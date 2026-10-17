@@ -12,6 +12,7 @@
   <a class="wordmark" href="#browse">Odor response database</a>
   <nav class="tabs" aria-label="Sections">
     <a href="#browse" data-tab="browse">Browse</a>
+    <a href="#odors" data-tab="odors">Odors<span class="tab-badge" id="odors-badge" hidden title="The odor sheet changed since it was last synced"></span></a>
     <a href="#upload" data-tab="upload">Upload</a>
     <a href="#reference" data-tab="reference">Reference matrices</a>
   </nav>
@@ -187,6 +188,7 @@
           </div>
           <div class="ds-actions">
             <span class="dl-status" id="ds-download-status"></span>
+            <button type="button" class="btn" id="ds-odors-toggle" aria-expanded="false">Odors</button>
             <button type="button" class="btn" id="ds-readme-toggle" aria-expanded="false">README</button>
             <details class="menu menu-right" id="ds-download">
               <summary class="btn">Download</summary>
@@ -203,8 +205,35 @@
           <div class="readme-html" id="ds-readme-html"></div>
           <div class="ds-files" id="ds-files"></div>
         </div>
+        <div id="ds-odors" class="readme-panel" hidden></div>
         <div id="dataset-viewer" class="viewer viewer-main"></div>
       </div>
+    </div>
+  </section>
+
+  <!-- ========================================================= ODORS -->
+  <section id="tab-odors" class="tab" hidden>
+    <div class="odors-page">
+      <div class="page-head">
+        <h1>Odors</h1>
+        <p class="lede">One row per chemical. This table is the app's own copy, used for every dataset's odor table and for downloads; it only changes when you sync it from the odor sheet (or a CSV with the same columns) below.</p>
+      </div>
+      <div class="step">
+        <div id="sheet-status"></div>
+        <div class="actions">
+          <button type="button" class="btn primary" id="sheet-check">Check the sheet for changes</button>
+          <input type="file" id="odor-csv-input" accept=".csv,.tsv,.txt" hidden>
+          <button type="button" class="btn" id="odor-csv-btn">Import a CSV…</button>
+          <a class="btn" href="/api/odors/template.csv" download>Template CSV</a>
+        </div>
+        <div id="odor-preview"></div>
+      </div>
+      <div class="odor-table-head">
+        <h2>Odor table <span class="muted" id="odor-count"></span></h2>
+        <input type="search" id="odor-filter" placeholder="Filter by name, abbreviation, CID, CAS…" aria-label="Filter odors">
+      </div>
+      <div id="odor-table"></div>
+      <details class="sync-history"><summary>Sync history</summary><div id="odor-syncs"></div></details>
     </div>
   </section>
 

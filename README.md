@@ -17,8 +17,19 @@ matrices (chemicals × fruits, chemicals × pathways, ...) get their own tab.
   the original files, or the response matrices concatenated into one wide CSV
   (trials × ROIs, with `dataset_id` as an extra column level; trials matched on panel,
   odor components and repeat) or long CSV (one row per value), always with
-  `datasets.csv` (every dataset's details) and the READMEs. API:
-  `/api/download?ids=1,2&format=files|wide|long` (see `app/export.py`).
+  `datasets.csv` (every dataset's details), `odors.csv` (their odors, with metadata and
+  links) and the READMEs. API: `/api/download?ids=1,2&format=files|wide|long` (see
+  `app/export.py`).
+- **Odors**: the app's own table of odor metadata, one row per chemical (name and
+  aliases, abbreviation, PubChem CID, CAS, solvent, supplier + catalog number, MetaCyc
+  and LOTUS IDs, inventory codes, notes), with links and PubChem structure images
+  (cached on the server). It is synced one way from a Google sheet (or an imported CSV)
+  with the columns of `config/odor_sheet_template.csv`, which starts it off with the
+  odors from the thesis tables: the app shows what a sync would do, adds new odors,
+  and applies changes to existing ones and deletions only where ticked, warning about
+  renames that would unlink datasets. A badge on the tab shows when the sheet changed
+  since its last sync. Each dataset has a thesis-style odor table, its odors matched
+  through its odor YAML when it has one, otherwise by abbreviation (setup in DEPLOY.md).
 - **Viewer**: canvas heatmap virtualised to ~10k ROIs, odor labels pinned at the top
   and fly/ROI labels at the left while scrolling, average over repeats or individual
   trials, rows by fly→ROI, ROI→fly or ungrouped, odor order as in the file or by name, a
@@ -67,7 +78,7 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
 ## Running it locally for development
 
 ```bash
-python3 -m venv .venv && . .venv/bin/activate
+python3 -m venv venv && . venv/bin/activate
 pip install -r requirements-dev.txt
 uvicorn app.main:app --reload --port 8080      # data goes to ./data
 python -m pytest tests/
@@ -86,6 +97,8 @@ app/metadata.py    form model (pydantic) and README.md generation
 app/db.py          SQLite schema and queries
 app/reference.py   fixed reference matrices
 app/export.py      downloads: zips of dataset files, concatenated wide/long matrices
+app/odormeta.py    odor table: sheet parsing / validation, sync diff, links, dataset matching
+config/odor_sheet_template.csv   odor sheet columns, with the odors from the thesis tables
 app/static/        frontend: index.html, app.js, heatmap.js, colormaps.js, app.css,
                    cluster.js (+ cluster-worker.js), figure.js (SVG/PDF/PNG export)
 manage.py          list / show / export / delete datasets from the server

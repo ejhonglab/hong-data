@@ -8,6 +8,8 @@ units           one row per (date, fly_num, roi) column of a dataset
 trials          one row per trial (panel, odor, repeat, ...) of a dataset
 responses       long table: one row per cell (unit_id, trial_id, value) -- queryable
 matrices        the same values as a float32 blob (units x trials) for fast serving
+odors           one row per chemical: names, IDs, supplier (synced from the odor sheet)
+odor_syncs      log of odor syncs (what was added / changed / deleted, by whom)
 """
 from __future__ import annotations
 
@@ -103,7 +105,39 @@ CREATE TABLE IF NOT EXISTS matrices (
     dtype TEXT NOT NULL,
     values_blob BLOB NOT NULL
 );
+CREATE TABLE IF NOT EXISTS odors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    name_key TEXT NOT NULL UNIQUE,     -- casefolded name
+    abbrev TEXT,
+    aliases TEXT NOT NULL DEFAULT '[]', -- JSON list
+    cid INTEGER,
+    cas TEXT,
+    solvent TEXT,
+    supplier TEXT,
+    catalog_no TEXT,
+    catalog_url TEXT,
+    metacyc TEXT,
+    lotus TEXT,
+    inventory TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS odor_syncs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    applied_at TEXT NOT NULL,
+    applied_by TEXT NOT NULL,
+    source TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    n_added INTEGER NOT NULL,
+    n_changed INTEGER NOT NULL,
+    n_deleted INTEGER NOT NULL,
+    details_json TEXT NOT NULL
+);
 """
+ODOR_COLUMNS = ("name", "abbrev", "aliases", "cid", "cas", "solvent", "supplier", "catalog_no", "catalog_url",
+                "metacyc", "lotus", "inventory", "notes")
 
 
 class Database:
@@ -276,6 +310,14 @@ class Database:
             "values": values,
         }
 
+    def get_trials(self, ds_id: int) -> list[dict]:
+        """A dataset's trials (panel, odor, components), in order."""
+        with self.connect() as con:
+            rows = con.execute(
+                "SELECT panel, odor, components_json FROM trials WHERE dataset_id = ? ORDER BY idx", (ds_id,)
+            ).fetchall()
+        return [{"panel": r["panel"], "odor": r["odor"], "components": json.loads(r["components_json"])} for r in rows]
+
     def get_matrix(self, ds_id: int) -> Optional[dict]:
         m = self.get_matrix_arrays(ds_id)
         if m is None:
@@ -307,3 +349,58 @@ class Database:
         with self.connect() as con:
             cur = con.execute("DELETE FROM datasets WHERE id = ?", (ds_id,))
             return cur.rowcount > 0
+
+    # ------------------------------------------------------------------- odors
+    def list_odors(self) -> list[dict]:
+        with self.connect() as con:
+            rows = con.execute("SELECT * FROM odors ORDER BY name_key").fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            del d["name_key"]
+            d["aliases"] = json.loads(d["aliases"])
+            out.append(d)
+        return out
+
+    def apply_odor_sync(self, *, added: list[dict], changed: list[tuple[int, dict]], deleted: list[int],
+                        applied_by: str, source: str, fingerprint: str, details: dict, when: str) -> int:
+        """Insert, update and delete odors (dicts with `ODOR_COLUMNS`), and log it, in one transaction.
+
+        Returns:
+            id of the odor_syncs row.
+        """
+        def values(r: dict) -> list:
+            return [json.dumps(r[c]) if c == "aliases" else r[c] for c in ODOR_COLUMNS]
+
+        cols = ", ".join(ODOR_COLUMNS)
+        with self.connect() as con:
+            for r in added:
+                con.execute(
+                    f"INSERT INTO odors ({cols}, name_key, created_at, updated_at) VALUES ({', '.join('?' * len(ODOR_COLUMNS))}, ?, ?, ?)",
+                    (*values(r), r["name"].casefold(), when, when),
+                )
+            for odor_id, r in changed:
+                con.execute(
+                    f"UPDATE odors SET {', '.join(f'{c} = ?' for c in ODOR_COLUMNS)}, name_key = ?, updated_at = ? WHERE id = ?",
+                    (*values(r), r["name"].casefold(), when, odor_id),
+                )
+            con.executemany("DELETE FROM odors WHERE id = ?", [(i,) for i in deleted])
+            cur = con.execute(
+                """INSERT INTO odor_syncs (applied_at, applied_by, source, fingerprint, n_added, n_changed, n_deleted,
+                   details_json) VALUES (?,?,?,?,?,?,?,?)""",
+                (when, applied_by, source, fingerprint, len(added), len(changed), len(deleted), json.dumps(details)),
+            )
+            return int(cur.lastrowid)
+
+    def odor_syncs(self, limit: int = 50, source: Optional[str] = None) -> list[dict]:
+        """Most recent odor syncs first (optionally only those from `source`)."""
+        with self.connect() as con:
+            rows = con.execute(
+                "SELECT * FROM odor_syncs WHERE ? IS NULL OR source = ? ORDER BY id DESC LIMIT ?", (source, source, limit)
+            ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["details"] = json.loads(d.pop("details_json"))
+            out.append(d)
+        return out

@@ -821,6 +821,13 @@ class Browse {
       p.hidden = !p.hidden;
       $('#ds-readme-toggle').setAttribute('aria-expanded', String(!p.hidden));
     });
+    this.odorCache = new Map();
+    $('#ds-odors-toggle').addEventListener('click', () => {
+      const p = $('#ds-odors');
+      p.hidden = !p.hidden;
+      $('#ds-odors-toggle').setAttribute('aria-expanded', String(!p.hidden));
+      if (!p.hidden && this.selected != null) this.showOdors(this.selected);
+    });
     const downloadUrl = (ids, format) => `/api/download?ids=${ids.join(',')}&format=${format}`;
     wireMenu($('#ds-download'), ({ format }) => { if (this.selected != null) download(downloadUrl([this.selected], format), $('#ds-download-status')); });
     wireMenu($('#pick-download'), ({ format }) => download(downloadUrl([...this.picked].sort((a, b) => a - b), format), $('#pick-status')));
@@ -931,6 +938,243 @@ class Browse {
     $('#ds-files').innerHTML = d.files.map((f) => `<a href="/api/datasets/${id}/files/${encodeURI(f)}" download>${esc(f)}</a>`).join('');
     if (!this.viewer) this.viewer = new MatrixViewer($('#dataset-viewer'));
     this.viewer.setNeuralData(m, { title: d.title, fileStem: `olfdb_dataset-${id}` });
+    if (!$('#ds-odors').hidden) this.showOdors(id);
+  }
+
+  async showOdors(id) {
+    const panel = $('#ds-odors');
+    if (!this.odorCache.has(id)) {
+      panel.innerHTML = '<p class="muted">Loading…</p>';
+      try { this.odorCache.set(id, await api(`/api/datasets/${id}/odors`)); } catch (e) { panel.replaceChildren(msgBox('error', esc(e.message))); return; }
+    }
+    if (this.selected === id) panel.innerHTML = datasetOdorTable(this.odorCache.get(id));
+  }
+}
+
+// ==================================================================== ODORS
+const ODOR_FIELDS = {
+  name: 'name', abbrev: 'abbreviation', aliases: 'aliases', cid: 'CID', cas: 'CAS', solvent: 'solvent', supplier: 'supplier',
+  catalog_no: 'catalog no.', catalog_url: 'catalog URL', metacyc: 'MetaCyc', lotus: 'LOTUS', inventory: 'inventory', notes: 'notes',
+};
+const extLink = (url, text) => (url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(text)}</a>` : esc(text ?? ''));
+const structureImg = (o) => (o.links?.structure
+  ? `<img class="structure" src="${esc(o.links.structure)}" alt="structure of ${esc(o.name)}" loading="lazy" onerror="this.remove()">` : '');
+const fmtValue = (v) => (Array.isArray(v) ? v.join('; ') : String(v ?? ''));
+const fmtWhen = (iso) => iso.replace('T', ' ').slice(0, 16);
+const usedBy = (n) => (n ? `used by ${n} dataset${n === 1 ? '' : 's'}` : 'not used by any dataset');
+const syncCounts = (s) => `${s.n_added} new, ${s.n_changed} changed, ${s.n_deleted} deleted`;
+// sort names ignoring leading stereo descriptors / locants: (+)-pulegone, 1,4-diaminobutane, p-cresol
+const odorSortKey = (name) => name.toLowerCase().replace(/^(\([^)]*\)-|[\d,]+-|[a-z]-(?=[a-z]))+/, '');
+function setOdorBadge(changed) { $('#odors-badge').hidden = !changed; }
+
+// linked identifier cells, shared by the Odors tab and the dataset odor tables
+function idCells(o) {
+  const l = o.links || {};
+  const catalog = o.catalog_no || l.catalog ? extLink(l.catalog, o.catalog_no || 'product page') : '';
+  return {
+    cid: extLink(l.pubchem, o.cid), cas: extLink(l.cas, o.cas), metacyc: extLink(l.metacyc, o.metacyc), lotus: extLink(l.lotus, o.lotus),
+    catalog: [o.supplier ? `<span class="muted">${esc(o.supplier)}</span>` : '', catalog].filter(Boolean).join(' '),
+  };
+}
+
+// a dataset's odors (GET /api/datasets/<id>/odors), per panel, like the thesis odor tables
+function datasetOdorTable({ rows, odors }) {
+  const hasGlom = rows.some((r) => r.yaml?.glomerulus);
+  const nCols = hasGlom ? 11 : 10;
+  const body = runsOf(rows, (r) => r.panel).map((g) => {
+    const title = g.key != null ? `<tr class="group"><td colspan="${nCols}">${esc(g.key)}</td></tr>` : '';
+    return title + rows.slice(g.start, g.end).map((r) => {
+      const o = r.odor_id != null ? odors[r.odor_id] : null;
+      const c = o ? idCells(o) : {};
+      let name;
+      if (o) name = `<a href="#odors/${o.id}">${esc(o.name)}</a>`;
+      else if (r.match === 'ambiguous') name = `<span class="muted">ambiguous: ${r.candidates.map((i) => `<a href="#odors/${i}">${esc(odors[i].name)}</a>`).join(' or ')}</span>`;
+      else name = `<span class="muted">${r.yaml?.name ? `${esc(r.yaml.name)}, ` : ''}not in the odor table</span>`;
+      return `<tr><td><code>${esc(r.odor)}</code></td><td>${name}</td><td>${r.log10_conc ?? ''}</td><td>${esc(r.yaml?.solvent || o?.solvent || '')}</td>
+        ${hasGlom ? `<td>${esc(r.yaml?.glomerulus || '')}</td>` : ''}<td>${c.cid || ''}</td><td>${c.cas || ''}</td><td>${c.catalog || ''}</td>
+        <td>${c.metacyc || ''}</td><td>${c.lotus || ''}</td><td class="structure-cell">${o ? structureImg(o) : ''}</td></tr>`;
+    }).join('');
+  }).join('');
+  const n = rows.filter((r) => r.odor_id != null).length;
+  return `<p class="muted">${n} of ${rows.length} odors are in the <a href="#odors">odor table</a> (matched through the dataset's odor YAML where it has one, otherwise by abbreviation).</p>
+    <table class="odor-table"><thead><tr><th>Odor</th><th>Name</th><th>log<sub>10</sub> conc.</th><th>Solvent</th>${hasGlom ? '<th>Target glomerulus</th>' : ''}
+    <th>CID</th><th>CAS</th><th>Catalog no.</th><th>MetaCyc</th><th>LOTUS</th><th>Structure</th></tr></thead><tbody>${body}</tbody></table>`;
+}
+
+class OdorsPage {
+  constructor() {
+    this.odors = null;
+    this.syncs = [];
+    this.preview = null;
+    this.highlightId = null;
+    $('#sheet-check').addEventListener('click', () => this.runPreview());
+    $('#odor-csv-btn').addEventListener('click', () => $('#odor-csv-input').click());
+    $('#odor-csv-input').addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) this.runPreview(f); });
+    $('#odor-filter').addEventListener('input', () => this.renderTable());
+  }
+
+  async load({ force = false } = {}) {
+    this.loadStatus();
+    if (this.odors && !force) { this.renderTable(); return; }
+    try {
+      ({ odors: this.odors, syncs: this.syncs } = await api('/api/odors'));
+    } catch (e) { $('#odor-table').replaceChildren(msgBox('error', esc(e.message))); return; }
+    this.odors.sort((a, b) => odorSortKey(a.name).localeCompare(odorSortKey(b.name)) || a.name.localeCompare(b.name));
+    this.renderTable();
+    this.renderSyncs();
+  }
+
+  async loadStatus() {
+    try { this.status = await api('/api/odors/status'); } catch (e) { $('#sheet-status').replaceChildren(msgBox('error', esc(e.message))); return; }
+    setOdorBadge(this.status.changed);
+    const s = this.status, box = $('#sheet-status');
+    $('#sheet-check').hidden = !s.configured;
+    if (!s.configured) {
+      box.innerHTML = `<p class="muted">No odor sheet is set up on the server (<code>OLFDB_ODOR_SHEET_URL</code>, see DEPLOY.md). You can still import a CSV with the sheet's columns;
+        the template has the odors from the thesis tables, and can also be imported into a new Google sheet to start it.</p>`;
+      return;
+    }
+    let state = '';
+    if (s.error) state = `<span class="pill error">can't read it</span> ${esc(s.error)}`;
+    else if (s.changed) state = `<span class="pill warn">${s.last_sync ? 'changed since the last sync' : 'never synced'}</span>`;
+    else if (s.fingerprint) state = '<span class="pill ok">in sync</span>';
+    const last = s.last_sync;
+    box.innerHTML = `<p><b>Odor sheet:</b> <a href="${esc(s.url)}" target="_blank" rel="noopener">Google sheet</a> ${state}</p>
+      <p class="muted">Read ${s.checked_at ? `${esc(fmtWhen(s.checked_at))}${s.n_rows != null ? ` (${s.n_rows} odors)` : ''}` : 'not yet'};
+      last synced ${last ? `${esc(fmtWhen(last.applied_at))} by ${esc(last.applied_by)} (${syncCounts(last)})` : 'never'}.
+      The sheet is looked at again every few minutes while the app is in use, to tell whether it changed.</p>`;
+  }
+
+  async runPreview(file) {
+    const box = $('#odor-preview');
+    box.replaceChildren(msgBox('info', file ? `Reading <b>${esc(file.name)}</b>…` : 'Reading the sheet…'));
+    try {
+      let form;
+      if (file) { form = new FormData(); form.append('file', file, file.name); }
+      this.preview = await api('/api/odors/preview', file ? { method: 'POST', form } : { method: 'POST', json: {} });
+    } catch (e) { box.replaceChildren(msgBox('error', esc(e.message))); return; }
+    this.renderPreview();
+    if (!file) this.loadStatus();
+  }
+
+  renderPreview() {
+    const p = this.preview, box = $('#odor-preview');
+    const where = p.source === 'Google sheet' ? 'sheet' : 'file';
+    const nothing = !p.added.length && !p.changed.length && !p.missing.length;
+    const empty = '<span class="muted">(empty)</span>';
+    const parts = [`<h3 class="subhead">${esc(p.source)}: ${p.n_rows} odors</h3>`];
+    if (p.errors.length) parts.push(`<div class="msg error"><b>Fix these in the ${where} first</b> (nothing is synced until they are):${listHtml(p.errors)}</div>`);
+    if (p.warnings.length) parts.push(`<div class="msg warn">Worth a look:${listHtml(p.warnings)}</div>`);
+    if (nothing && !p.errors.length) parts.push(`<div class="msg ok">The odor table already matches the ${where} (${p.unchanged} odors).</div>`);
+    if (p.added.length) {
+      parts.push(`<h4>New odors (${p.added.length}) <span class="muted">added when you apply</span></h4>
+        <table class="odor-table"><thead><tr><th>Name</th><th>Abbrev.</th><th>Aliases</th><th>CID</th><th>CAS</th><th>Solvent</th><th>Supplier</th><th>Catalog no.</th></tr></thead><tbody>
+        ${p.added.map((r) => `<tr><td><b>${esc(r.name)}</b></td>${['abbrev', 'aliases', 'cid', 'cas', 'solvent', 'supplier', 'catalog_no'].map((f) => `<td>${esc(fmtValue(r[f]))}</td>`).join('')}</tr>`).join('')}
+        </tbody></table>`);
+    }
+    if (p.changed.length) {
+      parts.push(`<h4>Changes to odors already in the table (${p.changed.length})</h4>
+        <div class="msg warn">Only the changes you tick are applied. Renaming an odor or changing its abbreviation can unlink datasets that refer to it
+        by the old name or abbreviation; keeping the old one in its aliases keeps them linked.</div>
+        <label class="check"><input type="checkbox" data-all-changes> tick all</label>`);
+      parts.push(p.changed.map((c) => `<div class="change">
+        <label class="check"><input type="checkbox" data-change="${c.id}"> <b>${esc(c.rename ? `${c.old_name} → ${c.name}` : c.name)}</b></label>
+        <span class="muted">${usedBy(c.datasets)}</span>${c.unlinked ? ` <span class="pill warn">${c.unlinked} would no longer be linked to it</span>` : ''}
+        <table class="diff">${c.fields.map((f) => `<tr><td>${esc(ODOR_FIELDS[f.field] || f.field)}</td><td class="old">${esc(fmtValue(f.old)) || empty}</td>
+          <td>→</td><td class="new">${esc(fmtValue(f.new)) || empty}</td></tr>`).join('')}</table></div>`).join(''));
+    }
+    if (p.missing.length) {
+      parts.push(`<h4>In the table but not in the ${where} (${p.missing.length}) <span class="muted">kept unless you tick them</span></h4>`);
+      parts.push(p.missing.map((o) => `<div class="change"><label class="check"><input type="checkbox" data-delete="${o.id}"> delete <b>${esc(o.name)}</b>${o.abbrev ? ` (${esc(o.abbrev)})` : ''}</label>
+        <span class="muted">${usedBy(o.datasets)}</span>${o.datasets ? ' <span class="pill warn">deleting it unlinks them</span>' : ''}</div>`).join(''));
+    }
+    if (p.unchanged && !nothing) parts.push(`<p class="muted">${p.unchanged} odors unchanged.</p>`);
+    if (!nothing && !p.errors.length) {
+      parts.push(`<div class="actions"><label class="check">Your name <input id="odor-sync-name" value="${esc(LS.get('olfdb.uploader_name', ''))}"></label>
+        <button type="button" class="btn primary" id="odor-apply"></button><button type="button" class="btn" id="odor-cancel">Cancel</button></div>
+        <div id="odor-apply-result"></div>`);
+    }
+    box.innerHTML = parts.join('');
+    $('[data-all-changes]', box)?.addEventListener('change', (e) => { $$('[data-change]', box).forEach((x) => { x.checked = e.target.checked; }); this._syncApply(); });
+    $$('[data-change], [data-delete]', box).forEach((x) => x.addEventListener('change', () => this._syncApply()));
+    $('#odor-apply', box)?.addEventListener('click', () => this.apply());
+    $('#odor-cancel', box)?.addEventListener('click', () => { this.preview = null; box.innerHTML = ''; });
+    this._syncApply();
+  }
+
+  _syncApply() {
+    const btn = $('#odor-apply');
+    if (!btn) return;
+    const p = this.preview, box = $('#odor-preview');
+    const nc = $$('[data-change]:checked', box).length, nd = $$('[data-delete]:checked', box).length;
+    btn.textContent = `Apply: ${p.added.length} new, ${nc} of ${p.changed.length} changes${p.missing.length ? `, ${nd} deletions` : ''}`;
+    btn.disabled = !p.added.length && !nc && !nd;
+  }
+
+  async apply() {
+    const box = $('#odor-preview'), out = $('#odor-apply-result');
+    const name = $('#odor-sync-name').value.trim();
+    if (!name) { out.replaceChildren(msgBox('error', 'Your name is required (it goes in the sync history).')); return; }
+    LS.set('olfdb.uploader_name', name);
+    const json = {
+      fingerprint: this.preview.fingerprint, applied_by: name,
+      changes: $$('[data-change]:checked', box).map((x) => +x.dataset.change),
+      deletions: $$('[data-delete]:checked', box).map((x) => +x.dataset.delete),
+    };
+    let res;
+    try { res = await api('/api/odors/apply', { method: 'POST', json }); } catch (e) { out.replaceChildren(msgBox('error', esc(e.message))); return; }
+    if (!res.ok) { out.replaceChildren(msgBox('error', `Not applied:${listHtml(res.errors)}`)); return; }
+    this.preview = null;
+    box.replaceChildren(msgBox('ok', `Synced: ${res.added} new, ${res.changed} changed, ${res.deleted} deleted.`));
+    browse.odorCache.clear();
+    await this.load({ force: true });
+  }
+
+  renderTable() {
+    const all = this.odors || [];
+    const q = $('#odor-filter').value.trim().toLowerCase();
+    const shown = q ? all.filter((o) => [o.name, o.abbrev, ...o.aliases, o.cid, o.cas, o.catalog_no, o.supplier, o.inventory]
+      .some((v) => v != null && String(v).toLowerCase().includes(q))) : all;
+    $('#odor-count').textContent = all.length ? `(${q ? `${shown.length} of ` : ''}${all.length})` : '';
+    if (!all.length) {
+      $('#odor-table').innerHTML = '<div class="empty">The odor table is empty. Sync it from the odor sheet, or import a CSV (the template has the odors from the thesis).</div>';
+      return;
+    }
+    $('#odor-table').innerHTML = `<table class="odor-table"><thead><tr><th>Structure</th><th>Name</th><th>Abbrev.</th><th>CID</th><th>CAS</th><th>Solvent</th>
+      <th>Catalog no.</th><th>MetaCyc</th><th>LOTUS</th><th>Inventory</th><th>Datasets</th><th>Notes</th></tr></thead><tbody>
+      ${shown.map((o) => {
+        const c = idCells(o);
+        return `<tr id="odor-${o.id}"><td class="structure-cell">${structureImg(o)}</td>
+          <td><b>${esc(o.name)}</b>${o.aliases.length ? `<div class="muted small">${esc(o.aliases.join('; '))}</div>` : ''}</td>
+          <td>${esc(o.abbrev || '')}</td><td>${c.cid}</td><td>${c.cas}</td><td>${esc(o.solvent || '')}</td><td>${c.catalog}</td>
+          <td>${c.metacyc}</td><td>${c.lotus}</td><td>${esc(o.inventory || '')}</td>
+          <td>${o.datasets.map((i) => `<a href="#browse/${i}">#${i}</a>`).join(' ')}</td><td class="notes">${esc(o.notes || '')}</td></tr>`;
+      }).join('')}</tbody></table>`;
+    if (this.highlightId != null) this.highlight(this.highlightId);
+  }
+
+  highlight(id) {
+    this.highlightId = id;
+    const tr = $(`#odor-${id}`);
+    if (!tr) return;
+    $$('.odor-table tr.hl').forEach((x) => x.classList.remove('hl'));
+    tr.classList.add('hl');
+    tr.scrollIntoView({ block: 'center' });
+  }
+
+  renderSyncs() {
+    const names = (xs) => esc(xs.join(', '));
+    $('#odor-syncs').innerHTML = this.syncs.length ? `<table class="odor-table"><thead><tr><th>When</th><th>By</th><th>From</th><th>What</th></tr></thead><tbody>
+      ${this.syncs.map((s) => {
+        const d = s.details || {};
+        const what = [
+          d.added?.length ? `<div><b>new:</b> ${names(d.added)}</div>` : '',
+          d.changed?.length ? `<div><b>changed:</b> ${d.changed.map((c) => `${esc(c.name)} <span class="muted">(${c.fields.map((f) => esc(ODOR_FIELDS[f.field] || f.field)).join(', ')})</span>`).join(', ')}</div>` : '',
+          d.deleted?.length ? `<div><b>deleted:</b> ${names(d.deleted)}</div>` : '',
+          d.not_applied?.length ? `<div class="muted">changes not applied: ${names(d.not_applied)}</div>` : '',
+        ].join('');
+        return `<tr><td>${esc(fmtWhen(s.applied_at))}</td><td>${esc(s.applied_by)}</td><td>${esc(s.source)}</td><td>${what || syncCounts(s)}</td></tr>`;
+      }).join('')}</tbody></table>` : '<p class="muted">No syncs yet.</p>';
   }
 }
 
@@ -968,14 +1212,16 @@ class Reference {
 // ==================================================================== router
 const upload = new UploadFlow();
 const browse = new Browse();
+const odorsPage = new OdorsPage();
 const reference = new Reference();
 
 function route() {
   const [tab, id] = location.hash.replace(/^#/, '').split('/');
-  const name = ['upload', 'browse', 'reference'].includes(tab) ? tab : 'browse';
+  const name = ['upload', 'browse', 'odors', 'reference'].includes(tab) ? tab : 'browse';
   $$('.tab').forEach((s) => { s.hidden = s.id !== `tab-${name}`; });
   $$('.tabs a').forEach((a) => a.classList.toggle('active', a.dataset.tab === name));
   if (name === 'browse') { browse.load().then(() => { if (id) browse.show(+id); }); }
+  if (name === 'odors') { odorsPage.highlightId = id ? +id : null; odorsPage.load().then(() => { if (id) odorsPage.highlight(+id); }); }
   if (name === 'reference') { reference.load().then(() => { if (id) reference.show(id); }); }
   if (name === 'browse' && !id) { $('#browse-empty').hidden = false; $('#dataset-view').hidden = true; browse.selected = null; }
   if (name === 'reference' && !id) { $('#reference-empty').hidden = false; $('#reference-view').hidden = true; reference.selected = null; }
@@ -984,3 +1230,4 @@ function route() {
 window.addEventListener('hashchange', route);
 upload.init().then(route);
 api('/api/health').then(() => { $('#topbar-status').textContent = ''; }).catch(() => { $('#topbar-status').textContent = 'server unreachable'; });
+api('/api/odors/status').then((s) => setOdorBadge(s.changed)).catch(() => {});

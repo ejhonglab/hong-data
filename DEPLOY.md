@@ -34,12 +34,14 @@ sudo chown -R 10001:10001 data        # the container runs as uid 10001 ("olfdb"
 ```
 
 `data/` is the only thing that needs backing up: it holds `olfdb.sqlite3`, every
-uploaded file (`data/datasets/<id>/...`), the short-lived staging area and downloads
-being sent (`data/exports/`, deleted once sent).
+uploaded file (`data/datasets/<id>/...`), the odor table and its sync history, the
+short-lived staging area, downloads being sent (`data/exports/`, deleted once sent) and
+cached odor structure images (`data/odor_structures/`).
 
 Before the first start, have a look at:
 
-- `docker-compose.yml`: host port (`8080:8000`), upload size limit.
+- `docker-compose.yml`: host port (`8080:8000`), upload size limit, odor sheet link
+  (see "Odor sheet" below).
 - `config/glomeruli.txt`: glomerulus names accepted as ROI labels.
 - `reference_data/manifest.json`: the fixed matrices shown in the "Reference matrices"
   tab (format in `reference_data/README.md`). Replace the two synthetic examples.
@@ -56,6 +58,25 @@ docker compose logs -f                       # Ctrl-C to stop following
 Open `http://<server>:8080/` from any machine on the intranet. The container has
 `restart: unless-stopped`, so Docker already restarts it after a crash and after a
 reboot (as long as the docker service is enabled).
+
+### Odor sheet
+
+The Odors tab keeps the app's own table of odor metadata (one row per chemical), which
+it syncs from a Google sheet when someone asks it to, after showing what would change.
+To set the sheet up:
+
+1. Make a Google sheet with the columns of `config/odor_sheet_template.csv` (File →
+   Import that file to start from the odors in the thesis tables). Column names are
+   matched loosely; `aliases` are `;`-separated.
+2. Share it as "anyone with the link can view" (the server reads its CSV export; no
+   Google account or credentials are involved, and nothing is written to the sheet).
+3. Put its link (as copied from the browser while editing it; include `#gid=...` if the
+   odors are not on the first tab) in `OLFDB_ODOR_SHEET_URL` in `docker-compose.yml`, and
+   restart: `docker compose up -d`.
+
+The server needs outbound HTTPS to docs.google.com for the sheet, and to
+pubchem.ncbi.nlm.nih.gov for structure images (fetched once per CID, then cached).
+Without a sheet, the Odors tab can still import a CSV in the same format.
 
 ## 4. Manage it with systemd (start on boot, restart on failure, logs in journald)
 
@@ -138,7 +159,7 @@ Logs: `journalctl -u olfdb` (with the systemd unit) or `docker compose logs`.
 sudo apt install -y python3-venv
 sudo useradd --system --home /opt/olfdb --shell /usr/sbin/nologin olfdb
 cd /opt/olfdb
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+python3 -m venv venv && venv/bin/pip install -r requirements.txt
 sudo chown -R olfdb:olfdb /opt/olfdb
 sudo cp deploy/olfdb-venv.service /etc/systemd/system/olfdb.service
 sudo systemctl daemon-reload && sudo systemctl enable --now olfdb
@@ -155,6 +176,8 @@ Same behaviour (boot start, restart on crash), just no container isolation.
 | `OLFDB_GLOMERULI_FILE` | `./config/glomeruli.txt` | accepted glomerulus names (falls back to the built-in list if missing) |
 | `OLFDB_MAX_UPLOAD_MB` | `1024` | reject data files larger than this |
 | `OLFDB_STAGE_TTL_HOURS` | `48` | staged-but-never-saved uploads are deleted after this |
+| `OLFDB_ODOR_SHEET_URL` | (none) | Google sheet the odor table is synced from (see "Odor sheet") |
+| `OLFDB_ODOR_SHEET_CHECK_MINUTES` | `10` | how often (at most) the sheet is read to tell whether it changed |
 
 Keep `--workers 1`: SQLite handles concurrent readers fine, and one process avoids
 write contention; the viewer work happens in the browser anyway.

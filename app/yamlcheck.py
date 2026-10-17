@@ -83,7 +83,7 @@ def parse_odor_yaml(text: str) -> tuple[list[YamlOdor], dict]:
     return odors, meta
 
 
-def _conc_equal(a: Optional[float], b: Optional[float]) -> bool:
+def conc_equal(a: Optional[float], b: Optional[float]) -> bool:
     if a is None or b is None:
         return a is None and b is None
     return math.isclose(a, b, abs_tol=1e-6)
@@ -103,7 +103,7 @@ def check_subset(
     for label, conc in matrix_odors:
         hit = None
         for j, yo in enumerate(yaml_odors):
-            if label in yo.labels() and _conc_equal(conc, yo.log10_conc):
+            if label in yo.labels() and conc_equal(conc, yo.log10_conc):
                 hit = j
                 break
         disp = f"{label} @ {format_conc(conc)}"

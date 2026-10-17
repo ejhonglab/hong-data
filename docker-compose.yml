@@ -13,6 +13,8 @@ services:
     environment:
       OLFDB_MAX_UPLOAD_MB: "1024"
       OLFDB_STAGE_TTL_HOURS: "48"
+      # Google sheet with odor metadata (see DEPLOY.md), shared as "anyone with the link can view"
+      OLFDB_ODOR_SHEET_URL: ""
     logging:
       driver: json-file
       options: { max-size: "20m", max-file: "5" }

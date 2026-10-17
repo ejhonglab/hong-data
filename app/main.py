@@ -7,6 +7,7 @@ import json
 import re
 import secrets
 import shutil
+import sqlite3
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -23,7 +24,7 @@ from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, R
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import config, export, reference, thorimage, yamlcheck
+from . import config, export, odormeta, reference, thorimage, yamlcheck
 from .db import Database
 from .glomeruli import load_glomeruli
 from .ingest import ParsedData, ValidationError, load_file, load_parsed, save_parsed
@@ -112,8 +113,17 @@ def _sha256(path: Path) -> str:
 # ---------------------------------------------------------------------- routes
 
 
+class RevalidatedStaticFiles(StaticFiles):
+    """Static files browsers check for changes on every load (a 304 when unchanged), so updates show at once."""
+
+    def file_response(self, *args, **kwargs) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers["cache-control"] = "no-cache"
+        return response
+
+
 async def index(request: Request) -> Response:
-    return FileResponse(config.STATIC_DIR / "index.html")
+    return FileResponse(config.STATIC_DIR / "index.html", headers={"cache-control": "no-cache"})
 
 
 async def health(request: Request) -> Response:
@@ -506,6 +516,185 @@ async def download(request: Request) -> Response:
     )
 
 
+# ----------------------------------------------------------------------- odors
+
+SHEET_SOURCE = "Google sheet"
+sheet_watch = odormeta.SheetWatch(config.ODOR_SHEET_CHECK_MINUTES * 60)
+
+
+def _sheet_status() -> dict:
+    state = sheet_watch.check()
+    last = next(iter(db.odor_syncs(limit=1, source=SHEET_SOURCE)), None)
+    return {
+        "configured": bool(config.ODOR_SHEET_URL),
+        "url": config.ODOR_SHEET_URL or None,
+        **state,
+        "last_sync": last,
+        "changed": bool(state["fingerprint"]) and (last is None or last["fingerprint"] != state["fingerprint"]),
+    }
+
+
+async def odors_status(request: Request) -> Response:
+    """The odor sheet, when it was last read, and whether it changed since it was last synced."""
+    return JSONResponse(await run_in_threadpool(_sheet_status))
+
+
+async def odors_list(request: Request) -> Response:
+    def build() -> dict:
+        odors = db.list_odors()
+        used = odormeta.usage(db, config.DATASETS_DIR, odors)
+        rows = [{**o, "links": odormeta.links(o), "datasets": sorted(used.get(o["id"], ()))} for o in odors]
+        return {"odors": rows, "syncs": db.odor_syncs(limit=20)}
+
+    return JSONResponse(await run_in_threadpool(build))
+
+
+def _cleanup_previews(max_age_s: float = 86400) -> None:
+    cutoff = time.time() - max_age_s
+    for p in config.ODOR_PREVIEWS_DIR.glob("*.json"):
+        try:
+            if p.stat().st_mtime < cutoff:
+                p.unlink()
+        except OSError:
+            pass
+
+
+def _preview(text: str, source: str) -> dict:
+    rows, errors, warnings = odormeta.parse_sheet(text)
+    fp = odormeta.fingerprint(rows)
+    if source == SHEET_SOURCE:
+        sheet_watch.record(rows)
+    _cleanup_previews()
+    (config.ODOR_PREVIEWS_DIR / f"{fp}.json").write_text(json.dumps({"rows": rows, "source": source, "errors": errors}))
+    odors = db.list_odors()
+    d = odormeta.diff(rows, odors)
+    used = odormeta.usage(db, config.DATASETS_DIR, odors)
+    # datasets that would no longer be linked to an odor if every addition and change were applied
+    used_after = odormeta.usage(db, config.DATASETS_DIR, odormeta.after_sync(odors, d))
+    lost = lambda i: len(used.get(i, set()) - used_after.get(i, set()))
+    return {
+        "ok": not errors, "source": source, "fingerprint": fp, "errors": errors, "warnings": warnings,
+        "n_rows": len(rows), "unchanged": d["unchanged"],
+        "added": d["added"],
+        "changed": [
+            {"id": c["id"], "name": c["row"]["name"], "old_name": c["odor"]["name"], "rename": c["rename"],
+             "fields": c["fields"], "datasets": len(used.get(c["id"], ())), "unlinked": lost(c["id"])}
+            for c in d["changed"]
+        ],
+        "missing": [{"id": o["id"], "name": o["name"], "abbrev": o["abbrev"], "datasets": len(used.get(o["id"], ()))}
+                    for o in d["missing"]],
+    }
+
+
+async def odors_preview(request: Request) -> Response:
+    """Validate the odor sheet (or an uploaded CSV, field 'file') and diff it against the odor table."""
+    if request.headers.get("content-type", "").startswith("multipart/"):
+        form = await request.form()
+        up = form.get("file")
+        if not isinstance(up, UploadFile):
+            return json_error(400, "no file in the request (field name 'file')")
+        raw = await up.read(20 * 1024 * 1024 + 1)
+        if len(raw) > 20 * 1024 * 1024:
+            return json_error(413, "odor CSV files are limited to 20 MB")
+        text, source = raw.decode("utf-8-sig", errors="replace"), f"file {safe_filename(up.filename, 'odors.csv')}"
+    else:
+        if not config.ODOR_SHEET_URL:
+            return json_error(400, "no odor sheet is configured (set OLFDB_ODOR_SHEET_URL on the server)")
+        try:
+            text = await run_in_threadpool(odormeta.fetch_sheet, config.ODOR_SHEET_URL)
+        except odormeta.SheetError as e:
+            return json_error(502, str(e))
+        source = SHEET_SOURCE
+    return JSONResponse(await run_in_threadpool(_preview, text, source))
+
+
+def _prefetch_structures() -> None:
+    for o in db.list_odors():
+        if o["cid"]:
+            odormeta.structure_png(o["cid"])
+
+
+def _apply(fp: str, change_ids: set[int], delete_ids: set[int], applied_by: str) -> dict:
+    path = config.ODOR_PREVIEWS_DIR / f"{fp}.json"
+    if not path.exists():
+        return {"ok": False, "errors": ["this preview has expired: check the sheet (or import the file) again"]}
+    saved = json.loads(path.read_text())
+    if saved["errors"]:
+        return {"ok": False, "errors": ["the sheet has errors: fix them and check it again"]}
+    d = odormeta.diff(saved["rows"], db.list_odors())
+    changes = [c for c in d["changed"] if c["id"] in change_ids]
+    deletions = [o for o in d["missing"] if o["id"] in delete_ids]
+    details = {
+        "added": [r["name"] for r in d["added"]],
+        "changed": [{"name": c["row"]["name"], "fields": c["fields"]} for c in changes],
+        "deleted": [o["name"] for o in deletions],
+        "not_applied": [c["row"]["name"] for c in d["changed"] if c["id"] not in change_ids],
+    }
+    try:
+        db.apply_odor_sync(
+            added=d["added"], changed=[(c["id"], c["row"]) for c in changes], deleted=[o["id"] for o in deletions],
+            applied_by=applied_by, source=saved["source"], fingerprint=fp, details=details,
+            when=dt.datetime.now().isoformat(timespec="seconds"),
+        )
+    except sqlite3.IntegrityError as e:
+        return {"ok": False, "errors": [f"could not apply the sync: {e}"]}
+    return {"ok": True, "added": len(d["added"]), "changed": len(changes), "deleted": len(deletions)}
+
+
+async def odors_apply(request: Request) -> Response:
+    """Apply a preview: all new odors, plus the changes and deletions listed (by odor id)."""
+    body = await request.json()
+    fp = str(body.get("fingerprint", ""))
+    applied_by = str(body.get("applied_by") or "").strip()
+    if not re.fullmatch(r"[0-9a-f]{64}", fp):
+        return json_error(400, "missing or malformed fingerprint")
+    if not applied_by:
+        return JSONResponse({"ok": False, "errors": ["your name is required"]}, status_code=422)
+    try:
+        change_ids = {int(x) for x in body.get("changes") or []}
+        delete_ids = {int(x) for x in body.get("deletions") or []}
+    except (TypeError, ValueError):
+        return json_error(400, "changes and deletions must be lists of odor ids")
+    result = await run_in_threadpool(_apply, fp, change_ids, delete_ids, applied_by)
+    return JSONResponse(result, status_code=200 if result["ok"] else 422,
+                        background=BackgroundTask(_prefetch_structures) if result["ok"] else None)
+
+
+async def odor_structure(request: Request) -> Response:
+    """PubChem structure image of an odor in the table (cached on the server)."""
+    cid = int(request.path_params["cid"])
+    if not any(o["cid"] == cid for o in db.list_odors()):
+        return json_error(404, "no odor with this CID")
+    path = await run_in_threadpool(odormeta.structure_png, cid)
+    if path is None:
+        return json_error(404, "structure image not available")
+    return FileResponse(path, media_type="image/png", headers={"cache-control": "public, max-age=604800"})
+
+
+async def odor_template(request: Request) -> Response:
+    return FileResponse(config.ODOR_TEMPLATE, filename="odor_sheet_template.csv", media_type="text/csv")
+
+
+async def dataset_odor_table(request: Request) -> Response:
+    """A dataset's odors (per panel, as in the data) matched to the odor table."""
+    ds_id = int(request.path_params["ds_id"])
+
+    def build() -> Optional[dict]:
+        ds = db.get_dataset(ds_id)
+        if ds is None:
+            return None
+        index = odormeta.OdorIndex(db.list_odors())
+        rows = odormeta.dataset_odors(ds, db.get_trials(ds_id), index, odormeta.dataset_yaml_odors(ds, config.DATASETS_DIR))
+        ids = {r["odor_id"] for r in rows} | {i for r in rows for i in r["candidates"]}
+        odors = {i: {**index.by_id[i], "links": odormeta.links(index.by_id[i])} for i in ids if i is not None}
+        return {"rows": rows, "odors": odors}
+
+    result = await run_in_threadpool(build)
+    if result is None:
+        return json_error(404, "dataset not found")
+    return JSONResponse(result)
+
+
 async def reference_list(request: Request) -> Response:
     return JSONResponse({"datasets": reference.manifest()})
 
@@ -537,10 +726,17 @@ routes = [
     Route("/api/datasets/{ds_id:int}", dataset_get),
     Route("/api/datasets/{ds_id:int}/matrix", dataset_matrix),
     Route("/api/datasets/{ds_id:int}/files/{path:path}", dataset_file),
+    Route("/api/datasets/{ds_id:int}/odors", dataset_odor_table),
     Route("/api/download", download),
+    Route("/api/odors", odors_list),
+    Route("/api/odors/status", odors_status),
+    Route("/api/odors/preview", odors_preview, methods=["POST"]),
+    Route("/api/odors/apply", odors_apply, methods=["POST"]),
+    Route("/api/odors/structure/{cid:int}", odor_structure),
+    Route("/api/odors/template.csv", odor_template),
     Route("/api/reference", reference_list),
     Route("/api/reference/{ref_id}", reference_get),
-    Mount("/static", StaticFiles(directory=str(config.STATIC_DIR)), name="static"),
+    Mount("/static", RevalidatedStaticFiles(directory=str(config.STATIC_DIR)), name="static"),
 ]
 
 app = Starlette(routes=routes, exception_handlers={HTTPException: http_exception})

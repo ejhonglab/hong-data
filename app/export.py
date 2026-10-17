@@ -10,8 +10,9 @@ wide   the response matrices concatenated into ``responses_wide.csv``: trials (r
        components and repeat
 long   the same values in ``responses_long.csv``, one row per non-missing value
 
-Every zip also has ``datasets.csv`` (one row of metadata per dataset), each dataset's
-README.md and metadata.json, and a README.md describing the contents.
+Every zip also has ``datasets.csv`` (one row of metadata per dataset), ``odors.csv``
+(each dataset's odors with their metadata and links from the odor table), each
+dataset's README.md and metadata.json, and a README.md describing the contents.
 """
 from __future__ import annotations
 
@@ -25,6 +26,7 @@ from typing import Iterable, Iterator, TextIO
 import numpy as np
 import pandas as pd
 
+from . import odormeta
 from .db import Database
 from .odors import SOLVENT_STR
 
@@ -147,6 +149,19 @@ def datasets_frame(datasets: list[dict]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def odors_frame(db: Database, datasets: list[dict], datasets_dir: Path) -> pd.DataFrame:
+    """Each dataset's odors (per panel, as in the data) with their odor-table metadata and links."""
+    index = odormeta.OdorIndex(db.list_odors())
+    rows = []
+    for d in datasets:
+        odors = odormeta.dataset_odors(d, db.get_trials(d["id"]), index, odormeta.dataset_yaml_odors(d, datasets_dir))
+        rows += [{"dataset_id": d["id"], **r} for r in odormeta.table_rows(odors, index)]
+    df = pd.DataFrame(rows)
+    if "cid" in df:
+        df["cid"] = df["cid"].astype("Int64")
+    return df
+
+
 # ------------------------------------------------------------------------- zip
 
 
@@ -195,6 +210,10 @@ def _readme(datasets: list[dict], fmt: str, levels: list[str], shape: tuple[int,
             f"- `odor1`, `odor2`, ...: components presented together; `{SOLVENT_STR}` marks an unused one."
         )
     lines.append("- `datasets.csv`: one row per dataset (details entered at upload, and summary counts).")
+    lines.append(
+        "- `odors.csv`: each dataset's odors, per panel, with names, PubChem CID, CAS, supplier and catalog "
+        "number, MetaCyc and LOTUS IDs (and links) from the odor table; empty where an odor is not in it."
+    )
     if fmt == "files":
         lines.append("- `dataset-<id>/`: every file of each dataset as uploaded, with its README.md and metadata.json.")
     else:
@@ -236,6 +255,8 @@ def write_zip(db: Database, ds_ids: Iterable[int], fmt: str, dest: Path, dataset
         zf.writestr(f"{stem}/README.md", _readme(datasets, fmt, levels, shape))
         with _zip_text(zf, f"{stem}/datasets.csv") as f:
             datasets_frame(datasets).to_csv(f, index=False)
+        with _zip_text(zf, f"{stem}/odors.csv") as f:
+            odors_frame(db, datasets, datasets_dir).to_csv(f, index=False)
         if fmt == "wide":
             with _zip_text(zf, f"{stem}/responses_wide.csv") as f:
                 wide_frame(matrices).to_csv(f)
