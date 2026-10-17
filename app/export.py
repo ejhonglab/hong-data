@@ -289,8 +289,8 @@ def _readme(datasets: list[dict], fmt: str, levels: list[str], shape: tuple[int,
         )
     lines.append("- `datasets.csv`: one row per dataset (details entered at upload, and summary counts).")
     lines.append(
-        "- `odors.csv`: each dataset's odors, per panel, with names, PubChem CID, CAS, supplier and catalog "
-        "number, MetaCyc and LOTUS IDs (and links) from the odor table; empty where an odor is not in it."
+        "- `odors.csv`: each dataset's odors, per panel, with names, PubChem CID and InChI, CAS, supplier and "
+        "catalog number, MetaCyc and LOTUS IDs (and links) from the odor table; empty where an odor is not in it."
     )
     if fmt == "files":
         lines.append("- `dataset-<id>/`: every file of each dataset as uploaded, with its README.md and metadata.json.")

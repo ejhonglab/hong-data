@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from app import odormeta
 from app.db import Database
 from app.export import ExportError, dataset_stem, trial_keys, write_download
 from app.ingest import ParsedData, load_file
@@ -112,6 +113,24 @@ def test_files_and_tables(store, tmp_path, two):
     meta = read_member(out, f"{stem}/datasets.csv")
     assert meta.dataset_id.tolist() == [ia, ib] and meta.driver.tolist() == ["GH146-Gal4", "pebbled"]
     assert meta.notes.tolist() == ["two\nlines"] * 2 and meta.n_units.tolist() == [4, 2]
+
+
+def test_odors_csv(store, tmp_path, two):
+    (ia, _), (ib, _) = two
+    db = store[0]
+    rows, _, _ = odormeta.parse_sheet("name,abbrev,cid\nvaleric acid,va,7991\nmethyl salicylate,ms,4133\n")
+    db.apply_odor_sync(added=rows, changed=[], deleted=[], applied_by="me", source="test", fingerprint="0",
+                       details={}, when="2026-10-17T00:00:00")
+    inchi = "InChI=1S/C5H10O2/c1-2-3-4-5(6)7/h2-4H2,1H3,(H,6,7)"
+    db.save_inchis({7991: inchi}, when="2026-10-17T00:00:00")  # none fetched yet for ms
+    out = tmp_path / "out.zip"
+    stem = write_zip(db, [ia, ib], "wide", out, store[1])[:-4]
+    odors = read_member(out, f"{stem}/odors.csv")
+    assert list(odors.columns[odors.columns.get_loc("cid"):][:3]) == ["cid", "inchi", "cas"]
+    by_odor = {(r.dataset_id, r.odor): r for r in odors.itertuples()}
+    assert by_odor[(ia, "va @ -3")].inchi == inchi and by_odor[(ib, "va @ -3")].inchi == inchi
+    assert by_odor[(ib, "ms @ -3")].cid == 4133 and pd.isna(by_odor[(ib, "ms @ -3")].inchi)
+    assert pd.isna(by_odor[(ia, "ea @ -2")].inchi)  # not in the odor table
 
 
 def test_unknown_and_empty(store, tmp_path, two):
