@@ -26,10 +26,10 @@ matrices (chemicals × fruits, chemicals × pathways, ...) get their own tab.
   full data range by default), hover tooltips.
   - *Clustering*: ROIs and/or odors ordered by hierarchical clustering (average
     linkage, correlation or Euclidean distance on trial-averaged responses, missing
-    values skipped pairwise), with dendrograms. ROIs are clustered within each fly;
-    with rows grouped by ROI the ROIs (averaged over flies) are clustered; ungrouped,
-    all rows together (up to 15,000 per clustering; 15,000 rows need ~450 MB in the
-    browser). Odors are clustered within each panel. Distances are computed in
+    values skipped pairwise), with dendrograms. ROIs are always clustered all
+    together, whichever fly they come from, and shown ungrouped in the clustered
+    order (up to 15,000 ROIs; 15,000 need ~450 MB in the browser). Odors are clustered
+    within each panel, by their responses across all ROIs. Distances are computed in
     parallel web workers, the linkage in one of them.
   - *Export figure*: SVG, PDF or PNG of the whole matrix as shown (order, colors,
     cell size, dendrograms) with a colorbar; cells are an embedded image, labels and

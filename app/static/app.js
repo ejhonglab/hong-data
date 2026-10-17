@@ -195,11 +195,10 @@ function meanOver(values, nT, unitIdx, colTrials) {
 }
 
 // Reorders ROIs and/or odors by hierarchical clustering of trial-averaged responses
-// (whatever the display mode). ROIs are clustered within each fly; when grouped by
-// ROI, the ROIs (each the mean over its flies) are; when ungrouped, all rows together.
-// Odors are clustered within each panel. -> {unitIdx, conds, rowTrees, colTrees, notes}
+// (whatever the display mode). ROIs are clustered all together, whichever fly they come
+// from; odors within each panel, by their responses across all ROIs.
+// -> {unitIdx, conds, rowTrees, colTrees, notes}
 async function clusterNeural(pool, data, order, o, onProgress) {
-  const { units } = data;
   const { conds, unitIdx } = order;
   const nU = unitIdx.length, nC = conds.length;
   const means = meanOver(data.values, data.trials.length, unitIdx, conds.map((c) => c.trials));
@@ -210,25 +209,7 @@ async function clusterNeural(pool, data, order, o, onProgress) {
     jobs.push({ data: vectors(), n, d, metric: o.metric });
     plans.push(plan);
   };
-  if (o.clusterRows && o.rowOrder === 'roi') {
-    const groups = runsOf(unitIdx, (u) => units[u].roi);
-    add({ kind: 'groups', groups, what: 'ROIs' }, groups.length, nC, () => {
-      const vecs = new Float32Array(groups.length * nC);
-      groups.forEach((g, k) => {
-        for (let c = 0; c < nC; c++) {
-          let s = 0, n = 0;
-          for (let r = g.start; r < g.end; r++) { const v = means[r * nC + c]; if (v === v) { s += v; n++; } }
-          vecs[k * nC + c] = n ? s / n : NaN;
-        }
-      });
-      return vecs;
-    });
-  } else if (o.clusterRows) {
-    const groups = o.rowOrder === 'fly' ? runsOf(unitIdx, (u) => flyKey(units[u])) : [{ key: null, start: 0, end: nU }];
-    for (const g of groups) {
-      add({ kind: 'rows', group: g, what: g.key ? `ROIs of ${g.key}` : 'ROIs' }, g.end - g.start, nC, () => means.slice(g.start * nC, g.end * nC));
-    }
-  }
+  if (o.clusterRows) add({ kind: 'rows', group: { start: 0, end: nU }, what: 'ROIs' }, nU, nC, () => means);
   if (o.clusterCols) {
     for (const p of runsOf(conds, (c) => c.panel)) {
       const n = p.end - p.start;
@@ -243,17 +224,11 @@ async function clusterNeural(pool, data, order, o, onProgress) {
   const out = { unitIdx: unitIdx.slice(), conds: conds.slice(), rowTrees: [], colTrees: [], notes };
   results.forEach((res, k) => {
     const plan = plans[k];
-    if (plan.kind === 'groups') {
-      out.unitIdx = [];
-      for (const gi of res.order) { const g = plan.groups[gi]; for (let r = g.start; r < g.end; r++) out.unitIdx.push(unitIdx[r]); }
-      out.rowTrees.push({ merges: res.merges, leaves: plan.groups.map((g) => g.key), leafKind: 'group' });
-      return;
-    }
     const { start, end } = plan.group;
     const items = plan.kind === 'rows' ? unitIdx.slice(start, end) : conds.slice(start, end);
     const target = plan.kind === 'rows' ? out.unitIdx : out.conds;
     res.order.forEach((i, t) => { target[start + t] = items[i]; });
-    (plan.kind === 'rows' ? out.rowTrees : out.colTrees).push({ merges: res.merges, leaves: items, leafKind: plan.kind === 'rows' ? 'unit' : 'cond' });
+    (plan.kind === 'rows' ? out.rowTrees : out.colTrees).push({ merges: res.merges, leaves: items });
   });
   return out;
 }
@@ -291,10 +266,7 @@ function buildNeuralModel(data, order, { mode, rowOrder }, clustering) {
   };
   if (clustering?.rowTrees.length) {
     const rowOf = new Map(unitIdx.map((u, r) => [u, r + 0.5]));
-    const groupCenter = new Map(runsOf(rows, (r) => r.group).map((g) => [g.key, (g.start + g.end) / 2]));
-    model.rowDendro = layoutDendrogram(clustering.rowTrees.map((t) => ({
-      merges: t.merges, leafPos: t.leaves.map((x) => (t.leafKind === 'group' ? groupCenter : rowOf).get(x)),
-    })));
+    model.rowDendro = layoutDendrogram(clustering.rowTrees.map((t) => ({ merges: t.merges, leafPos: t.leaves.map((u) => rowOf.get(u)) })));
   }
   if (clustering?.colTrees.length) {
     model.colDendro = layoutDendrogram(clustering.colTrees.map((t) => ({ merges: t.merges, leafPos: t.leaves.map((c) => condCenter.get(c)) })));
@@ -387,13 +359,15 @@ class MatrixViewer {
     this._syncEnabled();
   }
 
-  // orderings that clustering replaces are disabled while it is on
+  // orderings that clustering replaces are disabled while it is on (rows show as
+  // ungrouped then; the chosen grouping comes back when ROI clustering is turned off)
   _syncEnabled() {
     const tb = this.toolbar, o = this.opts;
-    const roi = $('select[data-opt=roiSort]', tb), odor = $('select[data-opt=odorOrder]', tb);
-    roi.disabled = o.clusterRows;
+    const rows = $('select[data-opt=rowOrder]', tb), roi = $('select[data-opt=roiSort]', tb), odor = $('select[data-opt=odorOrder]', tb);
+    rows.disabled = roi.disabled = o.clusterRows;
+    rows.value = o.clusterRows ? 'none' : o.rowOrder;
     odor.disabled = o.clusterCols;
-    roi.title = o.clusterRows ? 'ROIs are ordered by the clustering' : '';
+    rows.title = roi.title = o.clusterRows ? 'ROIs are ordered by the clustering, across all flies' : '';
     odor.title = o.clusterCols ? 'odors are ordered by the clustering' : '';
     $('select[data-opt=metric]', tb).disabled = !(o.clusterRows || o.clusterCols);
   }
@@ -445,7 +419,8 @@ class MatrixViewer {
   async _rebuild() {
     if (!this.data) return;
     const seq = ++this._seq;
-    const o = this.opts;
+    // ROI clustering pools the ROIs of every fly, so the rows are then not grouped
+    const o = this.opts.clusterRows ? { ...this.opts, rowOrder: 'none' } : this.opts;
     if (this.kind !== 'neural') {
       if (COLORMAPS[o.colormap]?.kind === 'sequential') { this.opts.colormapSeq = o.colormap; this._save(); }
       this._show(this.data.model);
