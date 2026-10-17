@@ -49,6 +49,49 @@ matrices (chemicals × fruits, chemicals × pathways, ...) get their own tab.
 
 Hosting instructions: [DEPLOY.md](DEPLOY.md).
 
+## Opening it in a browser
+
+The site is plain HTTP, reachable only from the intranet: `http://<server>:8080/` (type
+and bookmark it with the `http://`). Browsers label it "Not secure", which is expected:
+there is no login and nothing secret is entered. Usually only Chrome's download
+warnings need dealing with:
+
+- **Chrome** (Edge, Brave and other Chromium-based browsers are similar)
+  - *Downloads*: dataset downloads (always a zip), PDF/SVG figure exports and single
+    original files other than CSV (parquet, YAML, XML, README.md) are stopped with
+    "Insecure download blocked" (CSV and PNG files are not). Open the download bubble
+    (or `chrome://downloads`) and click **Download insecure file**. To stop this for
+    the site for good: click "Not secure" at the left of the address bar →
+    *Site settings* → *Insecure content* → *Allow*.
+  - *Pages*: since Chrome 154 (October 2026), *Always use secure connections* is on by
+    default, set to *Warns you for insecure public sites*. That setting leaves private
+    IP addresses, single-label hostnames (`http://olfdb/`) and non-default ports
+    (`:8080`) alone. If you chose *Warns you for insecure public & private sites*
+    (Settings → Privacy and security → Security), or the site is proxied on port 80
+    under a public domain name, a visit can first show "The connection to … is not
+    secure": click **Continue to site** (remembered for a while).
+- **Firefox**: nothing to change. HTTPS-First (on by default) skips non-default ports
+  and local addresses, and otherwise falls back to HTTP by itself; downloads from an
+  HTTP page are not blocked. Only with *HTTPS-Only Mode* on (Settings → Privacy &
+  Security) can you get "Secure Site Not Available": click **Continue to HTTP Site**, or
+  add the site under *Manage Exceptions…* there.
+- **Safari**: nothing to change. It tries HTTPS first and quietly falls back to HTTP.
+  If *Warn before connecting to a website over HTTP* is on (Safari → Settings →
+  Security; on iPhone/iPad, Settings → Apps → Safari → *Not Secure Connection
+  Warning*), confirm on the warning page that you want to continue.
+- **macOS 15 (Sequoia) or later, any browser except Safari**: macOS asks once whether
+  each app may connect to devices on the local network. If that was refused, the site
+  does not load in that browser (Chrome: `ERR_ADDRESS_UNREACHABLE`; Firefox: fails to
+  connect or times out), even though Safari, which is exempt, loads it fine. Turn the
+  browser on under System Settings → Privacy & Security → Local Network and restart it
+  (if it is already on, turn it off and on again). This only applies when the server is
+  on the same network segment as the Mac (not reached through a router or VPN).
+  Browsers other than Safari on iPhone/iPad have the same switch under Settings →
+  Privacy & Security → Local Network.
+
+Serving the site over HTTPS, with a certificate browsers already trust (DEPLOY.md,
+section 6), would remove all of the above except the macOS item.
+
 ## Data file format
 
 The wide layout written by pandas for a frame with MultiIndex rows and columns:
