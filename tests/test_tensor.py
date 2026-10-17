@@ -188,7 +188,8 @@ def test_stage_from_tensor(main, root, tmp_path, monkeypatch):
     assert r["raw_data_path"] == "ann/raw" and r["odor_yamls"]["selected"] == ["ann/yaml/ann_odors.yml"]
 
     status, r = call(main.stage_add_xml, body={"tensor_path": r["experiment_xmls"][0]}, path_params=stage)
-    assert status == 200 and r["suggestions"] == {"wavelength_nm": 920.0}
+    # the laser wavelength in Experiment.xml is not read (it does not follow the laser)
+    assert status == 200 and "laser_position" not in r["info"] and "suggestions" not in r
     assert r["stage"]["experiment_xml_tensor_path"] == "ann/raw/2024-01-01/1/t1/Experiment.xml"
     r = call(main.stage_add_yaml, body={"tensor_paths": ["ann/yaml/ann_odors.yml", "/ann/x.yml", "ann/raw"]}, path_params=stage)[1]
     assert r["check"]["ok"] and r["stage"]["odor_yamls"] == [{"name": "ann_odors.yml", "n_odors": 2, "tensor_path": "ann/yaml/ann_odors.yml"}]

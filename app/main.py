@@ -341,7 +341,7 @@ async def stage_add_xml(request: Request) -> Response:
     meta["experiment_xml_info"] = info["info"]
     meta["experiment_xml_tensor_path"] = rel
     _write_stage_meta(d, meta)
-    return JSONResponse({"ok": True, "stage": _public_stage(meta), "info": info["info"], "suggestions": info["suggestions"]})
+    return JSONResponse({"ok": True, "stage": _public_stage(meta), "info": info["info"]})
 
 
 async def stage_remove_xml(request: Request) -> Response:

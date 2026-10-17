@@ -14,7 +14,7 @@ matrices (chemicals × fruits, chemicals × pathways, ...) get their own tab.
   from the file (panel names; glomerulus ROIs mean coding unit "glomeruli") and from
   your data on tensor: the server looks for each fly (`<folder>/<date>/<fly>/`, as in
   hong2p) in your raw and motion-corrected data folders, attaches the Experiment.xml of
-  the first recording (wavelength from its laser setting) and the fewest odor YAMLs
+  the first recording and the fewest odor YAMLs
   that together describe every odor (those named in the recordings' ThorImage notes
   first, then ones with a fly's date in their path), and fills in the raw and
   motion-corrected data paths. Each field is colored by where its value came from

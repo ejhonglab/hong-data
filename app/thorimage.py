@@ -1,8 +1,9 @@
 """Light-touch parsing of a ThorImage ``Experiment.xml``.
 
-We only pull a handful of attributes that are useful to show next to a dataset (and
-to suggest form values such as the laser wavelength). Everything is optional: any
-missing element is simply skipped, and the file is stored verbatim regardless.
+We only pull a handful of attributes that are useful to show next to a dataset.
+Everything is optional: any missing element is simply skipped, and the file is stored
+verbatim regardless. The laser wavelength (``MultiPhotonLaser``) is deliberately not
+read: it does not follow changes made to the wavelength at the laser.
 """
 from __future__ import annotations
 
@@ -72,19 +73,13 @@ def parse_experiment_xml(text: str) -> dict[str, Any]:
     pockels = root.find("Pockels")
     if pockels is not None:
         info["pockels"] = {k: _num(_attr(pockels, k)) for k in ("start", "stop") if _attr(pockels, k) is not None}
-    laser = root.find("MultiPhotonLaser")
-    laser_pos = _num(_attr(laser, "position"))
-    info["laser_position"] = laser_pos
-    suggestions: dict[str, Any] = {}
-    if laser_pos is not None and 600 <= laser_pos <= 1400:
-        suggestions["wavelength_nm"] = laser_pos
     comments = root.find("Comments")
     info["comments"] = _attr(comments, "text")
     wl = root.find("Wavelengths")
     if wl is not None:
         info["channels"] = [w.get("name") for w in wl.findall("Wavelength") if w.get("name")]
     info = {k: v for k, v in info.items() if v not in (None, {}, [])}
-    return {"info": info, "suggestions": suggestions}
+    return {"info": info}
 
 
 def notes_yaml_names(text: str) -> list[str]:

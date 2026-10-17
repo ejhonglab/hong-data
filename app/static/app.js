@@ -570,7 +570,6 @@ class UploadFlow {
     this.viewer = null;
     this.yamlCheck = null;
     this.nas = null; // what the last lookup found on tensor
-    this.xmlSuggestions = null; // form values from the attached Experiment.xml: {values, src}
     this.manual = new Set(); // fields the user changed
     this.auto = new Set(); // fields filled in automatically
     this._lookupSeq = 0;
@@ -692,8 +691,6 @@ class UploadFlow {
     if (sum?.panel_names?.length) offer('panel_names', sum.panel_names.join(', '), 'file', 3, 'the panel level of the data file');
     if (sum?.roi_kind === 'glomeruli') offer('coding_unit', 'glomeruli', 'file', 3, 'the ROIs are glomeruli');
     if (sum?.roi_kind === 'integers' && this.options?.coding_units.includes('KCs')) offer('coding_unit', 'KCs', 'file', 1, 'numbered ROIs');
-    const x = this.xmlSuggestions;
-    if (x) offer('wavelength_nm', x.values.wavelength_nm, x.src, 4, 'the laser setting in Experiment.xml');
     if (this.nas) {
       offer('raw_data_path', this.nas.raw_data_path, 'nas', 4, 'the folder with the flies found');
       offer('mocorr_data_path', this.nas.mocorr_data_path, 'nas', 4, 'the folder with the flies found');
@@ -806,7 +803,7 @@ class UploadFlow {
   // ------------------------------------------------------------------- staging
   reset() {
     this.stage = null; this.data = null; this.yamlCheck = null; this.generatedReadme = '';
-    this.nas = null; this.xmlSuggestions = null; this._lookupSeq++;
+    this.nas = null; this._lookupSeq++;
     for (const key of DATASET_FIELDS) {
       this._setField(key, null);
       this._mark(key, null);
@@ -913,9 +910,8 @@ class UploadFlow {
   // file: a File, or {tensorPath} for one on tensor
   async addXml(file) {
     const stageId = this.stage.stage_id;
-    const onTensor = !(file instanceof File);
     let req;
-    if (onTensor) req = { method: 'POST', json: { tensor_path: file.tensorPath } };
+    if (!(file instanceof File)) req = { method: 'POST', json: { tensor_path: file.tensorPath } };
     else {
       const form = new FormData();
       form.append('file', file, file.name);
@@ -927,9 +923,7 @@ class UploadFlow {
     if (this.stage?.stage_id !== stageId) return;
     if (!res.ok) { this._renderXml(); $('#xml-info').replaceChildren(msgBox('error', `Not added:${listHtml(res.errors)}`)); return; }
     this.stage = res.stage;
-    this.xmlSuggestions = { values: res.suggestions || {}, src: onTensor ? 'nas' : 'file' };
     this._renderXml();
-    this._autofill();
     if (this.nas) this._renderLookup();
   }
 
@@ -946,7 +940,6 @@ class UploadFlow {
     if (info.software_version) kv.push(['ThorImage', info.software_version]);
     if (info.lsm) kv.push(['frame', `${info.lsm.pixelX ?? '?'} × ${info.lsm.pixelY ?? '?'} px${info.lsm.frameRate ? `, ${info.lsm.frameRate} fps` : ''}${info.lsm.pixelSizeUM ? `, ${info.lsm.pixelSizeUM} µm/px` : ''}`]);
     if (info.zstage?.steps) kv.push(['z planes', `${info.zstage.steps}${info.zstage.stepSizeUM ? ` × ${info.zstage.stepSizeUM} µm` : ''}`]);
-    if (info.laser_position) kv.push(['laser', `${info.laser_position} nm`]);
     if (info.pockels?.start != null) kv.push(['pockels', `${info.pockels.start}%`]);
     $('#xml-info').innerHTML = kv.length ? `<div class="kv">${kv.map(([k, v]) => `<span>${esc(k)}</span><span>${esc(v)}</span>`).join('')}</div>` : '';
   }
