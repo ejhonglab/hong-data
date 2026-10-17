@@ -64,6 +64,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .tabs a.active { border-bottom-color: var(--accent); }
 .tabs a:hover:not(.active) { border-bottom-color: var(--rule-strong); }
+/* between the datasets' tabs (Browse, Upload) and the rest */
+.tabs-sep { align-self: center; width: 1px; height: 20px; margin: 0 10px; background: var(--rule-strong); }
 .topbar-status { margin-left: auto; color: var(--ink-muted); font-size: 12px; }
 .topbar-link { color: var(--ink); text-decoration: none; }
 .topbar-link:hover { text-decoration: underline; }
