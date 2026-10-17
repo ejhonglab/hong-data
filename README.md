@@ -13,11 +13,26 @@ matrices (chemicals × fruits, chemicals × pathways, ...) get their own tab.
   generated and can be edited → saved to SQLite plus files on disk.
 - **Browse**: datasets grouped by panel or by the date of their last fly; README and
   original files one click away; the same viewer as the upload preview.
+- **Download** (one dataset from its page, or several ticked in the list): a zip with
+  the original files, or the response matrices concatenated into one wide CSV
+  (trials × ROIs, with `dataset_id` as an extra column level; trials matched on panel,
+  odor components and repeat) or long CSV (one row per value), always with
+  `datasets.csv` (every dataset's details) and the READMEs. API:
+  `/api/download?ids=1,2&format=files|wide|long` (see `app/export.py`).
 - **Viewer**: canvas heatmap virtualised to ~10k ROIs, odor labels pinned at the top
   and fly/ROI labels at the left while scrolling, average over repeats or individual
-  trials, rows by fly→ROI or ROI→fly, odor order as in the file or by name, a
+  trials, rows by fly→ROI, ROI→fly or ungrouped, odor order as in the file or by name, a
   blue–white–red colormap built in Oklab (lightness linear in |value|, white at 0,
   full data range by default), hover tooltips.
+  - *Clustering*: ROIs and/or odors ordered by hierarchical clustering (average
+    linkage, correlation or Euclidean distance on trial-averaged responses, missing
+    values skipped pairwise), with dendrograms. ROIs are clustered within each fly;
+    with rows grouped by ROI the ROIs (averaged over flies) are clustered; ungrouped,
+    all rows together (up to 5,000 per clustering). Odors are clustered within each
+    panel. Runs in a web worker.
+  - *Export figure*: SVG, PDF or PNG of the whole matrix as shown (order, colors,
+    cell size, dendrograms) with a colorbar; cells are an embedded image, labels and
+    lines stay vector in SVG/PDF.
 - **Reference matrices**: any CSV in `reference_data/` listed in its `manifest.json`.
 
 Hosting instructions: [DEPLOY.md](DEPLOY.md).
@@ -69,7 +84,9 @@ app/thorimage.py   Experiment.xml summary
 app/metadata.py    form model (pydantic) and README.md generation
 app/db.py          SQLite schema and queries
 app/reference.py   fixed reference matrices
-app/static/        frontend: index.html, app.js, heatmap.js, colormaps.js, app.css
+app/export.py      downloads: zips of dataset files, concatenated wide/long matrices
+app/static/        frontend: index.html, app.js, heatmap.js, colormaps.js, app.css,
+                   cluster.js (+ cluster-worker.js), figure.js (SVG/PDF/PNG export)
 manage.py          list / show / export / delete datasets from the server
 deploy/            systemd units; Dockerfile + docker-compose.yml at the top level
 ```

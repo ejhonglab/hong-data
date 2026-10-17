@@ -2,7 +2,8 @@
 // that stays at the top and row labels that stay at the left while scrolling.
 // Only the visible cells are drawn, so 10k+ rows are fine.
 //
-// model = { rows: [{label, group}], cols: [{label, group, sub}], values: Float32Array (row-major) }
+// model = { rows: [{label, group}], cols: [{label, group, sub}], values: Float32Array (row-major),
+//           rowDendro, colDendro (optional, from cluster.js layoutDendrogram) }
 // options = { cellW, cellH, lut, norm, nanColor, onHover(cellInfo|null) }
 import { fmtNum } from './colormaps.js';
 
@@ -97,7 +98,8 @@ export class Heatmap {
     if (this.hasRowGroups) for (const r of m.rows) groupW = Math.max(groupW, ctx.measureText(r.group).width);
     this.rowGroupColW = this.hasRowGroups ? Math.min(150, Math.ceil(groupW) + 12) : 0;
     this.rowLabelColW = this.showRowLabels ? Math.min(160, Math.ceil(labelW) + 12) : 0;
-    this.labelW = Math.max(this.rowGroupColW + this.rowLabelColW, this.hasRowGroups || this.showRowLabels ? 40 : 8);
+    this.rowDendroW = m.rowDendro ? 56 : 0;
+    this.labelW = this.rowDendroW + Math.max(this.rowGroupColW + this.rowLabelColW, this.hasRowGroups || this.showRowLabels ? 40 : 8);
 
     ctx.font = this.colLabelFont;
     let colW = 0;
@@ -105,7 +107,8 @@ export class Heatmap {
     this.colLabelBand = this.showColLabels ? Math.min(200, Math.ceil(colW) + 10) : 6;
     this.colGroupBand = this.hasColGroups ? 18 : 0;
     this.colSubBand = this.hasColSubs && cellW >= 10 ? 13 : 0;
-    this.headerH = this.colGroupBand + this.colLabelBand + this.colSubBand;
+    this.colDendroH = m.colDendro ? 44 : 0;
+    this.headerH = this.colDendroH + this.colGroupBand + this.colLabelBand + this.colSubBand;
 
     // group runs (row and column) for separators and labels
     this.rowRuns = runs(m.rows.map((r) => r.group));
@@ -228,20 +231,22 @@ export class Heatmap {
     if (this.hasRowGroups) {
       ctx.font = this.groupLabelFont;
       ctx.textAlign = 'left';
+      const x0 = this.rowDendroW;
       for (const run of this.rowRuns) {
         const top = run.start * cellH - st, bottom = run.end * cellH - st;
         if (bottom < 0 || top > this.viewH) continue;
         const visTop = Math.max(top, 0), visBottom = Math.min(bottom, this.viewH);
-        if (run.start > 0) { ctx.fillStyle = rule; ctx.fillRect(0, top, this.labelW, 1); }
+        if (run.start > 0) { ctx.fillStyle = rule; ctx.fillRect(x0, top, this.labelW - x0, 1); }
         const h = visBottom - visTop;
         if (h >= 11) {
           ctx.fillStyle = inkMuted;
           const label = ellipsize(ctx, String(run.key), this.rowGroupColW - 8);
           const y = h >= 24 ? visTop + 10 : visTop + h / 2;
-          ctx.fillText(label, 6, y);
+          ctx.fillText(label, x0 + 6, y);
         }
       }
     }
+    if (m.rowDendro) this._drawDendro(ctx, m.rowDendro, true, st, inkMuted);
     ctx.fillStyle = rule;
     ctx.fillRect(this.labelW - 1, 0, 1, this.viewH);
 
@@ -254,7 +259,9 @@ export class Heatmap {
     hc.beginPath();
     hc.rect(this.labelW, 0, this.viewW - this.labelW, this.headerH);
     hc.clip();
+    if (m.colDendro) this._drawDendro(hc, m.colDendro, false, sl, inkMuted);
     // panel / group band
+    const bandY = this.colDendroH;
     if (this.hasColGroups) {
       hc.font = `600 11px ${FONT_FAMILY}`;
       hc.textBaseline = 'middle';
@@ -262,14 +269,14 @@ export class Heatmap {
       for (const run of this.colRuns) {
         const x0 = this.labelW + run.start * cellW - sl, x1 = this.labelW + run.end * cellW - sl;
         if (x1 < this.labelW || x0 > this.viewW) continue;
-        if (run.start > 0) { hc.fillStyle = rule; hc.fillRect(x0 - 1, 0, 1, this.headerH); }
+        if (run.start > 0) { hc.fillStyle = rule; hc.fillRect(x0 - 1, bandY, 1, this.headerH - bandY); }
         const vis0 = Math.max(x0, this.labelW), vis1 = Math.min(x1, this.viewW);
         hc.fillStyle = inkMuted;
         const label = ellipsize(hc, String(run.key ?? ''), vis1 - vis0 - 6);
-        if (label) hc.fillText(label, (vis0 + vis1) / 2, this.colGroupBand / 2 + 1);
+        if (label) hc.fillText(label, (vis0 + vis1) / 2, bandY + this.colGroupBand / 2 + 1);
       }
       hc.fillStyle = rule;
-      hc.fillRect(this.labelW, this.colGroupBand - 1, this.viewW, 1);
+      hc.fillRect(this.labelW, bandY + this.colGroupBand - 1, this.viewW, 1);
     }
     // rotated odor labels (one per label run; a run spans the repeats of one odor)
     if (this.showColLabels) {
@@ -277,7 +284,7 @@ export class Heatmap {
       hc.fillStyle = ink;
       hc.textAlign = 'left';
       hc.textBaseline = 'middle';
-      const baseY = this.colGroupBand + this.colLabelBand - 5;
+      const baseY = bandY + this.colGroupBand + this.colLabelBand - 5;
       for (const run of this.colLabelRuns) {
         if (run.end <= firstCol || run.start > lastCol + 1) continue;
         const xc = this.labelW + ((run.start + run.end) / 2) * cellW - sl;
@@ -316,6 +323,33 @@ export class Heatmap {
       hc.fillText(ellipsize(hc, t, this.labelW - 10), 6, this.headerH - 6);
     }
     this._drawOverlay();
+  }
+
+  // Dendrogram in the band left of the row labels (rows) or above the column header,
+  // leaves next to the labels; only segments in view are drawn.
+  _drawDendro(ctx, d, rows, scroll, color) {
+    const { cellW, cellH } = this.options;
+    const cell = rows ? cellH : cellW;
+    const origin = (rows ? 0 : this.labelW) - scroll;
+    const lo = rows ? 0 : this.labelW, hi = rows ? this.viewH : this.viewW;
+    const band = rows ? this.rowDendroW : this.colDendroH;
+    const base = band - 3, scale = (band - 7) / d.maxH;
+    const s = d.segs;
+    ctx.save();
+    ctx.beginPath();
+    if (rows) ctx.rect(0, 0, band, this.viewH); else ctx.rect(this.labelW, 0, this.viewW - this.labelW, band);
+    ctx.clip();
+    ctx.beginPath();
+    for (let i = 0; i < s.length; i += 4) {
+      const p1 = origin + s[i] * cell, p2 = origin + s[i + 2] * cell;
+      if ((p1 < lo && p2 < lo) || (p1 > hi && p2 > hi)) continue;
+      const h1 = base - s[i + 1] * scale, h2 = base - s[i + 3] * scale;
+      if (rows) { ctx.moveTo(h1, p1); ctx.lineTo(h2, p2); } else { ctx.moveTo(p1, h1); ctx.lineTo(p2, h2); }
+    }
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.restore();
   }
 
   _drawOverlay() {
@@ -417,7 +451,7 @@ function ellipsize(ctx, text, maxW) {
   return lo > 0 ? text.slice(0, lo) + '…' : '';
 }
 
-function parseColor(c) {
+export function parseColor(c) {
   if (c.startsWith('#')) {
     const n = parseInt(c.slice(1), 16);
     return c.length === 7 ? [(n >> 16) & 255, (n >> 8) & 255, n & 255] : [((n >> 8) & 15) * 17, ((n >> 4) & 15) * 17, (n & 15) * 17];

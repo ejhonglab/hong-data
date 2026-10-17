@@ -13,11 +13,12 @@ STATIC_DIR = ROOT / "app" / "static"
 DB_PATH = DATA_DIR / "olfdb.sqlite3"
 STAGING_DIR = DATA_DIR / "staging"
 DATASETS_DIR = DATA_DIR / "datasets"
+EXPORTS_DIR = DATA_DIR / "exports"  # downloads being sent (deleted once sent)
 
 MAX_UPLOAD_MB = float(os.environ.get("OLFDB_MAX_UPLOAD_MB", "1024"))
 STAGE_TTL_HOURS = float(os.environ.get("OLFDB_STAGE_TTL_HOURS", "48"))
 
 
 def ensure_dirs() -> None:
-    for d in (DATA_DIR, STAGING_DIR, DATASETS_DIR):
+    for d in (DATA_DIR, STAGING_DIR, DATASETS_DIR, EXPORTS_DIR):
         d.mkdir(parents=True, exist_ok=True)

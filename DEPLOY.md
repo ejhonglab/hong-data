@@ -34,7 +34,8 @@ sudo chown -R 10001:10001 data        # the container runs as uid 10001 ("olfdb"
 ```
 
 `data/` is the only thing that needs backing up: it holds `olfdb.sqlite3`, every
-uploaded file (`data/datasets/<id>/...`) and the short-lived staging area.
+uploaded file (`data/datasets/<id>/...`), the short-lived staging area and downloads
+being sent (`data/exports/`, deleted once sent).
 
 Before the first start, have a look at:
 

@@ -162,6 +162,20 @@
         </div>
       </div>
       <div id="dataset-list" class="list"></div>
+      <div class="sidebar-foot">
+        <span id="pick-text" class="grow muted"></span>
+        <button type="button" class="btn small" id="pick-clear" hidden>Clear</button>
+        <details class="menu menu-up menu-right" id="pick-download" hidden>
+          <summary class="btn small primary">Download</summary>
+          <div class="menu-list">
+            <button type="button" data-format="wide">Concatenated matrix, wide CSV</button>
+            <button type="button" data-format="long">Concatenated matrix, long CSV</button>
+            <button type="button" data-format="files">Original files of each dataset</button>
+            <p class="menu-note">A zip, with a table of every dataset's details (datasets.csv) and their READMEs. Wide: trials × ROIs, with a dataset_id column level. Long: one row per value.</p>
+          </div>
+        </details>
+        <span class="dl-status" id="pick-status"></span>
+      </div>
     </aside>
     <div class="content" id="browse-content">
       <div class="empty" id="browse-empty">Choose a dataset on the left.</div>
@@ -172,7 +186,17 @@
             <p class="muted" id="ds-sub"></p>
           </div>
           <div class="ds-actions">
+            <span class="dl-status" id="ds-download-status"></span>
             <button type="button" class="btn" id="ds-readme-toggle" aria-expanded="false">README</button>
+            <details class="menu menu-right" id="ds-download">
+              <summary class="btn">Download</summary>
+              <div class="menu-list">
+                <button type="button" data-format="files">Original files <span class="muted">as uploaded</span></button>
+                <button type="button" data-format="wide">Response matrix, wide CSV</button>
+                <button type="button" data-format="long">Response matrix, long CSV</button>
+                <p class="menu-note">Each is a zip that also has the README and the details entered at upload.</p>
+              </div>
+            </details>
           </div>
         </div>
         <div id="ds-readme" class="readme-panel" hidden>
@@ -208,11 +232,17 @@
       <div class="seg"><button type="button" data-mode="average" class="active">Average over trials</button><button type="button" data-mode="trials">Individual trials</button></div>
     </div>
     <div class="vt-group" data-role="rows">
-      <label>Rows <select data-opt="rowOrder"><option value="fly">fly, then ROI</option><option value="roi">ROI, then fly</option></select></label>
+      <label>Rows <select data-opt="rowOrder"><option value="fly">fly, then ROI</option><option value="roi">ROI, then fly</option><option value="none">ungrouped</option></select></label>
       <label>ROI order <select data-opt="roiSort"><option value="file">as in file</option><option value="sorted">sorted</option></select></label>
     </div>
     <div class="vt-group" data-role="cols">
       <label>Odors <select data-opt="odorOrder"><option value="file">as in file</option><option value="name">by name, then conc.</option></select></label>
+    </div>
+    <div class="vt-group" data-role="cluster" title="Hierarchical clustering (average linkage) of trial-averaged responses. ROIs are clustered within each fly; with rows grouped by ROI, the ROIs are (each averaged over flies); ungrouped, all rows together. Odors are clustered within each panel.">
+      <span class="vt-label">Cluster</span>
+      <label class="check"><input type="checkbox" data-opt="clusterRows"> ROIs</label>
+      <label class="check"><input type="checkbox" data-opt="clusterCols"> odors</label>
+      <label>by <select data-opt="metric"><option value="correlation">correlation</option><option value="euclidean">Euclidean distance</option></select></label>
     </div>
     <div class="vt-group">
       <label>Column <input type="range" data-opt="cellW" min="6" max="32" value="16"><span data-out="cellW">16</span>px</label>
@@ -225,6 +255,18 @@
     </div>
     <div class="vt-group vt-legend"><canvas class="colorbar" width="220" height="30"></canvas></div>
     <div class="vt-stats" data-role="stats"></div>
+    <div class="vt-group">
+      <span class="dl-status" data-role="export-status"></span>
+      <details class="menu menu-right" data-role="export">
+        <summary class="btn small">Export figure</summary>
+        <div class="menu-list">
+          <button type="button" data-export="svg">SVG <span class="muted">vector</span></button>
+          <button type="button" data-export="pdf">PDF <span class="muted">vector</span></button>
+          <button type="button" data-export="png">PNG <span class="muted">image</span></button>
+          <p class="menu-note">The whole matrix as currently ordered and colored, at the current cell size, with a colorbar.</p>
+        </div>
+      </details>
+    </div>
   </div>
 </template>
 

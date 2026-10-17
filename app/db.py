@@ -247,7 +247,8 @@ class Database:
         d["panels"] = [dict(p) for p in panels]
         return d
 
-    def get_matrix(self, ds_id: int) -> Optional[dict]:
+    def get_matrix_arrays(self, ds_id: int) -> Optional[dict]:
+        """Units, trials and the float32 response matrix (n_units, n_trials) of a dataset."""
         with self.connect() as con:
             m = con.execute("SELECT * FROM matrices WHERE dataset_id = ?", (ds_id,)).fetchone()
             if m is None:
@@ -259,6 +260,7 @@ class Database:
                 "SELECT panel, odor, components_json, repeat, extra_json FROM trials WHERE dataset_id = ? ORDER BY idx",
                 (ds_id,),
             ).fetchall()
+        values = np.frombuffer(bytes(m["values_blob"]), dtype="<f4").reshape(m["n_units"], m["n_trials"])
         return {
             "units": [dict(u) for u in units],
             "trials": [
@@ -271,9 +273,19 @@ class Database:
                 }
                 for t in trials
             ],
-            "shape": [m["n_units"], m["n_trials"]],
+            "values": values,
+        }
+
+    def get_matrix(self, ds_id: int) -> Optional[dict]:
+        m = self.get_matrix_arrays(ds_id)
+        if m is None:
+            return None
+        values = m.pop("values")
+        return {
+            **m,
+            "shape": list(values.shape),
             "dtype": "float32",
-            "values_b64": base64.b64encode(bytes(m["values_blob"])).decode("ascii"),
+            "values_b64": base64.b64encode(values.tobytes()).decode("ascii"),
         }
 
     def options(self) -> dict[str, list[str]]:

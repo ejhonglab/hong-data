@@ -1,6 +1,8 @@
 // Odor response database — frontend (no build step, no dependencies).
 import { Heatmap } from './heatmap.js';
 import { COLORMAPS, colormapsOfKind, makeNorm, drawColorbar, fmtNum } from './colormaps.js';
+import { MAX_CLUSTER_ITEMS, layoutDendrogram } from './cluster.js';
+import { exportFigure } from './figure.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -45,6 +47,64 @@ function msgBox(kind, html) {
 }
 function listHtml(items) { return `<ul>${items.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`; }
 
+function fmtBytes(n) { return n < 1e6 ? `${Math.max(1, Math.round(n / 1e3))} kB` : `${(n / 1e6).toFixed(1)} MB`; }
+
+function saveBlob(blob, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 60_000);
+}
+
+function setStatus(el, text, kind = '') {
+  el.textContent = text;
+  el.classList.toggle('error', kind === 'error');
+}
+
+// Fetched (rather than a plain link) so that the wait while the server builds a large
+// zip, and any error, show up in `status`.
+async function download(url, status) {
+  if (status.dataset.busy) return;
+  status.dataset.busy = '1';
+  setStatus(status, 'Preparing the download…');
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new Error(body?.error || `${res.status} ${res.statusText}`);
+    }
+    const total = Number(res.headers.get('content-length')) || 0;
+    const reader = res.body.getReader();
+    const chunks = [];
+    let got = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      got += value.length;
+      setStatus(status, `Downloading… ${fmtBytes(got)}${total ? ` of ${fmtBytes(total)}` : ''}`);
+    }
+    const cd = res.headers.get('content-disposition') || '';
+    const m = cd.match(/filename\*=utf-8''([^;]+)/i) || cd.match(/filename="?([^";]+)"?/i);
+    saveBlob(new Blob(chunks, { type: 'application/zip' }), m ? decodeURIComponent(m[1]) : 'download.zip');
+    setStatus(status, '');
+  } catch (e) {
+    setStatus(status, `Download failed: ${e.message}`, 'error');
+  } finally {
+    delete status.dataset.busy;
+  }
+}
+
+// <details class="menu"> dropdowns: onPick(button.dataset) for the chosen entry
+function wireMenu(menu, onPick) {
+  $$('.menu-list button', menu).forEach((b) => b.addEventListener('click', () => { menu.open = false; onPick(b.dataset); }));
+}
+document.addEventListener('click', (e) => { $$('details.menu[open]').forEach((m) => { if (!m.contains(e.target)) m.open = false; }); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $$('details.menu[open]').forEach((m) => { m.open = false; }); });
+
 // ------------------------------------------------------------- sorting helpers
 function roiKey(roi) {
   return /^\d+$/.test(roi) ? [0, parseInt(roi, 10), ''] : [1, 0, roi.toLowerCase()];
@@ -76,9 +136,23 @@ function cmpOdor(a, b) {
 
 // --------------------------------------------------------- neural data model
 // data: {units, trials, values: Float32Array (units x trials)}
-function buildNeuralModel(data, { mode, rowOrder, roiSort, odorOrder }) {
-  const { units, trials, values } = data;
-  const nT = trials.length;
+const flyKey = (u) => `${u.date} fly ${u.fly_num}`;
+
+// contiguous runs of equal key(item): [{key, start, end}]
+function runsOf(items, key) {
+  const out = [];
+  items.forEach((it, i) => {
+    const k = key(it);
+    if (out.length && out[out.length - 1].key === k) out[out.length - 1].end = i + 1;
+    else out.push({ key: k, start: i, end: i + 1 });
+  });
+  return out;
+}
+
+// conditions (panel, odor) grouped by panel, and units, in display order before any
+// clustering ('ungrouped' rows use the fly order)
+function neuralOrder(data, { rowOrder, roiSort, odorOrder }) {
+  const { units, trials } = data;
   const condIndex = new Map();
   const conds = [];
   trials.forEach((t, j) => {
@@ -95,29 +169,18 @@ function buildNeuralModel(data, { mode, rowOrder, roiSort, odorOrder }) {
     if (p) return p;
     return odorOrder === 'name' ? cmpOdor(x.c.odor, y.c.odor) || x.i - y.i : x.i - y.i;
   });
-  const showGroups = panelOrder.length > 1 || panelOrder[0] != null;
-  const cols = [], colTrials = [];
-  for (const { c } of ordered) {
-    const group = showGroups ? (c.panel ?? '(no panel)') : null;
-    if (mode === 'trials') {
-      const ts = c.trials.slice().sort((a, b) => trials[a].repeat - trials[b].repeat || a - b);
-      for (const j of ts) { cols.push({ label: c.odor, group, sub: trials[j].repeat }); colTrials.push([j]); }
-    } else {
-      cols.push({ label: c.odor, group, sub: null });
-      colTrials.push(c.trials);
-    }
-  }
-  const flyKey = (u) => `${u.date} fly ${u.fly_num}`;
   const firstRoi = new Map();
   units.forEach((u, i) => { if (!firstRoi.has(u.roi)) firstRoi.set(u.roi, i); });
   const unitIdx = units.map((u, i) => i);
   const roiCmp = (i, j) => (roiSort === 'sorted' ? cmpRoi(units[i].roi, units[j].roi) : firstRoi.get(units[i].roi) - firstRoi.get(units[j].roi));
-  if (rowOrder === 'fly') unitIdx.sort((i, j) => cmpFly(units[i], units[j]) || roiCmp(i, j) || i - j);
-  else unitIdx.sort((i, j) => roiCmp(i, j) || cmpFly(units[i], units[j]) || i - j);
-  const rows = unitIdx.map((i) => (rowOrder === 'fly'
-    ? { label: units[i].roi, group: flyKey(units[i]) }
-    : { label: flyKey(units[i]), group: units[i].roi }));
-  const nR = rows.length, nC = cols.length;
+  if (rowOrder === 'roi') unitIdx.sort((i, j) => roiCmp(i, j) || cmpFly(units[i], units[j]) || i - j);
+  else unitIdx.sort((i, j) => cmpFly(units[i], units[j]) || roiCmp(i, j) || i - j);
+  return { conds: ordered.map((x) => x.c), panelOrder, unitIdx };
+}
+
+// units (in unitIdx order) x columns, each column the mean over its trials
+function meanOver(values, nT, unitIdx, colTrials) {
+  const nR = unitIdx.length, nC = colTrials.length;
   const out = new Float32Array(nR * nC);
   for (let r = 0; r < nR; r++) {
     const base = unitIdx[r] * nT;
@@ -128,12 +191,143 @@ function buildNeuralModel(data, { mode, rowOrder, roiSort, odorOrder }) {
       out[r * nC + c] = n ? s / n : NaN;
     }
   }
-  return {
-    rows, cols, values: out,
-    rowTitle: rowOrder === 'fly' ? 'ROI' : 'fly',
-    rowGroupTitle: rowOrder === 'fly' ? 'fly' : 'ROI',
-    nConditions: conds.length, nPanels: panelOrder.length, nUnits: units.length, nTrials: nT,
+  return out;
+}
+
+// Reorders ROIs and/or odors by hierarchical clustering of trial-averaged responses
+// (whatever the display mode). ROIs are clustered within each fly; when grouped by
+// ROI, the ROIs (each the mean over its flies) are; when ungrouped, all rows together.
+// Odors are clustered within each panel. -> {unitIdx, conds, rowTrees, colTrees, notes}
+async function clusterNeural(client, data, order, o) {
+  const { units } = data;
+  const { conds, unitIdx } = order;
+  const nU = unitIdx.length, nC = conds.length;
+  const means = meanOver(data.values, data.trials.length, unitIdx, conds.map((c) => c.trials));
+  const jobs = [], plans = [], notes = [];
+  const add = (plan, n, d, vectors) => {
+    if (n < 2) return;
+    if (n > MAX_CLUSTER_ITEMS) { notes.push(`${plan.what} not clustered (${n.toLocaleString()} is over the limit of ${MAX_CLUSTER_ITEMS.toLocaleString()})`); return; }
+    jobs.push({ data: vectors(), n, d, metric: o.metric });
+    plans.push(plan);
   };
+  if (o.clusterRows && o.rowOrder === 'roi') {
+    const groups = runsOf(unitIdx, (u) => units[u].roi);
+    add({ kind: 'groups', groups, what: 'ROIs' }, groups.length, nC, () => {
+      const vecs = new Float32Array(groups.length * nC);
+      groups.forEach((g, k) => {
+        for (let c = 0; c < nC; c++) {
+          let s = 0, n = 0;
+          for (let r = g.start; r < g.end; r++) { const v = means[r * nC + c]; if (v === v) { s += v; n++; } }
+          vecs[k * nC + c] = n ? s / n : NaN;
+        }
+      });
+      return vecs;
+    });
+  } else if (o.clusterRows) {
+    const groups = o.rowOrder === 'fly' ? runsOf(unitIdx, (u) => flyKey(units[u])) : [{ key: null, start: 0, end: nU }];
+    for (const g of groups) {
+      add({ kind: 'rows', group: g, what: g.key ? `ROIs of ${g.key}` : 'ROIs' }, g.end - g.start, nC, () => means.slice(g.start * nC, g.end * nC));
+    }
+  }
+  if (o.clusterCols) {
+    for (const p of runsOf(conds, (c) => c.panel)) {
+      const n = p.end - p.start;
+      add({ kind: 'cols', group: p, what: p.key != null ? `odors of ${p.key}` : 'odors' }, n, nU, () => {
+        const vecs = new Float32Array(n * nU);
+        for (let c = 0; c < n; c++) for (let r = 0; r < nU; r++) vecs[c * nU + r] = means[r * nC + p.start + c];
+        return vecs;
+      });
+    }
+  }
+  const results = jobs.length ? await client.run(jobs) : [];
+  const out = { unitIdx: unitIdx.slice(), conds: conds.slice(), rowTrees: [], colTrees: [], notes };
+  results.forEach((res, k) => {
+    const plan = plans[k];
+    if (plan.kind === 'groups') {
+      out.unitIdx = [];
+      for (const gi of res.order) { const g = plan.groups[gi]; for (let r = g.start; r < g.end; r++) out.unitIdx.push(unitIdx[r]); }
+      out.rowTrees.push({ merges: res.merges, leaves: plan.groups.map((g) => g.key), leafKind: 'group' });
+      return;
+    }
+    const { start, end } = plan.group;
+    const items = plan.kind === 'rows' ? unitIdx.slice(start, end) : conds.slice(start, end);
+    const target = plan.kind === 'rows' ? out.unitIdx : out.conds;
+    res.order.forEach((i, t) => { target[start + t] = items[i]; });
+    (plan.kind === 'rows' ? out.rowTrees : out.colTrees).push({ merges: res.merges, leaves: items, leafKind: plan.kind === 'rows' ? 'unit' : 'cond' });
+  });
+  return out;
+}
+
+function buildNeuralModel(data, order, { mode, rowOrder }, clustering) {
+  const { units, trials, values } = data;
+  const conds = clustering ? clustering.conds : order.conds;
+  const unitIdx = clustering ? clustering.unitIdx : order.unitIdx;
+  const showGroups = order.panelOrder.length > 1 || order.panelOrder[0] != null;
+  const cols = [], colTrials = [], condCenter = new Map();
+  for (const c of conds) {
+    const group = showGroups ? (c.panel ?? '(no panel)') : null;
+    const start = cols.length;
+    if (mode === 'trials') {
+      const ts = c.trials.slice().sort((a, b) => trials[a].repeat - trials[b].repeat || a - b);
+      for (const j of ts) { cols.push({ label: c.odor, group, sub: trials[j].repeat }); colTrials.push([j]); }
+    } else {
+      cols.push({ label: c.odor, group, sub: null });
+      colTrials.push(c.trials);
+    }
+    condCenter.set(c, (start + cols.length) / 2);
+  }
+  const rows = unitIdx.map((i) => {
+    const u = units[i];
+    if (rowOrder === 'roi') return { label: flyKey(u), group: u.roi };
+    if (rowOrder === 'none') return { label: `${u.roi} (${flyKey(u)})`, group: null };
+    return { label: u.roi, group: flyKey(u) };
+  });
+  const model = {
+    rows, cols, values: meanOver(values, trials.length, unitIdx, colTrials),
+    rowTitle: { fly: 'ROI', roi: 'fly', none: 'ROI (fly)' }[rowOrder],
+    rowGroupTitle: { fly: 'fly', roi: 'ROI', none: null }[rowOrder],
+    nConditions: conds.length, nPanels: order.panelOrder.length, nUnits: units.length, nTrials: trials.length,
+    rowDendro: null, colDendro: null,
+  };
+  if (clustering?.rowTrees.length) {
+    const rowOf = new Map(unitIdx.map((u, r) => [u, r + 0.5]));
+    const groupCenter = new Map(runsOf(rows, (r) => r.group).map((g) => [g.key, (g.start + g.end) / 2]));
+    model.rowDendro = layoutDendrogram(clustering.rowTrees.map((t) => ({
+      merges: t.merges, leafPos: t.leaves.map((x) => (t.leafKind === 'group' ? groupCenter : rowOf).get(x)),
+    })));
+  }
+  if (clustering?.colTrees.length) {
+    model.colDendro = layoutDendrogram(clustering.colTrees.map((t) => ({ merges: t.merges, leafPos: t.leaves.map((c) => condCenter.get(c)) })));
+  }
+  return model;
+}
+
+// Clustering jobs run in a worker; starting a new request cancels the one in progress.
+class ClusterClient {
+  constructor() { this.worker = null; this.pending = null; }
+
+  run(jobs) {
+    if (this.pending) {
+      this.worker.terminate();
+      this.worker = null;
+      this.pending.reject(Object.assign(new Error('cancelled'), { cancelled: true }));
+    }
+    if (!this.worker) this.worker = new Worker(new URL('./cluster-worker.js', import.meta.url), { type: 'module' });
+    return new Promise((resolve, reject) => {
+      this.pending = { reject };
+      this.worker.onmessage = (e) => {
+        this.pending = null;
+        if (e.data.error) reject(new Error(e.data.error)); else resolve(e.data.results);
+      };
+      this.worker.onerror = (e) => {
+        this.pending = null;
+        this.worker.terminate();
+        this.worker = null;
+        reject(new Error(e.message || 'the clustering worker failed'));
+      };
+      this.worker.postMessage({ jobs }, jobs.map((j) => j.data.buffer));
+    });
+  }
 }
 
 function dataRange(values, clip) {
@@ -162,10 +356,18 @@ class MatrixViewer {
     this.heatmap = new Heatmap(this.wrap);
     this.colorbar = $('.colorbar', container);
     this.opts = Object.assign(
-      { mode: 'average', rowOrder: 'fly', roiSort: 'file', odorOrder: 'file', cellW: 16, cellH: 16, colormap: 'oklab-div', range: 'twoslope', clip: false },
+      {
+        mode: 'average', rowOrder: 'fly', roiSort: 'file', odorOrder: 'file', clusterRows: false, clusterCols: false, metric: 'correlation',
+        cellW: 16, cellH: 16, colormap: 'oklab-div', range: 'twoslope', clip: false,
+      },
       LS.get('olfdb.viewer', {}),
     );
     this.data = null;
+    this.title = '';
+    this.fileStem = 'heatmap';
+    this.clusterer = new ClusterClient();
+    this.clusterCache = new Map();
+    this._seq = 0;
     this._wire();
   }
 
@@ -177,18 +379,28 @@ class MatrixViewer {
       const range = $(`input[data-opt=${k}]`, tb);
       range.addEventListener('input', () => { this.opts[k] = +range.value; $(`[data-out=${k}]`, tb).textContent = range.value; this._save(); this.heatmap.setOptions({ cellW: this.opts.cellW, cellH: this.opts.cellH }); });
     }
-    $('input[data-opt=clip]', tb).addEventListener('change', (e) => { this.opts.clip = e.target.checked; this._save(); this._rebuild(); });
+    $$('input[type=checkbox][data-opt]', tb).forEach((cb) => cb.addEventListener('change', () => {
+      this.opts[cb.dataset.opt] = cb.checked;
+      this._save();
+      this._syncEnabled();
+      this._rebuild();
+    }));
+    wireMenu($('[data-role=export]', tb), ({ export: format }) => this.exportFigure(format));
   }
 
-  _save() { LS.set('olfdb.viewer', { cellW: this.opts.cellW, cellH: this.opts.cellH, colormap: this.opts.colormap, range: this.opts.range, rowOrder: this.opts.rowOrder, roiSort: this.opts.roiSort, odorOrder: this.opts.odorOrder }); }
+  _save() {
+    const o = this.opts;
+    LS.set('olfdb.viewer', {
+      cellW: o.cellW, cellH: o.cellH, colormap: o.colormap, range: o.range, rowOrder: o.rowOrder, roiSort: o.roiSort, odorOrder: o.odorOrder,
+      clusterRows: o.clusterRows, clusterCols: o.clusterCols, metric: o.metric,
+    });
+  }
 
   _syncToolbar() {
     const tb = this.toolbar, o = this.opts;
     $$('[data-mode]', tb).forEach((b) => b.classList.toggle('active', b.dataset.mode === o.mode));
     const neural = this.kind === 'neural';
-    $('[data-role=mode]', tb).hidden = !neural;
-    $('[data-role=rows]', tb).hidden = !neural;
-    $('[data-role=cols]', tb).hidden = !neural;
+    for (const role of ['mode', 'rows', 'cols', 'cluster']) $(`[data-role=${role}]`, tb).hidden = !neural;
     const mapKind = neural ? 'diverging' : (this.data?.meta?.kind || 'sequential');
     const cmSel = $('select[data-opt=colormap]', tb);
     const maps = colormapsOfKind(mapKind);
@@ -197,21 +409,39 @@ class MatrixViewer {
     cmSel.value = o.colormap;
     $('[data-role=range]', tb).hidden = mapKind !== 'diverging';
     $('input[data-opt=clip]', tb).parentElement.hidden = mapKind === 'binary';
-    for (const k of ['rowOrder', 'roiSort', 'odorOrder', 'range']) { const s = $(`select[data-opt=${k}]`, tb); if (s) s.value = o[k]; }
+    for (const k of ['rowOrder', 'roiSort', 'odorOrder', 'metric', 'range']) { const s = $(`select[data-opt=${k}]`, tb); if (s) s.value = o[k]; }
     for (const k of ['cellW', 'cellH']) { $(`input[data-opt=${k}]`, tb).value = o[k]; $(`[data-out=${k}]`, tb).textContent = o[k]; }
-    $('input[data-opt=clip]', tb).checked = !!o.clip;
+    $$('input[type=checkbox][data-opt]', tb).forEach((cb) => { cb.checked = !!o[cb.dataset.opt]; });
+    this._syncEnabled();
   }
 
-  setNeuralData(payload) {
+  // orderings that clustering replaces are disabled while it is on
+  _syncEnabled() {
+    const tb = this.toolbar, o = this.opts;
+    const roi = $('select[data-opt=roiSort]', tb), odor = $('select[data-opt=odorOrder]', tb);
+    roi.disabled = o.clusterRows;
+    odor.disabled = o.clusterCols;
+    roi.title = o.clusterRows ? 'ROIs are ordered by the clustering' : '';
+    odor.title = o.clusterCols ? 'odors are ordered by the clustering' : '';
+    $('select[data-opt=metric]', tb).disabled = !(o.clusterRows || o.clusterCols);
+  }
+
+  // title: for the exported figure's metadata; fileStem: its file name
+  setNeuralData(payload, { title = '', fileStem = 'heatmap' } = {}) {
     this.kind = 'neural';
     this.data = { units: payload.units, trials: payload.trials, values: decodeValues(payload.values_b64) };
+    this.title = title;
+    this.fileStem = fileStem;
+    this.clusterCache.clear();
     this.opts.colormap = this.opts.colormap in COLORMAPS && COLORMAPS[this.opts.colormap].kind === 'diverging' ? this.opts.colormap : 'oklab-div';
     this._syncToolbar();
     this._rebuild();
   }
 
-  setGenericData(ref) {
+  setGenericData(ref, { title = '', fileStem = 'heatmap' } = {}) {
     this.kind = 'generic';
+    this.title = title;
+    this.fileStem = fileStem;
     const values = decodeValues(ref.values_b64);
     const hasGroups = ref.rows.some((r) => r.group != null);
     let rows = ref.rows.map((r, i) => ({ label: r.label, group: hasGroups ? (r.group ?? '') : null, i }));
@@ -240,16 +470,45 @@ class MatrixViewer {
     this._rebuild();
   }
 
-  _rebuild() {
+  async _rebuild() {
     if (!this.data) return;
+    const seq = ++this._seq;
     const o = this.opts;
-    let model;
-    if (this.kind === 'neural') {
-      model = buildNeuralModel(this.data, o);
-    } else {
-      model = this.data.model;
+    if (this.kind !== 'neural') {
       if (COLORMAPS[o.colormap]?.kind === 'sequential') { this.opts.colormapSeq = o.colormap; this._save(); }
+      this._show(this.data.model);
+      return;
     }
+    const order = neuralOrder(this.data, o);
+    let clustering = null;
+    const notes = [];
+    if (o.clusterRows || o.clusterCols) {
+      const key = [o.rowOrder, o.roiSort, o.odorOrder, o.clusterRows, o.clusterCols, o.metric].join('|');
+      clustering = this.clusterCache.get(key);
+      if (!clustering) {
+        // show the matrix unclustered if clustering takes more than a moment
+        const timer = setTimeout(() => { if (seq === this._seq) this._show(buildNeuralModel(this.data, order, o, null), 'clustering…'); }, 150);
+        try {
+          clustering = await clusterNeural(this.clusterer, this.data, order, o);
+          this.clusterCache.set(key, clustering);
+        } catch (e) {
+          if (e.cancelled) return;
+          notes.push(`clustering failed: ${e.message}`);
+        } finally {
+          clearTimeout(timer);
+        }
+        if (seq !== this._seq) return;
+      }
+      if (clustering) {
+        notes.push(...clustering.notes);
+        if (clustering.rowTrees.length || clustering.colTrees.length) notes.unshift(`clustered by ${o.metric === 'euclidean' ? 'Euclidean distance' : 'correlation'}`);
+      }
+    }
+    this._show(buildNeuralModel(this.data, order, o, clustering), notes.join(' · '));
+  }
+
+  _show(model, note = '') {
+    const o = this.opts;
     const cm = COLORMAPS[o.colormap] || COLORMAPS['oklab-div'];
     const { vmin, vmax } = dataRange(model.values, o.clip);
     let norm;
@@ -258,15 +517,33 @@ class MatrixViewer {
     else norm = makeNorm('linear', vmin, vmax);
     this.model = model;
     this.norm = norm;
+    this.lut = cm.lut;
     this.heatmap.setModel(model, { cellW: o.cellW, cellH: o.cellH, lut: cm.lut, norm });
     drawColorbar(this.colorbar, cm.lut, norm);
-    const stats = $('[data-role=stats]', this.toolbar);
+    let text;
     if (this.kind === 'neural') {
-      const m = model;
-      stats.textContent = `${m.rows.length.toLocaleString()} ROIs × ${m.cols.length} ${o.mode === 'trials' ? 'trials' : 'odors'}` +
-        (m.nPanels > 1 ? ` in ${m.nPanels} panels` : '') + ` · range ${fmtNum(vmin)} to ${fmtNum(vmax)}`;
+      text = `${model.rows.length.toLocaleString()} ROIs × ${model.cols.length} ${o.mode === 'trials' ? 'trials' : 'odors'}` +
+        (model.nPanels > 1 ? ` in ${model.nPanels} panels` : '') + ` · range ${fmtNum(vmin)} to ${fmtNum(vmax)}`;
     } else {
-      stats.textContent = `${model.rows.length} × ${model.cols.length} · range ${fmtNum(vmin)} to ${fmtNum(vmax)}` + (this.data.meta.value_label ? ` (${this.data.meta.value_label})` : '');
+      text = `${model.rows.length} × ${model.cols.length} · range ${fmtNum(vmin)} to ${fmtNum(vmax)}` + (this.data.meta.value_label ? ` (${this.data.meta.value_label})` : '');
+    }
+    $('[data-role=stats]', this.toolbar).textContent = note ? `${text} · ${note}` : text;
+  }
+
+  async exportFigure(format) {
+    if (!this.model) return;
+    const status = $('[data-role=export-status]', this.toolbar);
+    setStatus(status, `Exporting ${format.toUpperCase()}…`);
+    try {
+      const { blob, note } = await exportFigure(format, this.model, {
+        cellW: this.opts.cellW, cellH: this.opts.cellH, lut: this.lut, norm: this.norm, nanColor: this.heatmap.options.nanColor,
+        valueLabel: this.data.meta?.value_label || '', title: this.title,
+      });
+      const suffix = this.kind === 'neural' && this.opts.mode === 'trials' ? '_trials' : '';
+      saveBlob(blob, `${this.fileStem}${suffix}.${format}`);
+      setStatus(status, note);
+    } catch (e) {
+      setStatus(status, `Export failed: ${e.message}`, 'error');
     }
   }
 }
@@ -422,7 +699,7 @@ class UploadFlow {
     $('#preview').hidden = false;
     $('#preview-caption').textContent = 'This is exactly what will be shown after saving. Hover a cell for its value.';
     if (!this.viewer) this.viewer = new MatrixViewer($('#preview-viewer'));
-    this.viewer.setNeuralData(res.data);
+    this.viewer.setNeuralData(res.data, { title: file.name, fileStem: file.name.replace(/\.[^.]*$/, '') || 'preview' });
 
     // prefill the form from the file
     const meta = $('#step-meta');
@@ -574,6 +851,7 @@ class Browse {
     this.datasets = null;
     this.group = LS.get('olfdb.browse_group', 'panel');
     this.selected = null;
+    this.picked = new Set(); // ticked for download
     this.viewer = null;
     this.cache = new Map();
     $$('#tab-browse .seg button').forEach((b) => b.addEventListener('click', () => { this.group = b.dataset.group; LS.set('olfdb.browse_group', this.group); this.renderList(); }));
@@ -582,6 +860,16 @@ class Browse {
       p.hidden = !p.hidden;
       $('#ds-readme-toggle').setAttribute('aria-expanded', String(!p.hidden));
     });
+    const downloadUrl = (ids, format) => `/api/download?ids=${ids.join(',')}&format=${format}`;
+    wireMenu($('#ds-download'), ({ format }) => { if (this.selected != null) download(downloadUrl([this.selected], format), $('#ds-download-status')); });
+    wireMenu($('#pick-download'), ({ format }) => download(downloadUrl([...this.picked].sort((a, b) => a - b), format), $('#pick-status')));
+    $('#pick-clear').addEventListener('click', () => { this.picked.clear(); this._syncPicks(); });
+    $('#dataset-list').addEventListener('change', (e) => {
+      const cb = e.target;
+      const ids = cb.matches('.pick') ? [+cb.dataset.id] : cb.matches('.pick-group') ? cb.dataset.ids.split(',').map(Number) : [];
+      for (const id of ids) { if (cb.checked) this.picked.add(id); else this.picked.delete(id); }
+      if (ids.length) this._syncPicks();
+    });
   }
 
   invalidate() { this.datasets = null; this.cache.clear(); }
@@ -589,20 +877,46 @@ class Browse {
   async load() {
     if (!this.datasets) {
       try { this.datasets = (await api('/api/datasets')).datasets; } catch (e) { $('#dataset-list').replaceChildren(msgBox('error', esc(e.message))); return; }
+      const ids = new Set(this.datasets.map((d) => d.id));
+      for (const id of this.picked) if (!ids.has(id)) this.picked.delete(id);
     }
     this.renderList();
+  }
+
+  // checkboxes (a dataset can be listed under several panels) and the selection bar
+  _syncPicks() {
+    const list = $('#dataset-list');
+    $$('.pick', list).forEach((cb) => { cb.checked = this.picked.has(+cb.dataset.id); });
+    $$('.pick-group', list).forEach((cb) => {
+      const ids = cb.dataset.ids.split(',').map(Number);
+      const n = ids.filter((id) => this.picked.has(id)).length;
+      cb.checked = n === ids.length;
+      cb.indeterminate = n > 0 && n < ids.length;
+    });
+    const n = this.picked.size;
+    const units = (this.datasets || []).filter((d) => this.picked.has(d.id)).reduce((s, d) => s + d.n_units, 0);
+    const text = $('#pick-text');
+    text.textContent = n ? `${n} selected · ${units.toLocaleString()} ROIs` : 'Tick datasets to download several together.';
+    text.classList.toggle('muted', !n);
+    $('#pick-download').hidden = !n;
+    $('#pick-clear').hidden = !n;
   }
 
   renderList() {
     $$('#tab-browse .seg button').forEach((b) => b.classList.toggle('active', b.dataset.group === this.group));
     const list = $('#dataset-list');
     if (!this.datasets) return;
-    if (!this.datasets.length) { list.innerHTML = '<div class="empty">Nothing uploaded yet. Use the Upload tab.</div>'; return; }
-    const item = (d) => `<button type="button" class="list-item${this.selected === d.id ? ' active' : ''}" data-id="${d.id}">
-        <span class="t">${esc(d.driver)} &gt; ${esc(d.indicator)} <span class="muted">(${esc(d.coding_unit)})</span></span>
-        <span class="s">${d.n_flies} ${d.n_flies === 1 ? 'fly' : 'flies'}, ${d.n_units.toLocaleString()} ROIs, ${d.n_odors} odors; last fly ${esc(d.last_fly_date)}</span>
-        <span class="s">#${d.id}, ${esc(d.uploader_name)}${d.recording_system ? ', ' + esc(d.recording_system) : ''}</span>
-      </button>`;
+    if (!this.datasets.length) { list.innerHTML = '<div class="empty">Nothing uploaded yet. Use the Upload tab.</div>'; this._syncPicks(); return; }
+    const item = (d) => `<div class="ds-item${this.selected === d.id ? ' active' : ''}">
+        <input type="checkbox" class="pick" data-id="${d.id}" aria-label="Select dataset #${d.id} for download">
+        <button type="button" class="list-item" data-id="${d.id}">
+          <span class="t">${esc(d.driver)} &gt; ${esc(d.indicator)} <span class="muted">(${esc(d.coding_unit)})</span></span>
+          <span class="s">${d.n_flies} ${d.n_flies === 1 ? 'fly' : 'flies'}, ${d.n_units.toLocaleString()} ROIs, ${d.n_odors} odors; last fly ${esc(d.last_fly_date)}</span>
+          <span class="s">#${d.id}, ${esc(d.uploader_name)}${d.recording_system ? ', ' + esc(d.recording_system) : ''}</span>
+        </button>
+      </div>`;
+    const groupHead = (label, ds) => `<div class="list-group"><label><input type="checkbox" class="pick-group" data-ids="${ds.map((d) => d.id).join(',')}"
+        aria-label="Select all of ${esc(label)} for download"> ${esc(label)} <span class="muted">(${ds.length})</span></label></div>`;
     let html = '';
     if (this.group === 'panel') {
       const groups = new Map();
@@ -616,19 +930,16 @@ class Browse {
       const keys = Array.from(groups.keys()).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
       for (const k of keys) {
         const ds = groups.get(k).slice().sort((a, b) => (b.last_fly_date || '').localeCompare(a.last_fly_date || '') || b.id - a.id);
-        html += `<div class="list-group">${esc(k)} <span class="muted">(${ds.length})</span></div>` + ds.map(item).join('');
+        html += groupHead(k, ds) + ds.map(item).join('');
       }
     } else {
       const ds = this.datasets.slice().sort((a, b) => (b.last_fly_date || '').localeCompare(a.last_fly_date || '') || b.id - a.id);
-      let last = null;
-      for (const d of ds) {
-        const month = (d.last_fly_date || '').slice(0, 7) || 'unknown date';
-        if (month !== last) { html += `<div class="list-group">${esc(month)}</div>`; last = month; }
-        html += item(d);
-      }
+      const months = runsOf(ds, (d) => (d.last_fly_date || '').slice(0, 7) || 'unknown date');
+      for (const m of months) html += groupHead(m.key, ds.slice(m.start, m.end)) + ds.slice(m.start, m.end).map(item).join('');
     }
     list.innerHTML = html;
     $$('.list-item', list).forEach((b) => b.addEventListener('click', () => { location.hash = `#browse/${b.dataset.id}`; }));
+    this._syncPicks();
   }
 
   async show(id) {
@@ -658,7 +969,7 @@ class Browse {
     $('#ds-readme-html').innerHTML = d.readme_html;
     $('#ds-files').innerHTML = d.files.map((f) => `<a href="/api/datasets/${id}/files/${encodeURI(f)}" download>${esc(f)}</a>`).join('');
     if (!this.viewer) this.viewer = new MatrixViewer($('#dataset-viewer'));
-    this.viewer.setNeuralData(m);
+    this.viewer.setNeuralData(m, { title: d.title, fileStem: `olfdb_dataset-${id}` });
   }
 }
 
@@ -689,7 +1000,7 @@ class Reference {
     $('#ref-title').textContent = ref.meta.title;
     $('#ref-desc').textContent = [ref.meta.description, ref.meta.source ? `Source: ${ref.meta.source}` : ''].filter(Boolean).join(' ');
     if (!this.viewer) this.viewer = new MatrixViewer($('#reference-viewer'), { kind: 'generic' });
-    this.viewer.setGenericData(ref);
+    this.viewer.setGenericData(ref, { title: ref.meta.title, fileStem: `olfdb_reference-${id}` });
   }
 }
 

@@ -14,6 +14,7 @@ from typing import Any, Optional
 import markdown
 from pydantic import ValidationError as PydanticValidationError
 from starlette.applications import Starlette
+from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException
@@ -22,7 +23,7 @@ from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, R
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import config, reference, thorimage, yamlcheck
+from . import config, export, reference, thorimage, yamlcheck
 from .db import Database
 from .glomeruli import load_glomeruli
 from .ingest import ParsedData, ValidationError, load_file, load_parsed, save_parsed
@@ -470,6 +471,41 @@ async def dataset_file(request: Request) -> Response:
     return FileResponse(target, filename=target.name)
 
 
+def cleanup_exports(max_age_s: float = 3600) -> None:
+    """Remove downloads left behind by interrupted transfers."""
+    cutoff = time.time() - max_age_s
+    for p in config.EXPORTS_DIR.glob("*.zip"):
+        try:
+            if p.stat().st_mtime < cutoff:
+                p.unlink()
+        except OSError:
+            pass
+
+
+async def download(request: Request) -> Response:
+    """Zip of one or more datasets: ``?ids=1,2,3&format=files|wide|long`` (see export.py)."""
+    try:
+        ids = [int(x) for x in request.query_params.get("ids", "").split(",") if x.strip()]
+    except ValueError:
+        return json_error(400, "ids must be comma-separated dataset numbers")
+    fmt = request.query_params.get("format", "files")
+    if not ids or fmt not in export.FORMATS:
+        return json_error(400, f"expected ?ids=1,2,...&format={'|'.join(export.FORMATS)}")
+    cleanup_exports()
+    dest = config.EXPORTS_DIR / f"{secrets.token_urlsafe(9)}.zip"
+    try:
+        name = await run_in_threadpool(export.write_zip, db, ids, fmt, dest, config.DATASETS_DIR)
+    except export.ExportError as e:
+        dest.unlink(missing_ok=True)
+        return json_error(404, str(e))
+    except BaseException:
+        dest.unlink(missing_ok=True)
+        raise
+    return FileResponse(
+        dest, filename=name, media_type="application/zip", background=BackgroundTask(dest.unlink, missing_ok=True)
+    )
+
+
 async def reference_list(request: Request) -> Response:
     return JSONResponse({"datasets": reference.manifest()})
 
@@ -501,6 +537,7 @@ routes = [
     Route("/api/datasets/{ds_id:int}", dataset_get),
     Route("/api/datasets/{ds_id:int}/matrix", dataset_matrix),
     Route("/api/datasets/{ds_id:int}/files/{path:path}", dataset_file),
+    Route("/api/download", download),
     Route("/api/reference", reference_list),
     Route("/api/reference/{ref_id}", reference_get),
     Mount("/static", StaticFiles(directory=str(config.STATIC_DIR)), name="static"),
