@@ -28,8 +28,9 @@ matrices (chemicals × fruits, chemicals × pathways, ...) get their own tab.
     linkage, correlation or Euclidean distance on trial-averaged responses, missing
     values skipped pairwise), with dendrograms. ROIs are clustered within each fly;
     with rows grouped by ROI the ROIs (averaged over flies) are clustered; ungrouped,
-    all rows together (up to 5,000 per clustering). Odors are clustered within each
-    panel. Runs in a web worker.
+    all rows together (up to 15,000 per clustering; 15,000 rows need ~450 MB in the
+    browser). Odors are clustered within each panel. Distances are computed in
+    parallel web workers, the linkage in one of them.
   - *Export figure*: SVG, PDF or PNG of the whole matrix as shown (order, colors,
     cell size, dendrograms) with a colorbar; cells are an embedded image, labels and
     lines stay vector in SVG/PDF.

@@ -1,7 +1,7 @@
 // Odor response database — frontend (no build step, no dependencies).
 import { Heatmap } from './heatmap.js';
 import { COLORMAPS, colormapsOfKind, makeNorm, drawColorbar, fmtNum } from './colormaps.js';
-import { MAX_CLUSTER_ITEMS, layoutDendrogram } from './cluster.js';
+import { MAX_CLUSTER_ITEMS, ClusterPool, layoutDendrogram } from './cluster.js';
 import { exportFigure } from './figure.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -198,7 +198,7 @@ function meanOver(values, nT, unitIdx, colTrials) {
 // (whatever the display mode). ROIs are clustered within each fly; when grouped by
 // ROI, the ROIs (each the mean over its flies) are; when ungrouped, all rows together.
 // Odors are clustered within each panel. -> {unitIdx, conds, rowTrees, colTrees, notes}
-async function clusterNeural(client, data, order, o) {
+async function clusterNeural(pool, data, order, o, onProgress) {
   const { units } = data;
   const { conds, unitIdx } = order;
   const nU = unitIdx.length, nC = conds.length;
@@ -239,7 +239,7 @@ async function clusterNeural(client, data, order, o) {
       });
     }
   }
-  const results = jobs.length ? await client.run(jobs) : [];
+  const results = jobs.length ? await pool.run(jobs, onProgress) : [];
   const out = { unitIdx: unitIdx.slice(), conds: conds.slice(), rowTrees: [], colTrees: [], notes };
   results.forEach((res, k) => {
     const plan = plans[k];
@@ -302,34 +302,6 @@ function buildNeuralModel(data, order, { mode, rowOrder }, clustering) {
   return model;
 }
 
-// Clustering jobs run in a worker; starting a new request cancels the one in progress.
-class ClusterClient {
-  constructor() { this.worker = null; this.pending = null; }
-
-  run(jobs) {
-    if (this.pending) {
-      this.worker.terminate();
-      this.worker = null;
-      this.pending.reject(Object.assign(new Error('cancelled'), { cancelled: true }));
-    }
-    if (!this.worker) this.worker = new Worker(new URL('./cluster-worker.js', import.meta.url), { type: 'module' });
-    return new Promise((resolve, reject) => {
-      this.pending = { reject };
-      this.worker.onmessage = (e) => {
-        this.pending = null;
-        if (e.data.error) reject(new Error(e.data.error)); else resolve(e.data.results);
-      };
-      this.worker.onerror = (e) => {
-        this.pending = null;
-        this.worker.terminate();
-        this.worker = null;
-        reject(new Error(e.message || 'the clustering worker failed'));
-      };
-      this.worker.postMessage({ jobs }, jobs.map((j) => j.data.buffer));
-    });
-  }
-}
-
 function dataRange(values, clip) {
   let vmin = Infinity, vmax = -Infinity, n = 0;
   for (let i = 0; i < values.length; i++) { const v = values[i]; if (v === v) { n++; if (v < vmin) vmin = v; if (v > vmax) vmax = v; } }
@@ -365,7 +337,7 @@ class MatrixViewer {
     this.data = null;
     this.title = '';
     this.fileStem = 'heatmap';
-    this.clusterer = new ClusterClient();
+    this.clusterPool = new ClusterPool();
     this.clusterCache = new Map();
     this._seq = 0;
     this._wire();
@@ -486,10 +458,19 @@ class MatrixViewer {
       const key = [o.rowOrder, o.roiSort, o.odorOrder, o.clusterRows, o.clusterCols, o.metric].join('|');
       clustering = this.clusterCache.get(key);
       if (!clustering) {
-        // show the matrix unclustered if clustering takes more than a moment
-        const timer = setTimeout(() => { if (seq === this._seq) this._show(buildNeuralModel(this.data, order, o, null), 'clustering…'); }, 150);
+        // show the matrix unclustered, with progress, if clustering takes more than a moment
+        let shown = false, progress = 'clustering…';
+        const timer = setTimeout(() => {
+          if (seq !== this._seq) return;
+          shown = true;
+          this._show(buildNeuralModel(this.data, order, o, null), progress);
+        }, 150);
+        const onProgress = ({ distances, linkage }) => {
+          progress = distances < 1 ? `clustering… distances ${Math.floor(distances * 100)}%` : `clustering… linkage ${Math.floor(linkage * 100)}%`;
+          if (shown && seq === this._seq) this._setNote(progress);
+        };
         try {
-          clustering = await clusterNeural(this.clusterer, this.data, order, o);
+          clustering = await clusterNeural(this.clusterPool, this.data, order, o, onProgress);
           this.clusterCache.set(key, clustering);
         } catch (e) {
           if (e.cancelled) return;
@@ -527,7 +508,12 @@ class MatrixViewer {
     } else {
       text = `${model.rows.length} × ${model.cols.length} · range ${fmtNum(vmin)} to ${fmtNum(vmax)}` + (this.data.meta.value_label ? ` (${this.data.meta.value_label})` : '');
     }
-    $('[data-role=stats]', this.toolbar).textContent = note ? `${text} · ${note}` : text;
+    this.statsText = text;
+    this._setNote(note);
+  }
+
+  _setNote(note) {
+    $('[data-role=stats]', this.toolbar).textContent = note ? `${this.statsText} · ${note}` : this.statsText;
   }
 
   async exportFigure(format) {
