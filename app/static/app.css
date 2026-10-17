@@ -55,15 +55,18 @@ button, input, select, textarea { font: inherit; color: inherit; }
   display: flex; align-items: center; gap: 28px; height: 48px; padding: 0 20px;
   background: var(--panel); border-bottom: 1px solid var(--rule); flex: none;
 }
-.wordmark { font-weight: 650; color: var(--ink); text-decoration: none; font-size: 15px; }
+.wordmark { font-weight: 650; color: var(--ink-muted); text-decoration: none; font-size: 15px; }
+.wordmark:hover { color: var(--ink); }
 .tabs { display: flex; gap: 4px; height: 100%; }
 .tabs a {
-  display: flex; align-items: center; padding: 0 12px; color: var(--ink-muted); text-decoration: none;
+  display: flex; align-items: center; padding: 0 12px; color: var(--ink); text-decoration: none;
   border-bottom: 2px solid transparent; margin-bottom: -1px;
 }
-.tabs a.active { color: var(--ink); border-bottom-color: var(--accent); }
-.tabs a:hover { color: var(--ink); }
+.tabs a.active { border-bottom-color: var(--accent); }
+.tabs a:hover:not(.active) { border-bottom-color: var(--rule-strong); }
 .topbar-status { margin-left: auto; color: var(--ink-muted); font-size: 12px; }
+.topbar-link { color: var(--ink); text-decoration: none; }
+.topbar-link:hover { text-decoration: underline; }
 
 main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .tab { flex: 1; min-height: 0; }
