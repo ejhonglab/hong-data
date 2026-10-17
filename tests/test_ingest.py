@@ -88,6 +88,10 @@ def test_sample_file():
 @pytest.mark.parametrize("odor2,odor3,dropped", [
     (["solvent"] * 6, ["solvent"] * 6, ["odor2", "odor3"]),
     (["pfo @ 0"] * 6, ["pfo @ 0"] * 6, ["odor2", "odor3"]),
+    # a 0 concentration however it is written
+    (["pfo @ 0.0", "pfo @ 0", "pfo @ -0", "pfo @ 0.00", "pfo @ 0e0", "pfo @ 0."], ["pfo @ 0"] * 6, ["odor2", "odor3"]),
+    (["water @ 0"] * 6, ["water @ 0.0"] * 6, ["odor2", "odor3"]),
+    (["pfo @ 0"] * 6, ["water @ 0"] * 6, ["odor3"]),
     ([np.nan] * 6, [np.nan] * 6, ["odor2", "odor3"]),
     # only the trailing levels that hold one and the same value
     (["solvent"] * 6, ["pfo"] * 6, ["odor3"]),

@@ -15,7 +15,7 @@ rows and columns):
 
 Row levels that say nothing are dropped before anything else (`uninformative_levels`):
 ``is_pair`` when it is False on every row, and the last ``odor<n>`` levels when they hold
-nothing but one of missing / 'solvent' / 'pfo' / 'pfo @ 0' / 'water'.
+nothing but one of missing / 'solvent' / 'pfo' / 'water' / 'pfo @ 0' / 'water @ 0'.
 
 Validation collects *all* problems it can find and raises :class:`ValidationError`
 with the full list, so a user can fix a file in one go.
@@ -26,6 +26,7 @@ import base64
 import csv
 import itertools
 import math
+import re
 import warnings as warnings_module
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -49,8 +50,10 @@ COL_LEVELS = ("date", "fly_num", "roi")
 KNOWN_ROW_LEVELS = {"panel", "is_pair", "repeat"}
 LONG_VALUE_COLUMNS = ("value", "response", "resp", "df_over_f", "dff", "mean_dff", "delta_f", "mean_df_over_f")
 MAX_EXAMPLES = 15
-# odor<n> values meaning that nothing was presented on that manifold (as is a missing one)
-EMPTY_ODOR_VALUES = (SOLVENT_STR, "pfo", "pfo @ 0", "water")
+# odor<n> values meaning that nothing was presented on that manifold (as is a missing one);
+# the '@ 0' ones however the 0 is written ('pfo @ 0.0', ...)
+EMPTY_ODOR_VALUES = (SOLVENT_STR, "pfo", "water", "pfo @ 0", "water @ 0")
+_SOLVENT_AT = re.compile(r"(pfo|water)\s*@\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)")
 
 
 class ValidationError(Exception):
@@ -362,6 +365,16 @@ def _missing(v) -> bool:
     return v is None or (isinstance(v, float) and math.isnan(v)) or (isinstance(v, str) and not v.strip())
 
 
+def _odor_value(v) -> Optional[str]:
+    """An odor level's value for comparing: None if missing, solvents at a concentration of
+    0 written one way ('pfo @ 0.0' -> 'pfo @ 0'), anything else as it is."""
+    if _missing(v):
+        return None
+    s = str(v).strip()
+    m = _SOLVENT_AT.fullmatch(s)
+    return f"{m[1]} @ 0" if m and float(m[2]) == 0 else s
+
+
 def _false(v) -> bool:
     return (isinstance(v, (bool, np.bool_)) and not v) or (isinstance(v, str) and v.strip().lower() == "false")
 
@@ -371,7 +384,8 @@ def uninformative_levels(columns: dict[str, list]) -> list[tuple[list[str], str]
 
     These are ``is_pair`` if it is False on every row, and ``odor<n>`` (n >= 2) together
     with every odor level after it, if all their values are one and the same of: missing,
-    or one of `EMPTY_ODOR_VALUES`. ``odor1`` is always kept.
+    or one of `EMPTY_ODOR_VALUES` (a 0 concentration written any way: 'pfo @ 0' and
+    'pfo @ 0.0' count as the same). ``odor1`` is always kept.
 
     Args:
         columns: row level name -> its value on each row.
@@ -384,7 +398,7 @@ def uninformative_levels(columns: dict[str, list]) -> list[tuple[list[str], str]
         out.append((["is_pair"], "False"))
     odor_levels = sorted((n for n in columns if is_odor_level(n)), key=odor_level_sort_key)
     for i in range(1, len(odor_levels)):
-        values = {None if _missing(v) else str(v).strip() for n in odor_levels[i:] for v in columns[n]}
+        values = {_odor_value(v) for n in odor_levels[i:] for v in columns[n]}
         if len(values) == 1 and values <= {None, *EMPTY_ODOR_VALUES}:
             value = values.pop()
             out.append((odor_levels[i:], "empty" if value is None else f"'{value}'"))

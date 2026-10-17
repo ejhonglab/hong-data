@@ -133,8 +133,9 @@ glomeruli_diagnostics,False,3mtp @ -5,solvent,0,-0.0377,0.13,...
   negative; `solvent` for an unused component.
 - Row levels that say nothing are dropped on upload: `is_pair` if it is False on every
   row, and `odor<n>` (from `odor2` on) together with every odor level after it, if all
-  their values are the same one of: empty, `solvent`, `pfo`, `pfo @ 0`, `water`. (Only
-  there are `pfo` and `water` accepted without a concentration.) Datasets stored before
+  their values are the same one of: empty, `solvent`, `pfo`, `water`, `pfo @ 0`,
+  `water @ 0` (with the 0 written any way: `pfo @ 0.0` too). (Only there are `pfo` and
+  `water` accepted without a concentration.) Datasets stored before
   this are shown and downloaded the same way.
 - A long layout (`date, fly_num, roi, [panel,] odor1, ..., [repeat,] value`) is also
   accepted for CSV and parquet (parquet with integer `fly_num` column labels cannot be
