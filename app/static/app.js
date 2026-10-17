@@ -65,7 +65,7 @@ function setStatus(el, text, kind = '') {
 }
 
 // Fetched (rather than a plain link) so that the wait while the server builds a large
-// zip, and any error, show up in `status`.
+// zip (or CSV), and any error, show up in `status`.
 async function download(url, status) {
   if (status.dataset.busy) return;
   status.dataset.busy = '1';
@@ -89,7 +89,8 @@ async function download(url, status) {
     }
     const cd = res.headers.get('content-disposition') || '';
     const m = cd.match(/filename\*=utf-8''([^;]+)/i) || cd.match(/filename="?([^";]+)"?/i);
-    saveBlob(new Blob(chunks, { type: 'application/zip' }), m ? decodeURIComponent(m[1]) : 'download.zip');
+    const type = res.headers.get('content-type') || 'application/zip';
+    saveBlob(new Blob(chunks, { type }), m ? decodeURIComponent(m[1]) : `download.${type.includes('csv') ? 'csv' : 'zip'}`);
     setStatus(status, '');
   } catch (e) {
     setStatus(status, `Download failed: ${e.message}`, 'error');

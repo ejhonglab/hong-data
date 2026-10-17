@@ -13,6 +13,10 @@ rows and columns):
 
     columns: date, fly_num, roi, [panel,] odor1[, odor2, ...][, repeat], value
 
+Row levels that say nothing are dropped before anything else (`uninformative_levels`):
+``is_pair`` when it is False on every row, and the last ``odor<n>`` levels when they hold
+nothing but one of missing / 'solvent' / 'pfo' / 'pfo @ 0' / 'water'.
+
 Validation collects *all* problems it can find and raises :class:`ValidationError`
 with the full list, so a user can fix a file in one go.
 """
@@ -36,6 +40,7 @@ from .odors import (
     OdorFormatError,
     format_mix_from_strs,
     is_odor_level,
+    odor_level_sort_key,
     parse_odor,
     validate_odor_levels,
 )
@@ -44,6 +49,8 @@ COL_LEVELS = ("date", "fly_num", "roi")
 KNOWN_ROW_LEVELS = {"panel", "is_pair", "repeat"}
 LONG_VALUE_COLUMNS = ("value", "response", "resp", "df_over_f", "dff", "mean_dff", "delta_f", "mean_df_over_f")
 MAX_EXAMPLES = 15
+# odor<n> values meaning that nothing was presented on that manifold (as is a missing one)
+EMPTY_ODOR_VALUES = (SOLVENT_STR, "pfo", "pfo @ 0", "water")
 
 
 class ValidationError(Exception):
@@ -348,6 +355,63 @@ def _long_to_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
     return pd_
 
 
+# ------------------------------------------------------ uninformative row levels
+
+
+def _missing(v) -> bool:
+    return v is None or (isinstance(v, float) and math.isnan(v)) or (isinstance(v, str) and not v.strip())
+
+
+def _false(v) -> bool:
+    return (isinstance(v, (bool, np.bool_)) and not v) or (isinstance(v, str) and v.strip().lower() == "false")
+
+
+def uninformative_levels(columns: dict[str, list]) -> list[tuple[list[str], str]]:
+    """Row levels that say nothing, to be dropped.
+
+    These are ``is_pair`` if it is False on every row, and ``odor<n>`` (n >= 2) together
+    with every odor level after it, if all their values are one and the same of: missing,
+    or one of `EMPTY_ODOR_VALUES`. ``odor1`` is always kept.
+
+    Args:
+        columns: row level name -> its value on each row.
+
+    Returns:
+        [(level names, what they all hold)]
+    """
+    out = []
+    if "is_pair" in columns and all(_false(v) for v in columns["is_pair"]):
+        out.append((["is_pair"], "False"))
+    odor_levels = sorted((n for n in columns if is_odor_level(n)), key=odor_level_sort_key)
+    for i in range(1, len(odor_levels)):
+        values = {None if _missing(v) else str(v).strip() for n in odor_levels[i:] for v in columns[n]}
+        if len(values) == 1 and values <= {None, *EMPTY_ODOR_VALUES}:
+            value = values.pop()
+            out.append((odor_levels[i:], "empty" if value is None else f"'{value}'"))
+            break
+    return out
+
+
+def drop_uninformative(trials: list[dict]) -> list[dict]:
+    """Stored trials without the levels `uninformative_levels` finds in them (for datasets
+    uploaded before those were dropped on upload)."""
+    if not trials:
+        return trials
+    n = len(trials[0]["components"])
+    columns = {f"odor{k + 1}": [t["components"][k] for t in trials] for k in range(n)}
+    if all("is_pair" in t["extra"] for t in trials):
+        columns["is_pair"] = [t["extra"]["is_pair"] for t in trials]
+    dropped = {lvl for lvls, _ in uninformative_levels(columns) for lvl in lvls}
+    if not dropped:
+        return trials
+    keep = sum(f"odor{k + 1}" not in dropped for k in range(n))
+    return [
+        {**t, "components": t["components"][:keep], "odor": format_mix_from_strs(t["components"][:keep]),
+         "extra": {k: v for k, v in t["extra"].items() if k not in dropped}}
+        for t in trials
+    ]
+
+
 # -------------------------------------------------------------------- validation
 
 
@@ -407,6 +471,16 @@ def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
         odor_levels = validate_odor_levels(row_names)
     except ValueError as e:
         raise ValidationError([str(e)])
+    idx_frame = df.index.to_frame(index=False)
+    idx_frame.columns = row_names
+    dropped = uninformative_levels({n: idx_frame[n].tolist() for n in row_names})
+    if dropped:
+        names = [n for levels, _ in dropped for n in levels]
+        idx_frame = idx_frame.drop(columns=names)
+        row_names = [n for n in row_names if n not in names]
+        odor_levels = [n for n in odor_levels if n not in names]
+        warnings.append("row levels that say nothing were dropped: "
+                        + "; ".join(f"{', '.join(levels)} (all {what})" for levels, what in dropped))
     unknown_levels = [n for n in row_names if n not in KNOWN_ROW_LEVELS and not is_odor_level(n)]
     if unknown_levels:
         warnings.append(
@@ -483,14 +557,12 @@ def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
         )
 
     # ---- row values: odors / repeat / panel ----------------------------------
-    idx_frame = df.index.to_frame(index=False)
-    idx_frame.columns = row_names
     components_per_row: list[list[str]] = [[] for _ in range(len(idx_frame))]
     for lvl in odor_levels:
         bad: dict[str, str] = {}
         n_missing = 0
         for i, v in enumerate(idx_frame[lvl].tolist()):
-            if v is None or (isinstance(v, float) and math.isnan(v)) or (isinstance(v, str) and v.strip() == ""):
+            if _missing(v):
                 if lvl == odor_levels[0]:
                     bad.setdefault("<empty>", f"'{lvl}' is empty on some rows")
                 else:

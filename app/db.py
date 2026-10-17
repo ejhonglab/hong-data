@@ -23,6 +23,8 @@ from typing import Any, Iterator, Optional
 
 import numpy as np
 
+from .ingest import drop_uninformative
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS datasets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -299,7 +301,11 @@ class Database:
         return d
 
     def get_matrix_arrays(self, ds_id: int) -> Optional[dict]:
-        """Units, trials and the float32 response matrix (n_units, n_trials) of a dataset."""
+        """Units, trials and the float32 response matrix (n_units, n_trials) of a dataset.
+
+        Trials are without row levels that say nothing (`ingest.uninformative_levels`),
+        also for datasets stored before those were dropped on upload.
+        """
         with self.connect() as con:
             m = con.execute("SELECT * FROM matrices WHERE dataset_id = ?", (ds_id,)).fetchone()
             if m is None:
@@ -314,7 +320,7 @@ class Database:
         values = np.frombuffer(bytes(m["values_blob"]), dtype="<f4").reshape(m["n_units"], m["n_trials"])
         return {
             "units": [dict(u) for u in units],
-            "trials": [
+            "trials": drop_uninformative([
                 {
                     "panel": t["panel"],
                     "odor": t["odor"],
@@ -323,17 +329,22 @@ class Database:
                     "extra": json.loads(t["extra_json"]),
                 }
                 for t in trials
-            ],
+            ]),
             "values": values,
         }
 
     def get_trials(self, ds_id: int) -> list[dict]:
-        """A dataset's trials (panel, odor, components), in order."""
+        """A dataset's trials (panel, odor, components), in order, as in `get_matrix_arrays`."""
         with self.connect() as con:
             rows = con.execute(
-                "SELECT panel, odor, components_json FROM trials WHERE dataset_id = ? ORDER BY idx", (ds_id,)
+                "SELECT panel, odor, components_json, extra_json FROM trials WHERE dataset_id = ? ORDER BY idx", (ds_id,)
             ).fetchall()
-        return [{"panel": r["panel"], "odor": r["odor"], "components": json.loads(r["components_json"])} for r in rows]
+        trials = drop_uninformative([
+            {"panel": r["panel"], "odor": r["odor"], "components": json.loads(r["components_json"]),
+             "extra": json.loads(r["extra_json"])}
+            for r in rows
+        ])
+        return [{"panel": t["panel"], "odor": t["odor"], "components": t["components"]} for t in trials]
 
     def get_matrix(self, ds_id: int) -> Optional[dict]:
         m = self.get_matrix_arrays(ds_id)

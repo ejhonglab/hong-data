@@ -576,7 +576,7 @@ async def dataset_file(request: Request) -> Response:
 def cleanup_exports(max_age_s: float = 3600) -> None:
     """Remove downloads left behind by interrupted transfers."""
     cutoff = time.time() - max_age_s
-    for p in config.EXPORTS_DIR.glob("*.zip"):
+    for p in config.EXPORTS_DIR.iterdir():
         try:
             if p.stat().st_mtime < cutoff:
                 p.unlink()
@@ -585,7 +585,8 @@ def cleanup_exports(max_age_s: float = 3600) -> None:
 
 
 async def download(request: Request) -> Response:
-    """Zip of one or more datasets: ``?ids=1,2,3&format=files|wide|long`` (see export.py)."""
+    """Download of one or more datasets: ``?ids=1,2,3&format=files|wide|long`` (see export.py);
+    a zip, or a CSV for the matrix of a single dataset."""
     try:
         ids = [int(x) for x in request.query_params.get("ids", "").split(",") if x.strip()]
     except ValueError:
@@ -594,18 +595,16 @@ async def download(request: Request) -> Response:
     if not ids or fmt not in export.FORMATS:
         return json_error(400, f"expected ?ids=1,2,...&format={'|'.join(export.FORMATS)}")
     cleanup_exports()
-    dest = config.EXPORTS_DIR / f"{secrets.token_urlsafe(9)}.zip"
+    dest = config.EXPORTS_DIR / secrets.token_urlsafe(9)
     try:
-        name = await run_in_threadpool(export.write_zip, db, ids, fmt, dest, config.DATASETS_DIR)
+        name, media_type = await run_in_threadpool(export.write_download, db, ids, fmt, dest, config.DATASETS_DIR)
     except export.ExportError as e:
         dest.unlink(missing_ok=True)
         return json_error(404, str(e))
     except BaseException:
         dest.unlink(missing_ok=True)
         raise
-    return FileResponse(
-        dest, filename=name, media_type="application/zip", background=BackgroundTask(dest.unlink, missing_ok=True)
-    )
+    return FileResponse(dest, filename=name, media_type=media_type, background=BackgroundTask(dest.unlink, missing_ok=True))
 
 
 # ----------------------------------------------------------------------- users

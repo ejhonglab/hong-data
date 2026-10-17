@@ -33,8 +33,13 @@ matrices (chemicals × fruits, chemicals × pathways, ...) get their own tab.
   (trials × ROIs, with `dataset_id` as an extra column level; trials matched on panel,
   odor components and repeat) or long CSV (one row per value), always with
   `datasets.csv` (every dataset's details), `odors.csv` (their odors, with metadata and
-  links) and the READMEs. API: `/api/download?ids=1,2&format=files|wide|long` (see
-  `app/export.py`).
+  links) and the READMEs. The matrix of a single dataset is just one CSV instead, laid
+  out as uploaded (less the row levels dropped on upload) and named
+  `<panels>_<uploader>_<coding unit>_<last fly date>.csv`: the panels in the data,
+  sorted, without diagnostic ones (unless there are only those), and the uploader's
+  name lowercased without periods, e.g. `megamat_tom_glomeruli_2023-11-19.csv` (the
+  long one ends in `_long.csv`). API: `/api/download?ids=1,2&format=files|wide|long`
+  (see `app/export.py`).
 - **Odors**: the app's own table of odor metadata, one row per chemical (name and
   aliases, abbreviation, PubChem CID, CAS, solvent, supplier + catalog number, MetaCyc
   and LOTUS IDs, inventory codes, notes), with links and PubChem structure images
@@ -72,7 +77,7 @@ there is no login and nothing secret is entered. Usually only Chrome's download
 warnings need dealing with:
 
 - **Chrome** (Edge, Brave and other Chromium-based browsers are similar)
-  - *Downloads*: dataset downloads (always a zip), PDF/SVG figure exports and single
+  - *Downloads*: dataset downloads that are zips, PDF/SVG figure exports and single
     original files other than CSV (parquet, YAML, XML, README.md) are stopped with
     "Insecure download blocked" (CSV and PNG files are not). Open the download bubble
     (or `chrome://downloads`) and click **Download insecure file**. To stop this for
@@ -126,6 +131,11 @@ glomeruli_diagnostics,False,3mtp @ -5,solvent,0,-0.0377,0.13,...
   are displayed joined with ` + ` (solvent components dropped), as in `hong2p.olf`.
 - **Odor strings**: `<abbrev> @ <log10_conc>` with single spaces, concentration 0 or
   negative; `solvent` for an unused component.
+- Row levels that say nothing are dropped on upload: `is_pair` if it is False on every
+  row, and `odor<n>` (from `odor2` on) together with every odor level after it, if all
+  their values are the same one of: empty, `solvent`, `pfo`, `pfo @ 0`, `water`. (Only
+  there are `pfo` and `water` accepted without a concentration.) Datasets stored before
+  this are shown and downloaded the same way.
 - A long layout (`date, fly_num, roi, [panel,] odor1, ..., [repeat,] value`) is also
   accepted for CSV and parquet (parquet with integer `fly_num` column labels cannot be
   written in the wide layout by pandas, so use long there).

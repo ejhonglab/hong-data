@@ -79,9 +79,40 @@ def test_sample_file():
     assert s["panel_names"] == ["glomeruli_diagnostics", "validation2"]
     assert s["repeats_min"] == s["repeats_max"] == 3
     assert s["roi_kind"] == "glomeruli"
-    assert p.trials[0]["odor"] == "3mtp @ -5" and p.trials[0]["components"] == ["3mtp @ -5", "solvent"]
+    assert p.trials[0]["odor"] == "3mtp @ -5" and p.trials[0]["components"] == ["3mtp @ -5"]
     assert p.values.shape == (224, 141)
-    assert not p.warnings
+    assert p.row_levels == ["panel", "odor1", "repeat"]
+    assert p.warnings == ["row levels that say nothing were dropped: is_pair (all False); odor2 (all 'solvent')"]
+
+
+@pytest.mark.parametrize("odor2,odor3,dropped", [
+    (["solvent"] * 6, ["solvent"] * 6, ["odor2", "odor3"]),
+    (["pfo @ 0"] * 6, ["pfo @ 0"] * 6, ["odor2", "odor3"]),
+    ([np.nan] * 6, [np.nan] * 6, ["odor2", "odor3"]),
+    # only the trailing levels that hold one and the same value
+    (["solvent"] * 6, ["pfo"] * 6, ["odor3"]),
+    (["va @ -3"] * 6, ["water"] * 6, ["odor3"]),
+    (["solvent"] * 5 + ["va @ -3"], ["solvent"] * 6, ["odor3"]),
+    (["solvent"] * 6, ["solvent"] * 5 + ["va @ -3"], []),
+    (["pfo @ -1"] * 6, ["solvent"] * 6, ["odor3"]),
+])
+def test_uninformative_levels(tmp_path, odor2, odor3, dropped):
+    odor1 = ["va @ -3", "va @ -3", "ea @ -2", "ea @ -2", "ms @ -3", "ms @ -3"]
+    rows = [("p1", False, o1, o2, o3, i % 2) for i, (o1, o2, o3) in enumerate(zip(odor1, odor2, odor3))]
+    p = load_file(write_csv(make_wide(rows, COLS, row_names=("panel", "is_pair", "odor1", "odor2", "odor3", "repeat")), tmp_path))
+    kept = [lvl for lvl in ("odor1", "odor2", "odor3") if lvl not in dropped]
+    # is_pair is False on every row
+    assert p.row_levels == ["panel", *kept, "repeat"]
+    assert all(len(t["components"]) == len(kept) and "is_pair" not in t["extra"] for t in p.trials)
+    assert p.trials[0]["components"] == ["va @ -3", odor2[0], odor3[0]][:len(kept)]
+
+
+def test_informative_levels_kept(tmp_path):
+    # is_pair True somewhere; odor1 is never dropped (here it is all one odor)
+    rows = [("p1", i == 0, "va @ -3", "solvent", i) for i in range(3)]
+    p = load_file(write_csv(make_wide(rows, COLS), tmp_path))
+    assert p.row_levels == ["panel", "is_pair", "odor1", "repeat"]
+    assert [t["extra"] for t in p.trials] == [{"is_pair": True}, {"is_pair": False}, {"is_pair": False}]
 
 
 def test_minimal_wide_ok(tmp_path):
