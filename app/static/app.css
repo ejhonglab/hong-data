@@ -274,14 +274,17 @@ table.diff .new { color: var(--ok); }
 /* -------------------------------------------------------------- viewer */
 .viewer { display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--panel); overflow: hidden; }
 .vt { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--rule); background: var(--surface); font-size: 12.5px; }
-.vt-group { display: flex; align-items: center; gap: 10px; }
+.vt-group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 .vt label { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-muted); white-space: nowrap; }
 .vt select { width: auto; padding: 3px 6px; }
 .vt input[type=range] { width: 90px; }
 .vt .check input { margin: 0; }
 .vt select:disabled { color: var(--ink-muted); background: var(--surface-2); }
 .vt-label { color: var(--ink-muted); }
-.vt-stats { margin-left: auto; color: var(--ink-muted); }
+.vt [data-out] { display: inline-block; min-width: 2ch; text-align: right; font-variant-numeric: tabular-nums; }
+.vt-status { flex-basis: 100%; display: flex; align-items: center; gap: 12px; min-width: 0; }
+.vt-stats { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-muted); }
+.vt-status .dl-status { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .colorbar { width: 220px; height: 30px; color: var(--ink); }
 .vt-legend { align-self: stretch; }
 .hm-wrap { flex: 1; min-height: 0; position: relative; }

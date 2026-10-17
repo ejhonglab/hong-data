@@ -357,8 +357,9 @@
       <label class="check"><input type="checkbox" data-opt="clip"> clip to 0.5–99.5th pct</label>
     </div>
     <div class="vt-group vt-legend"><canvas class="colorbar" width="220" height="30"></canvas></div>
-    <div class="vt-stats" data-role="stats"></div>
-    <div class="vt-group">
+    <!-- a line of its own: its texts change, and are cut short rather than move a control -->
+    <div class="vt-status">
+      <span class="vt-stats" data-role="stats"></span>
       <span class="dl-status" data-role="export-status"></span>
       <details class="menu menu-right" data-role="export">
         <summary class="btn small">Export figure</summary>

@@ -61,6 +61,7 @@ function saveBlob(blob, name) {
 
 function setStatus(el, text, kind = '') {
   el.textContent = text;
+  el.title = text;
   el.classList.toggle('error', kind === 'error');
 }
 
@@ -489,7 +490,9 @@ class MatrixViewer {
   }
 
   _setNote(note) {
-    $('[data-role=stats]', this.toolbar).textContent = note ? `${this.statsText} · ${note}` : this.statsText;
+    const el = $('[data-role=stats]', this.toolbar);
+    el.textContent = note ? `${this.statsText} · ${note}` : this.statsText;
+    el.title = el.textContent; // in full, as it is cut short when it does not fit
   }
 
   async exportFigure(format) {
