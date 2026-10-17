@@ -26,7 +26,7 @@ import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from . import config, yamlcheck
 from .db import ODOR_COLUMNS as FIELDS
@@ -308,10 +308,32 @@ def links(odor: dict) -> dict[str, Optional[str]]:
 
 # ------------------------------------------------------------------ structures
 
-# PubChem allows 5 requests a second: fetch one image at a time, at most 4 a second
-_pubchem_lock = threading.Lock()
+PUBCHEM_REST = "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid"
+INCHI_BATCH = 100  # CIDs per InChI request
+
+# PubChem allows 5 requests a second: one request at a time, at most 4 a second
+_pubchem_lock = threading.RLock()
 _pubchem_last = [0.0]
-_failed: dict[int, float] = {}  # cid -> time a fetch failed (retried after 10 minutes)
+_failed: dict[str, float] = {}  # url -> time a request for it failed (retried after 10 minutes)
+
+
+def _pubchem_get(url: str, check: Callable[[bytes], bool]) -> Optional[bytes]:
+    """The body of a PubChem request, or None if it failed (or failed in the last 10 minutes)."""
+    with _pubchem_lock:
+        if time.time() - _failed.get(url, 0) < 600:
+            return None
+        time.sleep(max(0.0, 0.25 - (time.time() - _pubchem_last[0])))
+        try:
+            with urllib.request.urlopen(url, timeout=15) as res:
+                data = res.read()
+            if not check(data):
+                raise ValueError("unexpected response")
+        except Exception:
+            _failed[url] = time.time()
+            return None
+        finally:
+            _pubchem_last[0] = time.time()
+        return data
 
 
 def structure_png(cid: int) -> Optional[Path]:
@@ -319,28 +341,35 @@ def structure_png(cid: int) -> Optional[Path]:
     path = config.STRUCTURES_DIR / f"{cid}.png"
     if path.exists():
         return path
-    with _pubchem_lock:
+    with _pubchem_lock:  # so that an image several requests want is fetched once
         if path.exists():
             return path
-        if time.time() - _failed.get(cid, 0) < 600:
+        data = _pubchem_get(f"{PUBCHEM_REST}/{cid}/PNG?image_size=300x300", lambda d: d.startswith(b"\x89PNG"))
+        if data is None:
             return None
-        time.sleep(max(0.0, 0.25 - (time.time() - _pubchem_last[0])))
-        url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{cid}/PNG?image_size=300x300"
-        try:
-            with urllib.request.urlopen(url, timeout=15) as res:
-                data = res.read()
-            if not data.startswith(b"\x89PNG"):
-                raise ValueError("not a PNG")
-        except Exception:
-            _failed[cid] = time.time()
-            return None
-        finally:
-            _pubchem_last[0] = time.time()
         config.STRUCTURES_DIR.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
         tmp.write_bytes(data)
         tmp.replace(path)
         return path
+
+
+def fetch_inchis(cids: list[int]) -> dict[int, str]:
+    """The InChI of each of `cids`, from PubChem (`INCHI_BATCH` CIDs per request).
+
+    Returns:
+        cid -> InChI, without the CIDs PubChem has none for (or that could not be fetched).
+    """
+    out = {}
+    for i in range(0, len(cids), INCHI_BATCH):
+        batch = ",".join(str(c) for c in cids[i:i + INCHI_BATCH])
+        data = _pubchem_get(f"{PUBCHEM_REST}/{batch}/property/InChI/JSON", lambda d: d.lstrip().startswith(b"{"))
+        if data is None:
+            continue
+        for p in json.loads(data).get("PropertyTable", {}).get("Properties", []):
+            if isinstance(p.get("InChI"), str) and p["InChI"].startswith("InChI="):
+                out[int(p["CID"])] = p["InChI"]
+    return out
 
 
 # -------------------------------------------------------- datasets <-> odors

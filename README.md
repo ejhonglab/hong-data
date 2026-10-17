@@ -43,7 +43,8 @@ matrices (chemicals × fruits, chemicals × pathways, ...) get their own tab.
 - **Odors**: the app's own table of odor metadata, one row per chemical (name and
   aliases, abbreviation, PubChem CID, CAS, solvent, supplier + catalog number, MetaCyc
   and LOTUS IDs, inventory codes, notes), with links and PubChem structure images
-  (cached on the server). It is synced one way from a Google sheet (or an imported CSV)
+  (cached on the server); each CID's InChI is fetched from PubChem along with them and
+  kept in the database (`inchi` of each odor in `/api/odors`). It is synced one way from a Google sheet (or an imported CSV)
   with the columns of `config/odor_sheet_template.csv`, which starts it off with the
   odors from the thesis tables: the app shows what a sync would do, adds new odors,
   and applies changes to existing ones and deletions only where ticked, warning about
@@ -180,7 +181,8 @@ deploy/            systemd units; Dockerfile + docker-compose.yml at the top lev
 `data/olfdb.sqlite3` tables: `datasets` (metadata, README, summary), `dataset_panels`,
 `units` (date, fly_num, roi), `trials` (panel, odor, components, repeat), `responses`
 (one row per cell, for SQL queries), `matrices` (the same values as a float32 blob
-for fast serving) and `users` (each user's folders on tensor). Files: `data/datasets/<id>/` holds the original data file,
+for fast serving), `users` (each user's folders on tensor), `odors` and `odor_syncs`, and
+`pubchem` (each odor CID's InChI). Files: `data/datasets/<id>/` holds the original data file,
 `README.md`, `metadata.json`, `odor_yaml/*.yaml` and the `Experiment.xml`.
 
 ## API (used by the frontend; handy for scripts)

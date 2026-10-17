@@ -11,6 +11,7 @@ matrices        the same values as a float32 blob (units x trials) for fast serv
 odors           one row per chemical: names, IDs, supplier (synced from the odor sheet)
 odor_syncs      log of odor syncs (what was added / changed / deleted, by whom)
 users           each user's data folders on tensor (relative to its top), by name
+pubchem         what was fetched from PubChem for an odor CID (its InChI)
 """
 from __future__ import annotations
 
@@ -138,6 +139,11 @@ CREATE TABLE IF NOT EXISTS odor_syncs (
     n_changed INTEGER NOT NULL,
     n_deleted INTEGER NOT NULL,
     details_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS pubchem (
+    cid INTEGER PRIMARY KEY,
+    inchi TEXT NOT NULL,
+    fetched_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -380,8 +386,11 @@ class Database:
 
     # ------------------------------------------------------------------- odors
     def list_odors(self) -> list[dict]:
+        """Every odor, with the InChI of its CID (None until fetched from PubChem)."""
         with self.connect() as con:
-            rows = con.execute("SELECT * FROM odors ORDER BY name_key").fetchall()
+            rows = con.execute(
+                "SELECT odors.*, pubchem.inchi FROM odors LEFT JOIN pubchem USING (cid) ORDER BY name_key"
+            ).fetchall()
         out = []
         for r in rows:
             d = dict(r)
@@ -419,6 +428,19 @@ class Database:
                 (when, applied_by, source, fingerprint, len(added), len(changed), len(deleted), json.dumps(details)),
             )
             return int(cur.lastrowid)
+
+    def inchis(self) -> dict[int, str]:
+        """CID -> InChI, for every CID one was fetched for."""
+        with self.connect() as con:
+            return {r["cid"]: r["inchi"] for r in con.execute("SELECT cid, inchi FROM pubchem")}
+
+    def save_inchis(self, inchis: dict[int, str], when: str) -> None:
+        with self.connect() as con:
+            con.executemany(
+                "INSERT INTO pubchem (cid, inchi, fetched_at) VALUES (?,?,?) "
+                "ON CONFLICT (cid) DO UPDATE SET inchi = excluded.inchi, fetched_at = excluded.fetched_at",
+                [(cid, inchi, when) for cid, inchi in inchis.items()],
+            )
 
     def odor_syncs(self, limit: int = 50, source: Optional[str] = None) -> list[dict]:
         """Most recent odor syncs first (optionally only those from `source`)."""

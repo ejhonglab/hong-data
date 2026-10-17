@@ -8,6 +8,7 @@ import re
 import secrets
 import shutil
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -737,10 +738,28 @@ async def odors_preview(request: Request) -> Response:
     return JSONResponse(await run_in_threadpool(_preview, text, source))
 
 
-def _prefetch_structures() -> None:
+_inchi_lock = threading.Lock()
+
+
+def _fetch_inchis() -> None:
+    """Fetch from PubChem the InChI of every odor CID that has none in the database yet
+    (in one request per 100 CIDs; skipped while another call is at it)."""
+    if not _inchi_lock.acquire(blocking=False):
+        return
+    try:
+        missing = sorted({o["cid"] for o in db.list_odors() if o["cid"] and not o["inchi"]})
+        if missing:
+            db.save_inchis(odormeta.fetch_inchis(missing), when=dt.datetime.now().isoformat(timespec="seconds"))
+    finally:
+        _inchi_lock.release()
+
+
+def _prefetch_pubchem() -> None:
+    """Structure images and InChIs of every odor's CID."""
     for o in db.list_odors():
         if o["cid"]:
             odormeta.structure_png(o["cid"])
+    _fetch_inchis()
 
 
 def _apply(fp: str, change_ids: set[int], delete_ids: set[int], applied_by: str) -> dict:
@@ -786,18 +805,22 @@ async def odors_apply(request: Request) -> Response:
         return json_error(400, "changes and deletions must be lists of odor ids")
     result = await run_in_threadpool(_apply, fp, change_ids, delete_ids, applied_by)
     return JSONResponse(result, status_code=200 if result["ok"] else 422,
-                        background=BackgroundTask(_prefetch_structures) if result["ok"] else None)
+                        background=BackgroundTask(_prefetch_pubchem) if result["ok"] else None)
 
 
 async def odor_structure(request: Request) -> Response:
-    """PubChem structure image of an odor in the table (cached on the server)."""
+    """PubChem structure image of an odor in the table (cached on the server). The InChIs
+    of odors without one are fetched afterwards, if this one has none."""
     cid = int(request.path_params["cid"])
-    if not any(o["cid"] == cid for o in db.list_odors()):
+    odor = next((o for o in await run_in_threadpool(db.list_odors) if o["cid"] == cid), None)
+    if odor is None:
         return json_error(404, "no odor with this CID")
+    background = BackgroundTask(_fetch_inchis) if not odor["inchi"] else None
     path = await run_in_threadpool(odormeta.structure_png, cid)
     if path is None:
-        return json_error(404, "structure image not available")
-    return FileResponse(path, media_type="image/png", headers={"cache-control": "public, max-age=604800"})
+        return JSONResponse({"error": "structure image not available"}, status_code=404, background=background)
+    return FileResponse(path, media_type="image/png", headers={"cache-control": "public, max-age=604800"},
+                        background=background)
 
 
 async def odor_template(request: Request) -> Response:

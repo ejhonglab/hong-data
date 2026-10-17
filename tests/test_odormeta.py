@@ -1,8 +1,10 @@
 """Odor metadata tests (sheet parsing, sync diff, dataset matching). Run with: python -m pytest tests/"""
 from __future__ import annotations
 
+import contextlib
 import csv
 import io
+import json
 
 import pytest
 
@@ -132,3 +134,59 @@ def test_dataset_matching(tmp_path):
     table = odormeta.table_rows(rows, index)
     csv.DictWriter(io.StringIO(), fieldnames=list(table[0])).writerows(table)
     assert next(t for t in table if t["odor"] == "va @ -3")["pubchem_url"].endswith("/7991")
+
+
+class FakePubChem:
+    """Stands in for urlopen: answers InChI requests for the CIDs in `inchis`, and counts requests."""
+
+    def __init__(self, inchis: dict[int, str], fail: bool = False):
+        self.inchis, self.fail, self.urls = inchis, fail, []
+
+    def __call__(self, url, timeout=None):
+        self.urls.append(url)
+        if self.fail:
+            raise OSError("no network")
+        cids = url.split("/cid/")[1].split("/")[0].split(",")
+        props = [{"CID": int(c), **({"InChI": self.inchis[int(c)]} if int(c) in self.inchis else {})} for c in cids]
+        return contextlib.nullcontext(io.BytesIO(json.dumps({"PropertyTable": {"Properties": props}}).encode()))
+
+
+@pytest.fixture
+def pubchem(monkeypatch):
+    monkeypatch.setattr(odormeta, "_failed", {})
+    monkeypatch.setattr(odormeta, "INCHI_BATCH", 2)
+    fake = FakePubChem({7991: "InChI=1S/C5H10O2/c1-2-3-4-5(6)7/h2-4H2,1H3,(H,6,7)", 702: "InChI=1S/C2H6O/c1-2-3/h3H,2H2,1H3"})
+    monkeypatch.setattr(odormeta.urllib.request, "urlopen", fake)
+    return fake
+
+
+def test_fetch_inchis(pubchem, monkeypatch):
+    # in batches; CIDs PubChem has no InChI for are left out
+    assert odormeta.fetch_inchis([7991, 702, 1]) == {7991: pubchem.inchis[7991], 702: pubchem.inchis[702]}
+    assert [u.split("/cid/")[1].split("/")[0] for u in pubchem.urls] == ["7991,702", "1"]
+    # a failed request is not repeated for a while
+    monkeypatch.setattr(odormeta.urllib.request, "urlopen", failing := FakePubChem({}, fail=True))
+    assert odormeta.fetch_inchis([5]) == {} and odormeta.fetch_inchis([5]) == {}
+    assert len(failing.urls) == 1
+
+
+def test_inchis_in_database(pubchem, tmp_path, monkeypatch):
+    from app import main
+
+    db = Database(tmp_path / "db.sqlite3")
+    monkeypatch.setattr(main, "db", db)
+    apply_all(db, rows_of(HEADER + "valeric acid,va,,7991,,water,,,,,,,\n" "ethanol,EtOH,,702,,,,,,,,,\n"
+                                   "no such cid,x,,1,,,,,,,,,\n" "no cid,y,,,,,,,,,,,\n"))
+    assert {o["name"]: o["inchi"] for o in db.list_odors()} == dict.fromkeys(["valeric acid", "ethanol", "no such cid", "no cid"])
+    main._fetch_inchis()
+    assert {o["name"]: o["inchi"] for o in db.list_odors()} == {
+        "valeric acid": pubchem.inchis[7991], "ethanol": pubchem.inchis[702], "no such cid": None, "no cid": None}
+    assert db.inchis() == {7991: pubchem.inchis[7991], 702: pubchem.inchis[702]}
+    # only CIDs still without an InChI are asked for again
+    pubchem.urls.clear()
+    monkeypatch.setattr(odormeta, "_failed", {})
+    main._fetch_inchis()
+    assert [u.split("/cid/")[1].split("/")[0] for u in pubchem.urls] == ["1"]
+    # the InChI belongs to the CID, so it stays with an odor through a sync that changes other fields
+    apply_all(db, rows_of(HEADER + "valeric acid,va,pentanoic acid,7991,,water,,,,,,,\n"), changes={o["id"] for o in db.list_odors()})
+    assert next(o for o in db.list_odors() if o["name"] == "valeric acid")["inchi"] == pubchem.inchis[7991]

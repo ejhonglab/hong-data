@@ -75,7 +75,8 @@ To set the sheet up:
    restart: `docker compose up -d`.
 
 The server needs outbound HTTPS to docs.google.com for the sheet, and to
-pubchem.ncbi.nlm.nih.gov for structure images (fetched once per CID, then cached).
+pubchem.ncbi.nlm.nih.gov for structure images and InChIs (fetched once per CID, then
+cached; InChIs in the database, a hundred CIDs per request).
 Without a sheet, the Odors tab can still import a CSV in the same format.
 
 ### Tensor
