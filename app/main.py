@@ -24,7 +24,7 @@ from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, R
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import config, export, odormeta, reference, thorimage, yamlcheck
+from . import config, export, odormeta, reference, tensor, thorimage, yamlcheck
 from .db import Database
 from .glomeruli import load_glomeruli
 from .ingest import ParsedData, ValidationError, load_file, load_parsed, save_parsed
@@ -33,6 +33,7 @@ from .metadata import (
     DEFAULT_INDICATORS,
     DEFAULT_RECORDING_SYSTEMS,
     DEFAULT_WAVELENGTH_NM,
+    REQUIRED_FIELDS,
     Metadata,
     dataset_title,
     generate_readme,
@@ -152,6 +153,7 @@ async def options(request: Request) -> Response:
             "default_wavelength_nm": DEFAULT_WAVELENGTH_NM,
             "glomeruli": load_glomeruli(),
             "max_upload_mb": config.MAX_UPLOAD_MB,
+            "tensor_root": str(config.TENSOR_ROOT),
         }
     )
 
@@ -208,10 +210,58 @@ def _public_stage(meta: dict) -> dict:
         "size_bytes": meta["size_bytes"],
         "sha256": meta["sha256"],
         "source_format": meta["source_format"],
-        "odor_yamls": [{"name": y["name"], "n_odors": y["n_odors"]} for y in meta["odor_yamls"]],
+        "odor_yamls": [{"name": y["name"], "n_odors": y["n_odors"], "tensor_path": y.get("tensor_path")}
+                       for y in meta["odor_yamls"]],
         "experiment_xml": meta["experiment_xml"],
         "experiment_xml_info": meta["experiment_xml_info"],
+        "experiment_xml_tensor_path": meta.get("experiment_xml_tensor_path"),
     }
+
+
+def _tensor_sources(meta: dict) -> dict[str, str]:
+    """Attached files copied from tensor: file name -> path there."""
+    out = {y["name"]: y["tensor_path"] for y in meta["odor_yamls"] if y.get("tensor_path")}
+    if meta.get("experiment_xml") and meta.get("experiment_xml_tensor_path"):
+        out[meta["experiment_xml"]] = meta["experiment_xml_tensor_path"]
+    return out
+
+
+async def _incoming(request: Request, d: Path, *, json_key: str, fallback: str, suffixes: tuple[str, ...],
+                    max_bytes: int) -> tuple[list[tuple[str, Optional[str]]], list[str]]:
+    """Save the files of a request in `d`: uploaded ones (multipart field 'file'), or ones
+    on tensor (JSON: `json_key`, a path relative to it or a list of them).
+
+    Returns:
+        ([(saved file name, its path on tensor or None)], errors)
+
+    Raises:
+        HTTPException: 400 if there are no files (or paths) in the request at all.
+    """
+    saved, errors = [], []
+    if request.headers.get("content-type", "").startswith("application/json"):
+        paths = (await request.json()).get(json_key)
+        paths = [paths] if isinstance(paths, str) else paths or []
+        if not paths:
+            raise HTTPException(400, f"no path on tensor in the request ('{json_key}')")
+        for p in paths:
+            try:
+                rel, src = tensor.file_path(str(p), config.TENSOR_ROOT, suffixes)
+            except tensor.PathError as e:
+                errors.append(f"{p}: {e}")
+                continue
+            name = safe_filename(src.name, fallback)
+            await run_in_threadpool(shutil.copyfile, src, d / name)
+            saved.append((name, rel))
+        return saved, errors
+    form = await request.form()
+    uploads = [up for up in form.getlist("file") if isinstance(up, UploadFile)]
+    if not uploads:
+        raise HTTPException(400, "no file in the request (field name 'file')")
+    for up in uploads:
+        name = safe_filename(up.filename, fallback)
+        await _save_upload(up, d / name, max_bytes=max_bytes)
+        saved.append((name, None))
+    return saved, errors
 
 
 async def stage_get(request: Request) -> Response:
@@ -237,19 +287,15 @@ def _run_yaml_check(d: Path, meta: dict) -> dict:
 
 
 async def stage_add_yaml(request: Request) -> Response:
+    """Add odor YAMLs: uploaded (multipart 'file', repeatable) or on tensor (JSON 'tensor_paths')."""
     d = _stage_dir(request.path_params["stage_id"])
     meta = _stage_meta(d)
-    form = await request.form()
-    uploads = [v for v in form.getlist("file") if isinstance(v, UploadFile)]
-    if not uploads:
-        return json_error(400, "no YAML file in the request (field name 'file')")
     ydir = d / "odor_yaml"
     ydir.mkdir(exist_ok=True)
-    errors = []
-    for up in uploads:
-        name = safe_filename(up.filename, "odors.yaml")
+    saved, errors = await _incoming(request, ydir, json_key="tensor_paths", fallback="odors.yaml",
+                                    suffixes=(".yaml", ".yml"), max_bytes=20 * 1024 * 1024)
+    for name, rel in saved:
         dest = ydir / name
-        await _save_upload(up, dest, max_bytes=20 * 1024 * 1024)
         try:
             odors, _ = yamlcheck.parse_odor_yaml(dest.read_text(encoding="utf-8"))
         except (yamlcheck.YamlError, UnicodeDecodeError) as e:
@@ -257,7 +303,7 @@ async def stage_add_yaml(request: Request) -> Response:
             errors.append(f"{name}: {e}")
             continue
         meta["odor_yamls"] = [y for y in meta["odor_yamls"] if y["name"] != name]
-        meta["odor_yamls"].append({"name": name, "n_odors": len(odors)})
+        meta["odor_yamls"].append({"name": name, "n_odors": len(odors), "tensor_path": rel})
     _write_stage_meta(d, meta)
     check = await run_in_threadpool(_run_yaml_check, d, meta) if meta["odor_yamls"] else None
     return JSONResponse({"ok": not errors, "errors": errors, "stage": _public_stage(meta), "check": check})
@@ -275,15 +321,15 @@ async def stage_remove_yaml(request: Request) -> Response:
 
 
 async def stage_add_xml(request: Request) -> Response:
+    """Add the Experiment.xml: uploaded (multipart 'file') or on tensor (JSON 'tensor_path')."""
     d = _stage_dir(request.path_params["stage_id"])
     meta = _stage_meta(d)
-    form = await request.form()
-    up = form.get("file")
-    if not isinstance(up, UploadFile):
-        return json_error(400, "no XML file in the request (field name 'file')")
-    name = safe_filename(up.filename, "Experiment.xml")
+    saved, errors = await _incoming(request, d, json_key="tensor_path", fallback="Experiment.xml",
+                                    suffixes=(".xml",), max_bytes=50 * 1024 * 1024)
+    if not saved:
+        return JSONResponse({"ok": False, "errors": errors}, status_code=422)
+    name, rel = saved[0]
     dest = d / name
-    await _save_upload(up, dest, max_bytes=50 * 1024 * 1024)
     try:
         info = thorimage.parse_experiment_xml(dest.read_text(encoding="utf-8", errors="replace"))
     except thorimage.ExperimentXmlError as e:
@@ -293,6 +339,7 @@ async def stage_add_xml(request: Request) -> Response:
         (d / meta["experiment_xml"]).unlink(missing_ok=True)
     meta["experiment_xml"] = name
     meta["experiment_xml_info"] = info["info"]
+    meta["experiment_xml_tensor_path"] = rel
     _write_stage_meta(d, meta)
     return JSONResponse({"ok": True, "stage": _public_stage(meta), "info": info["info"], "suggestions": info["suggestions"]})
 
@@ -304,8 +351,26 @@ async def stage_remove_xml(request: Request) -> Response:
         (d / meta["experiment_xml"]).unlink(missing_ok=True)
     meta["experiment_xml"] = None
     meta["experiment_xml_info"] = None
+    meta["experiment_xml_tensor_path"] = None
     _write_stage_meta(d, meta)
     return JSONResponse({"ok": True, "stage": _public_stage(meta)})
+
+
+async def stage_lookup(request: Request) -> Response:
+    """Look for the staged dataset's flies, recordings and odor YAMLs in a user's folders on
+    tensor ({"name": ...}); ``user`` is null when nobody of that name has folders saved."""
+    d = _stage_dir(request.path_params["stage_id"])
+    body = await request.json()
+    user = await run_in_threadpool(db.get_user, _user_name(body.get("name")))
+    if user is None:
+        return JSONResponse({"ok": True, "user": None})
+
+    def run() -> dict:
+        parsed = load_parsed(d / "parsed")
+        return tensor.lookup(config.TENSOR_ROOT, user, parsed.summary()["flies"], parsed.component_odors())
+
+    result = await run_in_threadpool(run)
+    return JSONResponse({"ok": True, "user": user, **result})
 
 
 _FIELD_LABELS = {
@@ -313,23 +378,48 @@ _FIELD_LABELS = {
     "coding_unit": "coding unit", "age_min_days": "fly age (min)", "age_max_days": "fly age (max)",
     "power_mw": "power (mW)", "power_tolerance_mw": "power tolerance", "wavelength_nm": "wavelength",
     "panel_names": "panel name(s)", "recording_system": "recording system", "source_code_url": "analysis code link",
-    "raw_data_path": "raw data path", "genotype": "genotype", "notes": "notes",
+    "raw_data_path": "raw data path", "mocorr_data_path": "motion-corrected data path", "genotype": "genotype",
+    "notes": "notes", "power_measured_same_day": "power measured on the day",
 }
+
+
+def _metadata_errors(e: PydanticValidationError) -> list[dict]:
+    """``{'field', 'message'}`` for each problem ('' as the field for ones about several fields)."""
+    out = []
+    for err in e.errors():
+        loc = ".".join(str(x) for x in err["loc"])
+        label = _FIELD_LABELS.get(loc, loc or "metadata")
+        if err["type"] in ("string_too_short", "string_type", "missing") and loc in REQUIRED_FIELDS:
+            msg = f"{label} is required"
+        else:
+            msg = f"{label}: {err['msg'].replace('Value error, ', '')}"
+        out.append({"field": loc, "message": msg})
+    return out
 
 
 def _parse_metadata(body: Any) -> tuple[Optional[Metadata], list[str]]:
     try:
         return Metadata.model_validate(body or {}), []
     except PydanticValidationError as e:
-        msgs = []
-        for err in e.errors():
-            loc = ".".join(str(x) for x in err["loc"])
-            label = _FIELD_LABELS.get(loc, loc or "metadata")
-            if err["type"] in ("string_too_short", "string_type", "missing") and loc in ("uploader_name", "indicator", "driver", "coding_unit"):
-                msgs.append(f"{label} is required")
-            else:
-                msgs.append(f"{label}: {err['msg'].replace('Value error, ', '')}")
-        return None, msgs
+        return None, [x["message"] for x in _metadata_errors(e)]
+
+
+async def metadata_check(request: Request) -> Response:
+    """Check defaults for the upload form ({"metadata": {...}}): any of its fields, validated
+    as for an upload, except that the required ones may be left out."""
+    body = await request.json()
+    values = body.get("metadata") if isinstance(body, dict) else None
+    if not isinstance(values, dict):
+        return json_error(400, "expected {\"metadata\": {...}}")
+    values = {k: v for k, v in values.items() if k in Metadata.model_fields}
+    for k in REQUIRED_FIELDS:
+        if values.get(k) is None or (isinstance(values[k], str) and not values[k].strip()):
+            values[k] = "-"
+    try:
+        Metadata.model_validate(values)
+    except PydanticValidationError as e:
+        return JSONResponse({"ok": False, "errors": _metadata_errors(e)})
+    return JSONResponse({"ok": True, "errors": []})
 
 
 async def stage_readme(request: Request) -> Response:
@@ -350,6 +440,7 @@ async def stage_readme(request: Request) -> Response:
             "sha256": meta["sha256"],
             "odor_yamls": [y["name"] for y in meta["odor_yamls"]],
             "experiment_xml": meta.get("experiment_xml"),
+            "sources": _tensor_sources(meta),
         },
     )
     return JSONResponse({"ok": True, "readme": readme, "title": dataset_title(m, summary)})
@@ -412,6 +503,7 @@ def _commit(d: Path, meta: dict, m: Metadata, readme: str, readme_edited: bool) 
                 "data_sha256": meta["sha256"],
                 "odor_yaml_files": [y["name"] for y in meta["odor_yamls"]],
                 "experiment_xml_file": meta.get("experiment_xml"),
+                "tensor_sources": _tensor_sources(meta),
                 "summary": summary,
             },
             indent=1,
@@ -514,6 +606,44 @@ async def download(request: Request) -> Response:
     return FileResponse(
         dest, filename=name, media_type="application/zip", background=BackgroundTask(dest.unlink, missing_ok=True)
     )
+
+
+# ----------------------------------------------------------------------- users
+
+
+def _user_name(v: Any) -> str:
+    return " ".join(str(v or "").split())[:200]
+
+
+async def user_get(request: Request) -> Response:
+    """A user's data folders on tensor (``?name=``); ``user`` is null for a name with none saved."""
+    name = _user_name(request.query_params.get("name"))
+    return JSONResponse({"user": await run_in_threadpool(db.get_user, name) if name else None})
+
+
+async def user_save(request: Request) -> Response:
+    """Check a user's data folders on tensor and, if every one is there, save them under the
+    name given (when there is one): {"name", "raw_dirs", "mocorr_dirs", "odor_dirs"}, each
+    a list of paths relative to tensor."""
+    body = await request.json()
+    if not isinstance(body, dict) or any(not isinstance(body.get(k) or [], list) for k in tensor.USER_DIR_KINDS):
+        return json_error(400, f"expected lists of paths in {', '.join(tensor.USER_DIR_KINDS)}")
+    name = _user_name(body.get("name"))
+
+    def run() -> dict:
+        root = tensor.root_status(config.TENSOR_ROOT)
+        checks = {
+            k: [tensor.check_dir(str(p), config.TENSOR_ROOT) for p in body.get(k) or [] if str(p).strip()]
+            for k in tensor.USER_DIR_KINDS
+        }
+        ok = root["ok"] and all(c["ok"] for cs in checks.values() for c in cs)
+        user = None
+        if ok and name:
+            dirs = {k: list(dict.fromkeys(c["path"] for c in cs)) for k, cs in checks.items()}
+            user = db.save_user(name, dirs, when=dt.datetime.now().isoformat(timespec="seconds"))
+        return {"ok": ok, "root": root, "dirs": checks, "saved": user is not None, "user": user}
+
+    return JSONResponse(await run_in_threadpool(run))
 
 
 # ----------------------------------------------------------------------- odors
@@ -714,12 +844,16 @@ routes = [
     Route("/", index),
     Route("/api/health", health),
     Route("/api/options", options),
+    Route("/api/metadata/check", metadata_check, methods=["POST"]),
+    Route("/api/user", user_get),
+    Route("/api/user", user_save, methods=["POST"]),
     Route("/api/stage", stage_create, methods=["POST"]),
     Route("/api/stage/{stage_id}", stage_get),
     Route("/api/stage/{stage_id}/odor_yaml", stage_add_yaml, methods=["POST"]),
     Route("/api/stage/{stage_id}/odor_yaml/{name}", stage_remove_yaml, methods=["DELETE"]),
     Route("/api/stage/{stage_id}/experiment_xml", stage_add_xml, methods=["POST"]),
     Route("/api/stage/{stage_id}/experiment_xml", stage_remove_xml, methods=["DELETE"]),
+    Route("/api/stage/{stage_id}/lookup", stage_lookup, methods=["POST"]),
     Route("/api/stage/{stage_id}/readme", stage_readme, methods=["POST"]),
     Route("/api/stage/{stage_id}/commit", stage_commit, methods=["POST"]),
     Route("/api/datasets", datasets_list),

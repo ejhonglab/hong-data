@@ -6,12 +6,16 @@ missing element is simply skipped, and the file is stored verbatim regardless.
 """
 from __future__ import annotations
 
+import re
 import xml.etree.ElementTree as ET
 from typing import Any, Optional
 
 
 class ExperimentXmlError(ValueError):
     pass
+
+
+_YAML_NAME = re.compile(r"[^\s\"'<>|*?]+\.ya?ml\b", re.IGNORECASE)
 
 
 def _attr(el: Optional[ET.Element], name: str) -> Optional[str]:
@@ -81,3 +85,18 @@ def parse_experiment_xml(text: str) -> dict[str, Any]:
         info["channels"] = [w.get("name") for w in wl.findall("Wavelength") if w.get("name")]
     info = {k: v for k, v in info.items() if v not in (None, {}, [])}
     return {"info": info, "suggestions": suggestions}
+
+
+def notes_yaml_names(text: str) -> list[str]:
+    """File names of the YAMLs mentioned in an Experiment.xml's notes (where hong2p looks for the stimulus file).
+
+    Returns:
+        names without their folders (which may be Windows paths), or [] if the XML
+        cannot be read.
+    """
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        return []
+    notes = " ".join(t for t in (_attr(root.find("ExperimentNotes"), "text"), _attr(root.find("Comments"), "text")) if t)
+    return list(dict.fromkeys(m.replace("\\", "/").rsplit("/", 1)[-1] for m in _YAML_NAME.findall(notes)))

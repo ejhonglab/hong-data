@@ -41,7 +41,7 @@ cached odor structure images (`data/odor_structures/`).
 Before the first start, have a look at:
 
 - `docker-compose.yml`: host port (`8080:8000`), upload size limit, odor sheet link
-  (see "Odor sheet" below).
+  (see "Odor sheet" below), where tensor is mounted (see "Tensor" below).
 - `config/glomeruli.txt`: glomerulus names accepted as ROI labels.
 - `reference_data/manifest.json`: the fixed matrices shown in the "Reference matrices"
   tab (format in `reference_data/README.md`). Replace the two synthetic examples.
@@ -77,6 +77,20 @@ To set the sheet up:
 The server needs outbound HTTPS to docs.google.com for the sheet, and to
 pubchem.ncbi.nlm.nih.gov for structure images (fetched once per CID, then cached).
 Without a sheet, the Odors tab can still import a CSV in the same format.
+
+### Tensor
+
+Users give their data folders (Settings tab) relative to the top of the lab NAS,
+tensor, which the server needs to be able to read: it checks that the folders exist,
+and looks in them for the flies of each upload (raw data folder, ThorImage
+`Experiment.xml`, odor YAMLs). Mount tensor on the server (by default the app expects it
+at `/mnt/tank0/tensor`; `OLFDB_TENSOR_ROOT` sets another place). `docker-compose.yml`
+bind-mounts that path into the container read-only, at the same path; change both
+sides of that line, and `OLFDB_TENSOR_ROOT`, if it is elsewhere. The container runs as
+uid 10001, so the files need to be readable by it (world-readable is enough); the
+Settings tab says when a folder exists but cannot be read. If the path does not exist
+on the host when the container starts, Docker creates it empty, and the Settings tab
+reports tensor as not mounted.
 
 ## 4. Manage it with systemd (start on boot, restart on failure, logs in journald)
 
@@ -178,6 +192,7 @@ Same behaviour (boot start, restart on crash), just no container isolation.
 | `OLFDB_STAGE_TTL_HOURS` | `48` | staged-but-never-saved uploads are deleted after this |
 | `OLFDB_ODOR_SHEET_URL` | (none) | Google sheet the odor table is synced from (see "Odor sheet") |
 | `OLFDB_ODOR_SHEET_CHECK_MINUTES` | `10` | how often (at most) the sheet is read to tell whether it changed |
+| `OLFDB_TENSOR_ROOT` | `/mnt/tank0/tensor` | the lab NAS as mounted on the server (see "Tensor"); users' folders are relative to it |
 
 Keep `--workers 1`: SQLite handles concurrent readers fine, and one process avoids
 write contention; the viewer work happens in the browser anyway.

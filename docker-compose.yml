@@ -10,11 +10,13 @@ services:
       - ./data:/data           # SQLite DB, staging area and every uploaded file
       - ./reference_data:/srv/olfdb/reference_data:ro
       - ./config:/srv/olfdb/config:ro
+      - /mnt/tank0/tensor:/mnt/tank0/tensor:ro   # the lab NAS (see DEPLOY.md, "Tensor")
     environment:
       OLFDB_MAX_UPLOAD_MB: "1024"
       OLFDB_STAGE_TTL_HOURS: "48"
       # Google sheet with odor metadata (see DEPLOY.md), shared as "anyone with the link can view"
       OLFDB_ODOR_SHEET_URL: ""
+      OLFDB_TENSOR_ROOT: "/mnt/tank0/tensor"
     logging:
       driver: json-file
       options: { max-size: "20m", max-file: "5" }

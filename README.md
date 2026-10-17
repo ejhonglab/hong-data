@@ -6,11 +6,26 @@ experiment, and browse everything as scrollable heatmaps. Fixed reference
 matrices (chemicals × fruits, chemicals × pathways, ...) get their own tab.
 
 - **Upload**: drop a CSV/parquet → it is checked and shown as a heatmap *before*
-  anything is saved → fill in the experiment details (your name is remembered on the
-  machine; required: indicator, Gal4 driver, coding unit) → optional odor YAML (every
-  odor in the matrix must appear with the same abbreviation and concentration),
-  ThorImage `Experiment.xml`, power/age/wavelength/rig/paths/notes → a README.md is
-  generated and can be edited → saved to SQLite plus files on disk.
+  anything is saved → fill in the experiment details (required: your name, indicator,
+  Gal4 driver, coding unit) → optional odor YAML (every odor in the matrix must appear
+  with the same abbreviation and concentration), ThorImage `Experiment.xml`,
+  power/age/wavelength/rig/paths/notes → a README.md is generated and can be edited →
+  saved to SQLite plus files on disk. The details are filled in from your settings,
+  from the file (panel names; glomerulus ROIs mean coding unit "glomeruli") and from
+  your data on tensor: the server looks for each fly (`<folder>/<date>/<fly>/`, as in
+  hong2p) in your raw and motion-corrected data folders, attaches the Experiment.xml of
+  the first recording (wavelength from its laser setting) and the fewest odor YAMLs
+  that together describe every odor (those named in the recordings' ThorImage notes
+  first, then ones with a fly's date in their path), and fills in the raw and
+  motion-corrected data paths. Each field is colored by where its value came from
+  (settings, tensor, the files), until you change it; the README says which files came
+  from tensor, and from where.
+- **Settings**: your name, and your raw data, motion-corrected data and odor YAML
+  folders on tensor (relative to its top; absolute paths are refused). Each folder is
+  checked on the server as you leave its field, and once all are found there ("All
+  Paths Accessible") they are saved on the server under your name, so that any
+  computer you use, and the upload form, gets them. Below that, defaults for the
+  upload form, checked as the form checks its fields and kept in the browser only.
 - **Browse**: datasets grouped by panel or by the date of their last fly; README and
   original files one click away; the same viewer as the upload preview.
 - **Download** (one dataset from its page, or several ticked in the list): a zip with
@@ -141,6 +156,7 @@ app/db.py          SQLite schema and queries
 app/reference.py   fixed reference matrices
 app/export.py      downloads: zips of dataset files, concatenated wide/long matrices
 app/odormeta.py    odor table: sheet parsing / validation, sync diff, links, dataset matching
+app/tensor.py      users' folders on tensor: path checks, finding a dataset's flies, recordings, YAMLs
 config/odor_sheet_template.csv   odor sheet columns, with the odors from the thesis tables
 app/static/        frontend: index.html, app.js, heatmap.js, colormaps.js, app.css,
                    cluster.js (+ cluster-worker.js), figure.js (SVG/PDF/PNG export)
@@ -152,17 +168,24 @@ deploy/            systemd units; Dockerfile + docker-compose.yml at the top lev
 
 `data/olfdb.sqlite3` tables: `datasets` (metadata, README, summary), `dataset_panels`,
 `units` (date, fly_num, roi), `trials` (panel, odor, components, repeat), `responses`
-(one row per cell, for SQL queries) and `matrices` (the same values as a float32 blob
-for fast serving). Files: `data/datasets/<id>/` holds the original data file,
+(one row per cell, for SQL queries), `matrices` (the same values as a float32 blob
+for fast serving) and `users` (each user's folders on tensor). Files: `data/datasets/<id>/` holds the original data file,
 `README.md`, `metadata.json`, `odor_yaml/*.yaml` and the `Experiment.xml`.
 
 ## API (used by the frontend; handy for scripts)
 
 ```
 GET  /api/options                       dropdown values (indicators, drivers, panels, ...)
+POST /api/metadata/check                {"metadata": {...}} → problems with upload form defaults
+GET  /api/user?name=                    a user's folders on tensor ("user": null if none saved)
+POST /api/user                          {"name", "raw_dirs", "mocorr_dirs", "odor_dirs"} → each
+                                        folder checked on tensor; saved if all are there
 POST /api/stage                         multipart 'file' → validation + matrix payload
-POST /api/stage/{id}/odor_yaml          multipart 'file' (repeatable) → subset check
-POST /api/stage/{id}/experiment_xml     multipart 'file'
+POST /api/stage/{id}/lookup             {"name"} → that user's folders searched for the flies,
+                                        recordings and odor YAMLs of the staged dataset
+POST /api/stage/{id}/odor_yaml          multipart 'file' (repeatable), or {"tensor_paths": [...]}
+                                        → subset check
+POST /api/stage/{id}/experiment_xml     multipart 'file', or {"tensor_path"}
 POST /api/stage/{id}/readme             {"metadata": {...}} → README.md text
 POST /api/stage/{id}/commit             {"metadata", "readme", "readme_edited"} → {"dataset_id"}
 GET  /api/datasets                      list

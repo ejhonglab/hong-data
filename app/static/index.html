@@ -15,6 +15,7 @@
     <a href="#odors" data-tab="odors">Odors<span class="tab-badge" id="odors-badge" hidden title="The odor sheet changed since it was last synced"></span></a>
     <a href="#upload" data-tab="upload">Upload</a>
     <a href="#reference" data-tab="reference">Reference matrices</a>
+    <a href="#settings" data-tab="settings">Settings</a>
   </nav>
   <span class="topbar-status" id="topbar-status"></span>
 </header>
@@ -60,7 +61,11 @@
 
     <form class="step" id="step-meta" hidden autocomplete="off">
       <div class="step-head"><span class="step-num">2</span><h2>Experiment details</h2></div>
-      <p class="muted">Fields marked * are required. Your name is remembered on this computer.</p>
+      <p class="muted">Fields marked * are required. Colors show values you did not type in:
+        <span class="src-legend"><span class="swatch" data-src="settings"></span>from your <a href="#settings">settings</a>
+        <span class="swatch" data-src="nas"></span>found on tensor
+        <span class="swatch" data-src="file"></span>read from the files you added</span></p>
+      <div id="nas-lookup"></div>
 
       <div class="grid">
         <label class="field"><span>Your name *</span><input name="uploader_name" required list="dl-uploaders"></label>
@@ -95,7 +100,8 @@
         </label>
         <label class="field"><span>Panel name(s) <span class="muted">(comma-separated)</span></span><input name="panel_names" list="dl-panels" placeholder="e.g. megamat"></label>
         <label class="field"><span>Analysis source code (link)</span><input name="source_code_url" type="url" placeholder="https://github.com/…"></label>
-        <label class="field"><span>Raw data path on tensor</span><input name="raw_data_path" placeholder="/mnt/tensor/…"></label>
+        <label class="field"><span>Raw data path on tensor</span><input name="raw_data_path" placeholder="e.g. tom/raw_data/2023-11-19"></label>
+        <label class="field"><span>Motion-corrected data path on tensor</span><input name="mocorr_data_path" placeholder="e.g. tom/analysis/2023-11-19"></label>
 
         <div class="field span2"><span>Odor metadata YAML <span class="muted">(olfactometer config; several allowed)</span></span>
           <div class="row">
@@ -111,7 +117,7 @@
           <div class="row">
             <input type="file" id="xml-input" accept=".xml" hidden>
             <button type="button" class="btn" id="xml-btn">Add Experiment.xml</button>
-            <span id="xml-status" class="muted"></span>
+            <span id="xml-status" class="xml-status muted"></span>
           </div>
           <div id="xml-info"></div>
         </div>
@@ -235,6 +241,73 @@
       <div id="odor-table"></div>
       <details class="sync-history"><summary>Sync history</summary><div id="odor-syncs"></div></details>
     </div>
+  </section>
+
+  <!-- ====================================================== SETTINGS -->
+  <section id="tab-settings" class="tab" hidden>
+    <div class="page-head">
+      <h1>Settings</h1>
+      <p class="lede">Who you are and where your data is on tensor, so that the upload form can fill itself in. Your folders are saved on the server under your name; the upload form defaults are kept on this computer only.</p>
+    </div>
+
+    <div class="step" id="settings-folders">
+      <div class="step-head"><h2>You and your data on tensor</h2></div>
+      <div class="grid">
+        <label class="field"><span>Your name</span><input id="settings-name" list="dl-uploaders" autocomplete="off"></label>
+      </div>
+      <p class="muted folders-help">Give folders relative to the top of tensor (on the server: <code id="tensor-root">…</code>), e.g. <code>tom/raw_data</code>.
+        Each is checked on the server when you leave its field; once all of them are found there, they are saved under your name.</p>
+      <div class="dir-section">
+        <h3>Raw data</h3>
+        <p class="muted">ThorImage recordings, as <code>&lt;folder&gt;/&lt;YYYY-MM-DD&gt;/&lt;fly&gt;/&lt;recording&gt;/Experiment.xml</code>.</p>
+        <div class="dirlist" data-kind="raw_dirs" data-placeholder="e.g. tom/raw_data"></div>
+      </div>
+      <div class="dir-section">
+        <h3>Motion-corrected data</h3>
+        <p class="muted">Laid out like the raw data: <code>&lt;folder&gt;/&lt;YYYY-MM-DD&gt;/&lt;fly&gt;/…</code></p>
+        <div class="dirlist" data-kind="mocorr_dirs" data-placeholder="e.g. tom/analysis"></div>
+      </div>
+      <div class="dir-section">
+        <h3>Odor metadata</h3>
+        <p class="muted">Olfactometer YAML files, up to three folders deep. Those named in the notes of a fly's ThorImage recordings, or with one of the flies' dates in their name, are tried for an upload.</p>
+        <div class="dirlist" data-kind="odor_dirs" data-placeholder="e.g. tom/stimulus_files"></div>
+      </div>
+      <div class="paths-status" id="paths-status" aria-live="polite"></div>
+    </div>
+
+    <form class="step" id="settings-defaults" autocomplete="off">
+      <div class="step-head"><h2>Upload form defaults</h2></div>
+      <p class="muted">Filled into the upload form for every new dataset, unless its files (or its data on tensor) give a value. Checked as the upload form checks them when you leave a field, and kept on this computer only.</p>
+      <div class="grid">
+        <label class="field"><span>Calcium indicator</span><input name="indicator" list="dl-indicators"></label>
+        <label class="field"><span>Gal4 driver</span><input name="driver" list="dl-drivers" placeholder="e.g. GH146-Gal4"></label>
+        <label class="field"><span>Coding unit recorded from</span><input name="coding_unit" list="dl-coding-units"></label>
+        <label class="field"><span>Recording system</span><input name="recording_system" list="dl-systems"></label>
+        <label class="field span2"><span>Full fly genotype</span><input name="genotype" list="dl-genotypes" placeholder="e.g. w;GH146-Gal4/UAS-GCaMP6f;+"></label>
+        <div class="field"><span>Fly age range (days after eclosion, from 0)</span>
+          <div class="row"><input name="age_min_days" type="number" min="0" step="any" placeholder="min" class="narrow"><span class="dash">–</span><input name="age_max_days" type="number" min="0" step="any" placeholder="max" class="narrow"></div>
+        </div>
+        <label class="field"><span>Excitation wavelength (nm)</span><input name="wavelength_nm" type="number" min="0" step="any" placeholder="925"></label>
+        <div class="field"><span>Power measured at the fly (mW)</span>
+          <div class="row"><input name="power_mw" type="number" min="0" step="any" placeholder="e.g. 12" class="narrow"><span class="dash">±</span><input name="power_tolerance_mw" type="number" min="0" step="any" placeholder="tolerance" class="narrow" disabled></div>
+        </div>
+        <div class="field"><span>Was the power measured on the day of the experiments?</span>
+          <div class="row radios">
+            <label><input type="radio" name="power_measured_same_day" value="true" disabled> yes</label>
+            <label><input type="radio" name="power_measured_same_day" value="false" disabled> no</label>
+            <label><input type="radio" name="power_measured_same_day" value="" checked disabled> not sure</label>
+          </div>
+        </div>
+        <label class="field"><span>Panel name(s) <span class="muted">(comma-separated)</span></span><input name="panel_names" list="dl-panels" placeholder="e.g. megamat"></label>
+        <label class="field"><span>Analysis source code (link)</span><input name="source_code_url" type="url" placeholder="https://github.com/…"></label>
+        <label class="field span2"><span>Notes</span><textarea name="notes" rows="3"></textarea></label>
+      </div>
+      <div id="defaults-status" aria-live="polite"></div>
+      <div class="actions"><button type="button" class="btn" id="defaults-clear">Clear all defaults</button></div>
+      <datalist id="dl-indicators"></datalist>
+      <datalist id="dl-coding-units"></datalist>
+      <datalist id="dl-systems"></datalist>
+    </form>
   </section>
 
   <!-- ===================================================== REFERENCE -->

@@ -544,6 +544,23 @@ function renderMarkdown(md) {
 }
 
 // =================================================================== UPLOAD
+// where a value in the upload form came from, when it was not typed in (shown as its color)
+const SOURCES = { settings: 'from your settings', nas: 'found on tensor', file: 'read from the files you added' };
+// fields that can be filled in automatically; once the user changes one, it is left alone
+const AUTO_FIELDS = ['uploader_name', 'indicator', 'driver', 'coding_unit', 'genotype', 'age_min_days', 'age_max_days', 'wavelength_nm',
+  'power_mw', 'power_tolerance_mw', 'power_measured_same_day', 'recording_system', 'panel_names', 'source_code_url', 'raw_data_path',
+  'mocorr_data_path', 'notes'];
+// fields about one dataset only, emptied for each new file
+const DATASET_FIELDS = ['raw_data_path', 'mocorr_data_path'];
+// <select> + "Other…" input pairs
+const COMBOS = { indicator: ['#indicator-select', '#indicator-other'], coding_unit: ['#coding-unit-select', '#coding-unit-other'], recording_system: ['#system-select', '#system-other'] };
+// the field a form element belongs to
+const fieldKey = (el) => (el.name || '').replace(/_(select|other)$/, '');
+
+function markSource(el, src, detail = '') {
+  if (src) { el.dataset.src = src; el.title = detail ? `${SOURCES[src]}: ${detail}` : SOURCES[src]; } else { delete el.dataset.src; el.removeAttribute('title'); }
+}
+
 class UploadFlow {
   constructor() {
     this.options = null;
@@ -552,6 +569,11 @@ class UploadFlow {
     this.generatedReadme = '';
     this.viewer = null;
     this.yamlCheck = null;
+    this.nas = null; // what the last lookup found on tensor
+    this.xmlSuggestions = null; // form values from the attached Experiment.xml: {values, src}
+    this.manual = new Set(); // fields the user changed
+    this.auto = new Set(); // fields filled in automatically
+    this._lookupSeq = 0;
     this._wire();
   }
 
@@ -574,15 +596,14 @@ class UploadFlow {
     sys.innerHTML = '<option value="">—</option>' + o.recording_systems.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join('') + '<option value="__other__">Other…</option>';
     const dl = (id, values) => { $(id).innerHTML = values.map((v) => `<option value="${esc(v)}">`).join(''); };
     dl('#dl-uploaders', o.uploaders); dl('#dl-drivers', o.drivers); dl('#dl-genotypes', o.genotypes); dl('#dl-panels', o.panels);
-    const form = $('#step-meta');
-    form.wavelength_nm.value = o.default_wavelength_nm ?? 925;
-    const name = LS.get('olfdb.uploader_name', '');
-    if (name) form.uploader_name.value = name;
-    for (const [sel, other] of [['#indicator-select', '#indicator-other'], ['#coding-unit-select', '#coding-unit-other'], ['#system-select', '#system-other']]) {
+    dl('#dl-indicators', o.indicators); dl('#dl-coding-units', o.coding_units); dl('#dl-systems', o.recording_systems);
+    $('#step-meta').wavelength_nm.value = o.default_wavelength_nm ?? 925;
+    for (const [sel, other] of Object.values(COMBOS)) {
       const s = $(sel), oth = $(other);
       const sync = () => { oth.hidden = s.value !== '__other__'; if (!oth.hidden) oth.focus(); };
       s.addEventListener('change', sync);
     }
+    this._autofill();
   }
 
   _wire() {
@@ -595,17 +616,15 @@ class UploadFlow {
     fi.addEventListener('change', () => { if (fi.files[0]) this.stageFile(fi.files[0]); fi.value = ''; });
 
     const form = $('#step-meta');
-    const pw = $('#power-mw'), tol = $('#power-tol');
-    const syncPower = () => {
-      const has = pw.value !== '';
-      tol.disabled = !has;
-      $$('#power-sameday input').forEach((r) => { r.disabled = !has; });
-    };
-    pw.addEventListener('input', syncPower);
+    $('#power-mw').addEventListener('input', () => this._syncPower());
+    // capturing, to know a field was changed by the user before its own listeners run
+    form.addEventListener('input', (e) => this._changedByUser(e.target), true);
+    form.addEventListener('change', (e) => this._changedByUser(e.target), true);
+    form.uploader_name.addEventListener('change', () => { if (this.stage) this.lookup(); });
     form.addEventListener('submit', (e) => { e.preventDefault(); this.generateReadme(); });
 
     $('#yaml-btn').addEventListener('click', () => $('#yaml-input').click());
-    $('#yaml-input').addEventListener('change', (e) => { if (e.target.files.length) this.addYaml(e.target.files); e.target.value = ''; });
+    $('#yaml-input').addEventListener('change', (e) => { if (e.target.files.length) this.addYaml([...e.target.files]); e.target.value = ''; });
     $('#xml-btn').addEventListener('click', () => $('#xml-input').click());
     $('#xml-input').addEventListener('change', (e) => { if (e.target.files[0]) this.addXml(e.target.files[0]); e.target.value = ''; });
 
@@ -615,14 +634,192 @@ class UploadFlow {
     $('#done-another').addEventListener('click', () => this.reset());
   }
 
+  _syncPower() {
+    const has = $('#power-mw').value !== '';
+    $('#power-tol').disabled = !has;
+    $$('#power-sameday input').forEach((r) => { r.disabled = !has; });
+  }
+
+  // ------------------------------------------------- automatically filled fields
+  _changedByUser(el) {
+    const key = fieldKey(el);
+    if (!AUTO_FIELDS.includes(key) || this.manual.has(key)) return;
+    this.manual.add(key);
+    this.auto.delete(key);
+    this._mark(key, null);
+  }
+
+  _setField(key, value) {
+    const v = value == null ? '' : String(value);
+    if (COMBOS[key]) {
+      const [s, other] = COMBOS[key].map((sel) => $(sel));
+      const known = v !== '__other__' && [...s.options].some((o) => o.value === v);
+      s.value = known ? v : v ? '__other__' : s.options[0].value;
+      other.value = known ? '' : v;
+      other.hidden = s.value !== '__other__';
+    } else if (key === 'power_measured_same_day') {
+      $$('#power-sameday input').forEach((r) => { r.checked = r.value === v; });
+    } else {
+      $('#step-meta')[key].value = v;
+    }
+    if (key === 'power_mw') this._syncPower();
+  }
+
+  _fieldEls(key) {
+    if (COMBOS[key]) return COMBOS[key].map((sel) => $(sel));
+    if (key === 'power_measured_same_day') return [$('#power-sameday')];
+    return [$('#step-meta')[key]];
+  }
+
+  _mark(key, src, detail = '') {
+    for (const el of this._fieldEls(key)) markSource(el, src, detail);
+  }
+
+  // Fills each field the user has not changed with the most specific value there is for
+  // it: found on tensor, then read from the dataset's files, then the defaults in
+  // Settings (a guess from the files comes last). A field filled in before that has
+  // nothing now goes back to how it started.
+  _autofill() {
+    const best = new Map();
+    const offer = (key, value, src, rank, detail = '') => {
+      if (value == null || value === '' || (best.get(key)?.rank ?? 0) >= rank) return;
+      best.set(key, { value, src, rank, detail });
+    };
+    const s = settings.current();
+    offer('uploader_name', s.name, 'settings', 2);
+    for (const [k, v] of Object.entries(s.defaults)) offer(k, v, 'settings', 2);
+    const sum = this.data?.summary;
+    if (sum?.panel_names?.length) offer('panel_names', sum.panel_names.join(', '), 'file', 3, 'the panel level of the data file');
+    if (sum?.roi_kind === 'glomeruli') offer('coding_unit', 'glomeruli', 'file', 3, 'the ROIs are glomeruli');
+    if (sum?.roi_kind === 'integers' && this.options?.coding_units.includes('KCs')) offer('coding_unit', 'KCs', 'file', 1, 'numbered ROIs');
+    const x = this.xmlSuggestions;
+    if (x) offer('wavelength_nm', x.values.wavelength_nm, x.src, 4, 'the laser setting in Experiment.xml');
+    if (this.nas) {
+      offer('raw_data_path', this.nas.raw_data_path, 'nas', 4, 'the folder with the flies found');
+      offer('mocorr_data_path', this.nas.mocorr_data_path, 'nas', 4, 'the folder with the flies found');
+    }
+    for (const key of AUTO_FIELDS) {
+      if (this.manual.has(key)) continue;
+      const b = best.get(key);
+      if (b) {
+        this._setField(key, b.value);
+        this._mark(key, b.src, b.detail);
+        this.auto.add(key);
+      } else if (this.auto.has(key)) {
+        this._setField(key, key === 'wavelength_nm' ? this.options?.default_wavelength_nm ?? 925 : null);
+        this._mark(key, null);
+        this.auto.delete(key);
+      }
+    }
+  }
+
+  // the name or the defaults in Settings changed
+  settingsChanged() {
+    if (!this.options) return;
+    const name = $('#step-meta').uploader_name.value;
+    this._autofill();
+    if (this.stage && $('#step-meta').uploader_name.value !== name) this.lookup();
+  }
+
+  // Looks for the dataset's flies in the uploader's folders on tensor, and attaches the
+  // Experiment.xml and odor YAMLs found there, unless some are attached already.
+  async lookup() {
+    const seq = ++this._lookupSeq;
+    const box = $('#nas-lookup');
+    const name = $('#step-meta').uploader_name.value.trim();
+    const stageId = this.stage.stage_id;
+    const done = (html) => { this.nas = null; box.replaceChildren(msgBox('info', html)); this._autofill(); };
+    if (!name) { done('Set your name and data folders in <a href="#settings">Settings</a> to have the files of this dataset found on tensor.'); return; }
+    box.replaceChildren(msgBox('info', `Looking for these flies in the folders of ${esc(name)} on tensor…`));
+    let res;
+    try {
+      res = await api(`/api/stage/${stageId}/lookup`, { method: 'POST', json: { name } });
+    } catch (e) {
+      if (seq === this._lookupSeq) box.replaceChildren(msgBox('error', `Could not look on tensor: ${esc(e.message)}`));
+      return;
+    }
+    if (seq !== this._lookupSeq || this.stage?.stage_id !== stageId) return;
+    if (!res.user) {
+      done(`No data folders are saved for <b>${esc(name)}</b>. Add them in <a href="#settings">Settings</a> to have the raw data, Experiment.xml and odor YAML of your uploads found on tensor.`);
+      return;
+    }
+    this.nas = res;
+    if (res.experiment_xmls.length && !this.stage.experiment_xml) await this.addXml({ tensorPath: res.experiment_xmls[0] });
+    if (res.odor_yamls.selected.length && !this.stage?.odor_yamls.length) await this.addYaml({ tensorPaths: res.odor_yamls.selected });
+    if (seq !== this._lookupSeq || this.stage?.stage_id !== stageId) return;
+    this._renderLookup();
+    this._autofill();
+  }
+
+  _renderLookup() {
+    const n = this.nas, st = this.stage, box = $('#nas-lookup');
+    const flyName = (f) => `${f.date} fly ${f.fly_num}`;
+    const plural = (k, word) => `${k} ${word}${k === 1 ? '' : 's'}`;
+    const flies = (key, folders, path) => {
+      if (!n.user[folders].length) return '<span class="muted">no such folders in your settings</span>';
+      const missing = n.flies.filter((f) => !f[key].length);
+      const found = n.flies.length - missing.length;
+      let s = `${found} of ${n.flies.length} ${n.flies.length === 1 ? 'fly' : 'flies'}`;
+      if (path) s += ` in <code>${esc(path)}</code>`;
+      if (found && missing.length) s += ` <span class="muted">(not ${esc(missing.slice(0, 4).map(flyName).join(', '))}${missing.length > 4 ? ', …' : ''})</span>`;
+      return s;
+    };
+    const short = (p) => p.replace(/\/Experiment\.xml$/, '').replace(n.raw_data_path ? `${n.raw_data_path}/` : '', '');
+    let xml = n.experiment_xmls.length ? plural(n.experiment_xmls.length, 'recording') : '<span class="muted">none</span>';
+    if (n.experiment_xmls.length) {
+      const current = st.experiment_xml_tensor_path;
+      const opts = (n.experiment_xmls.includes(current) ? [] : [`<option value="">${st.experiment_xml ? 'the one you added' : 'none'}</option>`])
+        .concat(n.experiment_xmls.map((p) => `<option value="${esc(p)}"${p === current ? ' selected' : ''}>${esc(short(p))}</option>`));
+      xml += `; <label>Experiment.xml attached: <select data-xml>${opts.join('')}</select></label>`;
+    }
+    const y = n.odor_yamls;
+    const attached = new Set(st.odor_yamls.map((a) => a.tensor_path).filter(Boolean));
+    let yaml;
+    if (!n.user.odor_dirs.length) yaml = '<span class="muted">no such folders in your settings</span>';
+    else if (y.selected.length) {
+      yaml = `${plural(y.selected.length, 'file')} describing all ${y.n_matrix_odors} odors`;
+      yaml += y.selected.every((p) => attached.has(p)) ? ', attached' : ' <span class="muted">(not attached, as other YAML was attached already)</span>';
+    } else if (y.candidates.length) {
+      yaml = `${plural(y.candidates.length, 'file')} describing some of the odors, but none for ${esc(y.missing.slice(0, 6).join(', '))}${y.missing.length > 6 ? ', …' : ''}; attach any of them below`;
+    } else yaml = '<span class="muted">none describing these odors</span>';
+    const flyRows = n.flies.map((f) => `<tr><td>${esc(flyName(f))}</td><td>${f.raw.map((p) => `<code>${esc(p)}</code>`).join('<br>') || '—'}</td>
+      <td>${f.mocorr.map((p) => `<code>${esc(p)}</code>`).join('<br>') || '—'}</td><td>${f.recordings.length}</td></tr>`).join('');
+    const yamlRows = y.candidates.map((c) => `<tr><td><code>${esc(c.path)}</code></td><td class="muted">${esc(c.reason)}</td>
+      <td>${c.n_covered} of ${y.n_matrix_odors} odors</td><td>${attached.has(c.path) ? '<span class="muted">attached</span>'
+        : `<button type="button" class="btn small" data-attach-yaml="${esc(c.path)}">attach</button>`}</td></tr>`).join('');
+    box.innerHTML = `<div class="msg info lookup">
+      <div class="lookup-head"><b>Found on tensor</b><span>in the folders of ${esc(n.user.name)} <span class="muted">(<a href="#settings">settings</a>)</span></span>
+        <button type="button" class="btn small" data-again>Look again</button></div>
+      <ul><li>Raw data: ${flies('raw', 'raw_dirs', n.raw_data_path)}</li>
+        <li>Motion-corrected data: ${flies('mocorr', 'mocorr_dirs', n.mocorr_data_path)}</li>
+        <li>ThorImage recordings: ${xml}</li>
+        <li>Odor YAML: ${yaml}</li></ul>
+      <details><summary>Each fly${y.candidates.length ? ', and the odor YAMLs tried' : ''}</summary>
+        <table class="odor-table"><thead><tr><th>Fly</th><th>Raw data</th><th>Motion-corrected</th><th>Recordings</th></tr></thead><tbody>${flyRows}</tbody></table>
+        ${yamlRows ? `<table class="odor-table"><thead><tr><th>Odor YAML</th><th>Found by</th><th>Describes</th><th></th></tr></thead><tbody>${yamlRows}</tbody></table>` : ''}
+      </details></div>`;
+    $('[data-again]', box).addEventListener('click', () => this.lookup());
+    $('[data-xml]', box)?.addEventListener('change', (e) => { if (e.target.value) this.addXml({ tensorPath: e.target.value }); });
+    $$('[data-attach-yaml]', box).forEach((b) => b.addEventListener('click', () => this.addYaml({ tensorPaths: [b.dataset.attachYaml] })));
+  }
+
+  // ------------------------------------------------------------------- staging
   reset() {
     this.stage = null; this.data = null; this.yamlCheck = null; this.generatedReadme = '';
+    this.nas = null; this.xmlSuggestions = null; this._lookupSeq++;
+    for (const key of DATASET_FIELDS) {
+      this._setField(key, null);
+      this._mark(key, null);
+      this.manual.delete(key);
+      this.auto.delete(key);
+    }
+    $('#nas-lookup').innerHTML = '';
     $('#file-result').innerHTML = '';
     $('#preview').hidden = true;
     $('#step-meta').hidden = true;
     $('#step-readme').hidden = true;
     $('#step-done').hidden = true;
-    $('#yaml-list').innerHTML = ''; $('#yaml-check').innerHTML = ''; $('#xml-info').innerHTML = ''; $('#xml-status').textContent = '';
+    $('#yaml-list').innerHTML = ''; $('#yaml-check').innerHTML = ''; $('#xml-info').innerHTML = ''; this._renderXml();
     $('#meta-errors').innerHTML = ''; $('#commit-errors').innerHTML = '';
     window.scrollTo(0, 0);
   }
@@ -662,23 +859,28 @@ class UploadFlow {
     if (!this.viewer) this.viewer = new MatrixViewer($('#preview-viewer'));
     this.viewer.setNeuralData(res.data, { title: file.name, fileStem: file.name.replace(/\.[^.]*$/, '') || 'preview' });
 
-    // prefill the form from the file
     const meta = $('#step-meta');
     meta.hidden = false;
-    if (s.panel_names?.length && !meta.panel_names.value) meta.panel_names.value = s.panel_names.join(', ');
-    if (s.roi_kind === 'glomeruli') $('#coding-unit-select').value = 'glomeruli';
-    else if (s.roi_kind === 'integers' && this.options?.coding_units.includes('KCs')) $('#coding-unit-select').value = 'KCs';
+    this._autofill();
+    this.lookup();
     meta.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
+  // files: File objects, or {tensorPaths} for files on tensor
   async addYaml(files) {
-    const form = new FormData();
-    for (const f of files) form.append('file', f, f.name);
+    const stageId = this.stage.stage_id;
+    let req;
+    if (files.tensorPaths) req = { method: 'POST', json: { tensor_paths: files.tensorPaths } };
+    else {
+      const form = new FormData();
+      for (const f of files) form.append('file', f, f.name);
+      req = { method: 'POST', form };
+    }
     const box = $('#yaml-check');
     box.replaceChildren(msgBox('info', 'Checking the odors against the YAML…'));
     let res;
-    try { res = await api(`/api/stage/${this.stage.stage_id}/odor_yaml`, { method: 'POST', form }); } catch (e) { box.replaceChildren(msgBox('error', esc(e.message))); return; }
-    this._renderYaml(res);
+    try { res = await api(`/api/stage/${stageId}/odor_yaml`, req); } catch (e) { box.replaceChildren(msgBox('error', esc(e.message))); return; }
+    if (this.stage?.stage_id === stageId) this._renderYaml(res);
   }
 
   async removeYaml(name) {
@@ -690,11 +892,14 @@ class UploadFlow {
     this.stage = res.stage;
     this.yamlCheck = res.check;
     const list = $('#yaml-list');
-    list.innerHTML = res.stage.odor_yamls.map((y) => `<div class="file"><code>${esc(y.name)}</code><span class="muted">${y.n_odors} odors</span><button type="button" class="btn small" data-remove="${esc(y.name)}">remove</button></div>`).join('');
+    list.innerHTML = res.stage.odor_yamls.map((y) => `<div class="file"${y.tensor_path ? ` data-src="nas" title="${esc(`${SOURCES.nas}: ${y.tensor_path}`)}"` : ''}>
+      <code>${esc(y.name)}</code><span class="muted">${y.n_odors} odors${y.tensor_path ? `, from <code>${esc(y.tensor_path)}</code>` : ''}</span>
+      <button type="button" class="btn small" data-remove="${esc(y.name)}">remove</button></div>`).join('');
     $$('[data-remove]', list).forEach((b) => b.addEventListener('click', () => this.removeYaml(b.dataset.remove)));
     const box = $('#yaml-check');
     box.innerHTML = '';
     if (res.errors?.length) box.appendChild(msgBox('error', `Not added:${listHtml(res.errors)}`));
+    if (this.nas) this._renderLookup();
     const c = res.check;
     if (!c) return;
     if (c.ok) {
@@ -705,16 +910,37 @@ class UploadFlow {
     }
   }
 
+  // file: a File, or {tensorPath} for one on tensor
   async addXml(file) {
-    const form = new FormData();
-    form.append('file', file, file.name);
+    const stageId = this.stage.stage_id;
+    const onTensor = !(file instanceof File);
+    let req;
+    if (onTensor) req = { method: 'POST', json: { tensor_path: file.tensorPath } };
+    else {
+      const form = new FormData();
+      form.append('file', file, file.name);
+      req = { method: 'POST', form };
+    }
     $('#xml-status').textContent = 'Reading…';
     let res;
-    try { res = await api(`/api/stage/${this.stage.stage_id}/experiment_xml`, { method: 'POST', form }); } catch (e) { $('#xml-status').textContent = ''; $('#xml-info').replaceChildren(msgBox('error', esc(e.message))); return; }
-    if (!res.ok) { $('#xml-status').textContent = ''; $('#xml-info').replaceChildren(msgBox('error', `Not added:${listHtml(res.errors)}`)); return; }
+    try { res = await api(`/api/stage/${stageId}/experiment_xml`, req); } catch (e) { this._renderXml(); $('#xml-info').replaceChildren(msgBox('error', esc(e.message))); return; }
+    if (this.stage?.stage_id !== stageId) return;
+    if (!res.ok) { this._renderXml(); $('#xml-info').replaceChildren(msgBox('error', `Not added:${listHtml(res.errors)}`)); return; }
     this.stage = res.stage;
-    $('#xml-status').innerHTML = `<code>${esc(file.name)}</code> added`;
-    const info = res.info || {};
+    this.xmlSuggestions = { values: res.suggestions || {}, src: onTensor ? 'nas' : 'file' };
+    this._renderXml();
+    this._autofill();
+    if (this.nas) this._renderLookup();
+  }
+
+  _renderXml() {
+    const st = this.stage, status = $('#xml-status');
+    markSource(status, null);
+    if (!st?.experiment_xml) { status.textContent = ''; return; }
+    const from = st.experiment_xml_tensor_path;
+    status.innerHTML = `<code>${esc(st.experiment_xml)}</code> added${from ? ` from <code>${esc(from)}</code>` : ''}`;
+    if (from) markSource(status, 'nas');
+    const info = st.experiment_xml_info || {};
     const kv = [];
     if (info.date) kv.push(['date', info.date]);
     if (info.software_version) kv.push(['ThorImage', info.software_version]);
@@ -723,10 +949,6 @@ class UploadFlow {
     if (info.laser_position) kv.push(['laser', `${info.laser_position} nm`]);
     if (info.pockels?.start != null) kv.push(['pockels', `${info.pockels.start}%`]);
     $('#xml-info').innerHTML = kv.length ? `<div class="kv">${kv.map(([k, v]) => `<span>${esc(k)}</span><span>${esc(v)}</span>`).join('')}</div>` : '';
-    const metaForm = $('#step-meta');
-    if (res.suggestions?.wavelength_nm && String(metaForm.wavelength_nm.value) === String(this.options.default_wavelength_nm)) {
-      metaForm.wavelength_nm.value = res.suggestions.wavelength_nm;
-    }
   }
 
   collectMetadata() {
@@ -748,6 +970,7 @@ class UploadFlow {
       wavelength_nm: num(f.wavelength_nm.value),
       source_code_url: f.source_code_url.value.trim() || null,
       raw_data_path: f.raw_data_path.value.trim() || null,
+      mocorr_data_path: f.mocorr_data_path.value.trim() || null,
       panel_names: f.panel_names.value,
       recording_system: other('#system-select', '#system-other') || null,
       notes: f.notes.value.trim() || null,
@@ -771,7 +994,7 @@ class UploadFlow {
     const box = $('#meta-errors');
     box.innerHTML = '';
     if (errs.length) { box.appendChild(msgBox('error', `Before generating the README:${listHtml(errs)}`)); return; }
-    LS.set('olfdb.uploader_name', meta.uploader_name);
+    settings.rememberName(meta.uploader_name);
     let res;
     try { res = await api(`/api/stage/${this.stage.stage_id}/readme`, { method: 'POST', json: { metadata: meta } }); } catch (e) { box.appendChild(msgBox('error', esc(e.message))); return; }
     if (!res.ok) { box.appendChild(msgBox('error', `The server rejected the details:${listHtml(res.errors)}`)); return; }
@@ -797,7 +1020,7 @@ class UploadFlow {
     } catch (e) { box.appendChild(msgBox('error', esc(e.message))); btn.disabled = false; btn.textContent = 'Save to database'; return; }
     btn.disabled = false; btn.textContent = 'Save to database';
     if (!res.ok) { box.appendChild(msgBox('error', `Not saved:${listHtml(res.errors)}`)); return; }
-    LS.set('olfdb.uploader_name', meta.uploader_name);
+    settings.rememberName(meta.uploader_name);
     $('#step-done').hidden = false;
     $('#done-text').innerHTML = `Dataset <b>#${res.dataset_id}</b> — ${esc(res.title)} — is in the database.`;
     $('#done-link').href = `#browse/${res.dataset_id}`;
@@ -1115,7 +1338,7 @@ class OdorsPage {
     const box = $('#odor-preview'), out = $('#odor-apply-result');
     const name = $('#odor-sync-name').value.trim();
     if (!name) { out.replaceChildren(msgBox('error', 'Your name is required (it goes in the sync history).')); return; }
-    LS.set('olfdb.uploader_name', name);
+    settings.rememberName(name);
     const json = {
       fingerprint: this.preview.fingerprint, applied_by: name,
       changes: $$('[data-change]:checked', box).map((x) => +x.dataset.change),
@@ -1209,20 +1432,270 @@ class Reference {
   }
 }
 
+// ================================================================= SETTINGS
+// The user's name and data folders on tensor (saved on the server, which looks for the
+// files of their uploads there), and their defaults for the upload form (kept in this browser).
+const DIR_KINDS = ['raw_dirs', 'mocorr_dirs', 'odor_dirs'];
+const DEFAULT_FIELDS = ['indicator', 'driver', 'coding_unit', 'recording_system', 'genotype', 'age_min_days', 'age_max_days',
+  'wavelength_nm', 'power_mw', 'power_tolerance_mw', 'power_measured_same_day', 'panel_names', 'source_code_url', 'notes'];
+const NUMBER_FIELDS = ['age_min_days', 'age_max_days', 'wavelength_nm', 'power_mw', 'power_tolerance_mw'];
+
+// what is wrong with a folder as typed, as far as can be told without the server
+function localDirProblem(path) {
+  if (/^\s*([/\\~]|[A-Za-z]:)/.test(path)) return 'absolute paths are not accepted: give the folder relative to the top of tensor';
+  if (path.split(/[/\\]/).includes('..')) return "'..' is not allowed: give the folder from the top of tensor";
+  return null;
+}
+
+class SettingsPage {
+  constructor() {
+    this.name = LS.get('olfdb.uploader_name', '');
+    this.defaults = LS.get('olfdb.defaults', {});
+    this.user = null; // the folders as saved on the server
+    this.owner = ''; // whose folders are shown ('' if not saved under any name yet)
+    this.loaded = false;
+    this._checking = false;
+    this._defaultsSeq = 0;
+    const box = $('#settings-folders');
+    $('#settings-name').addEventListener('change', (e) => this.setName(e.target.value));
+    box.addEventListener('input', (e) => { if (e.target.matches('input.dir')) this._dirEdited(e.target); });
+    box.addEventListener('change', (e) => { if (e.target.matches('input.dir')) this.check(); });
+    box.addEventListener('click', (e) => {
+      const row = e.target.closest('[data-remove]')?.closest('.dir-row');
+      if (!row) return;
+      if (row.nextElementSibling) row.remove(); else { $('input', row).value = ''; this._showRow(row, null); }
+      this.check();
+    });
+    const f = $('#settings-defaults');
+    f.power_mw.addEventListener('input', () => this._syncPower());
+    f.addEventListener('change', () => this.checkDefaults());
+    f.addEventListener('submit', (e) => e.preventDefault());
+    $('#defaults-clear').addEventListener('click', () => { this._fillDefaults({}); this.checkDefaults(); });
+  }
+
+  // what the upload form is filled in from
+  current() { return { name: this.name, defaults: this.defaults }; }
+
+  // a name entered elsewhere (upload form, odor sync) is kept only while none is set here
+  rememberName(name) {
+    if (this.name || !name) return;
+    this.name = name;
+    LS.set('olfdb.uploader_name', name);
+    $('#settings-name').value = name;
+  }
+
+  async load() {
+    if (this.loaded) return;
+    this.loaded = true;
+    $('#settings-name').value = this.name;
+    $('#tensor-root').textContent = upload.options?.tensor_root || '?';
+    this._fillDefaults(this.defaults);
+    if (this.name) {
+      try { this.user = (await api(`/api/user?name=${encodeURIComponent(this.name)}`)).user; } catch { /* check() says so */ }
+    }
+    // folders that could not be saved yet are kept in this browser until they can
+    const draft = LS.get('olfdb.dirs_draft', null);
+    const dirs = draft && draft.name === this.name ? draft.dirs : this.user || {};
+    this.owner = draft && draft.name === this.name ? draft.name : this.user?.name || '';
+    this._setDirs(dirs);
+    if (this.name || DIR_KINDS.some((k) => dirs[k]?.length)) this.check();
+    else this._status('none', 'No Folders Yet', 'Enter your name and your folders above.');
+  }
+
+  async setName(value) {
+    const name = value.trim().replace(/\s+/g, ' ');
+    $('#settings-name').value = name;
+    if (name === this.name) return;
+    this.name = name;
+    LS.set('olfdb.uploader_name', name);
+    upload.settingsChanged();
+    if (name) {
+      let user = null;
+      try { user = (await api(`/api/user?name=${encodeURIComponent(name)}`)).user; } catch { /* check() says so */ }
+      if (this.name !== name) return;
+      // the folders saved under this name before (perhaps on another computer); someone
+      // else's are not carried over to a new name, but ones entered before any name are
+      this.user = user;
+      if (user || this.owner) {
+        this._setDirs(user || {});
+        this.owner = user?.name || '';
+      }
+    }
+    this.check();
+  }
+
+  _setDirs(dirs) {
+    for (const kind of DIR_KINDS) {
+      const list = $(`.dirlist[data-kind=${kind}]`);
+      list.replaceChildren(...[...(dirs[kind] || []), ''].map((p) => this._dirRow(list, p)));
+    }
+  }
+
+  _dirRow(list, value) {
+    const row = document.createElement('div');
+    row.className = 'dir-row';
+    row.innerHTML = `<input class="dir" spellcheck="false" autocomplete="off" aria-label="Folder on tensor">
+      <span class="dir-mark" aria-hidden="true"></span><button type="button" class="btn small" data-remove title="Remove this folder">×</button>
+      <div class="dir-msg"></div>`;
+    const input = $('input', row);
+    input.placeholder = list.dataset.placeholder;
+    input.value = value;
+    return row;
+  }
+
+  _dirEdited(input) {
+    const row = input.closest('.dir-row');
+    const problem = localDirProblem(input.value);
+    this._showRow(row, problem ? { ok: false, error: problem } : null);
+    if (!row.nextElementSibling && input.value.trim()) row.parentElement.appendChild(this._dirRow(row.parentElement, ''));
+    this._status('pending', 'Not Checked Yet', 'Folders are checked on the server when you leave their field.');
+  }
+
+  // c: a check from the server (or a local one), or null to clear it
+  _showRow(row, c) {
+    row.classList.toggle('ok', !!c?.ok);
+    row.classList.toggle('bad', !!c && !c.ok);
+    $('.dir-mark', row).textContent = c ? (c.ok ? '✓' : '✗') : '';
+    $('.dir-msg', row).textContent = c && !c.ok ? c.error : '';
+  }
+
+  _status(kind, label, detail = '') {
+    $('#paths-status').innerHTML = `<span class="indicator ${kind}">${esc(label)}</span>${detail ? ` <span class="muted">${detail}</span>` : ''}`;
+  }
+
+  // Checks every folder on the server, which saves them under the name once all are found
+  // there. One check at a time, so that saves reach the server in order; edits made during
+  // one are checked right after it.
+  async check() {
+    if (this._checking) { this._checkAgain = true; return; }
+    this._checking = true;
+    try {
+      do {
+        this._checkAgain = false;
+        await this._check();
+      } while (this._checkAgain);
+    } finally {
+      this._checking = false;
+    }
+  }
+
+  async _check() {
+    const rows = {}, dirs = {};
+    for (const kind of DIR_KINDS) {
+      rows[kind] = $$(`.dirlist[data-kind=${kind}] .dir-row`).filter((r) => $('input', r).value.trim());
+      dirs[kind] = rows[kind].map((r) => $('input', r).value.trim());
+    }
+    this._status('pending', 'Checking…');
+    let res;
+    try {
+      res = await api('/api/user', { method: 'POST', json: { name: this.name, ...dirs } });
+    } catch (e) {
+      if (!this._checkAgain) this._status('bad', 'Could Not Check', esc(e.message));
+      return;
+    }
+    if (this._checkAgain) return;
+    for (const kind of DIR_KINDS) {
+      res.dirs[kind].forEach((c, i) => {
+        const input = $('input', rows[kind][i]);
+        if (input.value.trim() !== c.input) return; // changed since
+        if (c.ok && document.activeElement !== input) input.value = c.path;
+        this._showRow(rows[kind][i], c);
+      });
+    }
+    if (res.saved) {
+      this.user = res.user;
+      this.owner = res.user.name;
+      LS.set('olfdb.dirs_draft', null);
+    } else LS.set('olfdb.dirs_draft', { name: this.name, dirs });
+    const all = DIR_KINDS.flatMap((k) => res.dirs[k]);
+    const bad = all.filter((c) => !c.ok).length;
+    const saved = res.saved ? `Saved on the server for <b>${esc(res.user.name)}</b>.` : 'Enter your name above to save them on the server.';
+    if (!res.root.ok) this._status('bad', 'Tensor Not Accessible', `${esc(res.root.error)}. Nothing is saved until the server can read tensor.`);
+    else if (bad) this._status('bad', `${bad} of ${all.length} Paths Not Accessible`, 'Fix or remove the folders marked above; they are saved on the server once all of them are found there.');
+    else if (!all.length) this._status('none', 'No Folders Yet', this.name ? '' : 'Enter your name and your folders above.');
+    else this._status('ok', 'All Paths Accessible', saved);
+  }
+
+  // ------------------------------------------------------------------ defaults
+  _fillDefaults(values) {
+    const f = $('#settings-defaults');
+    for (const key of DEFAULT_FIELDS) {
+      const v = values[key] == null ? '' : String(values[key]);
+      if (key === 'power_measured_same_day') $$(`input[name=${key}]`, f).forEach((r) => { r.checked = r.value === v; });
+      else f[key].value = v;
+    }
+    this._syncPower();
+  }
+
+  _syncPower() {
+    const f = $('#settings-defaults'), has = f.power_mw.value !== '';
+    f.power_tolerance_mw.disabled = !has;
+    $$('input[name=power_measured_same_day]', f).forEach((r) => { r.disabled = !has; });
+  }
+
+  // the defaults entered, as the upload form would send them (empty ones left out)
+  _collectDefaults() {
+    const f = $('#settings-defaults'), out = {};
+    const hasPower = f.power_mw.value !== '';
+    for (const key of DEFAULT_FIELDS) {
+      let v;
+      if (key === 'power_measured_same_day') {
+        const r = $(`input[name=${key}]:checked`, f)?.value;
+        v = hasPower && r ? r === 'true' : null;
+      } else if (key === 'power_tolerance_mw' && !hasPower) v = null;
+      else if (NUMBER_FIELDS.includes(key)) v = f[key].value === '' ? null : Number(f[key].value);
+      else v = f[key].value.trim() || null;
+      if (v != null) out[key] = v;
+    }
+    return out;
+  }
+
+  // Checks the defaults as an upload is checked (by the browser for the same kinds of
+  // inputs, then by the server); they are kept, and used, once they pass.
+  async checkDefaults() {
+    const seq = ++this._defaultsSeq;
+    const f = $('#settings-defaults'), box = $('#defaults-status');
+    const values = this._collectDefaults();
+    const problems = new Map();
+    for (const el of $$('input[name], textarea[name]', f)) {
+      if (!el.disabled && !el.checkValidity()) problems.set(el.name, `${el.closest('.field').firstElementChild.textContent}: ${el.validationMessage}`);
+    }
+    let res;
+    try {
+      const checkable = Object.fromEntries(Object.entries(values).filter(([k]) => !problems.has(k)));
+      res = await api('/api/metadata/check', { method: 'POST', json: { metadata: checkable } });
+    } catch (e) {
+      if (seq === this._defaultsSeq) box.replaceChildren(msgBox('error', `Could not check the defaults: ${esc(e.message)}`));
+      return;
+    }
+    if (seq !== this._defaultsSeq) return;
+    for (const e of res.errors) if (!problems.has(e.field)) problems.set(e.field, e.message);
+    $$('[name]', f).forEach((el) => el.classList.toggle('invalid', problems.has(el.name)));
+    if (problems.size) { box.replaceChildren(msgBox('error', `Not kept until fixed:${listHtml([...problems.values()])}`)); return; }
+    this.defaults = values;
+    LS.set('olfdb.defaults', values);
+    const n = Object.keys(values).length;
+    box.replaceChildren(msgBox('ok', n ? `${n} default${n === 1 ? '' : 's'} kept on this computer.` : 'No defaults set.'));
+    upload.settingsChanged();
+  }
+}
+
 // ==================================================================== router
 const upload = new UploadFlow();
 const browse = new Browse();
 const odorsPage = new OdorsPage();
 const reference = new Reference();
+const settings = new SettingsPage();
 
 function route() {
   const [tab, id] = location.hash.replace(/^#/, '').split('/');
-  const name = ['upload', 'browse', 'odors', 'reference'].includes(tab) ? tab : 'browse';
+  const name = ['upload', 'browse', 'odors', 'reference', 'settings'].includes(tab) ? tab : 'browse';
   $$('.tab').forEach((s) => { s.hidden = s.id !== `tab-${name}`; });
   $$('.tabs a').forEach((a) => a.classList.toggle('active', a.dataset.tab === name));
   if (name === 'browse') { browse.load().then(() => { if (id) browse.show(+id); }); }
   if (name === 'odors') { odorsPage.highlightId = id ? +id : null; odorsPage.load().then(() => { if (id) odorsPage.highlight(+id); }); }
   if (name === 'reference') { reference.load().then(() => { if (id) reference.show(id); }); }
+  if (name === 'settings') settings.load();
   if (name === 'browse' && !id) { $('#browse-empty').hidden = false; $('#dataset-view').hidden = true; browse.selected = null; }
   if (name === 'reference' && !id) { $('#reference-empty').hidden = false; $('#reference-view').hidden = true; reference.selected = null; }
 }

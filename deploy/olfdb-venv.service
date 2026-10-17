@@ -17,6 +17,8 @@ WorkingDirectory=/opt/olfdb
 Environment=OLFDB_DATA_DIR=/opt/olfdb/data
 # Google sheet with odor metadata (see DEPLOY.md):
 #Environment=OLFDB_ODOR_SHEET_URL=https://docs.google.com/spreadsheets/d/<id>/edit
+# where the lab NAS (tensor) is mounted, if not at /mnt/tank0/tensor (it must be readable by olfdb):
+#Environment=OLFDB_TENSOR_ROOT=/mnt/tank0/tensor
 ExecStart=/opt/olfdb/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8080 --workers 1
 Restart=always
 RestartSec=5s

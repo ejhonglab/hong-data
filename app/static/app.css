@@ -15,6 +15,13 @@
   --warn-soft: #fff4dc;
   --ok: #1f6b3a;
   --ok-soft: #e4f3e8;
+  /* where an upload form value came from (settings, found on tensor, read from the files added) */
+  --src-settings: #8a6fd0;
+  --src-settings-soft: #f1ecfc;
+  --src-nas: #3f93b8;
+  --src-nas-soft: #e2f1f8;
+  --src-file: #b98b3a;
+  --src-file-soft: #f8f0df;
   --hm-surface: #ffffff;
   --hm-ink: #1d1f22;
   --hm-ink-muted: #5c6066;
@@ -125,6 +132,22 @@ textarea { resize: vertical; }
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; font-size: 12.5px; margin-top: 6px; }
 .kv span:nth-child(odd) { color: var(--ink-muted); }
 
+/* values filled in automatically, by source */
+[data-src=settings] { --src: var(--src-settings); --src-soft: var(--src-settings-soft); }
+[data-src=nas] { --src: var(--src-nas); --src-soft: var(--src-nas-soft); }
+[data-src=file] { --src: var(--src-file); --src-soft: var(--src-file-soft); }
+input[data-src], select[data-src], textarea[data-src] { background: var(--src-soft); border-color: var(--src); }
+.radios[data-src], .filelist .file[data-src], .xml-status[data-src] { background: var(--src-soft); box-shadow: inset 3px 0 0 var(--src); border-radius: 4px; padding: 2px 8px 2px 10px; }
+.src-legend { white-space: nowrap; }
+.swatch { display: inline-block; width: 20px; height: 12px; margin: 0 4px 0 10px; vertical-align: -1px; border: 1px solid var(--src); background: var(--src-soft); border-radius: 3px; }
+.lookup ul { margin: 6px 0 4px; }
+.lookup-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.lookup-head .btn { margin-left: auto; }
+.lookup select { width: auto; max-width: 100%; padding: 1px 4px; }
+.lookup details { margin-top: 6px; }
+.lookup summary { cursor: pointer; color: var(--ink-muted); }
+.lookup .odor-table { margin-top: 6px; }
+
 .readme-editor { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .readme-editor textarea { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; line-height: 1.4; }
 .readme-preview { border: 1px solid var(--rule); border-radius: 4px; padding: 10px 14px; overflow: auto; max-height: 560px; background: var(--surface); }
@@ -133,6 +156,28 @@ textarea { resize: vertical; }
 .readme-html table, .readme-preview table { border-collapse: collapse; margin: 6px 0; }
 .readme-html td, .readme-html th, .readme-preview td, .readme-preview th { border: 1px solid var(--rule); padding: 3px 8px; text-align: left; }
 .readme-html ul, .readme-preview ul { padding-left: 20px; }
+
+/* ------------------------------------------------------------- settings */
+#tab-settings { overflow: auto; padding: 24px 20px 60px; }
+.folders-help { margin-top: 12px; }
+.dir-section { margin-top: 16px; }
+.dir-section p { margin-bottom: 4px; }
+.dirlist { display: flex; flex-direction: column; gap: 6px; max-width: 640px; }
+.dir-row { display: grid; grid-template-columns: 1fr 14px auto; gap: 2px 8px; align-items: center; }
+.dir-row input { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
+.dir-row .dir-msg { grid-column: 1 / -1; font-size: 12px; color: var(--danger); }
+.dir-row .dir-msg:empty { display: none; }
+.dir-row .dir-mark { font-weight: 600; text-align: center; }
+.dir-row.ok .dir-mark { color: var(--ok); }
+.dir-row.bad .dir-mark { color: var(--danger); }
+.dir-row.bad input, #settings-defaults .invalid { border-color: var(--danger); background: var(--danger-soft); }
+.dir-row:last-child [data-remove] { visibility: hidden; }
+.paths-status { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--rule); display: flex; align-items: center; gap: 4px 12px; flex-wrap: wrap; min-height: 34px; }
+.indicator { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; padding: 4px 12px; border-radius: 16px; border: 1px solid; }
+.indicator::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: currentColor; }
+.indicator.ok { color: var(--ok); background: var(--ok-soft); border-color: #c4e3cd; }
+.indicator.bad { color: var(--danger); background: var(--danger-soft); border-color: #efc7c3; }
+.indicator.pending, .indicator.none { color: var(--ink-muted); background: var(--surface-2); border-color: var(--rule); }
 
 /* --------------------------------------------------------------- odors */
 #tab-odors { overflow: auto; padding: 24px 20px 60px; }

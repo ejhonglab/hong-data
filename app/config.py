@@ -25,6 +25,9 @@ ODOR_SHEET_URL = os.environ.get("OLFDB_ODOR_SHEET_URL", "").strip()
 ODOR_SHEET_CHECK_MINUTES = float(os.environ.get("OLFDB_ODOR_SHEET_CHECK_MINUTES", "10"))
 ODOR_TEMPLATE = ROOT / "config" / "odor_sheet_template.csv"
 
+# the lab NAS as mounted on the server; users' data folders are given relative to it
+TENSOR_ROOT = Path(os.environ.get("OLFDB_TENSOR_ROOT", "/mnt/tank0/tensor"))
+
 
 def ensure_dirs() -> None:
     for d in (DATA_DIR, STAGING_DIR, DATASETS_DIR, EXPORTS_DIR, STRUCTURES_DIR, ODOR_PREVIEWS_DIR):

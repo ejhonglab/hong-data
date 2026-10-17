@@ -10,6 +10,7 @@ responses       long table: one row per cell (unit_id, trial_id, value) -- query
 matrices        the same values as a float32 blob (units x trials) for fast serving
 odors           one row per chemical: names, IDs, supplier (synced from the odor sheet)
 odor_syncs      log of odor syncs (what was added / changed / deleted, by whom)
+users           each user's data folders on tensor (relative to its top), by name
 """
 from __future__ import annotations
 
@@ -40,6 +41,7 @@ CREATE TABLE IF NOT EXISTS datasets (
     wavelength_nm REAL,
     source_code_url TEXT,
     raw_data_path TEXT,
+    mocorr_data_path TEXT,
     panel_names TEXT,
     recording_system TEXT,
     notes TEXT,
@@ -135,7 +137,19 @@ CREATE TABLE IF NOT EXISTS odor_syncs (
     n_deleted INTEGER NOT NULL,
     details_json TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    name_key TEXT NOT NULL UNIQUE,     -- casefolded name
+    raw_dirs TEXT NOT NULL,            -- JSON lists of folders
+    mocorr_dirs TEXT NOT NULL,
+    odor_dirs TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
+# columns added since the first release: (table, column, type)
+ADDED_COLUMNS = [("datasets", "mocorr_data_path", "TEXT")]
+USER_DIR_COLUMNS = ("raw_dirs", "mocorr_dirs", "odor_dirs")
 ODOR_COLUMNS = ("name", "abbrev", "aliases", "cid", "cas", "solvent", "supplier", "catalog_no", "catalog_url",
                 "metacyc", "lotus", "inventory", "notes")
 
@@ -146,6 +160,9 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as con:
             con.executescript(SCHEMA)
+            for table, column, kind in ADDED_COLUMNS:
+                if column not in {r["name"] for r in con.execute(f"PRAGMA table_info({table})")}:
+                    con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -189,18 +206,18 @@ class Database:
             cur = con.execute(
                 """INSERT INTO datasets (created_at, title, uploader_name, indicator, driver, coding_unit,
                     genotype, age_min_days, age_max_days, power_mw, power_tolerance_mw, power_measured_same_day,
-                    wavelength_nm, source_code_url, raw_data_path, panel_names, recording_system, notes,
-                    readme_md, readme_edited, data_file, data_format, data_sha256, odor_yaml_files,
+                    wavelength_nm, source_code_url, raw_data_path, mocorr_data_path, panel_names, recording_system,
+                    notes, readme_md, readme_edited, data_file, data_format, data_sha256, odor_yaml_files,
                     experiment_xml_file, experiment_xml_info, n_flies, n_units, n_trials, n_odors,
                     repeats_min, repeats_max, first_fly_date, last_fly_date, roi_kind, metadata_json, summary_json)
-                VALUES (?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?,?,?)""",
+                VALUES (?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?,?,?)""",
                 (
                     created_at, title, metadata["uploader_name"], metadata["indicator"], metadata["driver"],
                     metadata["coding_unit"], metadata.get("genotype"), metadata.get("age_min_days"),
                     metadata.get("age_max_days"), metadata.get("power_mw"), metadata.get("power_tolerance_mw"),
                     None if metadata.get("power_measured_same_day") is None else int(metadata["power_measured_same_day"]),
                     metadata.get("wavelength_nm"), metadata.get("source_code_url"), metadata.get("raw_data_path"),
-                    ", ".join(panels_form) if panels_form else None, metadata.get("recording_system"),
+                    metadata.get("mocorr_data_path"), ", ".join(panels_form) if panels_form else None, metadata.get("recording_system"),
                     metadata.get("notes"), readme_md, int(readme_edited), data_file, data_format, data_sha256,
                     json.dumps(odor_yaml_files), experiment_xml_file,
                     json.dumps(experiment_xml_info) if experiment_xml_info else None,
@@ -404,3 +421,27 @@ class Database:
             d["details"] = json.loads(d.pop("details_json"))
             out.append(d)
         return out
+
+    # ------------------------------------------------------------------- users
+    @staticmethod
+    def _user(r: sqlite3.Row) -> dict:
+        return {"name": r["name"], "updated_at": r["updated_at"], **{k: json.loads(r[k]) for k in USER_DIR_COLUMNS}}
+
+    def get_user(self, name: str) -> Optional[dict]:
+        """A user's folders (lists of paths relative to tensor, by `USER_DIR_COLUMNS`), by name in any case."""
+        with self.connect() as con:
+            r = con.execute("SELECT * FROM users WHERE name_key = ?", (name.casefold(),)).fetchone()
+        return self._user(r) if r else None
+
+    def save_user(self, name: str, dirs: dict[str, list[str]], when: str) -> dict:
+        """Create or replace a user's folders; returns them as `get_user` does."""
+        values = [json.dumps(dirs.get(k) or []) for k in USER_DIR_COLUMNS]
+        with self.connect() as con:
+            con.execute(
+                f"""INSERT INTO users (name, name_key, {', '.join(USER_DIR_COLUMNS)}, updated_at) VALUES (?,?,?,?,?,?)
+                    ON CONFLICT (name_key) DO UPDATE SET name = excluded.name,
+                    {', '.join(f'{k} = excluded.{k}' for k in USER_DIR_COLUMNS)}, updated_at = excluded.updated_at""",
+                (name, name.casefold(), *values, when),
+            )
+            r = con.execute("SELECT * FROM users WHERE name_key = ?", (name.casefold(),)).fetchone()
+        return self._user(r)

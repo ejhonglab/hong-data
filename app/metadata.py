@@ -10,6 +10,7 @@ DEFAULT_INDICATORS = ["GCaMP6f", "GCaMP6s", "GCaMP6m", "GCaMP7f", "GCaMP7s", "GC
 DEFAULT_CODING_UNITS = ["glomeruli", "KCs"]
 DEFAULT_RECORDING_SYSTEMS = ["upstairs-left 2p", "upstairs-right 2p", "downstairs 2p"]
 DEFAULT_WAVELENGTH_NM = 925.0
+REQUIRED_FIELDS = ("uploader_name", "indicator", "driver", "coding_unit")
 
 
 def _clean(v):
@@ -34,13 +35,14 @@ class Metadata(BaseModel):
     wavelength_nm: Optional[float] = Field(default=DEFAULT_WAVELENGTH_NM, gt=0)
     source_code_url: Optional[str] = None
     raw_data_path: Optional[str] = None
+    mocorr_data_path: Optional[str] = None
     panel_names: list[str] = Field(default_factory=list)
     recording_system: Optional[str] = None
     notes: Optional[str] = None
 
     @field_validator(
         "uploader_name", "indicator", "driver", "coding_unit", "genotype", "source_code_url",
-        "raw_data_path", "recording_system", "notes", mode="before",
+        "raw_data_path", "mocorr_data_path", "recording_system", "notes", mode="before",
     )
     @classmethod
     def _strip(cls, v):
@@ -102,7 +104,8 @@ def generate_readme(m: Metadata, summary: dict, files: dict[str, Any], *, create
     """Concise README.md for a dataset.
 
     ``files`` keys: data (original file name), odor_yamls (list of names),
-    experiment_xml (name or None), sha256 (hex of the data file).
+    experiment_xml (name or None), sha256 (hex of the data file), and optionally
+    sources (file name -> the path on tensor it was copied from).
     """
     created_at = created_at or dt.datetime.now()
     flies = summary.get("flies", [])
@@ -137,6 +140,7 @@ def generate_readme(m: Metadata, summary: dict, files: dict[str, Any], *, create
         ("Power", _power_str(m)),
         ("Rig", m.recording_system),
         ("Raw data (tensor)", f"`{m.raw_data_path}`" if m.raw_data_path else None),
+        ("Motion-corrected data (tensor)", f"`{m.mocorr_data_path}`" if m.mocorr_data_path else None),
         ("Analysis code", m.source_code_url),
     ]
     lines += ["| | |", "|---|---|"]
@@ -164,11 +168,13 @@ def generate_readme(m: Metadata, summary: dict, files: dict[str, Any], *, create
         lines.append(f"- **{label}** ({len(p['odors'])} odors, {p['n_trials']} trials): " + ", ".join(p["odors"]))
     lines.append("")
 
+    sources = files.get("sources") or {}
+    origin = lambda name: f" (from tensor: `{sources[name]}`)" if sources.get(name) else ""
     extra_files = []
     for y in files.get("odor_yamls", []) or []:
-        extra_files.append(f"- odor metadata: `{y}`")
+        extra_files.append(f"- odor metadata: `{y}`{origin(y)}")
     if files.get("experiment_xml"):
-        extra_files.append(f"- ThorImage: `{files['experiment_xml']}`")
+        extra_files.append(f"- ThorImage: `{files['experiment_xml']}`{origin(files['experiment_xml'])}")
     if extra_files:
         lines.append("## Files")
         lines += extra_files
