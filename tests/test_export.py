@@ -140,6 +140,42 @@ def test_single_dataset(store, tmp_path, two):
     assert write_zip(store[0], [ia], "files", out, store[1]) == f"olfdb_dataset-{ia}_files.zip"
 
 
+def read_wide(path: Path, n_row_levels: int) -> pd.DataFrame:
+    """A wide CSV as pandas reads it, with its date and fly_num column levels as dates and integers."""
+    df = pd.read_csv(path, header=[0, 1, 2], index_col=list(range(n_row_levels)))
+    cols = df.columns.to_frame(index=False)
+    df.columns = pd.MultiIndex.from_arrays(
+        [pd.to_datetime(cols["date"]), cols["fly_num"].astype(int), cols["roi"]], names=["date", "fly_num", "roi"]
+    )
+    return df
+
+
+# dates as the lab's files have them (pandas writing Timestamps in a column level)
+REAL_COLS = [("2023-11-19 00:00:00", 1, "DM2"), ("2023-11-19 00:00:00", 1, "DL5"), ("2023-11-19 00:00:00", 2, "DM2"),
+             ("2023-11-21 00:00:00", 1, "VA2"), ("2023-11-21 00:00:00", 1, "DM2")]
+
+
+@pytest.mark.parametrize("rows,row_names", [
+    # mixtures flagged by is_pair, and odor2 not all one solvent: nothing to drop
+    ([("megamat", pair, o1, o2, r) for pair, o1, o2 in [(False, "va @ -3", "solvent"), (False, "ea @ -2", "solvent"),
+                                                        (True, "ea @ -2", "va @ -3")] for r in range(3)],
+     ("panel", "is_pair", "odor1", "odor2", "repeat")),
+    ([("2h @ -6", r) for r in range(2)] + [("ms @ -3", r) for r in range(2)], ("odor1", "repeat")),
+    ([("diag", "1-6ol @ -3"), ("megamat", "1-6ol @ -3"), ("megamat", "pa @ -3")], ("panel", "odor")),
+])
+def test_wide_download_matches_upload(store, tmp_path, rows, row_names):
+    values = np.random.default_rng(1).normal(size=(len(rows), len(REAL_COLS)))
+    values[1, 2] = values[0, 4] = np.nan
+    uploaded = write_csv(make_wide(rows, REAL_COLS, values, row_names=row_names), tmp_path, "uploaded.csv")
+    parsed = load_file(uploaded)
+    assert parsed.row_levels == list(row_names)  # no levels dropped
+    out = tmp_path / "downloaded.csv"
+    write_download(store[0], [add(store, parsed)], "wide", out, store[1])
+    # values are stored as float32
+    pd.testing.assert_frame_equal(read_wide(out, len(row_names)), read_wide(uploaded, len(row_names)),
+                                  check_exact=False, rtol=1e-6, atol=0)
+
+
 def test_dataset_stem():
     d = {"id": 1, "uploader_name": "É.J. Hong", "coding_unit": "KCs", "last_fly_date": "2023-11-19",
          "metadata": {"panel_names": ["from form"]}}
