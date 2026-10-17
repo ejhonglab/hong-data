@@ -1,0 +1,21 @@
+# systemd unit that keeps the Docker Compose stack running and starts it on boot.
+# Install: sudo cp deploy/olfdb.service /etc/systemd/system/ && sudo systemctl daemon-reload
+#          sudo systemctl enable --now olfdb
+[Unit]
+Description=Odor response database (Docker Compose)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/olfdb
+# --build picks up code changes on restart; remove it to start faster
+ExecStart=/usr/bin/docker compose up --build --remove-orphans
+ExecStop=/usr/bin/docker compose down
+Restart=always
+RestartSec=10s
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

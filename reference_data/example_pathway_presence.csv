@@ -1,0 +1,17 @@
+chemical,group,glycolysis,TCA cycle,fatty acid synthesis,ester biosynthesis,terpene biosynthesis,phenylpropanoid pathway,amino acid degradation,lipoxygenase pathway
+ethyl acetate,esters,1,1,0,0,0,0,1,0
+ethyl butyrate,esters,1,1,0,0,0,1,0,0
+isoamyl acetate,esters,0,0,1,0,0,1,1,0
+hexanal,aldehydes,1,0,0,1,0,0,0,0
+trans-2-hexenal,aldehydes,0,1,1,1,0,0,0,0
+1-hexanol,other,0,1,1,1,0,0,0,0
+linalool,aldehydes,0,0,0,0,1,0,0,0
+B-citronellol,other,1,0,0,0,0,1,1,1
+benzaldehyde,aldehydes,1,0,1,0,1,0,1,1
+methyl salicylate,esters,1,1,0,0,1,1,0,0
+2-heptanone,other,1,0,0,1,0,1,1,0
+acetic acid,other,0,0,0,1,0,1,0,0
+valeric acid,other,0,1,0,0,0,0,1,0
+1-octen-3-ol,other,1,0,0,0,0,1,0,0
+"2,3-butanedione",other,0,0,0,1,0,0,0,1
+ethyl propionate,esters,0,0,0,0,0,0,0,1

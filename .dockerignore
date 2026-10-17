@@ -1,0 +1,7 @@
+data/
+.git/
+__pycache__/
+*.pyc
+tests/
+*.md
+!reference_data/README.md

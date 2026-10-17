@@ -1,0 +1,26 @@
+{
+ "datasets": [
+  {
+   "id": "example-fruit-volatiles",
+   "title": "EXAMPLE: volatile concentrations across fruits (synthetic)",
+   "description": "Placeholder with random numbers so the tab has something to show. Replace with real data (see reference_data/README.md).",
+   "file": "example_fruit_volatiles.csv",
+   "kind": "sequential",
+   "value_label": "log10 concentration (arbitrary)",
+   "row_label": "chemical",
+   "col_label": "fruit",
+   "source": "synthetic"
+  },
+  {
+   "id": "example-pathway-presence",
+   "title": "EXAMPLE: compound presence across metabolic pathways (synthetic)",
+   "description": "Placeholder 0/1 matrix with a row 'group' column. Replace with real data.",
+   "file": "example_pathway_presence.csv",
+   "kind": "binary",
+   "value_label": "present",
+   "row_label": "chemical",
+   "col_label": "pathway",
+   "source": "synthetic"
+  }
+ ]
+}
