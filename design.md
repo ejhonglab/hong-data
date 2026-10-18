@@ -86,6 +86,16 @@ the app is described in [README.md](README.md), hosting it in [DEPLOY.md](DEPLOY
   convention) then runs in one worker directly on those blocks, never copied into one
   buffer; blocks are transferred between workers, as they cannot share memory. Memory
   limits it to 15,000 rows.
+- **Movies are read on the server, a few planes at a time.** The browser asks for planes
+  (`/api/movie/planes`) and gets plain little-endian numbers, which it colours itself:
+  it never parses a TIFF or reads a whole movie, and Z max projections are computed
+  where the data are. A TIFF is memory-mapped when its data are in one piece (as
+  tifffile writes ImageJ hyperstacks), and read page by page otherwise; a ThorImage
+  `.raw` is memory-mapped by its `Experiment.xml` (time, then Z with flyback frames,
+  then channel, as hong2p reads it). Open movies are kept (the last few), so a TIFF's
+  header is not read again for every plane. ImageJ ROIs are read with roifile, and each
+  is drawn on its Z plane: the hyperstack Z of the ROI, or its stack position on a
+  volume (as hong2p reads them, ROIs being drawn on per-plane average images).
 - **Figure export** embeds the cells as an image drawn without smoothing, so they stay
   crisp at any zoom, while text and lines stay vector in SVG and PDF.
 - **Downloads** are built in `data/exports/` and deleted once sent. Across datasets,
@@ -110,9 +120,11 @@ app/export.py      downloads: zips of dataset files, concatenated wide/long matr
 app/odormeta.py    odor table: sheet parsing / validation, sync diff, links, dataset matching
 app/tensor.py      users' folders on tensor: path checks, finding a dataset's flies, recordings, YAMLs
 app/sandbox.py     folders the server may read and write (Admin tab): settings, path checks, Landlock
+app/movies.py      a dataset's movies on tensor: finding them, reading their planes, their ImageJ ROIs
 config/odor_sheet_template.csv   odor sheet columns, with the odors from the thesis tables
 app/static/        frontend: index.html, app.js, heatmap.js, colormaps.js (+ mpl_luts.js),
-                   app.css, cluster.js (+ cluster-worker.js), figure.js (SVG/PDF/PNG export)
+                   app.css, cluster.js (+ cluster-worker.js), figure.js (SVG/PDF/PNG export),
+                   player.js (movie player)
 manage.py          list / show / export / delete datasets from the server
 deploy/            systemd units; Dockerfile + docker-compose.yml at the top level
 tests/             pytest tests
@@ -165,6 +177,11 @@ GET    /api/datasets/{id}/data_paths        where its raw and motion-corrected d
                                             server, and what is in them (or why they are not)
 PUT    /api/datasets/{id}/data_paths        {"raw_data_path", "mocorr_data_path"} (either) → set, if
                                             found on tensor
+GET    /api/datasets/{id}/movies            its movies in its raw and motion-corrected data folders
+GET    /api/movie?path=                     a movie's shape (t, z, c, y, x), pixel type, frame rate
+GET    /api/movie/planes?path=&t=&n=&z=&c=  n planes from time t (z: a plane, or 'max'), as numbers;
+                                            their type in X-Dtype, their shape (n, y, x) in X-Shape
+GET    /api/movie/rois?path=                the ImageJ ROIs of a RoiSet.zip (or .roi), with their planes
 GET    /api/download?ids=1,2&format=files|wide|long
                                             a zip, or a CSV for the matrix of a single dataset
 GET    /api/odors                           the odor table (with each odor's `inchi`)

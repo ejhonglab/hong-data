@@ -3,6 +3,7 @@ import { Heatmap } from './heatmap.js';
 import { COLORMAPS, colormapsOfKind, makeNorm, drawColorbar, fmtNum } from './colormaps.js';
 import { MAX_CLUSTER_ITEMS, ClusterPool, layoutDendrogram } from './cluster.js';
 import { exportFigure } from './figure.js';
+import { MoviePlayer } from './player.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -1113,6 +1114,11 @@ class Browse {
     $$('.data-link').forEach((menu) => {
       menu.addEventListener('click', async (e) => {
         if (e.target.closest('[data-save-path]')) { this.saveDataPath(menu); return; }
+        if (e.target.closest('[data-movies]')) {
+          menu.open = false;
+          player.open(this.selected, this.cache.get(this.selected).d.title, menu.dataset.kind);
+          return;
+        }
         const b = e.target.closest('[data-copy]');
         if (!b) return;
         try { await copyText(b.dataset.copy); b.textContent = 'Copied'; } catch (err) { b.textContent = `Could not copy: ${err.message}`; }
@@ -1286,6 +1292,8 @@ class Browse {
         <span>${r.tensor_path != null ? 'On tensor' : 'On the server'}</span><span><code>${esc(shown)}</code> <button type="button" class="btn small" data-copy="${esc(shown)}">Copy</button></span>
         ${r.tensor_path != null ? `<span>On the server</span><span><code>${esc(r.path)}</code></span>` : ''}
       </div>
+      ${r.is_dir ? `<div class="data-movies"><button type="button" class="btn small" data-movies>Play movies…</button>
+        <span class="muted">${kind === 'mocorr' ? 'the TIFFs in it, with their ImageJ ROIs' : 'the ThorImage .raw files in it'}</span></div>` : ''}
       ${r.is_dir ? (r.n_entries ? `<ul class="data-entries">${entries}</ul>${r.n_entries > r.entries.length ? `<p class="menu-note">… and ${r.n_entries - r.entries.length} more</p>` : ''}` : '<p class="menu-note">The folder is empty.</p>') : '<p class="menu-note">A file, not a folder.</p>'}
       <p class="menu-note">Browsers cannot open folders on your computer from a web page: open it from where tensor is mounted on yours.</p>
       ${edit}`;
@@ -2130,6 +2138,7 @@ const odorsPage = new OdorsPage();
 const reference = new Reference();
 const settings = new SettingsPage();
 const admin = new AdminPage();
+const player = new MoviePlayer($('#player'), { api, esc, fmtBytes });
 
 let currentTab = null;
 let lastPlace = 'browse'; // the hash of the last place shown other than the Admin tab

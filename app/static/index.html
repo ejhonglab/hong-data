@@ -424,6 +424,55 @@
   </form>
 </dialog>
 
+<dialog id="player" class="player" aria-labelledby="player-title">
+  <div class="player-head">
+    <h2 class="player-title" id="player-title">Movies</h2>
+    <span class="player-sub muted"></span>
+    <button type="button" class="btn small player-close">Close</button>
+  </div>
+  <div class="player-body">
+    <nav class="player-list" aria-label="Movies"></nav>
+    <div class="player-main">
+      <div class="player-stage">
+        <canvas class="player-canvas" aria-label="Movie"></canvas>
+        <div class="player-msg"></div>
+      </div>
+      <p class="player-warnings"></p>
+      <div class="player-controls">
+        <div class="player-row">
+          <button type="button" class="btn player-play" title="Play (space)">▶</button>
+          <input type="range" class="player-t" min="0" max="0" value="0" aria-label="Time point">
+          <span class="player-t-out"></span>
+        </div>
+        <div class="player-row player-zrow">
+          <span class="muted">Plane</span>
+          <input type="range" class="player-z" min="0" max="0" value="0" aria-label="Z plane">
+          <span class="player-z-out"></span>
+          <label class="check"><input type="checkbox" class="player-max"> max projection</label>
+        </div>
+        <div class="player-row">
+          <label class="player-crow">Channel <select class="player-c"></select></label>
+          <label>Speed <input type="number" class="player-fps" min="0.1" max="200" step="any"> per s</label>
+          <label>Black <input type="number" class="player-lo" step="any"></label>
+          <label>White <input type="number" class="player-hi" step="any"></label>
+          <button type="button" class="btn small player-auto" title="From the plane shown: its 0.5th to 99.5th percentile">Auto contrast</button>
+          <button type="button" class="btn small player-fit" title="Fit the image to the window (or double-click it)">Fit</button>
+          <span class="player-pixel muted"></span>
+        </div>
+        <p class="player-keys">Space: play / pause · ←/→: time (with Shift: ×10) · ↑/↓: plane · P: max projection · A: auto contrast · F: fit · drag to move, wheel to zoom</p>
+      </div>
+    </div>
+    <aside class="player-rois" aria-label="ImageJ ROIs">
+      <div class="player-rois-head">
+        <h3>ROIs</h3>
+        <label class="check"><input type="checkbox" class="player-show-rois" checked> show</label>
+        <label class="check"><input type="checkbox" class="player-roi-names" checked> names</label>
+      </div>
+      <div class="player-roi-list"></div>
+    </aside>
+  </div>
+</dialog>
+
 <dialog id="readme-confirm" class="confirm" aria-labelledby="readme-confirm-q">
   <form method="dialog">
     <p id="readme-confirm-q">Overwrite this dataset's README with your edits, or discard your edits?</p>

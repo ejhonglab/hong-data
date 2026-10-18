@@ -31,7 +31,7 @@ from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, R
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import config, export, odormeta, reference, sandbox, tensor, thorimage, yamlcheck
+from . import config, export, movies, odormeta, reference, sandbox, tensor, thorimage, yamlcheck
 from .db import Database
 from .glomeruli import load_glomeruli
 from .ingest import ParsedData, ValidationError, load_file, load_parsed, save_parsed
@@ -713,6 +713,92 @@ async def dataset_data_paths_save(request: Request) -> Response:
     return JSONResponse(result, status_code=status)
 
 
+# ---------------------------------------------------------------------- movies
+
+
+def _server_file(path: Any, suffixes: tuple[str, ...]) -> Path:
+    """A file on the server named by the browser (a movie, or its ROIs): it must be on tensor
+    or in a folder set in the Admin tab, and one the server may read (raises HTTPException)."""
+    p = str(path or "")
+    if not os.path.isabs(p) or not p.lower().endswith(suffixes):
+        raise HTTPException(400, f"expected the path on the server of a {' / '.join(suffixes)} file")
+    real = os.path.realpath(p)
+    tops = [os.path.realpath(t).rstrip("/") for t in [config.TENSOR_ROOT, *sandbox.folders()]]
+    if not any(real == t or real.startswith(t + "/") for t in tops) or not sandbox.can_read(real):
+        raise HTTPException(403, tensor.NOT_ALLOWED)
+    if not os.path.isfile(real):
+        raise HTTPException(404, "no such file on the server")
+    return Path(real)
+
+
+async def dataset_movies(request: Request) -> Response:
+    """A dataset's movies in its raw and motion-corrected data folders (``raw``, ``mocorr``:
+    ``movies`` as from `movies.find`, and ``error``: why its folder was not looked in)."""
+    ds_id = int(request.path_params["ds_id"])
+
+    def run() -> Optional[dict]:
+        d = db.get_dataset(ds_id)
+        if d is None:
+            return None
+        flies = d["summary"].get("flies") or []
+        bases = [Path(p) for p in sandbox.folders()]
+        out = {}
+        for kind in ("raw", "mocorr"):
+            found = tensor.find_data(d["metadata"].get(f"{kind}_data_path"), config.TENSOR_ROOT, bases)
+            folder = Path(found["path"]) if found["status"] == "ok" and found["is_dir"] else None
+            out[kind] = {"movies": movies.find(folder, kind, flies) if folder else [], "error": found["error"]}
+        return out
+
+    result = await run_in_threadpool(run)
+    if result is None:
+        return json_error(404, "dataset not found")
+    return JSONResponse(result)
+
+
+async def movie_info(request: Request) -> Response:
+    """A movie's shape (t, z, c, y, x), pixel type and frame rate (``?path=``: on the server)."""
+    path = _server_file(request.query_params.get("path"), (*movies.TIFF_SUFFIXES, ".raw"))
+    try:
+        movie = await run_in_threadpool(movies.open_movie, path)
+    except movies.MovieError as e:
+        return json_error(422, str(e))
+    return JSONResponse(movie.info())
+
+
+async def movie_planes(request: Request) -> Response:
+    """Planes of a movie (``?path=&t=&n=&z=&c=``: `n` planes from time `t` on, of plane `z`, or
+    its max projection with ``z=max``, of channel `c`), as little-endian numbers: their type
+    in the X-Dtype header, their shape (n, y, x) in X-Shape (n may be fewer than asked)."""
+    q = request.query_params
+    path = _server_file(q.get("path"), (*movies.TIFF_SUFFIXES, ".raw"))
+    try:
+        t, n, c = int(q.get("t", 0)), int(q.get("n", 1)), int(q.get("c", 0))
+        z = None if q.get("z") == "max" else int(q.get("z", 0))
+    except ValueError:
+        return json_error(400, "t, n, c and z must be whole numbers (z may also be 'max')")
+
+    def run():
+        movie = movies.open_movie(path)
+        return movie.planes(t, movies.chunk(movie, n, z), z, c)
+
+    try:
+        planes = await run_in_threadpool(run)
+    except movies.MovieError as e:
+        return json_error(422, str(e))
+    return Response(planes.tobytes(), media_type="application/octet-stream",
+                    headers={"x-dtype": planes.dtype.name, "x-shape": ",".join(map(str, planes.shape))})
+
+
+async def movie_rois(request: Request) -> Response:
+    """The ImageJ ROIs of a RoiSet.zip (or .roi) on the server (``?path=``): see `movies.read_rois`."""
+    path = _server_file(request.query_params.get("path"), (".zip", ".roi"))
+    try:
+        rois = await run_in_threadpool(movies.read_rois, path)
+    except movies.MovieError as e:
+        return json_error(422, str(e))
+    return JSONResponse({"rois": rois})
+
+
 async def dataset_file(request: Request) -> Response:
     ds_id = int(request.path_params["ds_id"])
     rel = request.path_params["path"]
@@ -1201,6 +1287,10 @@ routes = [
     Route("/api/datasets/{ds_id:int}/data_paths", dataset_data_paths),
     Route("/api/datasets/{ds_id:int}/data_paths", dataset_data_paths_save, methods=["PUT"]),
     Route("/api/tensor/check", tensor_check, methods=["POST"]),
+    Route("/api/datasets/{ds_id:int}/movies", dataset_movies),
+    Route("/api/movie", movie_info),
+    Route("/api/movie/planes", movie_planes),
+    Route("/api/movie/rois", movie_rois),
     Route("/api/download", download),
     Route("/api/odors", odors_list),
     Route("/api/odors/status", odors_status),

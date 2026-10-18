@@ -359,7 +359,56 @@ table.diff .new { color: var(--ok); }
 .hm-tooltip .muted { color: #c8cacd; }
 .hm-tooltip .val { font-weight: 600; font-size: 13px; }
 
+/* --------------------------------------------------------- movie player */
+dialog.player { width: min(1500px, 96vw); height: 92vh; max-width: none; max-height: none; padding: 0; border: 1px solid var(--rule-strong); border-radius: var(--radius); background: var(--panel); color: var(--ink); overflow: hidden; }
+dialog.player[open] { display: flex; flex-direction: column; }
+dialog.player::backdrop { background: rgba(29,31,34,.55); }
+.player-head { display: flex; align-items: baseline; gap: 14px; padding: 10px 16px; border-bottom: 1px solid var(--rule); }
+.player-head h2 { font-size: 15px; white-space: nowrap; }
+.player-sub { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+.player-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 260px minmax(0, 1fr) 220px; }
+.player-list, .player-rois { overflow: auto; }
+.player-list { border-right: 1px solid var(--rule); padding: 6px 0; }
+.player-list h3 { font-size: 12px; color: var(--ink-muted); padding: 10px 14px 4px; }
+.player-list p { padding: 0 14px; }
+.player-item { display: flex; flex-direction: column; gap: 1px; width: 100%; text-align: left; border: 0; background: none; padding: 6px 14px 6px 11px; cursor: pointer; border-left: 3px solid transparent; font-size: 12.5px; }
+.player-item span:first-child { word-break: break-all; }
+.player-item .muted { font-size: 11.5px; }
+.player-item:hover { background: var(--surface-2); }
+.player-item.active { background: var(--accent-soft); border-left-color: var(--accent); }
+.player-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.player-stage { flex: 1; min-height: 0; position: relative; background: #111; }
+.player-canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+.player-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 20px; color: #ccc; text-align: center; pointer-events: none; }
+.player-msg:empty { display: none; }
+.player-error { color: var(--danger); }
+.player-msg.player-error { color: #ff9b94; }
+.player-warnings { margin: 0; padding: 4px 12px; color: var(--warn); background: var(--warn-soft); font-size: 12px; }
+.player-warnings:empty { display: none; }
+.player-controls { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border-top: 1px solid var(--rule); font-size: 12.5px; }
+.player-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; }
+.player-row label { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-muted); }
+.player-row input[type=number] { width: 84px; padding: 3px 6px; }
+.player-row select { width: auto; padding: 3px 6px; }
+.player-t, .player-z { flex: 1; min-width: 120px; }
+.player-t-out, .player-z-out { min-width: 120px; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+.player-play { width: 42px; justify-content: center; }
+.player-pixel { margin-left: auto; font-variant-numeric: tabular-nums; }
+.player-keys { margin: 0; font-size: 11.5px; color: var(--ink-muted); }
+.player-rois { border-left: 1px solid var(--rule); padding: 8px 10px; }
+.player-rois-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.player-rois-head h3 { font-size: 13px; margin-right: auto; }
+.player-rois-head .check { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--ink-muted); }
+.player-roi { display: flex; align-items: center; gap: 6px; width: 100%; border: 0; background: none; text-align: left; padding: 3px 6px; border-radius: 4px; cursor: pointer; font-size: 12.5px; }
+.player-roi .muted { margin-left: auto; font-size: 11.5px; }
+.player-roi:hover { background: var(--surface-2); }
+.player-roi.active { background: var(--accent-soft); }
+.swatch-roi { flex: none; width: 10px; height: 10px; border-radius: 2px; border: 1px solid rgba(0,0,0,.3); }
+.data-movies { display: flex; align-items: center; gap: 8px; margin: 0 10px 8px; font-size: 12px; }
+
 @media (max-width: 900px) {
+  .player-body { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr) auto; }
+  .player-list, .player-rois { max-height: 22vh; border: 0; }
   .grid, .readme-editor { grid-template-columns: 1fr; }
   #tab-browse, #tab-reference { flex-direction: column; }
   .sidebar { width: auto; max-height: 40vh; border-right: 0; border-bottom: 1px solid var(--rule); }
