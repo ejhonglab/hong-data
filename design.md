@@ -105,9 +105,12 @@ the app is described in [README.md](README.md), hosting it in [DEPLOY.md](DEPLOY
   every ROI is one, so the same glomeruli are compared, else over ROIs) to the stimuli a
   group shares with the target. One factor per group keeps each group's relative
   responses as they were, and a fit through zero keeps zero (no response) where it is.
-  Concentrations of an odor stand for each other within a tolerance, a dataset's exact
-  one first, only for the fit: the matrices keep their own odors. The average target is
-  the mean over groups of each response more than one of them has.
+  Concentrations of an odor stand for each other less than a tolerance apart (so that, by
+  default, a panel's 10-fold steps stay apart), a dataset's exact one first, only for the
+  fit: the matrices keep their own odors. The average target is the mean over groups of
+  each response more than one of them has. By power, groups are made greedily in order
+  of power, a dataset joining the first group it is close enough to every member of, so
+  that no two in a group are further apart than allowed.
 - **Reference matrices** are read from `reference_data/` at request time, so adding or
   editing one needs no restart.
 
@@ -195,9 +198,12 @@ GET    /api/download?ids=1,2&format=files|wide|long
                                             a zip, or a CSV for the matrix of a single dataset
 GET    /api/merge                           the coding units recorded from, with their datasets
 POST   /api/merge/preview                   {"coding_unit", "mode": "none"|"groups", "by": [...],
-                                            "target", "tolerance"} → the groups and their factors
-GET    /api/merge/download?coding_unit=&format=wide|long&mode=&by=a,b&target=&tolerance=
+                                            "target", "tolerance", "power_tolerance"} → the groups,
+                                            their factors and each dataset's
+GET    /api/merge/download?coding_unit=&format=wide|long&mode=&by=a,b&target=&tolerance=&power_tolerance=
                                             every dataset of the coding unit, scaled, as a zip
+GET    /api/merge/scales?(the same, without format)
+                                            each dataset's group and scale factor (scaling.csv)
 GET    /api/odors                           the odor table (with each odor's `inchi`)
 GET    /api/odors/status                    the odor sheet, when it was last read, whether it
                                             changed since the last sync

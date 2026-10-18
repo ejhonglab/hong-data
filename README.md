@@ -162,17 +162,20 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
 - **Merge**: the matrices of every dataset of the chosen coding unit (matched in any
   case), concatenated as above, in a zip that also has `scaling.csv` (each dataset's group
   and scale factor). Datasets can be left at their own scale, or grouped by any of
-  experimenter, recording system and power at the fly (with power: only datasets with it
-  measured, each within the others' ± in a group; the rest are left as they are), each
-  group then multiplied by one factor to match a chosen group, or the average of the
-  groups. A group's factor best matches (least squares, through zero) its mean responses
-  to the stimuli it shares with the target to the target's, per glomerulus when all ROIs
-  are glomeruli, else averaged over ROIs. A dataset's own concentration of an odor is
-  used when it has it, else its nearest within the tolerance (1 log10 unit by default:
-  `x @ -3.9` then stands for `x @ -3`, unless the dataset also has `x @ -3`). The tab
-  shows each group's factor, the stimuli and responses it was fitted on, and Pearson's
-  r over them, as the options change. Odors keep their own concentrations in the
-  matrices.
+  experimenter, recording system and power at the fly, each group then multiplied by one
+  factor to match a chosen group, or the average of the groups. By power, only datasets
+  with power measured are grouped (the rest are left as they are): every two in a group
+  have power ranges (power ± its tolerance, ± 0.5 mW where none was entered) that overlap,
+  or are at most a chosen power tolerance apart (0 mW by default). A group's factor best
+  matches (least squares, through zero) its mean responses to the stimuli it shares with
+  the target to the target's, per glomerulus when all ROIs are glomeruli, else averaged
+  over ROIs. A dataset's own concentration of an odor is used when it has it, else its
+  nearest less than the tolerance away (1 log10 unit by default: `x @ -3.9` then stands
+  for `x @ -3`, unless the dataset also has `x @ -3`, while `x @ -4` does not). The tab
+  shows each group's factor, the stimuli and responses it was fitted on, and Pearson's r
+  over them, then the factor each dataset is multiplied by, which can be downloaded on
+  its own (as `scaling.csv`, by `dataset_id` as in the matrices). Odors keep their own
+  concentrations in the matrices.
 - **Odors**: the app's own table of odor metadata, one row per chemical, with links and
   PubChem structure images. It is synced one way from a Google sheet (its link set in
   the Admin tab) or a CSV imported in the Admin tab, with the columns of

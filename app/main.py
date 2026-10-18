@@ -852,12 +852,14 @@ def _merge_options(q: Any) -> dict:
     by = [b for b in by.split(",") if b] if isinstance(by, str) else by
     try:
         tolerance = float(q.get("tolerance", merge.DEFAULT_TOLERANCE))
+        power_tolerance = float(q.get("power_tolerance", 0))
     except (TypeError, ValueError):
-        raise merge.MergeError("the tolerance must be a number") from None
+        raise merge.MergeError("the tolerances must be numbers") from None
     if not isinstance(by, list):
         raise merge.MergeError("by must be a list")
     return {"coding_unit": str(q.get("coding_unit") or ""), "mode": str(q.get("mode") or "none"),
-            "by": [str(b) for b in by], "target": str(q.get("target") or merge.AVERAGE), "tolerance": tolerance}
+            "by": [str(b) for b in by], "target": str(q.get("target") or merge.AVERAGE), "tolerance": tolerance,
+            "power_tolerance": power_tolerance}
 
 
 async def merge_units(request: Request) -> Response:
@@ -894,6 +896,20 @@ async def merge_download(request: Request) -> Response:
         dest.unlink(missing_ok=True)
         raise
     return FileResponse(dest, filename=name, media_type=media_type, background=BackgroundTask(dest.unlink, missing_ok=True))
+
+
+async def merge_scales(request: Request) -> Response:
+    """The scale factor of each dataset of a merged download (the options of `merge_preview`,
+    as a query), as a CSV indexed by dataset_id like its matrices (`merge.scaling_frame`)."""
+    try:
+        p = await run_in_threadpool(lambda: merge.plan(db, **_merge_options(request.query_params)))
+    except merge.MergeError as e:
+        return json_error(422, str(e))
+    unit = re.sub(r"[^A-Za-z0-9]+", "-", p["coding_unit"]).strip("-").lower() or "merged"
+    n = len(p["datasets"])
+    name = f"olfdb_{unit}_{n}-dataset{'s' if n > 1 else ''}_scales.csv"
+    return Response(merge.scaling_frame(p).to_csv(index=False), media_type="text/csv",
+                    headers={"content-disposition": f'attachment; filename="{name}"'})
 
 
 # ----------------------------------------------------------------------- users
@@ -1348,6 +1364,7 @@ routes = [
     Route("/api/merge", merge_units),
     Route("/api/merge/preview", merge_preview, methods=["POST"]),
     Route("/api/merge/download", merge_download),
+    Route("/api/merge/scales", merge_scales),
     Route("/api/odors", odors_list),
     Route("/api/odors/status", odors_status),
     Route("/api/odors/preview", odors_preview, methods=["POST"]),

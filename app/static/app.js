@@ -1916,7 +1916,10 @@ class MergePage {
   constructor() {
     this._seq = 0;
     $('#tab-merge').addEventListener('change', (e) => {
-      if (e.target.matches('#merge-unit, [name=merge-mode], [name=merge-by], #merge-target, #merge-tol')) this.preview();
+      if (e.target.matches('#merge-unit, [name=merge-mode], [name=merge-by], #merge-target, #merge-tol, #merge-power-tol')) this.preview();
+    });
+    $('#merge-plan').addEventListener('click', (e) => {
+      if (e.target.closest('[data-scales]')) download(`/api/merge/scales?${this._query()}`, $('#merge-status'));
     });
     $$('#merge-download button').forEach((b) => b.addEventListener('click', () => {
       if ($('#merge-unit').value) download(`/api/merge/download?${this._query(b.dataset.format)}`, $('#merge-status'));
@@ -1939,13 +1942,13 @@ class MergePage {
     return {
       coding_unit: $('#merge-unit').value, mode: $('[name=merge-mode]:checked').value,
       by: $$('[name=merge-by]:checked').map((c) => c.value), target: $('#merge-target').value || 'average',
-      tolerance: Number($('#merge-tol').value),
+      tolerance: Number($('#merge-tol').value), power_tolerance: Number($('#merge-power-tol').value),
     };
   }
 
   _query(format) {
     const o = this._options();
-    return new URLSearchParams({ ...o, by: o.by.join(','), format }).toString();
+    return new URLSearchParams({ ...o, by: o.by.join(','), ...(format ? { format } : {}) }).toString();
   }
 
   async preview() {
@@ -1953,7 +1956,9 @@ class MergePage {
     LS.set('olfdb.merge_unit', o.coding_unit);
     $('#merge-options').disabled = o.mode === 'none';
     if (!o.coding_unit) return;
+    $('#merge-power-tol').disabled = !o.by.includes('power');
     if (!(o.tolerance >= 0 && o.tolerance <= 10)) { box.replaceChildren(msgBox('error', 'The distance between concentrations must be between 0 and 10 log10 units.')); return; }
+    if (!(o.power_tolerance >= 0 && o.power_tolerance <= 1000)) { box.replaceChildren(msgBox('error', 'The distance between power ranges must be between 0 and 1000 mW.')); return; }
     let p;
     try { p = await api('/api/merge/preview', { method: 'POST', json: o }); } catch (e) {
       if (seq === this._seq) box.replaceChildren(msgBox('error', esc(e.message)));
@@ -1973,7 +1978,7 @@ class MergePage {
     const groupOf = new Map(p.groups.flatMap((g) => g.ids.map((i) => [i, g])));
     const why = new Map(p.unscaled.map((u) => [u.id, u.reason]));
     const power = (d) => (d.power_mw == null ? '<span class="muted">not measured</span>'
-      : `${d.power_mw}${d.power_tolerance_mw != null ? ` ± ${d.power_tolerance_mw}` : ''} mW`);
+      : `${d.power_mw} ± ${d.power_tolerance_mw ?? '0.5 <span class="muted">(assumed)</span>'} mW`);
     const parts = [];
     if (p.mode === 'groups' && !p.groups.length) {
       parts.push(msgBox('warn', 'None of these datasets can be grouped this way (why is in the table below), so none is scaled.').outerHTML);
@@ -1989,13 +1994,17 @@ class MergePage {
           <td class="scale">${g.r == null ? '' : g.r.toFixed(2)}</td><td class="muted">${esc(g.note || '')}</td></tr>`).join('')}
         </tbody></table>`);
     } else parts.push('<p>Every dataset stays at its own scale.</p>');
-    parts.push(`<h3>Datasets (${p.datasets.length})</h3><table class="odor-table"><thead><tr><th>Dataset</th><th>Experimenter</th>
-      <th>Recording system</th><th>Power</th>${p.mode === 'groups' ? '<th>Group</th>' : ''}<th>Scale</th></tr></thead><tbody>
+    // with scaling, the factor each dataset is multiplied by (as in scaling.csv, which can be downloaded on its own)
+    const scaled = p.mode === 'groups';
+    parts.push(`<div class="merge-scales-head"><h3>${scaled ? 'Scale factor of each dataset' : `Datasets (${p.datasets.length})`}</h3>
+      ${scaled ? '<button type="button" class="btn small" data-scales title="scaling.csv: one row per dataset, by dataset_id as in the matrices">Download as CSV</button>' : ''}</div>
+      <table class="odor-table merge-scales"><thead><tr><th>Dataset</th><th>Experimenter</th><th>Recording system</th><th>Power</th>
+      ${scaled ? '<th>Group</th><th>Scale</th>' : ''}</tr></thead><tbody>
       ${p.datasets.map((d) => {
         const g = groupOf.get(d.id);
         return `<tr><td>${link(d.id)} ${esc(d.title)}</td><td>${esc(d.uploader || '')}</td><td>${esc(d.system || '')}</td><td>${power(d)}</td>
-          ${p.mode === 'groups' ? `<td>${g ? esc(g.key) : `<span class="muted">${esc(why.get(d.id) || '')}</span>`}</td>` : ''}
-          <td class="scale">${factor(p.scales[d.id])}</td></tr>`;
+          ${scaled ? `<td>${g ? esc(g.key) : `<span class="muted">${esc(why.get(d.id) || '')}</span>`}</td>
+          <td class="scale">${factor(p.scales[d.id])}</td>` : ''}</tr>`;
       }).join('')}</tbody></table>`);
     return parts.join('');
   }

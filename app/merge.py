@@ -2,14 +2,15 @@
 scaled to match each other first.
 
 Datasets are grouped by any of experimenter, recording system and power at the fly (with
-power: measured, and every two in a group within each other's ±; datasets without it
-are left as they are). Each group gets one scale factor: the one that best matches
+power: measured, and every two in a group with their ranges, power ± its tolerance or
+`DEFAULT_POWER_PM`, at most `power_tolerance` apart; datasets without it are left as they
+are). Each group gets one scale factor: the one that best matches
 (least squares, through zero) its mean responses to the odors it shares with the target,
 a group or the average of the groups, to the target's. Responses are compared per odor,
 and per ROI when every dataset's ROIs are glomeruli (so that the same glomeruli are
 compared), else averaged over ROIs. An odor of a dataset stands for a target odor when
 their components have the same names, at the same concentrations if the dataset has
-those, else at its nearest ones within `tolerance` log10 units.
+those, else at its nearest ones, less than `tolerance` log10 units away.
 """
 from __future__ import annotations
 
@@ -28,6 +29,7 @@ MODES = ("none", "groups")
 GROUP_BY = ("uploader", "system", "power")
 AVERAGE = "average"
 DEFAULT_TOLERANCE = 1.0
+DEFAULT_POWER_PM = 0.5  # mW: the ± of a power measured without one
 
 
 class MergeError(ValueError):
@@ -69,17 +71,21 @@ def datasets_of(db: Database, coding_unit: str) -> list[dict]:
 
 
 def _power(d: dict) -> tuple[Optional[float], float]:
+    """A dataset's power (mW) and its ± (`DEFAULT_POWER_PM` if none was entered)."""
     md = d["metadata"]
-    return md.get("power_mw"), md.get("power_tolerance_mw") or 0.0
+    pm = md.get("power_tolerance_mw")
+    return md.get("power_mw"), DEFAULT_POWER_PM if pm is None else pm
 
 
-def _power_close(a: dict, b: dict) -> bool:
+def _power_close(a: dict, b: dict, power_tolerance: float) -> bool:
+    """Whether two datasets' power ranges (power ± its tolerance) overlap, or are at most `power_tolerance` apart."""
     (pa, ta), (pb, tb) = _power(a), _power(b)
-    return abs(pa - pb) <= ta + tb + 1e-9
+    return abs(pa - pb) <= ta + tb + power_tolerance + 1e-9
 
 
-def make_groups(datasets: list[dict], by: set[str]) -> tuple[list[Group], list[dict]]:
-    """Groups of `datasets` (by any of `GROUP_BY`), and the datasets left out of them (``id``, ``reason``)."""
+def make_groups(datasets: list[dict], by: set[str], power_tolerance: float = 0.0) -> tuple[list[Group], list[dict]]:
+    """Groups of `datasets` (by any of `GROUP_BY`; with power, every two in a group close
+    enough, see `_power_close`), and the datasets left out of them (``id``, ``reason``)."""
     buckets: dict[tuple, list[dict]] = {}
     labels: dict[tuple, list[str]] = {}
     unscaled = []
@@ -100,10 +106,10 @@ def make_groups(datasets: list[dict], by: set[str]) -> tuple[list[Group], list[d
     for key, ds in buckets.items():
         clusters: list[list[dict]] = []
         if "power" in by:
-            # in order of power, each joins the first group it is within the ± of all of
+            # in order of power, each joins the first group it is close enough to all of
             for d in sorted(ds, key=lambda d: (_power(d)[0], d["id"])):
                 for cl in clusters:
-                    if all(_power_close(d, e) for e in cl):
+                    if all(_power_close(d, e, power_tolerance) for e in cl):
                         cl.append(d)
                         break
                 else:
@@ -172,7 +178,7 @@ def dataset_means(matrix: dict, by_roi: bool) -> dict[tuple, dict[Optional[str],
 
 def match(available, target: tuple, tolerance: float) -> Optional[tuple]:
     """The odor (`odor_key`) of `available` that stands for `target`: the same, else the one
-    with the same components at the nearest concentrations, all within `tolerance`."""
+    with the same components at the nearest concentrations, all less than `tolerance` away."""
     if target in available:
         return target
     names = [n for n, _ in target]
@@ -181,7 +187,7 @@ def match(available, target: tuple, tolerance: float) -> Optional[tuple]:
         if [n for n, _ in k] != names:
             continue
         d = max(abs(c - tc) for (_, c), (_, tc) in zip(k, target))
-        if d <= tolerance + 1e-9 and (d < best_d or (d == best_d and k > best)):
+        if d < tolerance - 1e-9 and (d < best_d or (d == best_d and k > best)):
             best, best_d = k, d
     return best
 
@@ -214,7 +220,7 @@ def _fit(group: Group, target: dict[tuple, float]) -> None:
 
 
 def plan(db: Database, coding_unit: str, mode: str = "none", by: Optional[list[str]] = None, target: str = AVERAGE,
-         tolerance: float = DEFAULT_TOLERANCE) -> dict:
+         tolerance: float = DEFAULT_TOLERANCE, power_tolerance: float = 0.0) -> dict:
     """How the datasets of `coding_unit` are scaled in a merged download.
 
     Args:
@@ -222,7 +228,9 @@ def plan(db: Database, coding_unit: str, mode: str = "none", by: Optional[list[s
         by: what groups are made by (`GROUP_BY`).
         target: the key of the group scaled to, or `AVERAGE` (the average of the groups);
             the average if there is no such group.
-        tolerance: how far apart (log10) concentrations of an odor may be to stand for each other.
+        tolerance: how far apart (log10) concentrations of an odor must be less than to stand for each other.
+        power_tolerance: how far apart (mW) the power ranges (power ± its tolerance) of two
+            datasets may be for them to be in a group, when grouped by power.
 
     Returns:
         dict with ``datasets`` (each one's details), ``groups`` (``key``, ``ids``, ``scale``,
@@ -239,11 +247,14 @@ def plan(db: Database, coding_unit: str, mode: str = "none", by: Optional[list[s
         raise MergeError(f"mode must be one of {', '.join(MODES)}, and groups made by any of {', '.join(GROUP_BY)}")
     if not 0 <= tolerance <= 10:
         raise MergeError("the tolerance must be between 0 and 10 (log10 units)")
+    if not 0 <= power_tolerance <= 1000:
+        raise MergeError("the power tolerance must be between 0 and 1000 (mW)")
     datasets = datasets_of(db, coding_unit)
     if not datasets:
         raise MergeError(f"no datasets of coding unit {coding_unit!r}")
     out = {
         "coding_unit": _norm(datasets[0]["coding_unit"]), "mode": mode, "by": by, "tolerance": tolerance,
+        "power_tolerance": power_tolerance,
         "datasets": [{
             "id": d["id"], "title": d["title"], "uploader": d["metadata"].get("uploader_name"),
             "system": d["metadata"].get("recording_system"), "power_mw": d["metadata"].get("power_mw"),
@@ -253,7 +264,7 @@ def plan(db: Database, coding_unit: str, mode: str = "none", by: Optional[list[s
     }
     if mode == "none":
         return out
-    groups, unscaled = make_groups(datasets, set(by))
+    groups, unscaled = make_groups(datasets, set(by), power_tolerance)
     by_roi = all(d["roi_kind"] == "glomeruli" for d in datasets)
     in_groups = [i for g in groups for i in g.ids]
     means = {i: dataset_means(db.get_matrix_arrays(i), by_roi) for i in in_groups}
@@ -315,10 +326,14 @@ def readme_lines(p: dict) -> list[str]:
     names = {"uploader": "experimenter", "system": "recording system", "power": "power at the fly"}
     by = ", ".join(names[b] for b in p["by"]) or "nothing (one group)"
     target = "the average of the groups" if p["target"] == AVERAGE else f"the group {p['target']}"
-    return lines + [
+    power = [] if "power" not in p["by"] else [
+        f"By power: datasets with power measured, their ranges (power ± its tolerance, ± {DEFAULT_POWER_PM:g} mW where",
+        f"none was given) at most {p['power_tolerance']:g} mW apart for every two in a group.",
+    ]
+    return lines + power + [
         f"Datasets were grouped by {by}, and each group scaled to {target} (`scaling.csv`: each dataset's group",
         "and factor). A group's factor best matches (least squares, through zero) its mean responses to the odors",
         f"it shares with the target to the target's, {'per ROI (glomerulus)' if p['by_roi'] else 'averaged over ROIs'}.",
-        f"Odors stand for each other at concentrations up to {p['tolerance']:g} log10 units apart (a dataset's exact",
+        f"Odors stand for each other at concentrations less than {p['tolerance']:g} log10 units apart (a dataset's exact",
         "concentration is used when it has it). In the matrices, odors keep their own concentrations.",
     ]

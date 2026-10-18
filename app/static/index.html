@@ -270,15 +270,18 @@
           <div class="merge-by">
             <label class="check"><input type="checkbox" name="merge-by" value="uploader" checked> experimenter</label>
             <label class="check"><input type="checkbox" name="merge-by" value="system"> recording system</label>
-            <label class="check"><input type="checkbox" name="merge-by" value="power"> power at the fly <span class="muted">(only datasets with power measured, all within each other's ± in a group; the others are left as they are)</span></label>
+            <label class="check"><input type="checkbox" name="merge-by" value="power"> power at the fly <span class="muted">(only datasets with power measured, with ranges close enough, below; the others are left as they are)</span></label>
           </div>
         </div>
         <div class="grid">
           <label class="field"><span>Scale them to</span><select id="merge-target"><option value="average">the average of the groups</option></select></label>
-          <label class="field"><span>Odors match at concentrations up to this far apart (log<sub>10</sub> units)</span>
+          <label class="field"><span>Odors match at concentrations less than this far apart (log<sub>10</sub> units)</span>
             <input type="number" id="merge-tol" min="0" max="10" step="0.1" value="1" class="narrow"></label>
+          <label class="field"><span>By power: ranges may be this far apart (mW)</span>
+            <input type="number" id="merge-power-tol" min="0" max="1000" step="0.1" value="0" class="narrow" disabled></label>
+          <p class="muted small merge-power-note">A dataset's power range is its power ± the tolerance entered at upload, or <b>± 0.5 mW where none was entered</b>. Two datasets can be in a group when their ranges overlap, or are at most this far apart (every two in a group).</p>
         </div>
-        <p class="muted small">A group's scale factor best matches (least squares, through zero) its mean responses to the odors it shares with the target to the target's, per glomerulus when all ROIs are glomeruli. A dataset's own concentration of an odor is used when it has it; otherwise its nearest one within the distance above (so with 1, <code>x @ -3.9</code> stands for <code>x @ -3</code>). The odors in the download keep their own concentrations.</p>
+        <p class="muted small">A group's scale factor best matches (least squares, through zero) its mean responses to the odors it shares with the target to the target's, per glomerulus when all ROIs are glomeruli. A dataset's own concentration of an odor is used when it has it; otherwise its nearest one less than the distance above away (so with 1, <code>x @ -3.9</code> stands for <code>x @ -3</code>, but <code>x @ -4</code> does not). The odors in the download keep their own concentrations.</p>
       </fieldset>
       <div id="merge-plan" aria-live="polite"></div>
     </div>

@@ -22,7 +22,11 @@ ROWS_35 = [tuple("va @ -3.5" if x == "va @ -3" else x for x in r) for r in ROWS]
 
 
 def add(db, tmp_path, name, factor, rows=ROWS, **md):
-    parsed = load_file(write_csv(make_wide(rows, COLS, values=V * factor), tmp_path, f"{name}.csv"))
+    return add_values(db, tmp_path, name, V * factor, rows, **md)
+
+
+def add_values(db, tmp_path, name, values, rows, **md):
+    parsed = load_file(write_csv(make_wide(rows, COLS, values=values), tmp_path, f"{name}.csv"))
     metadata = {"uploader_name": "Ann", "indicator": "GCaMP6f", "driver": "GH146", "coding_unit": "glomeruli", **md}
     return db.insert_dataset(
         created_at="2026-01-02T03:04:05", title=name, metadata=metadata, readme_md="#", readme_edited=False,
@@ -56,6 +60,9 @@ def test_match():
     assert merge.match(avail | {(("va", -3.0),)}, (("va", -3.0),), 1) == (("va", -3.0),)  # the exact one first
     assert merge.match(avail, (("va", -3.0),), 0.4) is None and merge.match(avail, (("ea", -3.0),), 1) is None
     assert merge.match(avail, (("ea", -2.0), ("va", -2.5)), 1) == (("ea", -2.0), ("va", -3.0))
+    # exactly the tolerance apart is not close enough
+    assert merge.match({(("va", -4.0),)}, (("va", -3.0),), 1) is None
+    assert merge.match({(("va", -4.0),)}, (("va", -3.0),), 1.01) == (("va", -4.0),)
     assert merge.odor_key(["va @ -3", "solvent"]) == (("va", -3.0),) and merge.odor_key(["solvent"]) is None
 
 
@@ -95,6 +102,52 @@ def test_plan(four):
         merge.plan(db, "KCs")
 
 
+def test_power_groups():
+    """Power ranges (± 0.5 mW where none was given) at most the power tolerance apart, for every two in a group."""
+    ds = [{"id": i, "metadata": {"power_mw": p, "power_tolerance_mw": pm}}
+          for i, (p, pm) in enumerate([(10, None), (12, None), (11.5, 0.2), (20, 2)], 1)]
+    grouped = lambda tol: {g.key: g.ids for g in merge.make_groups(ds, {"power"}, tol)[0]}  # noqa: E731
+    assert grouped(0) == {"10 mW": [1], "11.5–12 mW": [2, 3], "20 mW": [4]}
+    assert grouped(1) == {"10–12 mW": [1, 2, 3], "20 mW": [4]}  # 10 ± 0.5 and 12 ± 0.5: 1 mW apart
+    assert grouped(0.9) == {"10–11.5 mW": [1, 3], "12 mW": [2], "20 mW": [4]}
+
+
+def test_scaling_per_dataset(tmp_path):
+    """Each dataset is multiplied by its group's factor, fitted on the pairs of odors that
+    stand for each other across datasets (here Bob's c has va @ -3.5 for Ann's va @ -3)."""
+    db = Database(tmp_path / "db.sqlite3")
+    rng = np.random.default_rng(7)
+    data = {name: np.abs(rng.normal(size=V.shape)) + 0.2 for name in "abc"}  # not proportional to each other
+    a = add_values(db, tmp_path, "a", data["a"], ROWS)
+    b = add_values(db, tmp_path, "b", data["b"], ROWS, uploader_name="Bob")
+    c = add_values(db, tmp_path, "c", data["c"], ROWS_35, uploader_name="Bob")
+
+    def means(values, rows):  # mean response to each stimulus, over repeats then flies, per glomerulus
+        stim = [" + ".join(sorted(o for o in r[2:4] if o != "solvent")) for r in rows]
+        df = pd.DataFrame(values, columns=pd.MultiIndex.from_tuples(COLS, names=["date", "fly_num", "roi"]))
+        return df.groupby(stim).mean().T.groupby(level="roi").mean().T
+
+    target = means(data["a"], ROWS)
+    pairs = {"va @ -3": "va @ -3.5", "ea @ -2": "ea @ -2", "ea @ -2 + va @ -3": "ea @ -2 + va @ -3.5"}
+    mb, mc = means(data["b"], ROWS), means(data["c"], ROWS_35)
+    bob = pd.DataFrame({s: (mb.loc[s] + mc.loc[pairs[s]]) / 2 for s in target.index}).T
+    t, g = target.values.ravel(), bob.loc[target.index, target.columns].values.ravel()
+    expected = t @ g / (g @ g)
+
+    p = merge.plan(db, "glomeruli", "groups", ["uploader"], target="Ann")
+    assert p["scales"] == {a: 1, b: pytest.approx(expected), c: pytest.approx(expected)}
+    assert p["groups"][1]["n_stimuli"] == 3 and p["groups"][1]["n_points"] == 9  # 3 stimuli x 3 glomeruli
+    # without the pairing (too narrow a tolerance), the factor comes from fewer stimuli of c
+    assert merge.plan(db, "glomeruli", "groups", ["uploader"], target="Ann", tolerance=0.4)["scales"][c] != pytest.approx(expected)
+
+    write_download(db, [a, b, c], "long", tmp_path / "out.zip", tmp_path / "datasets", merged=p)
+    with zipfile.ZipFile(tmp_path / "out.zip") as zf:
+        long = pd.read_csv(io.BytesIO(zf.read("olfdb_glomeruli_3-datasets_long/responses_long.csv")))
+    for i, name in ((a, "a"), (b, "b"), (c, "c")):  # every value of each dataset, times its own factor
+        got = np.sort(long[long.dataset_id == i].value.to_numpy())
+        np.testing.assert_allclose(got, np.sort(data[name].ravel() * p["scales"][i]), rtol=1e-5)
+
+
 def test_download(four, tmp_path):
     db, (a, b, c, d) = four
     p = merge.plan(db, "glomeruli", "groups", ["uploader"], target="Ann")
@@ -123,6 +176,12 @@ def test_api(main, tmp_path, monkeypatch):  # noqa: F811
     status, p = call(main.merge_preview, body={"coding_unit": "glomeruli", "mode": "groups", "by": ["uploader"], "target": "Bob"})
     assert status == 200 and {g["key"]: g["scale"] for g in p["groups"]} == {"Ann": pytest.approx(3), "Bob": 1}
     assert call(main.merge_preview, body={"coding_unit": "glomeruli", "tolerance": "x"})[0] == 422
+    status, p = call(main.merge_preview, body={"coding_unit": "glomeruli", "mode": "groups", "by": ["power"], "power_tolerance": 2})
+    assert status == 200 and p["power_tolerance"] == 2 and [g["key"] for g in p["groups"]] == ["10 mW"]
+    res = get(main.merge_scales, {"coding_unit": "glomeruli", "mode": "groups", "by": "uploader", "target": "Bob"})
+    assert res.headers["content-disposition"].endswith('olfdb_glomeruli_2-datasets_scales.csv"')
+    scales = pd.read_csv(io.StringIO(res.body.decode()))
+    assert scales.dataset_id.tolist() == [a, b] and scales.scale.tolist() == pytest.approx([3, 1])
     res = get(main.merge_download, {"coding_unit": "glomeruli", "format": "wide", "mode": "groups", "by": "uploader",
                                     "target": "Bob"})
     assert res.status_code == 200 and res.headers["content-disposition"].endswith('olfdb_glomeruli_2-datasets_wide.zip"')
