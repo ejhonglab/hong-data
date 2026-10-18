@@ -1909,6 +1909,98 @@ class SettingsPage {
   }
 }
 
+// ===================================================================== MERGE
+// Every dataset of a coding unit in one download, groups of them optionally scaled to each
+// other first (app/merge.py): how they would be scaled is shown as the options change.
+class MergePage {
+  constructor() {
+    this._seq = 0;
+    $('#tab-merge').addEventListener('change', (e) => {
+      if (e.target.matches('#merge-unit, [name=merge-mode], [name=merge-by], #merge-target, #merge-tol')) this.preview();
+    });
+    $$('#merge-download button').forEach((b) => b.addEventListener('click', () => {
+      if ($('#merge-unit').value) download(`/api/merge/download?${this._query(b.dataset.format)}`, $('#merge-status'));
+    }));
+  }
+
+  // each time the tab is opened (datasets may have been uploaded since)
+  async load() {
+    let res;
+    try { res = await api('/api/merge'); } catch (e) { $('#merge-plan').replaceChildren(msgBox('error', esc(e.message))); return; }
+    const sel = $('#merge-unit'), keep = sel.value || LS.get('olfdb.merge_unit', '');
+    sel.innerHTML = res.coding_units.map((u) => `<option value="${esc(u.coding_unit)}">${esc(u.coding_unit)} (${u.ids.length} dataset${u.ids.length === 1 ? '' : 's'})</option>`).join('');
+    $$('#merge-download button').forEach((b) => { b.disabled = !res.coding_units.length; });
+    if (!res.coding_units.length) { $('#merge-plan').replaceChildren(msgBox('info', 'Nothing has been uploaded yet.')); return; }
+    if (res.coding_units.some((u) => u.coding_unit === keep)) sel.value = keep;
+    this.preview();
+  }
+
+  _options() {
+    return {
+      coding_unit: $('#merge-unit').value, mode: $('[name=merge-mode]:checked').value,
+      by: $$('[name=merge-by]:checked').map((c) => c.value), target: $('#merge-target').value || 'average',
+      tolerance: Number($('#merge-tol').value),
+    };
+  }
+
+  _query(format) {
+    const o = this._options();
+    return new URLSearchParams({ ...o, by: o.by.join(','), format }).toString();
+  }
+
+  async preview() {
+    const seq = ++this._seq, o = this._options(), box = $('#merge-plan');
+    LS.set('olfdb.merge_unit', o.coding_unit);
+    $('#merge-options').disabled = o.mode === 'none';
+    if (!o.coding_unit) return;
+    if (!(o.tolerance >= 0 && o.tolerance <= 10)) { box.replaceChildren(msgBox('error', 'The distance between concentrations must be between 0 and 10 log10 units.')); return; }
+    let p;
+    try { p = await api('/api/merge/preview', { method: 'POST', json: o }); } catch (e) {
+      if (seq === this._seq) box.replaceChildren(msgBox('error', esc(e.message)));
+      return;
+    }
+    if (seq !== this._seq) return;
+    const sel = $('#merge-target');
+    sel.innerHTML = [['average', 'the average of the groups'], ...p.groups.map((g) => [g.key, `the group ${g.key}`])]
+      .map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join('');
+    sel.value = p.target || 'average';
+    box.innerHTML = this._planHtml(p);
+  }
+
+  _planHtml(p) {
+    const link = (id) => `<a href="#browse/${id}">#${id}</a>`;
+    const factor = (s) => `× ${+s.toPrecision(3)}`;
+    const groupOf = new Map(p.groups.flatMap((g) => g.ids.map((i) => [i, g])));
+    const why = new Map(p.unscaled.map((u) => [u.id, u.reason]));
+    const power = (d) => (d.power_mw == null ? '<span class="muted">not measured</span>'
+      : `${d.power_mw}${d.power_tolerance_mw != null ? ` ± ${d.power_tolerance_mw}` : ''} mW`);
+    const parts = [];
+    if (p.mode === 'groups' && !p.groups.length) {
+      parts.push(msgBox('warn', 'None of these datasets can be grouped this way (why is in the table below), so none is scaled.').outerHTML);
+    } else if (p.mode === 'groups') {
+      const target = p.target === 'average' ? 'the average of the groups' : `the group <b>${esc(p.target)}</b>`;
+      parts.push(`<p>${p.groups.length} group${p.groups.length === 1 ? '' : 's'}, each scaled to ${target}; responses compared
+        ${p.by_roi ? 'per glomerulus' : 'averaged over ROIs (they are not all glomeruli)'}.</p>`);
+      if (p.groups.length < 2) parts.push(msgBox('warn', 'With a single group, nothing is scaled: group the datasets by something that tells them apart.').outerHTML);
+      parts.push(`<table class="odor-table"><thead><tr><th>Group</th><th>Datasets</th><th>Scale</th><th>Compared on</th><th>r</th><th></th></tr></thead><tbody>
+        ${p.groups.map((g) => `<tr><td><b>${esc(g.key)}</b></td><td>${g.ids.map(link).join(' ')}</td>
+          <td class="scale">${g.scale == null ? '<span class="muted">× 1</span>' : factor(g.scale)}</td>
+          <td>${g.n_points ? `${g.n_stimuli} stimul${g.n_stimuli === 1 ? 'us' : 'i'}, ${g.n_points} responses` : ''}</td>
+          <td class="scale">${g.r == null ? '' : g.r.toFixed(2)}</td><td class="muted">${esc(g.note || '')}</td></tr>`).join('')}
+        </tbody></table>`);
+    } else parts.push('<p>Every dataset stays at its own scale.</p>');
+    parts.push(`<h3>Datasets (${p.datasets.length})</h3><table class="odor-table"><thead><tr><th>Dataset</th><th>Experimenter</th>
+      <th>Recording system</th><th>Power</th>${p.mode === 'groups' ? '<th>Group</th>' : ''}<th>Scale</th></tr></thead><tbody>
+      ${p.datasets.map((d) => {
+        const g = groupOf.get(d.id);
+        return `<tr><td>${link(d.id)} ${esc(d.title)}</td><td>${esc(d.uploader || '')}</td><td>${esc(d.system || '')}</td><td>${power(d)}</td>
+          ${p.mode === 'groups' ? `<td>${g ? esc(g.key) : `<span class="muted">${esc(why.get(d.id) || '')}</span>`}</td>` : ''}
+          <td class="scale">${factor(p.scales[d.id])}</td></tr>`;
+      }).join('')}</tbody></table>`);
+    return parts.join('');
+  }
+}
+
 // ===================================================================== ADMIN
 // Site-wide settings: the folders on the server the app may read and write (fixed when
 // the server starts, so saved changes wait for a restart, which can be asked for here
@@ -2136,6 +2228,7 @@ const upload = new UploadFlow();
 const browse = new Browse();
 const odorsPage = new OdorsPage();
 const reference = new Reference();
+const mergePage = new MergePage();
 const settings = new SettingsPage();
 const admin = new AdminPage();
 const player = new MoviePlayer($('#player'), { api, esc, fmtBytes });
@@ -2145,7 +2238,7 @@ let lastPlace = 'browse'; // the hash of the last place shown other than the Adm
 
 function route() {
   const [tab, id] = location.hash.replace(/^#/, '').split('/');
-  const name = ['upload', 'browse', 'odors', 'reference', 'settings', 'admin'].includes(tab) ? tab : 'browse';
+  const name = ['upload', 'browse', 'merge', 'odors', 'reference', 'settings', 'admin'].includes(tab) ? tab : 'browse';
   $$('.tab').forEach((s) => { s.hidden = s.id !== `tab-${name}`; });
   $$('.tabs a').forEach((a) => a.classList.toggle('active', a.dataset.tab === name));
   if (name === 'admin' && currentTab !== 'admin') admin.enter(lastPlace);
@@ -2155,6 +2248,7 @@ function route() {
   if (name === 'odors') { odorsPage.highlightId = id ? +id : null; odorsPage.load().then(() => { if (id) odorsPage.highlight(+id); }); }
   if (name === 'reference') { reference.load().then(() => { if (id) reference.show(id); }); }
   if (name === 'settings') settings.load();
+  if (name === 'merge') mergePage.load();
   if (name === 'browse' && !id) { $('#browse-empty').hidden = false; $('#dataset-view').hidden = true; browse.selected = null; }
   if (name === 'reference' && !id) { $('#reference-empty').hidden = false; $('#reference-view').hidden = true; reference.selected = null; }
 }

@@ -100,6 +100,14 @@ the app is described in [README.md](README.md), hosting it in [DEPLOY.md](DEPLOY
   crisp at any zoom, while text and lines stay vector in SVG and PDF.
 - **Downloads** are built in `data/exports/` and deleted once sent. Across datasets,
   trials are matched on panel, odor components and repeat.
+- **Merged downloads scale whole groups, by one factor each** (`app/merge.py`): fitted
+  through zero by least squares on mean responses (over repeats; per glomerulus when
+  every ROI is one, so the same glomeruli are compared, else over ROIs) to the stimuli a
+  group shares with the target. One factor per group keeps each group's relative
+  responses as they were, and a fit through zero keeps zero (no response) where it is.
+  Concentrations of an odor stand for each other within a tolerance, a dataset's exact
+  one first, only for the fit: the matrices keep their own odors. The average target is
+  the mean over groups of each response more than one of them has.
 - **Reference matrices** are read from `reference_data/` at request time, so adding or
   editing one needs no restart.
 
@@ -117,6 +125,7 @@ app/metadata.py    form model (pydantic) and README.md generation
 app/db.py          SQLite schema and queries
 app/reference.py   fixed reference matrices
 app/export.py      downloads: zips of dataset files, concatenated wide/long matrices
+app/merge.py       merged downloads of a coding unit: grouping datasets, scaling groups to each other
 app/odormeta.py    odor table: sheet parsing / validation, sync diff, links, dataset matching
 app/tensor.py      users' folders on tensor: path checks, finding a dataset's flies, recordings, YAMLs
 app/sandbox.py     folders the server may read and write (Admin tab): settings, path checks, Landlock
@@ -184,6 +193,11 @@ GET    /api/movie/planes?path=&t=&n=&z=&c=  n planes from time t (z: a plane, or
 GET    /api/movie/rois?path=                the ImageJ ROIs of a RoiSet.zip (or .roi), with their planes
 GET    /api/download?ids=1,2&format=files|wide|long
                                             a zip, or a CSV for the matrix of a single dataset
+GET    /api/merge                           the coding units recorded from, with their datasets
+POST   /api/merge/preview                   {"coding_unit", "mode": "none"|"groups", "by": [...],
+                                            "target", "tolerance"} → the groups and their factors
+GET    /api/merge/download?coding_unit=&format=wide|long&mode=&by=a,b&target=&tolerance=
+                                            every dataset of the coding unit, scaled, as a zip
 GET    /api/odors                           the odor table (with each odor's `inchi`)
 GET    /api/odors/status                    the odor sheet, when it was last read, whether it
                                             changed since the last sync

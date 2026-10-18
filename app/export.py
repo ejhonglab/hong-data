@@ -15,7 +15,9 @@ These are zips, which also have ``datasets.csv`` (one row of metadata per datase
 each dataset's README.md and metadata.json, and a README.md describing the contents.
 Except that a wide or long download of a single dataset is just its matrix, as one CSV
 laid out as it was uploaded (less row levels dropped on upload), with no ``dataset_id``
-and a name made from the dataset's details (`dataset_stem`).
+and a name made from the dataset's details (`dataset_stem`). A merged download (every
+dataset of a coding unit, see merge.py) is always a zip, with each dataset's values
+multiplied by its scale factor, and ``scaling.csv``.
 """
 from __future__ import annotations
 
@@ -26,12 +28,12 @@ import unicodedata
 import zipfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterable, Iterator, TextIO
+from typing import Iterable, Iterator, Optional, TextIO
 
 import numpy as np
 import pandas as pd
 
-from . import odormeta
+from . import merge, odormeta
 from .db import Database
 from .ingest import COL_LEVELS
 from .odors import SOLVENT_STR, is_odor_level, odor_level_sort_key
@@ -299,7 +301,8 @@ def _readme(datasets: list[dict], fmt: str, levels: list[str], shape: tuple[int,
     return "\n".join(lines) + "\n"
 
 
-def write_download(db: Database, ds_ids: Iterable[int], fmt: str, dest: Path, datasets_dir: Path) -> tuple[str, str]:
+def write_download(db: Database, ds_ids: Iterable[int], fmt: str, dest: Path, datasets_dir: Path, *,
+                   merged: Optional[dict] = None) -> tuple[str, str]:
     """Write the download of ``ds_ids`` in format ``fmt`` (see module docstring) to ``dest``.
 
     Args:
@@ -308,6 +311,9 @@ def write_download(db: Database, ds_ids: Iterable[int], fmt: str, dest: Path, da
         fmt: one of ``FORMATS``.
         dest: file to write (a zip, or a CSV for the matrix of a single dataset).
         datasets_dir: directory with one sub-directory of files per dataset id.
+        merged: for a merged download, its plan (`merge.plan`), whose ``scales`` multiply
+            each dataset's values: then always a zip, named after the coding unit, with
+            ``scaling.csv`` and a README section on the scaling.
 
     Returns:
         (file name to offer the download as, its media type)
@@ -324,7 +330,7 @@ def write_download(db: Database, ds_ids: Iterable[int], fmt: str, dest: Path, da
     missing = [i for i, d in zip(ids, datasets) if d is None]
     if missing:
         raise ExportError(f"dataset{'s' if len(missing) > 1 else ''} not found: {', '.join(map(str, missing))}")
-    if len(ids) == 1 and fmt != "files":
+    if len(ids) == 1 and fmt != "files" and merged is None:
         d, m = datasets[0], db.get_matrix_arrays(ids[0])
         levels, keys = dataset_trial_keys(m["trials"], d["summary"].get("row_levels") or trial_keys([m])[0])
         with open(dest, "w", encoding="utf-8", newline="") as f:
@@ -336,11 +342,21 @@ def write_download(db: Database, ds_ids: Iterable[int], fmt: str, dest: Path, da
 
     stem = _stem(ids, fmt)
     matrices = [(i, db.get_matrix_arrays(i)) for i in ids] if fmt != "files" else []
+    if merged is not None:
+        unit = re.sub(r"[^A-Za-z0-9]+", "-", _ascii(merged["coding_unit"])).strip("-").lower() or "merged"
+        stem = f"olfdb_{unit}_{len(ids)}-dataset{'s' if len(ids) > 1 else ''}_{fmt}"
+        for i, m in matrices:
+            m["values"] = (m["values"] * np.float32(merged["scales"][i])).astype(np.float32)
     levels, keys = trial_keys([m for _, m in matrices]) if matrices else ([], [])
     shape = (len({k for ks in keys for k in ks}), sum(len(m["units"]) for _, m in matrices))
 
     with zipfile.ZipFile(dest, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
-        zf.writestr(f"{stem}/README.md", _readme(datasets, fmt, levels, shape))
+        readme = _readme(datasets, fmt, levels, shape)
+        if merged is not None:
+            readme += "\n".join(merge.readme_lines(merged)) + "\n"
+            with _zip_text(zf, f"{stem}/scaling.csv") as f:
+                merge.scaling_frame(merged).to_csv(f, index=False)
+        zf.writestr(f"{stem}/README.md", readme)
         with _zip_text(zf, f"{stem}/datasets.csv") as f:
             datasets_frame(datasets).to_csv(f, index=False)
         with _zip_text(zf, f"{stem}/odors.csv") as f:

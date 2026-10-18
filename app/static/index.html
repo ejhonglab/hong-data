@@ -11,8 +11,9 @@
 <header class="topbar">
   <a class="wordmark" href="https://github.com/ejhonglab/hong-data" target="_blank" rel="noopener" title="Source code on GitHub">Odor response database</a>
   <nav class="tabs" aria-label="Sections">
-    <a href="#browse" data-tab="browse">Browse</a>
     <a href="#upload" data-tab="upload">Upload</a>
+    <a href="#browse" data-tab="browse">Browse</a>
+    <a href="#merge" data-tab="merge">Merge</a>
     <span class="tabs-sep" aria-hidden="true"></span>
     <a href="#reference" data-tab="reference">Reference matrices</a>
     <a href="#odors" data-tab="odors">Odors<span class="tab-badge" id="odors-badge" hidden title="The odor sheet changed since it was last synced"></span></a>
@@ -241,6 +242,55 @@
         <div id="ds-odors" class="readme-panel" hidden></div>
         <div id="dataset-viewer" class="viewer viewer-main"></div>
       </div>
+    </div>
+  </section>
+
+  <!-- ========================================================= MERGE -->
+  <section id="tab-merge" class="tab" hidden>
+    <div class="page-head">
+      <h1>Merge</h1>
+      <p class="lede">Every dataset recorded from one coding unit, in one download, concatenated as from Browse, with the option of scaling groups of datasets (by experimenter, rig or power) to each other first.</p>
+    </div>
+
+    <div class="step">
+      <div class="step-head"><span class="step-num">1</span><h2>Coding unit</h2></div>
+      <div class="grid">
+        <label class="field"><span>Coding unit recorded from</span><select id="merge-unit"></select></label>
+      </div>
+    </div>
+
+    <div class="step" id="merge-scaling">
+      <div class="step-head"><span class="step-num">2</span><h2>Scaling</h2></div>
+      <div class="merge-modes">
+        <label class="check"><input type="radio" name="merge-mode" value="none" checked> Leave every dataset at its own scale</label>
+        <label class="check"><input type="radio" name="merge-mode" value="groups"> Scale groups of datasets to each other</label>
+      </div>
+      <fieldset class="merge-options" id="merge-options" disabled>
+        <div class="field"><span>Group the datasets by</span>
+          <div class="merge-by">
+            <label class="check"><input type="checkbox" name="merge-by" value="uploader" checked> experimenter</label>
+            <label class="check"><input type="checkbox" name="merge-by" value="system"> recording system</label>
+            <label class="check"><input type="checkbox" name="merge-by" value="power"> power at the fly <span class="muted">(only datasets with power measured, all within each other's ± in a group; the others are left as they are)</span></label>
+          </div>
+        </div>
+        <div class="grid">
+          <label class="field"><span>Scale them to</span><select id="merge-target"><option value="average">the average of the groups</option></select></label>
+          <label class="field"><span>Odors match at concentrations up to this far apart (log<sub>10</sub> units)</span>
+            <input type="number" id="merge-tol" min="0" max="10" step="0.1" value="1" class="narrow"></label>
+        </div>
+        <p class="muted small">A group's scale factor best matches (least squares, through zero) its mean responses to the odors it shares with the target to the target's, per glomerulus when all ROIs are glomeruli. A dataset's own concentration of an odor is used when it has it; otherwise its nearest one within the distance above (so with 1, <code>x @ -3.9</code> stands for <code>x @ -3</code>). The odors in the download keep their own concentrations.</p>
+      </fieldset>
+      <div id="merge-plan" aria-live="polite"></div>
+    </div>
+
+    <div class="step">
+      <div class="step-head"><span class="step-num">3</span><h2>Download</h2></div>
+      <div class="actions" id="merge-download">
+        <button type="button" class="btn primary" data-format="wide">Wide CSV</button>
+        <button type="button" class="btn" data-format="long">Long CSV</button>
+        <span class="dl-status" id="merge-status"></span>
+      </div>
+      <p class="muted">A zip: the matrices as from Browse (wide: trials × ROIs, with a dataset_id column level; long: one row per value), each dataset multiplied by its scale factor; <code>scaling.csv</code> (each dataset's group and factor), <code>datasets.csv</code>, <code>odors.csv</code> and each dataset's README.</p>
     </div>
   </section>
 

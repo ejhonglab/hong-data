@@ -28,6 +28,8 @@ expected, and nothing secret is entered. If a download or the page is blocked, s
    are on tensor.
 4. **Download**: from a dataset's page, or tick several in the list: the original files
    (a zip), or the response matrices as CSV.
+5. **Merge**: every dataset of a coding unit (e.g. glomeruli) in one download, optionally
+   with groups of datasets (by experimenter, rig or power) scaled to each other first.
 
 ### Browser warnings
 
@@ -157,6 +159,20 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   sorted, without diagnostic ones (unless there are only those), and the uploader's
   name lowercased without periods, e.g. `megamat_tom_glomeruli_2023-11-19.csv` (the
   long one ends in `_long.csv`).
+- **Merge**: the matrices of every dataset of the chosen coding unit (matched in any
+  case), concatenated as above, in a zip that also has `scaling.csv` (each dataset's group
+  and scale factor). Datasets can be left at their own scale, or grouped by any of
+  experimenter, recording system and power at the fly (with power: only datasets with it
+  measured, each within the others' ± in a group; the rest are left as they are), each
+  group then multiplied by one factor to match a chosen group, or the average of the
+  groups. A group's factor best matches (least squares, through zero) its mean responses
+  to the stimuli it shares with the target to the target's, per glomerulus when all ROIs
+  are glomeruli, else averaged over ROIs. A dataset's own concentration of an odor is
+  used when it has it, else its nearest within the tolerance (1 log10 unit by default:
+  `x @ -3.9` then stands for `x @ -3`, unless the dataset also has `x @ -3`). The tab
+  shows each group's factor, the stimuli and responses it was fitted on, and Pearson's
+  r over them, as the options change. Odors keep their own concentrations in the
+  matrices.
 - **Odors**: the app's own table of odor metadata, one row per chemical, with links and
   PubChem structure images. It is synced one way from a Google sheet (its link set in
   the Admin tab) or a CSV imported in the Admin tab, with the columns of

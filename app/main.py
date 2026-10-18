@@ -31,7 +31,7 @@ from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, R
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import config, export, movies, odormeta, reference, sandbox, tensor, thorimage, yamlcheck
+from . import config, export, merge, movies, odormeta, reference, sandbox, tensor, thorimage, yamlcheck
 from .db import Database
 from .glomeruli import load_glomeruli
 from .ingest import ParsedData, ValidationError, load_file, load_parsed, save_parsed
@@ -843,6 +843,59 @@ async def download(request: Request) -> Response:
     return FileResponse(dest, filename=name, media_type=media_type, background=BackgroundTask(dest.unlink, missing_ok=True))
 
 
+# ----------------------------------------------------------------------- merge
+
+
+def _merge_options(q: Any) -> dict:
+    """The options of a merged download (see `merge.plan`), from a query or a JSON body."""
+    by = q.get("by") or []
+    by = [b for b in by.split(",") if b] if isinstance(by, str) else by
+    try:
+        tolerance = float(q.get("tolerance", merge.DEFAULT_TOLERANCE))
+    except (TypeError, ValueError):
+        raise merge.MergeError("the tolerance must be a number") from None
+    if not isinstance(by, list):
+        raise merge.MergeError("by must be a list")
+    return {"coding_unit": str(q.get("coding_unit") or ""), "mode": str(q.get("mode") or "none"),
+            "by": [str(b) for b in by], "target": str(q.get("target") or merge.AVERAGE), "tolerance": tolerance}
+
+
+async def merge_units(request: Request) -> Response:
+    """The coding units recorded from, with their datasets' ids."""
+    return JSONResponse({"coding_units": await run_in_threadpool(merge.coding_units, db)})
+
+
+async def merge_preview(request: Request) -> Response:
+    """How a merged download would be scaled ({"coding_unit", "mode", "by", "target", "tolerance"}): see `merge.plan`."""
+    body = await request.json()
+    try:
+        p = await run_in_threadpool(lambda: merge.plan(db, **_merge_options(body if isinstance(body, dict) else {})))
+    except merge.MergeError as e:
+        return json_error(422, str(e))
+    return JSONResponse(p)
+
+
+async def merge_download(request: Request) -> Response:
+    """Every dataset of a coding unit, in one download (``?format=wide|long``, and the options of
+    `merge_preview`): a zip, with the datasets scaled as `merge.plan` says."""
+    fmt = request.query_params.get("format", "wide")
+    if fmt not in ("wide", "long"):
+        return json_error(400, "format must be wide or long")
+    try:
+        p = await run_in_threadpool(lambda: merge.plan(db, **_merge_options(request.query_params)))
+    except merge.MergeError as e:
+        return json_error(422, str(e))
+    cleanup_exports()
+    dest = config.EXPORTS_DIR / secrets.token_urlsafe(9)
+    try:
+        name, media_type = await run_in_threadpool(export.write_download, db, [d["id"] for d in p["datasets"]], fmt, dest,
+                                                   config.DATASETS_DIR, merged=p)
+    except BaseException:
+        dest.unlink(missing_ok=True)
+        raise
+    return FileResponse(dest, filename=name, media_type=media_type, background=BackgroundTask(dest.unlink, missing_ok=True))
+
+
 # ----------------------------------------------------------------------- users
 
 
@@ -1292,6 +1345,9 @@ routes = [
     Route("/api/movie/planes", movie_planes),
     Route("/api/movie/rois", movie_rois),
     Route("/api/download", download),
+    Route("/api/merge", merge_units),
+    Route("/api/merge/preview", merge_preview, methods=["POST"]),
+    Route("/api/merge/download", merge_download),
     Route("/api/odors", odors_list),
     Route("/api/odors/status", odors_status),
     Route("/api/odors/preview", odors_preview, methods=["POST"]),

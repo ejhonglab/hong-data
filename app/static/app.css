@@ -64,7 +64,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .tabs a.active { border-bottom-color: var(--accent); }
 .tabs a:hover:not(.active) { border-bottom-color: var(--rule-strong); }
-/* between the datasets' tabs (Browse, Upload) and the rest */
+/* between the datasets' tabs (Upload, Browse, Merge) and the rest */
 .tabs-sep { align-self: center; width: 1px; height: 20px; margin: 0 10px; background: var(--rule-strong); }
 .topbar-status { margin-left: auto; color: var(--ink-muted); font-size: 12px; }
 
@@ -184,6 +184,18 @@ input[data-src], select[data-src], textarea[data-src] { background: var(--src-so
 .indicator.bad { color: var(--danger); background: var(--danger-soft); border-color: #efc7c3; }
 .indicator.pending, .indicator.none { color: var(--ink-muted); background: var(--surface-2); border-color: var(--rule); }
 .indicator.warn { color: var(--warn); background: var(--warn-soft); border-color: #f0dcae; }
+
+/* ---------------------------------------------------------------- merge */
+#tab-merge { overflow: auto; padding: 24px 20px 60px; }
+.merge-modes, .merge-by { display: flex; flex-direction: column; gap: 4px; }
+.merge-modes .check, .merge-by .check { display: flex; align-items: baseline; gap: 6px; }
+.merge-options { border: 0; margin: 10px 0 0 22px; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.merge-options:disabled { opacity: .5; }
+.merge-options .small { margin: 0; }
+#merge-plan { margin-top: 14px; }
+#merge-plan h3 { margin: 14px 0 6px; font-size: 13.5px; }
+#merge-plan .odor-table td { vertical-align: top; }
+.scale { font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* ---------------------------------------------------------------- admin */
 #tab-admin { overflow: auto; padding: 24px 20px 60px; }
