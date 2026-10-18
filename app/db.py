@@ -12,6 +12,7 @@ odors           one row per chemical: names, IDs, supplier (synced from the odor
 odor_syncs      log of odor syncs (what was added / changed / deleted, by whom)
 users           each user's data folders on tensor (relative to its top), by name
 pubchem         what was fetched from PubChem for an odor CID (its InChI)
+settings        site-wide settings from the Admin tab (the odor sheet's link), by key
 """
 from __future__ import annotations
 
@@ -144,6 +145,11 @@ CREATE TABLE IF NOT EXISTS pubchem (
     cid INTEGER PRIMARY KEY,
     inchi TEXT NOT NULL,
     fetched_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -455,6 +461,22 @@ class Database:
             d["details"] = json.loads(d.pop("details_json"))
             out.append(d)
         return out
+
+    # ---------------------------------------------------------------- settings
+    def get_setting(self, key: str) -> Optional[dict]:
+        """A site-wide setting (``{'value', 'updated_at'}``), or None if it is not set."""
+        with self.connect() as con:
+            r = con.execute("SELECT value, updated_at FROM settings WHERE key = ?", (key,)).fetchone()
+        return dict(r) if r else None
+
+    def set_setting(self, key: str, value: Optional[str], when: str) -> None:
+        """Set a site-wide setting, or clear it (`value` None)."""
+        with self.connect() as con:
+            if value is None:
+                con.execute("DELETE FROM settings WHERE key = ?", (key,))
+            else:
+                con.execute("INSERT INTO settings (key, value, updated_at) VALUES (?,?,?) ON CONFLICT (key) DO UPDATE "
+                            "SET value = excluded.value, updated_at = excluded.updated_at", (key, value, when))
 
     # ------------------------------------------------------------------- users
     @staticmethod

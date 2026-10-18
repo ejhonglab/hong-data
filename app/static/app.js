@@ -1248,10 +1248,10 @@ class OdorsPage {
     try { this.status = await api('/api/odors/status'); } catch (e) { $('#sheet-status').replaceChildren(msgBox('error', esc(e.message))); return; }
     setOdorBadge(this.status.changed);
     const s = this.status, box = $('#sheet-status');
-    $('#sheet-check').hidden = !s.configured;
+    $('#sheet-check').parentElement.hidden = !s.configured;
     if (!s.configured) {
-      box.innerHTML = `<p class="muted">No odor sheet is set up on the server (<code>OLFDB_ODOR_SHEET_URL</code>, see DEPLOY.md). You can still import a CSV with the sheet's columns;
-        the template has the odors from the thesis tables, and can also be imported into a new Google sheet to start it.</p>`;
+      box.innerHTML = `<p class="muted">No odor sheet is set up yet: its link goes in the <a href="#admin">Admin tab</a>, which can also import a CSV with the sheet's columns
+        (its template has the odors from the thesis tables, and can start a new Google sheet).</p>`;
       return;
     }
     let state = '';
@@ -1265,8 +1265,11 @@ class OdorsPage {
       The sheet is looked at again every few minutes while the app is in use, to tell whether it changed.</p>`;
   }
 
+  // a CSV is imported from the Admin tab, the sheet synced from the Odors tab; one preview at a time
   async runPreview(file) {
-    const box = $('#odor-preview');
+    const box = $(file ? '#admin-odor-preview' : '#odor-preview');
+    $(file ? '#odor-preview' : '#admin-odor-preview').replaceChildren();
+    this.previewBox = box;
     box.replaceChildren(msgBox('info', file ? `Reading <b>${esc(file.name)}</b>…` : 'Reading the sheet…'));
     try {
       let form;
@@ -1278,7 +1281,7 @@ class OdorsPage {
   }
 
   renderPreview() {
-    const p = this.preview, box = $('#odor-preview');
+    const p = this.preview, box = this.previewBox;
     const where = p.source === 'Google sheet' ? 'sheet' : 'file';
     const nothing = !p.added.length && !p.changed.length && !p.missing.length;
     const empty = '<span class="muted">(empty)</span>';
@@ -1325,14 +1328,14 @@ class OdorsPage {
   _syncApply() {
     const btn = $('#odor-apply');
     if (!btn) return;
-    const p = this.preview, box = $('#odor-preview');
+    const p = this.preview, box = this.previewBox;
     const nc = $$('[data-change]:checked', box).length, nd = $$('[data-delete]:checked', box).length;
     btn.textContent = `Apply: ${p.added.length} new, ${nc} of ${p.changed.length} changes${p.missing.length ? `, ${nd} deletions` : ''}`;
     btn.disabled = !p.added.length && !nc && !nd;
   }
 
   async apply() {
-    const box = $('#odor-preview'), out = $('#odor-apply-result');
+    const box = this.previewBox, out = $('#odor-apply-result');
     const name = $('#odor-sync-name').value.trim();
     if (!name) { out.replaceChildren(msgBox('error', 'Your name is required (it goes in the sync history).')); return; }
     settings.rememberName(name);
@@ -1357,7 +1360,7 @@ class OdorsPage {
       .some((v) => v != null && String(v).toLowerCase().includes(q))) : all;
     $('#odor-count').textContent = all.length ? `(${q ? `${shown.length} of ` : ''}${all.length})` : '';
     if (!all.length) {
-      $('#odor-table').innerHTML = '<div class="empty">The odor table is empty. Sync it from the odor sheet, or import a CSV (the template has the odors from the thesis).</div>';
+      $('#odor-table').innerHTML = '<div class="empty">The odor table is empty. Sync it from the odor sheet, or import a CSV in the Admin tab (its template has the odors from the thesis).</div>';
       return;
     }
     $('#odor-table').innerHTML = `<table class="odor-table"><thead><tr><th>Structure</th><th>Name</th><th>Abbrev.</th><th>CID</th><th>CAS</th><th>Solvent</th>
@@ -1682,9 +1685,10 @@ class SettingsPage {
 }
 
 // ===================================================================== ADMIN
-// The folders on the server the app may read and write. The server fixes them when it
-// starts, so saved changes wait for a restart, which can be asked for here too. Shown
-// each time the tab is opened, once the user says they may change these settings.
+// Site-wide settings: the folders on the server the app may read and write (fixed when
+// the server starts, so saved changes wait for a restart, which can be asked for here
+// too) and the odor sheet's link; the server's name and addresses. Shown each time the
+// tab is opened, once the user says they may change these settings.
 const ADMIN_KINDS = ['read_dirs', 'write_dirs'];
 
 // what is wrong with a folder as typed, as far as can be told without the server
@@ -1709,6 +1713,8 @@ class AdminPage {
       this.check();
     });
     $('#admin-save').addEventListener('click', () => this.save());
+    $('#admin-sheet-save').addEventListener('click', () => this.saveSheet());
+    $('#admin-sheet-url').addEventListener('keydown', (e) => { if (e.key === 'Enter') this.saveSheet(); });
     $('#admin-restart').addEventListener('click', () => this.restart());
     $('#admin-confirm').addEventListener('close', () => this._answered());
   }
@@ -1736,8 +1742,9 @@ class AdminPage {
   }
 
   async load() {
-    if (!$('#admin-name').value) $('#admin-name').value = settings.name;
+    this.loadHost();
     $('#admin-result').replaceChildren();
+    $('#admin-sheet-result').replaceChildren();
     let s;
     try { s = await api('/api/admin'); } catch (e) { $('#admin-result').replaceChildren(msgBox('error', `Could not load the settings: ${esc(e.message)}`)); return; }
     this._show(s);
@@ -1746,6 +1753,7 @@ class AdminPage {
   _show(s) {
     this.state = s;
     $('#admin-data-dir').textContent = s.data_dir;
+    $('#admin-data-dir-where').textContent = s.restart.by === 'Docker' ? ' in the container; on the server, the folder docker-compose.yml mounts there' : '';
     $('#admin-tensor-root').textContent = s.tensor_root;
     for (const kind of ADMIN_KINDS) {
       const list = $(`#admin-folders .dirlist[data-kind=${kind}]`);
@@ -1753,6 +1761,7 @@ class AdminPage {
       list.replaceChildren(...[...s.saved[kind], ''].map((p) => dirRow(list, p)));
       s.checks[kind].forEach((c, i) => showDirCheck(list.children[i], c));
     }
+    this._showSheet();
     this._showServer();
   }
 
@@ -1793,12 +1802,9 @@ class AdminPage {
 
   async save() {
     const out = $('#admin-result');
-    const by = $('#admin-name').value.trim();
-    if (!by) { out.replaceChildren(msgBox('error', 'Your name is required (it is kept with the settings).')); return; }
-    settings.rememberName(by);
     const { rows, dirs } = this._collect();
     let res;
-    try { res = await api('/api/admin', { method: 'POST', json: { ...dirs, by } }); } catch (e) { out.replaceChildren(msgBox('error', `Not saved: ${esc(e.message)}`)); return; }
+    try { res = await api('/api/admin', { method: 'POST', json: dirs }); } catch (e) { out.replaceChildren(msgBox('error', `Not saved: ${esc(e.message)}`)); return; }
     if (!res.ok) {
       this._showChecks(rows, res.checks);
       out.replaceChildren(msgBox('error', `Not saved:${listHtml(res.errors)}`));
@@ -1806,6 +1812,45 @@ class AdminPage {
     }
     this._show(res);
     out.replaceChildren(msgBox('ok', res.pending ? 'Saved. These folders take effect when the server restarts (below).' : 'Saved: these are the folders in effect now.'));
+  }
+
+  _showSheet() {
+    const o = this.state.odor_sheet, input = $('#admin-sheet-url');
+    if (document.activeElement !== input) input.value = o.url || '';
+    $('#admin-sheet-source').innerHTML = o.saved ? `Set here ${esc(fmtWhen(o.updated_at))}.`
+      : o.url ? 'Set on the server (<code>OLFDB_ODOR_SHEET_URL</code>); saving a link here replaces it.'
+        : 'None yet: until there is one, the odor table can only be synced from CSVs imported below.';
+  }
+
+  async saveSheet() {
+    const out = $('#admin-sheet-result'), url = $('#admin-sheet-url').value.trim();
+    out.replaceChildren(msgBox('info', url ? 'Saving, and reading the sheet…' : 'Clearing…'));
+    let res;
+    try { res = await api('/api/admin/odor_sheet', { method: 'POST', json: { url } }); } catch (e) { out.replaceChildren(msgBox('error', `Not saved: ${esc(e.message)}`)); return; }
+    if (!res.ok) { out.replaceChildren(msgBox('error', `Not saved:${listHtml(res.errors)}`)); return; }
+    this.state.odor_sheet = res.odor_sheet;
+    this._showSheet();
+    const r = res.read;
+    if (!url) out.replaceChildren(msgBox('ok', res.odor_sheet.url ? 'Cleared here: the sheet set on the server (OLFDB_ODOR_SHEET_URL) is used again.' : 'Cleared: there is no odor sheet now.'));
+    else if (r.error) out.replaceChildren(msgBox('warn', `Saved, but it cannot be read: ${esc(r.error)}`));
+    else out.replaceChildren(msgBox('ok', `Saved: the Odors tab syncs from this sheet, which has ${r.n_rows} odors.`));
+    odorsPage.loadStatus();
+  }
+
+  async loadHost() {
+    const box = $('#admin-host-info');
+    let h;
+    try { h = await api('/api/admin/host'); } catch (e) { box.innerHTML = `<span>Name</span><span class="muted">could not be found (${esc(e.message)})</span>`; return; }
+    const name = h.source === 'container'
+      ? `${esc(h.name)} <span class="muted">(the Docker container's; for the server's, mount its /etc/hostname as docker-compose.yml does)</span>`
+      : esc(h.name);
+    const none = h.source === 'mounted' ? `none: the network's DNS does not know ${esc(h.name)}` : 'none found';
+    const addresses = h.addresses.length ? h.addresses.map((a) => `<code>${esc(a)}</code>`).join(' ') : `<span class="muted">${none}</span>`;
+    box.innerHTML = [
+      ['Name', name],
+      [h.source === 'mounted' ? 'IP addresses (by DNS)' : 'IP addresses', addresses],
+      ['Reached here at', `<code>${esc(location.origin)}</code>`],
+    ].map(([a, b]) => `<span>${a}</span><span>${b}</span>`).join('');
   }
 
   _showServer() {
@@ -1819,7 +1864,7 @@ class AdminPage {
     if (s.pending && s.active) rows.push(['Reading now', folders(s.active.read_dirs)], ['Writing now', `${folders(s.active.write_dirs)} (and its data folder)`]);
     rows.push(
       ['Held to them by', k?.enforced ? `the kernel (Landlock, ABI ${k.abi}) and the app's own checks` : `the app's own checks only (Landlock: ${esc(k?.reason || 'not in use')})`],
-      ['Last changed', s.saved.updated_at ? `${esc(fmtWhen(s.saved.updated_at))} by ${esc(s.saved.updated_by)}` : 'never (these are the defaults)'],
+      ['Last changed', s.saved.updated_at ? esc(fmtWhen(s.saved.updated_at)) : 'never (these are the defaults)'],
       ['Started again by', s.restart.possible ? esc(s.restart.by) : 'nothing: restart it by hand on the server (DEPLOY.md)'],
     );
     $('#admin-info').innerHTML = rows.map(([a, b]) => `<span>${a}</span><span>${b}</span>`).join('');
@@ -1836,7 +1881,7 @@ class AdminPage {
     setStatus(status, 'Asking the server to restart…');
     let res;
     try {
-      res = await api('/api/admin/restart', { method: 'POST', json: { by: $('#admin-name').value.trim() } });
+      res = await api('/api/admin/restart', { method: 'POST', json: {} });
     } catch (e) {
       setStatus(status, `Could not restart: ${e.message}`, 'error');
       btn.disabled = false;

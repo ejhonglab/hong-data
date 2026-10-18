@@ -56,11 +56,11 @@ class SandboxError(ValueError):
 
 
 def defaults() -> dict:
-    return {"read_dirs": [str(config.TENSOR_ROOT)], "write_dirs": [], "updated_at": None, "updated_by": None}
+    return {"read_dirs": [str(config.TENSOR_ROOT)], "write_dirs": [], "updated_at": None}
 
 
 def load() -> dict:
-    """The saved settings (`KINDS`, ``updated_at``, ``updated_by``), or the defaults if there are none."""
+    """The saved settings (`KINDS` and ``updated_at``), or the defaults if there are none."""
     try:
         saved = json.loads(config.ADMIN_FILE.read_text())
     except FileNotFoundError:
@@ -68,18 +68,17 @@ def load() -> dict:
     except (OSError, ValueError) as e:
         log.warning("could not read %s (%s): using the default folders", config.ADMIN_FILE, e)
         return defaults()
-    return {**defaults(), **{k: saved[k] for k in (*KINDS, "updated_at", "updated_by") if k in saved}}
+    return {**defaults(), **{k: saved[k] for k in (*KINDS, "updated_at") if k in saved}}
 
 
-def save(dirs: dict[str, list[str]], by: str) -> dict:
+def save(dirs: dict[str, list[str]]) -> dict:
     """Save normalized folders (as from `check_folders`), taking effect at the next restart."""
-    settings = {**{k: dirs[k] for k in KINDS}, "updated_at": dt.datetime.now().isoformat(timespec="seconds"),
-                "updated_by": by}
+    settings = {**{k: dirs[k] for k in KINDS}, "updated_at": dt.datetime.now().isoformat(timespec="seconds")}
     tmp = config.ADMIN_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(settings, indent=1))
     tmp.replace(config.ADMIN_FILE)
-    log.info("folders the server may use changed by %s (from the next restart): read %s, write %s",
-             by, settings["read_dirs"], settings["write_dirs"])
+    log.info("folders the server may use changed (from the next restart): read %s, write %s",
+             settings["read_dirs"], settings["write_dirs"])
     return settings
 
 

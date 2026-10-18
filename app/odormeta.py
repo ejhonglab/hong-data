@@ -253,34 +253,37 @@ def fetch_sheet(sheet_url: str, timeout: float = 20) -> str:
 
 
 class SheetWatch:
-    """Fingerprint of the configured sheet, refreshed at most every `interval_s`."""
+    """Fingerprint of the odor sheet, refreshed at most every `interval_s`."""
+
+    UNREAD = {"checked_at": None, "fingerprint": None, "n_rows": None, "error": None}
 
     def __init__(self, interval_s: float):
         self.interval_s = interval_s
         self.lock = threading.Lock()
+        self.url: Optional[str] = None
         self.checked = 0.0
-        self.state: dict[str, Any] = {"checked_at": None, "fingerprint": None, "n_rows": None, "error": None}
+        self.state: dict[str, Any] = dict(self.UNREAD)
 
-    def check(self, force: bool = False) -> dict:
-        """Current state (fetching the sheet first if the last check is too old)."""
-        if not config.ODOR_SHEET_URL:
-            return dict(self.state)
+    def check(self, url: str, force: bool = False) -> dict:
+        """Current state of the sheet at `url` (read first if the last read is too old, or of another sheet)."""
+        if not url:
+            return dict(self.UNREAD)
         with self.lock:
-            if force or time.time() - self.checked > self.interval_s:
-                self.checked = time.time()
+            if force or url != self.url or time.time() - self.checked > self.interval_s:
+                self.url, self.checked = url, time.time()
                 state = {"checked_at": dt.datetime.now().isoformat(timespec="seconds"), "error": None}
                 try:
-                    rows, _, _ = parse_sheet(fetch_sheet(config.ODOR_SHEET_URL))
+                    rows, _, _ = parse_sheet(fetch_sheet(url))
                     state.update(fingerprint=fingerprint(rows), n_rows=len(rows))
                 except SheetError as e:
                     state.update(fingerprint=None, n_rows=None, error=str(e))
                 self.state = state
             return dict(self.state)
 
-    def record(self, rows: list[dict]) -> None:
-        """Remember a fresh read of the sheet (from a preview)."""
+    def record(self, url: str, rows: list[dict]) -> None:
+        """Remember a fresh read of the sheet at `url` (from a preview)."""
         with self.lock:
-            self.checked = time.time()
+            self.url, self.checked = url, time.time()
             self.state = {"checked_at": dt.datetime.now().isoformat(timespec="seconds"),
                           "fingerprint": fingerprint(rows), "n_rows": len(rows), "error": None}
 

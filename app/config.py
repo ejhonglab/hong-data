@@ -22,13 +22,17 @@ ADMIN_FILE = DATA_DIR / "admin.json"  # folders the server may read and write (A
 MAX_UPLOAD_MB = float(os.environ.get("OLFDB_MAX_UPLOAD_MB", "1024"))
 STAGE_TTL_HOURS = float(os.environ.get("OLFDB_STAGE_TTL_HOURS", "48"))
 
-# Google sheet with odor metadata (link as copied from the browser), shared as "anyone with the link can view"
+# Google sheet with odor metadata (link as copied from the browser), shared as "anyone with the link can view",
+# if none is set in the Admin tab
 ODOR_SHEET_URL = os.environ.get("OLFDB_ODOR_SHEET_URL", "").strip()
 ODOR_SHEET_CHECK_MINUTES = float(os.environ.get("OLFDB_ODOR_SHEET_CHECK_MINUTES", "10"))
 ODOR_TEMPLATE = ROOT / "config" / "odor_sheet_template.csv"
 
 # the lab NAS as mounted on the server; users' data folders are given relative to it
 TENSOR_ROOT = Path(os.environ.get("OLFDB_TENSOR_ROOT", "/mnt/tank0/tensor"))
+
+# the server's /etc/hostname, as docker-compose.yml mounts it into the container (whose own name is random)
+HOST_HOSTNAME_FILE = Path("/etc/host_hostname")
 
 # have the kernel (Landlock) deny the server any folder but those set in the Admin tab (and its own)
 LANDLOCK = os.environ.get("OLFDB_LANDLOCK", "1").strip().lower() not in ("0", "false", "no", "off")

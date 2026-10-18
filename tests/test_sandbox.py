@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-from app import config, sandbox, tensor
+from app import config, odormeta, sandbox, tensor
 from tests.test_tensor import call, main, root  # noqa: F401 (fixtures)
 
 
@@ -46,12 +47,12 @@ def test_check_folder(tmp_path):
 
 
 def test_settings_saved(tmp_path):
-    assert sandbox.load() == {"read_dirs": [str(config.TENSOR_ROOT)], "write_dirs": [], "updated_at": None, "updated_by": None}
+    assert sandbox.load() == {"read_dirs": [str(config.TENSOR_ROOT)], "write_dirs": [], "updated_at": None}
     checks, dirs = sandbox.check_folders({"read_dirs": ["/a/", "/a", " ", "b"], "write_dirs": ["/c"]})
     assert dirs == {"read_dirs": ["/a"], "write_dirs": ["/c"]} and not checks["read_dirs"][2]["ok"]
-    sandbox.save(dirs, "Tom")
+    sandbox.save(dirs)
     saved = sandbox.load()
-    assert saved["read_dirs"] == ["/a"] and saved["write_dirs"] == ["/c"] and saved["updated_by"] == "Tom"
+    assert saved["read_dirs"] == ["/a"] and saved["write_dirs"] == ["/c"] and saved["updated_at"]
     config.ADMIN_FILE.write_text("{not json")
     assert sandbox.load()["read_dirs"] == [str(config.TENSOR_ROOT)]
 
@@ -103,17 +104,69 @@ def test_admin_api(main, root, tmp_path):  # noqa: F811
     # in effect: the settings the server started with
     sandbox.STATUS["settings"] = sandbox.load()
     body = {"read_dirs": [str(root / "tom") + "/"], "write_dirs": [str(tmp_path)]}
+    status, r = call(main.admin_save, body={**body, "read_dirs": ["tom"]})
+    assert status == 422 and "absolute" in r["errors"][0] and sandbox.load()["updated_at"] is None
     status, r = call(main.admin_save, body=body)
-    assert status == 422 and r["errors"] == ["your name is required"] and sandbox.load()["updated_by"] is None
-    status, r = call(main.admin_save, body={**body, "read_dirs": ["tom"], "by": "Tom"})
-    assert status == 422 and "absolute" in r["errors"][0]
-    status, r = call(main.admin_save, body={**body, "by": " Tom "})
     assert status == 200 and r["ok"] and r["pending"] and r["saved"]["read_dirs"] == [str(root / "tom")]
-    assert r["active"]["read_dirs"] == [str(root)] and r["saved"]["updated_by"] == "Tom"
-    assert call(main.admin_save, body={"read_dirs": "/x", "by": "Tom"})[0] == 400
+    assert r["active"]["read_dirs"] == [str(root)] and r["saved"]["updated_at"]
+    assert call(main.admin_save, body={"read_dirs": "/x"})[0] == 400
 
-    status, r = call(main.admin_restart, body={"by": "Tom"})
+    status, r = call(main.admin_restart, body={})
     assert status == 409 and "by hand" in r["error"]
+
+
+SHEET = "https://docs.google.com/spreadsheets/d/abc123/edit#gid=7"
+
+
+def test_admin_odor_sheet(main, monkeypatch):  # noqa: F811
+    read = []
+
+    def fetch(url, timeout=20):
+        read.append(url)
+        if "broken" in url:
+            raise odormeta.SheetError("could not read the Google sheet (403)")
+        return config.ODOR_TEMPLATE.read_text()
+
+    monkeypatch.setattr(odormeta, "fetch_sheet", fetch)
+    monkeypatch.setattr(main, "sheet_watch", odormeta.SheetWatch(600))
+    monkeypatch.setattr(config, "ODOR_SHEET_URL", "")
+    assert call(main.admin_get)[1]["odor_sheet"] == {"url": None, "saved": False, "updated_at": None, "env": False}
+    assert not call(main.odors_status)[1]["configured"]
+    assert call(main.odors_preview, body={})[0] == 400
+
+    status, r = call(main.admin_odor_sheet, body={"url": "https://example.com/sheet"})
+    assert status == 422 and "not a Google sheet" in r["errors"][0] and main.db.get_setting("odor_sheet_url") is None
+    status, r = call(main.admin_odor_sheet, body={"url": f" {SHEET} "})
+    assert status == 200 and r["odor_sheet"]["url"] == SHEET and r["odor_sheet"]["saved"]
+    assert r["read"]["error"] is None and r["read"]["n_rows"] > 50 and read == [SHEET]
+    s = call(main.odors_status)[1]
+    assert s["configured"] and s["url"] == SHEET and s["changed"] and len(read) == 1  # read once, when saved
+    assert call(main.odors_preview, body={})[1]["source"] == "Google sheet"
+
+    # saved even if it cannot be read
+    status, r = call(main.admin_odor_sheet, body={"url": SHEET.replace("abc123", "broken")})
+    assert status == 200 and "403" in r["read"]["error"] and "403" in call(main.odors_status)[1]["error"]
+
+    # cleared: OLFDB_ODOR_SHEET_URL is used again, if set
+    monkeypatch.setattr(config, "ODOR_SHEET_URL", SHEET)
+    status, r = call(main.admin_odor_sheet, body={"url": ""})
+    assert r["odor_sheet"] == {"url": SHEET, "saved": False, "updated_at": None, "env": True} and r["read"]["error"] is None
+
+
+def test_admin_host(main, monkeypatch):  # noqa: F811
+    r = call(main.admin_host)[1]
+    assert r["name"] == socket.gethostname() and r["source"] == "server"
+    assert not any(a.startswith(("127.", "::1", "fe80")) for a in r["addresses"])
+    # in a Docker container: the server's name, as mounted in from its /etc/hostname
+    real_exists = os.path.exists
+    monkeypatch.setattr(os.path, "exists", lambda p: p == "/.dockerenv" or real_exists(p))
+    monkeypatch.setattr(config, "HOST_HOSTNAME_FILE", Path(main.config.DATA_DIR) / "no-such-file")
+    r = call(main.admin_host)[1]
+    assert r["source"] == "container" and r["addresses"] == []
+    hostname = config.ADMIN_FILE.with_name("hostname")
+    hostname.write_text("localhost\n")
+    monkeypatch.setattr(config, "HOST_HOSTNAME_FILE", hostname)
+    assert call(main.admin_host)[1] == {"name": "localhost", "source": "mounted", "addresses": []}  # loopback left out
 
 
 LANDLOCK_SCRIPT = """

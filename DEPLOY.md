@@ -41,9 +41,10 @@ downloads being sent (`data/exports/`, deleted once sent), cached odor structure
 
 Before the first start, have a look at:
 
-- `docker-compose.yml`: host port (`8080:8000`), upload size limit, odor sheet link
-  (see "Odor sheet" below), where tensor is mounted (see "Tensor" below), and any other
-  folder it may use (see "Folders it may read and write" below).
+- `docker-compose.yml`: host port (`8080:8000`), upload size limit, where tensor is
+  mounted (see "Tensor" below), and any other folder it may use (see "Folders it may
+  read and write" below). It also mounts the server's `/etc/hostname`, for the Admin
+  tab to show the server's name (the container's own is random).
 - `config/glomeruli.txt`: glomerulus names accepted as ROI labels.
 - `reference_data/manifest.json`: the fixed matrices shown in the "Reference matrices"
   tab (format in `reference_data/README.md`). Replace the two synthetic examples.
@@ -73,13 +74,14 @@ To set the sheet up:
 2. Share it as "anyone with the link can view" (the server reads its CSV export; no
    Google account or credentials are involved, and nothing is written to the sheet).
 3. Put its link (as copied from the browser while editing it; include `#gid=...` if the
-   odors are not on the first tab) in `OLFDB_ODOR_SHEET_URL` in `docker-compose.yml`, and
-   restart: `docker compose up -d`.
+   odors are not on the first tab) under "Odor sheet" in the Admin tab, and save: it is
+   used at once, and read right away to check that it can be. (`OLFDB_ODOR_SHEET_URL` on
+   the server also works, while no link is saved in the Admin tab.)
 
 The server needs outbound HTTPS to docs.google.com for the sheet, and to
 pubchem.ncbi.nlm.nih.gov for structure images and InChIs (fetched once per CID, then
 cached; InChIs in the database, a hundred CIDs per request).
-Without a sheet, the Odors tab can still import a CSV in the same format.
+Without a sheet, the Admin tab can still import a CSV in the same format.
 
 ### Tensor
 
@@ -166,6 +168,7 @@ docker compose -f /opt/olfdb/docker-compose.yml exec -T olfdb \
   python -c "import sqlite3; sqlite3.connect('/data/olfdb.sqlite3').backup(sqlite3.connect('/data/backup.sqlite3'))"
 mv /opt/olfdb/data/backup.sqlite3 "$DEST/olfdb.sqlite3"
 rsync -a /opt/olfdb/data/datasets/ "$DEST/datasets/"
+cp /opt/olfdb/data/admin.json "$DEST/" 2>/dev/null || true   # folders set in the Admin tab, if any
 ```
 
 Restoring is the reverse: stop the service, put the files back under `data/`, start.
@@ -239,7 +242,7 @@ read and write"). A folder it may write needs `ReadWritePaths=` there too (and
 | `OLFDB_GLOMERULI_FILE` | `./config/glomeruli.txt` | accepted glomerulus names (falls back to the built-in list if missing) |
 | `OLFDB_MAX_UPLOAD_MB` | `1024` | reject data files larger than this |
 | `OLFDB_STAGE_TTL_HOURS` | `48` | staged-but-never-saved uploads are deleted after this |
-| `OLFDB_ODOR_SHEET_URL` | (none) | Google sheet the odor table is synced from (see "Odor sheet") |
+| `OLFDB_ODOR_SHEET_URL` | (none) | Google sheet the odor table is synced from, while none is set in the Admin tab (see "Odor sheet") |
 | `OLFDB_ODOR_SHEET_CHECK_MINUTES` | `10` | how often (at most) the sheet is read to tell whether it changed |
 | `OLFDB_TENSOR_ROOT` | `/mnt/tank0/tensor` | the lab NAS as mounted on the server (see "Tensor"); users' folders are relative to it |
 | `OLFDB_LANDLOCK` | `1` | `0` to stop having the kernel (Landlock) hold the server to the folders set in the Admin tab (see "Folders it may read and write") |

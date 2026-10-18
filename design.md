@@ -61,7 +61,10 @@ the app is described in [README.md](README.md), hosting it in [DEPLOY.md](DEPLOY
   `MultiPhotonLaser` value does not follow changes made to the wavelength at the laser,
   so the wavelength is only ever entered in the form.
 - **The odor table is the app's own copy** of a Google sheet, synced one way. The sheet
-  is read through its CSV export (shared by link: no credentials, nothing written back).
+  is read through its CSV export (shared by link: no credentials, nothing written back),
+  its link set in the Admin tab and kept in the database (`settings`), so that it is
+  used at once and backed up with everything else (`OLFDB_ODOR_SHEET_URL` is the
+  fallback).
   A sync is two steps: a preview validates the sheet and diffs it against the database,
   then an apply adds the new odors plus only the changes and deletions a user confirmed,
   logged in `odor_syncs`. The rest of the app uses the database copy, so it keeps
@@ -117,8 +120,9 @@ tests/             pytest tests
 `data/olfdb.sqlite3` tables: `datasets` (metadata, README, summary), `dataset_panels`,
 `units` (date, fly_num, roi), `trials` (panel, odor, components, repeat), `responses`
 (one row per cell, for SQL queries), `matrices` (the same values as a float32 blob for
-fast serving), `users` (each user's folders on tensor), `odors` and `odor_syncs`, and
-`pubchem` (each odor CID's InChI). Files: `data/datasets/<id>/` holds the original data
+fast serving), `users` (each user's folders on tensor), `odors` and `odor_syncs`,
+`pubchem` (each odor CID's InChI), and `settings` (site-wide settings from the Admin tab:
+the odor sheet's link). Files: `data/datasets/<id>/` holds the original data
 file, `README.md`, `metadata.json`, `odor_yaml/*.yaml` and the `Experiment.xml`. Also
 under `data/`: `admin.json` (the folders set in the Admin tab), `staging/`, `exports/`,
 `odor_structures/`, `odor_previews/` (parsed sheets awaiting confirmation) and `tmp/`
@@ -162,13 +166,17 @@ POST   /api/odors/apply                     {"fingerprint", "applied_by", "chang
 GET    /api/odors/structure/{cid}           PubChem structure image (cached)
 GET    /api/odors/template.csv              config/odor_sheet_template.csv
 GET    /api/reference, /api/reference/{id}
-GET    /api/admin                           the folders the server may read and write: saved, in
-                                            effect since it started, checked; Landlock, restarts
+GET    /api/admin                           the folders the server may read and write (saved, in
+                                            effect since it started, checked), the odor sheet's
+                                            link; Landlock, restarts
 POST   /api/admin/check                     {"read_dirs", "write_dirs"} → each folder checked
-POST   /api/admin                           {"read_dirs", "write_dirs", "by"} → saved, in effect
-                                            from the next restart
-POST   /api/admin/restart                   {"by"} → the server stops, for Docker or systemd to
-                                            start it again (409 if neither would)
+POST   /api/admin                           {"read_dirs", "write_dirs"} → saved, in effect from
+                                            the next restart
+POST   /api/admin/odor_sheet                {"url"} (empty to clear it) → saved, in use at once;
+                                            the sheet read to check it
+GET    /api/admin/host                      the server's name and IP addresses
+POST   /api/admin/restart                   the server stops, for Docker or systemd to start it
+                                            again (409 if neither would)
 ```
 
 Matrix payloads carry `values_b64`: little-endian float32, row-major

@@ -4,6 +4,7 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import hashlib
+import ipaddress
 import json
 import logging
 import os
@@ -11,6 +12,7 @@ import re
 import secrets
 import shutil
 import signal
+import socket
 import sqlite3
 import threading
 import time
@@ -655,15 +657,25 @@ async def user_save(request: Request) -> Response:
 # ----------------------------------------------------------------------- odors
 
 SHEET_SOURCE = "Google sheet"
+SHEET_SETTING = "odor_sheet_url"
 sheet_watch = odormeta.SheetWatch(config.ODOR_SHEET_CHECK_MINUTES * 60)
 
 
+def _odor_sheet() -> dict:
+    """The odor sheet's link (``url``, or None): as set in the Admin tab (``saved``, with
+    ``updated_at``), else from OLFDB_ODOR_SHEET_URL (``env``)."""
+    saved = db.get_setting(SHEET_SETTING)
+    return {"url": saved["value"] if saved else config.ODOR_SHEET_URL or None, "saved": saved is not None,
+            "updated_at": saved["updated_at"] if saved else None, "env": bool(config.ODOR_SHEET_URL)}
+
+
 def _sheet_status() -> dict:
-    state = sheet_watch.check()
+    url = _odor_sheet()["url"]
+    state = sheet_watch.check(url)
     last = next(iter(db.odor_syncs(limit=1, source=SHEET_SOURCE)), None)
     return {
-        "configured": bool(config.ODOR_SHEET_URL),
-        "url": config.ODOR_SHEET_URL or None,
+        "configured": bool(url),
+        "url": url,
         **state,
         "last_sync": last,
         "changed": bool(state["fingerprint"]) and (last is None or last["fingerprint"] != state["fingerprint"]),
@@ -695,11 +707,11 @@ def _cleanup_previews(max_age_s: float = 86400) -> None:
             pass
 
 
-def _preview(text: str, source: str) -> dict:
+def _preview(text: str, source: str, sheet_url: Optional[str] = None) -> dict:
     rows, errors, warnings = odormeta.parse_sheet(text)
     fp = odormeta.fingerprint(rows)
-    if source == SHEET_SOURCE:
-        sheet_watch.record(rows)
+    if sheet_url:
+        sheet_watch.record(sheet_url, rows)
     _cleanup_previews()
     (config.ODOR_PREVIEWS_DIR / f"{fp}.json").write_text(json.dumps({"rows": rows, "source": source, "errors": errors}))
     odors = db.list_odors()
@@ -734,13 +746,14 @@ async def odors_preview(request: Request) -> Response:
             return json_error(413, "odor CSV files are limited to 20 MB")
         text, source = raw.decode("utf-8-sig", errors="replace"), f"file {safe_filename(up.filename, 'odors.csv')}"
     else:
-        if not config.ODOR_SHEET_URL:
-            return json_error(400, "no odor sheet is configured (set OLFDB_ODOR_SHEET_URL on the server)")
+        url = (await run_in_threadpool(_odor_sheet))["url"]
+        if not url:
+            return json_error(400, "no odor sheet is set up (its link goes in the Admin tab)")
         try:
-            text = await run_in_threadpool(odormeta.fetch_sheet, config.ODOR_SHEET_URL)
+            text = await run_in_threadpool(odormeta.fetch_sheet, url)
         except odormeta.SheetError as e:
             return json_error(502, str(e))
-        source = SHEET_SOURCE
+        return JSONResponse(await run_in_threadpool(_preview, text, SHEET_SOURCE, url))
     return JSONResponse(await run_in_threadpool(_preview, text, source))
 
 
@@ -889,6 +902,7 @@ def _admin_state() -> dict:
         "active": {k: active[k] for k in sandbox.KINDS} if active else None,
         "pending": active is not None and any(saved[k] != active[k] for k in sandbox.KINDS),
         "checks": sandbox.check_folders(saved)[0],
+        "odor_sheet": _odor_sheet(),
         "data_dir": str(config.DATA_DIR),
         "tensor_root": str(config.TENSOR_ROOT),
         "started_at": sandbox.STATUS["started_at"],
@@ -916,20 +930,82 @@ async def admin_check(request: Request) -> Response:
 
 
 async def admin_save(request: Request) -> Response:
-    """Save the folders the server may read and write ({"read_dirs", "write_dirs", "by"}),
-    in effect from the next restart; nothing is saved if any of them is malformed."""
+    """Save the folders the server may read and write ({"read_dirs", "write_dirs"}), in
+    effect from the next restart; nothing is saved if any of them is malformed."""
     body = await request.json()
     if not _folder_lists(body):
         return json_error(400, f"expected lists of paths in {', '.join(sandbox.KINDS)}")
-    by = _user_name(body.get("by"))
     checks, dirs = await run_in_threadpool(sandbox.check_folders, body)
     errors = [f"{c['input']}: {c['error']}" for cs in checks.values() for c in cs if not c["ok"]]
-    if not by:
-        errors.append("your name is required")
     if errors:
         return JSONResponse({"ok": False, "errors": errors, "checks": checks}, status_code=422)
-    await run_in_threadpool(sandbox.save, dirs, by)
+    await run_in_threadpool(sandbox.save, dirs)
     return JSONResponse({"ok": True, **await run_in_threadpool(_admin_state)})
+
+
+async def admin_odor_sheet(request: Request) -> Response:
+    """Set the odor sheet's link ({"url"}; empty to clear it), in use at once. The sheet is
+    read right away (``read``: as in /api/odors/status), but saved even if it cannot be."""
+    body = await request.json()
+    url = str(body.get("url") or "").strip() if isinstance(body, dict) else ""
+    if url:
+        try:
+            odormeta.export_url(url)
+        except odormeta.SheetError as e:
+            return JSONResponse({"ok": False, "errors": [str(e)]}, status_code=422)
+
+    def run() -> dict:
+        db.set_setting(SHEET_SETTING, url or None, when=dt.datetime.now().isoformat(timespec="seconds"))
+        sheet = _odor_sheet()
+        log.info("odor sheet set in the Admin tab: %s", url or "none")
+        return {"ok": True, "odor_sheet": sheet, "read": sheet_watch.check(sheet["url"], force=True) if sheet["url"] else None}
+
+    return JSONResponse(await run_in_threadpool(run))
+
+
+def _host() -> dict:
+    """The server's name and IP addresses (``name``, ``source``, ``addresses``).
+
+    Outside Docker: its own name (``source`` 'server'), and its address on the network
+    along with those DNS gives that name. In a Docker container, which has a random name
+    and addresses of its own: the server's name from its /etc/hostname, as
+    docker-compose.yml mounts it in ('mounted'), and the addresses DNS gives that name;
+    the container's name ('container') and no addresses if it is not mounted.
+    """
+    docker = os.path.exists("/.dockerenv")
+    name, source = socket.gethostname(), "server"
+    if docker:
+        try:
+            name, source = config.HOST_HOSTNAME_FILE.read_text().strip(), "mounted"
+        except OSError:
+            source = "container"
+    addresses = []
+    if source != "container":
+        try:
+            addresses += [a[4][0] for a in socket.getaddrinfo(name, None, type=socket.SOCK_STREAM)]
+        except OSError:
+            pass
+    if not docker:
+        try:  # the interface with a route to the network (nothing is sent)
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.connect(("10.255.255.255", 1))
+                addresses.insert(0, s.getsockname()[0])
+        except OSError:
+            pass
+
+    def on_network(a: str) -> bool:
+        try:
+            ip = ipaddress.ip_address(a.split("%")[0])
+        except ValueError:
+            return False
+        return not (ip.is_loopback or ip.is_link_local or ip.is_unspecified)
+
+    return {"name": name, "source": source, "addresses": [a for a in dict.fromkeys(addresses) if on_network(a)]}
+
+
+async def admin_host(request: Request) -> Response:
+    """The server's name and IP addresses (see `_host`)."""
+    return JSONResponse(await run_in_threadpool(_host))
 
 
 def _restart() -> None:
@@ -942,16 +1018,12 @@ def _restart() -> None:
 
 
 async def admin_restart(request: Request) -> Response:
-    """Restart the server ({"by"}, optional), if Docker or systemd starts it again after it exits."""
-    try:
-        by = _user_name((await request.json() or {}).get("by"))
-    except (ValueError, AttributeError):
-        by = ""
+    """Restart the server, if Docker or systemd starts it again after it exits."""
     supervisor = _supervisor()
     if supervisor is None:
         return json_error(409, "the server cannot restart itself here: it is not run by Docker or systemd, which would "
                                "start it again (DEPLOY.md). Restart it by hand.")
-    log.info("restart requested by %s", by or "someone who did not give their name")
+    log.info("restart requested from the Admin tab")
     return JSONResponse({"ok": True, "by": supervisor, "started_at": sandbox.STATUS["started_at"]},
                         background=BackgroundTask(_restart))
 
@@ -993,6 +1065,8 @@ routes = [
     Route("/api/admin", admin_get),
     Route("/api/admin", admin_save, methods=["POST"]),
     Route("/api/admin/check", admin_check, methods=["POST"]),
+    Route("/api/admin/odor_sheet", admin_odor_sheet, methods=["POST"]),
+    Route("/api/admin/host", admin_host),
     Route("/api/admin/restart", admin_restart, methods=["POST"]),
     Mount("/static", RevalidatedStaticFiles(directory=str(config.STATIC_DIR)), name="static"),
 ]

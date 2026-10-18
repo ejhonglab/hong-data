@@ -228,15 +228,12 @@
     <div class="odors-page">
       <div class="page-head">
         <h1>Odors</h1>
-        <p class="lede">One row per chemical. This table is the app's own copy, used for every dataset's odor table and for downloads; it only changes when you sync it from the odor sheet (or a CSV with the same columns) below.</p>
+        <p class="lede">One row per chemical. This table is the app's own copy, used for every dataset's odor table and for downloads; it only changes when it is synced from the odor sheet below, or from a CSV imported in the <a href="#admin">Admin tab</a>.</p>
       </div>
       <div class="step">
         <div id="sheet-status"></div>
         <div class="actions">
           <button type="button" class="btn primary" id="sheet-check">Check the sheet for changes</button>
-          <input type="file" id="odor-csv-input" accept=".csv,.tsv,.txt" hidden>
-          <button type="button" class="btn" id="odor-csv-btn">Import a CSV…</button>
-          <a class="btn" href="/api/odors/template.csv" download>Template CSV</a>
         </div>
         <div id="odor-preview"></div>
       </div>
@@ -321,12 +318,12 @@
     <div id="admin-page" hidden>
       <div class="page-head">
         <h1>Admin</h1>
-        <p class="lede">Which folders on the server this app may read and write. They are fixed when the server starts, so changes saved here take effect when it restarts, which can be done below.</p>
+        <p class="lede">Settings for the whole site: which folders on the server this app may read and write (fixed when the server starts, so changes take effect when it restarts, which can be done below), and the odor sheet it syncs the odor table from.</p>
       </div>
 
       <div class="step" id="admin-folders">
         <div class="step-head"><h2>Folders on the server</h2></div>
-        <p class="muted">Absolute paths on the server. Besides these, the app reads its own code and the system's, and reads and writes its data folder (<code id="admin-data-dir">…</code>), where it keeps everything it stores; it writes nowhere else.</p>
+        <p class="muted">Absolute paths on the server. Besides these, the app reads its own code and the system's, and reads and writes its data folder (<code id="admin-data-dir">…</code><span id="admin-data-dir-where"></span>), where it keeps everything it stores; it writes nowhere else.</p>
         <div class="dir-section">
           <h3>May read</h3>
           <p class="muted">Users' folders on tensor (<code id="admin-tensor-root">…</code>) can only be used where they are in one of these.</p>
@@ -338,14 +335,30 @@
           <div class="dirlist" data-kind="write_dirs" data-placeholder="e.g. /mnt/tank0/tensor/olfdb_backups"></div>
         </div>
         <div id="admin-result" aria-live="polite"></div>
-        <div class="actions">
-          <label class="check">Your name <input id="admin-name" autocomplete="off"></label>
-          <button type="button" class="btn primary" id="admin-save">Save</button>
+        <div class="actions"><button type="button" class="btn primary" id="admin-save">Save</button></div>
+      </div>
+
+      <div class="step" id="admin-odors">
+        <div class="step-head"><h2>Odor sheet</h2></div>
+        <p class="muted">The Google sheet the odor table is synced from (in the Odors tab), shared as "anyone with the link can view": its link as copied from the browser while editing it, with <code>#gid=…</code> if the odors are not on its first tab. It is used as soon as it is saved.</p>
+        <div class="row admin-sheet">
+          <input id="admin-sheet-url" type="url" spellcheck="false" autocomplete="off" placeholder="https://docs.google.com/spreadsheets/d/…/edit#gid=0" aria-label="Odor sheet link">
+          <button type="button" class="btn primary" id="admin-sheet-save">Save</button>
         </div>
+        <p class="muted small" id="admin-sheet-source"></p>
+        <div id="admin-sheet-result" aria-live="polite"></div>
+        <h3 class="subhead">Or import a CSV</h3>
+        <p class="muted">With the sheet's columns, as in the template, which has the odors from the thesis tables (and can start a new Google sheet: File → Import). It syncs the odor table the same way, showing what would change first.</p>
+        <div class="actions">
+          <input type="file" id="odor-csv-input" accept=".csv,.tsv,.txt" hidden>
+          <button type="button" class="btn" id="odor-csv-btn">Import a CSV…</button>
+          <a class="btn" href="/api/odors/template.csv" download>Template CSV</a>
+        </div>
+        <div id="admin-odor-preview"></div>
       </div>
 
       <div class="step" id="admin-server">
-        <div class="step-head"><h2>Server</h2></div>
+        <div class="step-head"><h2>Restart</h2></div>
         <div class="paths-status" id="admin-status" aria-live="polite"></div>
         <div class="kv" id="admin-info"></div>
         <div class="actions">
@@ -353,6 +366,11 @@
           <span class="dl-status" id="admin-restart-status" aria-live="polite"></span>
         </div>
         <p class="muted small">It takes a few seconds; uploads and downloads under way are given up to 30 s to finish.</p>
+      </div>
+
+      <div class="step" id="admin-host">
+        <div class="step-head"><h2>This server</h2></div>
+        <div class="kv" id="admin-host-info"><span>Name</span><span class="muted">…</span></div>
       </div>
     </div>
   </section>

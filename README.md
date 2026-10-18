@@ -134,8 +134,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   name lowercased without periods, e.g. `megamat_tom_glomeruli_2023-11-19.csv` (the
   long one ends in `_long.csv`).
 - **Odors**: the app's own table of odor metadata, one row per chemical, with links and
-  PubChem structure images. It is synced one way from a Google sheet (or an imported
-  CSV) with the columns of `config/odor_sheet_template.csv`, which starts it off with
+  PubChem structure images. It is synced one way from a Google sheet (its link set in
+  the Admin tab) or a CSV imported in the Admin tab, with the columns of
+  `config/odor_sheet_template.csv` (downloadable there), which starts it off with
   the odors from the thesis tables: the tab shows what a sync would do, adds new odors,
   and applies changes to existing ones and deletions only where ticked, warning about
   renames that would unlink datasets. A badge on the tab shows when the sheet changed
@@ -157,11 +158,16 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
 - **Reference matrices**: any CSV in `reference_data/` listed in its `manifest.json`
   (format in [reference_data/README.md](reference_data/README.md)).
 - **Admin** (to the right of Docs; it first asks whether you are Tom, Jon or Betty, or
-  have asked one of them): the folders on the server the app may read (by default
-  tensor) and also write (none by default: for backups, later), besides its own data
-  folder. Saved changes take effect when the server restarts, which a button there
-  does when it runs under Docker or systemd. How these are enforced:
-  [DEPLOY.md](DEPLOY.md#folders-it-may-read-and-write).
+  have asked one of them): settings for the whole site.
+  - *Folders on the server* the app may read (by default tensor) and also write (none
+    by default: for backups, later), besides its own data folder. Saved changes take
+    effect when the server restarts, which a button there does when it runs under
+    Docker or systemd. How they are enforced:
+    [DEPLOY.md](DEPLOY.md#folders-it-may-read-and-write).
+  - *Odor sheet*: the Google sheet's link, used as soon as it is saved, and importing a
+    CSV instead (with the template to start from).
+  - *This server*: its name, and its IP addresses (in Docker, those the network's DNS
+    gives its name).
 
 ## Scripting
 
@@ -180,9 +186,9 @@ uvicorn app.main:app --reload --port 8080      # data goes to ./data
 ```
 
 Settings and upload lookups need tensor mounted (at `/mnt/tank0/tensor`, or wherever
-`OLFDB_TENSOR_ROOT` points), and syncing the odor table from a sheet needs
-`OLFDB_ODOR_SHEET_URL`;
-the rest of the configuration is in [DEPLOY.md](DEPLOY.md#configuration-reference).
+`OLFDB_TENSOR_ROOT` points), and syncing the odor table from a sheet needs its link (in
+the Admin tab); the rest of the configuration is in
+[DEPLOY.md](DEPLOY.md#configuration-reference).
 
 [design.md](design.md) describes how the app is put together and why: the main design
 decisions, the code layout, storage and the HTTP API.
