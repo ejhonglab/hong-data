@@ -154,6 +154,46 @@ function wireMenu(menu, onPick) {
 document.addEventListener('click', (e) => { $$('details.menu[open]').forEach((m) => { if (!m.contains(e.target)) m.open = false; }); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $$('details.menu[open]').forEach((m) => { m.open = false; }); });
 
+// A menu at the pointer, for a right click: entries [{html, title, disabled, onPick}].
+// A pick, a press elsewhere, Escape, scrolling or resizing closes it.
+let closeContextMenu = () => {};
+function showContextMenu(x, y, entries) {
+  closeContextMenu();
+  const menu = document.createElement('div');
+  menu.className = 'menu-list ctx-menu';
+  for (const e of entries) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.innerHTML = e.html;
+    b.disabled = !!e.disabled;
+    b.title = e.title || '';
+    b.addEventListener('click', () => { closeContextMenu(); e.onPick(); });
+    menu.appendChild(b);
+  }
+  document.body.appendChild(menu);
+  const r = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(4, Math.min(x, innerWidth - r.width - 4))}px`;
+  menu.style.top = `${Math.max(4, Math.min(y, innerHeight - r.height - 4))}px`;
+  const away = (e) => { if (!menu.contains(e.target)) closeContextMenu(); };
+  const key = (e) => { if (e.key === 'Escape') closeContextMenu(); };
+  const close = () => closeContextMenu();
+  document.addEventListener('pointerdown', away, true);
+  document.addEventListener('keydown', key);
+  document.addEventListener('scroll', close, true);
+  window.addEventListener('resize', close);
+  window.addEventListener('blur', close);
+  closeContextMenu = () => {
+    menu.remove();
+    document.removeEventListener('pointerdown', away, true);
+    document.removeEventListener('keydown', key);
+    document.removeEventListener('scroll', close, true);
+    window.removeEventListener('resize', close);
+    window.removeEventListener('blur', close);
+    closeContextMenu = () => {};
+  };
+  menu.querySelector('button:not(:disabled)')?.focus();
+}
+
 // ------------------------------------------------------------- sorting helpers
 function roiKey(roi) {
   return /^\d+$/.test(roi) ? [0, parseInt(roi, 10), ''] : [1, 0, roi.toLowerCase()];
@@ -207,7 +247,7 @@ function neuralOrder(data, { rowOrder, roiSort, odorOrder }) {
   trials.forEach((t, j) => {
     const key = `${t.panel ?? ''}\u0000${t.odor}`;
     let c = condIndex.get(key);
-    if (!c) { c = { panel: t.panel, odor: t.odor, trials: [] }; condIndex.set(key, c); conds.push(c); }
+    if (!c) { c = { key, panel: t.panel, odor: t.odor, trials: [] }; condIndex.set(key, c); conds.push(c); }
     c.trials.push(j);
   });
   const panelOrder = [];
@@ -227,6 +267,19 @@ function neuralOrder(data, { rowOrder, roiSort, odorOrder }) {
   return { conds: ordered.map((x) => x.c), panelOrder, unitIdx };
 }
 
+// The order clustering starts from (ties keep it), whatever order is shown
+const CLUSTER_INPUT_ORDER = { rowOrder: 'fly', roiSort: 'file', odorOrder: 'file' };
+
+// The items of one axis less those removed, in the order they were dragged into if they
+// were. edit: {removed: Set of keys, order: [keys] or null}
+function arrange(items, keyOf, { removed, order }) {
+  const kept = removed.size ? items.filter((it) => !removed.has(keyOf(it))) : items.slice();
+  if (!order) return kept;
+  const pos = new Map(order.map((k, i) => [k, i]));
+  const at = (it) => pos.get(keyOf(it)) ?? Infinity;
+  return kept.map((it, i) => ({ it, i })).sort((a, b) => at(a.it) - at(b.it) || a.i - b.i).map((x) => x.it);
+}
+
 // units (in unitIdx order) x columns, each column the mean over its trials
 function meanOver(values, nT, unitIdx, colTrials) {
   const nR = unitIdx.length, nC = colTrials.length;
@@ -243,12 +296,13 @@ function meanOver(values, nT, unitIdx, colTrials) {
   return out;
 }
 
-// Reorders ROIs and/or odors by hierarchical clustering of trial-averaged responses
+// Orders ROIs and/or odors by hierarchical clustering of trial-averaged responses
 // (whatever the display mode). ROIs are clustered all together, whichever fly they come
 // from; odors within each panel, by their responses across all ROIs.
-// -> {unitIdx, conds, rowTrees, colTrees, notes}
-async function clusterNeural(pool, data, order, o, onProgress) {
-  const { conds, unitIdx } = order;
+// input: {unitIdx, conds} (those not removed, in CLUSTER_INPUT_ORDER)
+// -> {unitIdx, conds (each null unless clustered), rowTrees, colTrees, notes}
+async function clusterNeural(pool, data, input, o, onProgress) {
+  const { conds, unitIdx } = input;
   const nU = unitIdx.length, nC = conds.length;
   const means = meanOver(data.values, data.trials.length, unitIdx, conds.map((c) => c.trials));
   const jobs = [], plans = [], notes = [];
@@ -270,7 +324,7 @@ async function clusterNeural(pool, data, order, o, onProgress) {
     }
   }
   const results = jobs.length ? await pool.run(jobs, onProgress) : [];
-  const out = { unitIdx: unitIdx.slice(), conds: conds.slice(), rowTrees: [], colTrees: [], notes };
+  const out = { unitIdx: o.clusterRows ? unitIdx.slice() : null, conds: o.clusterCols ? conds.slice() : null, rowTrees: [], colTrees: [], notes };
   results.forEach((res, k) => {
     const plan = plans[k];
     const { start, end } = plan.group;
@@ -282,10 +336,11 @@ async function clusterNeural(pool, data, order, o, onProgress) {
   return out;
 }
 
+// order: {unitIdx, conds, panelOrder} as shown unless clustered
 function buildNeuralModel(data, order, { mode, rowOrder }, clustering) {
   const { units, trials, values } = data;
-  const conds = clustering ? clustering.conds : order.conds;
-  const unitIdx = clustering ? clustering.unitIdx : order.unitIdx;
+  const conds = clustering?.conds ?? order.conds;
+  const unitIdx = clustering?.unitIdx ?? order.unitIdx;
   const showGroups = order.panelOrder.length > 1 || order.panelOrder[0] != null;
   const cols = [], colTrials = [], condCenter = new Map();
   for (const c of conds) {
@@ -293,23 +348,24 @@ function buildNeuralModel(data, order, { mode, rowOrder }, clustering) {
     const start = cols.length;
     if (mode === 'trials') {
       const ts = c.trials.slice().sort((a, b) => trials[a].repeat - trials[b].repeat || a - b);
-      for (const j of ts) { cols.push({ label: c.odor, group, sub: trials[j].repeat }); colTrials.push([j]); }
+      for (const j of ts) { cols.push({ label: c.odor, group, sub: trials[j].repeat, key: c.key }); colTrials.push([j]); }
     } else {
-      cols.push({ label: c.odor, group, sub: null });
+      cols.push({ label: c.odor, group, sub: null, key: c.key });
       colTrials.push(c.trials);
     }
     condCenter.set(c, (start + cols.length) / 2);
   }
   const rows = unitIdx.map((i) => {
     const u = units[i];
-    if (rowOrder === 'roi') return { label: flyKey(u), group: u.roi };
-    if (rowOrder === 'none') return { label: `${u.roi} (${flyKey(u)})`, group: null };
-    return { label: u.roi, group: flyKey(u) };
+    if (rowOrder === 'roi') return { label: flyKey(u), group: u.roi, key: i };
+    if (rowOrder === 'none') return { label: `${u.roi} (${flyKey(u)})`, group: null, key: i };
+    return { label: u.roi, group: flyKey(u), key: i };
   });
   const model = {
     rows, cols, values: meanOver(values, trials.length, unitIdx, colTrials),
     rowTitle: { fly: 'ROI', roi: 'fly', none: 'ROI (fly)' }[rowOrder],
     rowGroupTitle: { fly: 'fly', roi: 'ROI', none: null }[rowOrder],
+    colTitle: 'odor', colGroupTitle: showGroups ? 'panel' : null,
     nConditions: conds.length, nPanels: order.panelOrder.length, nUnits: units.length, nTrials: trials.length,
     rowDendro: null, colDendro: null,
   };
@@ -321,6 +377,17 @@ function buildNeuralModel(data, order, { mode, rowOrder }, clustering) {
     model.colDendro = layoutDendrogram(clustering.colTrees.map((t) => ({ merges: t.merges, leafPos: t.leaves.map((c) => condCenter.get(c)) })));
   }
   return model;
+}
+
+// rows as columns and columns as rows, with their labels, titles and dendrograms
+function transposeModel(m) {
+  const nR = m.rows.length, nC = m.cols.length;
+  const values = new Float32Array(nR * nC);
+  for (let r = 0; r < nR; r++) for (let c = 0; c < nC; c++) values[c * nR + r] = m.values[r * nC + c];
+  return {
+    ...m, rows: m.cols, cols: m.rows, values, rowDendro: m.colDendro, colDendro: m.rowDendro, transposed: true,
+    rowTitle: m.colTitle, rowGroupTitle: m.colGroupTitle, colTitle: m.rowTitle, colGroupTitle: m.rowGroupTitle,
+  };
 }
 
 function dataRange(values, clip) {
@@ -335,6 +402,11 @@ function dataRange(values, clip) {
 }
 
 // ------------------------------------------------------------- matrix viewer
+// Edits of a viewer's rows and columns, kept for each matrix shown until reset: keys
+// removed, and the order they were dragged into. For neural data, rows are the units and
+// columns the odors, however they are shown.
+const newEdits = () => ({ rows: { removed: new Set(), order: null }, cols: { removed: new Set(), order: null } });
+
 class MatrixViewer {
   constructor(container, { kind = 'neural' } = {}) {
     this.container = container;
@@ -346,16 +418,24 @@ class MatrixViewer {
     this.wrap = document.createElement('div');
     this.wrap.className = 'hm-wrap';
     container.appendChild(this.wrap);
-    this.heatmap = new Heatmap(this.wrap);
+    this.hint = document.createElement('div');
+    this.hint.className = 'vt-hint';
+    container.appendChild(this.hint);
+    this.heatmap = new Heatmap(this.wrap, { onReorder: (axis, keys) => this._reorder(axis, keys), onLabelMenu: (info) => this._labelMenu(info) });
     this.colorbar = $('.colorbar', container);
+    const saved = LS.get('olfdb.viewer', {});
     this.opts = Object.assign(
       {
         mode: 'average', rowOrder: 'fly', roiSort: 'file', odorOrder: 'file', clusterRows: false, clusterCols: false, metric: 'correlation',
         cellW: 16, cellH: 16, colormap: 'oklab-div', range: 'twoslope', clip: false,
       },
-      LS.get('olfdb.viewer', {}),
+      saved,
+      { transpose: !!saved.transposed?.[kind] },
     );
     this.data = null;
+    this.source = null; // the payload shown
+    this.edits = newEdits();
+    this.editsOf = new WeakMap(); // by payload, for when it is shown again
     this.title = '';
     this.fileStem = 'heatmap';
     this.clusterPool = new ClusterPool();
@@ -367,7 +447,14 @@ class MatrixViewer {
   _wire() {
     const tb = this.toolbar;
     $$('[data-mode]', tb).forEach((b) => b.addEventListener('click', () => { this.opts.mode = b.dataset.mode; this._syncToolbar(); this._rebuild(); }));
-    $$('select[data-opt]', tb).forEach((s) => s.addEventListener('change', () => { this.opts[s.dataset.opt] = s.value; this._save(); this._rebuild(); }));
+    $$('select[data-opt]', tb).forEach((s) => s.addEventListener('change', () => {
+      this.opts[s.dataset.opt] = s.value;
+      // an order chosen here replaces the one dragged into
+      if (s.dataset.opt === 'rowOrder' || s.dataset.opt === 'roiSort') this.edits.rows.order = null;
+      if (s.dataset.opt === 'odorOrder') this.edits.cols.order = null;
+      this._save();
+      this._rebuild();
+    }));
     for (const k of ['cellW', 'cellH']) {
       const range = $(`input[data-opt=${k}]`, tb);
       range.addEventListener('input', () => { this.opts[k] = +range.value; $(`[data-out=${k}]`, tb).textContent = range.value; this._save(); this.heatmap.setOptions({ cellW: this.opts.cellW, cellH: this.opts.cellH }); });
@@ -378,6 +465,7 @@ class MatrixViewer {
       this._syncEnabled();
       this._rebuild();
     }));
+    $('[data-role=reset]', tb).addEventListener('click', () => { Object.assign(this.edits, newEdits()); this._rebuild(); });
     wireMenu($('[data-role=export]', tb), ({ export: format }) => this.exportFigure(format));
   }
 
@@ -386,7 +474,14 @@ class MatrixViewer {
     LS.set('olfdb.viewer', {
       cellW: o.cellW, cellH: o.cellH, colormap: o.colormap, range: o.range, rowOrder: o.rowOrder, roiSort: o.roiSort, odorOrder: o.odorOrder,
       clusterRows: o.clusterRows, clusterCols: o.clusterCols, metric: o.metric,
+      transposed: { ...LS.get('olfdb.viewer', {}).transposed, [this.kind]: o.transpose },
     });
+  }
+
+  _setKind(kind) {
+    if (kind === this.kind) return;
+    this.kind = kind;
+    this.opts.transpose = !!LS.get('olfdb.viewer', {}).transposed?.[kind];
   }
 
   _syncToolbar() {
@@ -402,6 +497,7 @@ class MatrixViewer {
     cmSel.value = o.colormap;
     $('[data-role=range]', tb).hidden = mapKind !== 'diverging';
     $('input[data-opt=clip]', tb).parentElement.hidden = mapKind === 'binary';
+    $('input[data-opt=transpose]', tb).parentElement.title = neural ? 'Odors as rows and ROIs as columns' : 'Rows as columns and columns as rows';
     for (const k of ['rowOrder', 'roiSort', 'odorOrder', 'metric', 'range']) { const s = $(`select[data-opt=${k}]`, tb); if (s) s.value = o[k]; }
     for (const k of ['cellW', 'cellH']) { $(`input[data-opt=${k}]`, tb).value = o[k]; $(`[data-out=${k}]`, tb).textContent = o[k]; }
     $$('input[type=checkbox][data-opt]', tb).forEach((cb) => { cb.checked = !!o[cb.dataset.opt]; });
@@ -419,67 +515,99 @@ class MatrixViewer {
     rows.title = roi.title = o.clusterRows ? 'ROIs are ordered by the clustering, across all flies' : '';
     odor.title = o.clusterCols ? 'odors are ordered by the clustering' : '';
     $('select[data-opt=metric]', tb).disabled = !(o.clusterRows || o.clusterCols);
+    $('[data-role=rows-label]', tb).textContent = o.transpose ? 'Columns' : 'Rows';
   }
 
   // title: for the exported figure's metadata; fileStem: its file name
   setNeuralData(payload, { title = '', fileStem = 'heatmap' } = {}) {
-    this.kind = 'neural';
-    this.data = { units: payload.units, trials: payload.trials, values: decodeValues(payload.values_b64) };
+    this._setKind('neural');
+    if (payload !== this.source) {
+      this.source = payload;
+      this.data = { units: payload.units, trials: payload.trials, values: decodeValues(payload.values_b64) };
+      this._editsFor(payload);
+      this.clusterCache.clear();
+    }
     this.title = title;
     this.fileStem = fileStem;
-    this.clusterCache.clear();
     this.opts.colormap = this.opts.colormap in COLORMAPS && COLORMAPS[this.opts.colormap].kind === 'diverging' ? this.opts.colormap : 'oklab-div';
     this._syncToolbar();
     this._rebuild();
   }
 
   setGenericData(ref, { title = '', fileStem = 'heatmap' } = {}) {
-    this.kind = 'generic';
+    this._setKind('generic');
     this.title = title;
     this.fileStem = fileStem;
-    const values = decodeValues(ref.values_b64);
-    const hasGroups = ref.rows.some((r) => r.group != null);
-    let rows = ref.rows.map((r, i) => ({ label: r.label, group: hasGroups ? (r.group ?? '') : null, i }));
-    let vals = values;
-    if (hasGroups) {
-      const first = new Map();
-      rows.forEach((r) => { if (!first.has(r.group)) first.set(r.group, r.i); });
-      rows = rows.slice().sort((a, b) => first.get(a.group) - first.get(b.group) || a.i - b.i);
-      const nC = ref.cols.length;
-      vals = new Float32Array(values.length);
-      rows.forEach((r, k) => { vals.set(values.subarray(r.i * nC, (r.i + 1) * nC), k * nC); });
+    if (ref !== this.source) {
+      this.source = ref;
+      this._editsFor(ref);
+      const values = decodeValues(ref.values_b64);
+      const hasGroups = ref.rows.some((r) => r.group != null);
+      let rows = ref.rows.map((r, i) => ({ label: r.label, group: hasGroups ? (r.group ?? '') : null, i }));
+      let vals = values;
+      if (hasGroups) {
+        const first = new Map();
+        rows.forEach((r) => { if (!first.has(r.group)) first.set(r.group, r.i); });
+        rows = rows.slice().sort((a, b) => first.get(a.group) - first.get(b.group) || a.i - b.i);
+        const nC = ref.cols.length;
+        vals = new Float32Array(values.length);
+        rows.forEach((r, k) => { vals.set(values.subarray(r.i * nC, (r.i + 1) * nC), k * nC); });
+      }
+      this.data = {
+        meta: ref.meta,
+        model: {
+          rows: rows.map((r) => ({ label: r.label, group: r.group, key: r.i })),
+          cols: ref.cols.map((c, j) => ({ label: c.label, group: null, sub: null, key: j })),
+          values: vals,
+          rowTitle: ref.meta.row_label || 'row',
+          rowGroupTitle: hasGroups ? 'group' : null,
+          colTitle: ref.meta.col_label || 'column',
+          colGroupTitle: null,
+        },
+      };
     }
-    this.data = {
-      meta: ref.meta,
-      model: {
-        rows: rows.map((r) => ({ label: r.label, group: r.group })),
-        cols: ref.cols.map((c) => ({ label: c.label, group: null, sub: null })),
-        values: vals,
-        rowTitle: ref.meta.row_label || 'row',
-        rowGroupTitle: hasGroups ? 'group' : null,
-      },
-    };
     const kind = ref.meta.kind || 'sequential';
     this.opts.colormap = kind === 'binary' ? 'binary' : kind === 'diverging' ? 'oklab-div' : (COLORMAPS[this.opts.colormapSeq]?.kind === 'sequential' ? this.opts.colormapSeq : 'viridis');
     this._syncToolbar();
     this._rebuild();
   }
 
+  _editsFor(payload) {
+    if (!this.editsOf.has(payload)) this.editsOf.set(payload, newEdits());
+    this.edits = this.editsOf.get(payload);
+  }
+
+  // the matrix less the rows and columns removed, in the order they were dragged into
+  _genericModel() {
+    const b = this.data.model, nC = b.cols.length;
+    const rows = arrange(b.rows.map((_, i) => i), (i) => b.rows[i].key, this.edits.rows);
+    const cols = arrange(b.cols.map((_, j) => j), (j) => b.cols[j].key, this.edits.cols);
+    const values = new Float32Array(rows.length * cols.length);
+    rows.forEach((i, r) => { cols.forEach((j, c) => { values[r * cols.length + c] = b.values[i * nC + j]; }); });
+    return { ...b, rows: rows.map((i) => b.rows[i]), cols: cols.map((j) => b.cols[j]), values };
+  }
+
   async _rebuild() {
     if (!this.data) return;
     const seq = ++this._seq;
+    this._syncEdits();
     // ROI clustering pools the ROIs of every fly, so the rows are then not grouped
     const o = this.opts.clusterRows ? { ...this.opts, rowOrder: 'none' } : this.opts;
     if (this.kind !== 'neural') {
       if (COLORMAPS[o.colormap]?.kind === 'sequential') { this.opts.colormapSeq = o.colormap; this._save(); }
-      this._show(this.data.model);
+      this._show(this._genericModel());
       return;
     }
+    const { rows, cols } = this.edits;
+    // an order dragged into is not used while its axis is clustered, but comes back after
     const order = neuralOrder(this.data, o);
+    order.unitIdx = arrange(order.unitIdx, (u) => u, { removed: rows.removed, order: o.clusterRows ? null : rows.order });
+    order.conds = arrange(order.conds, (c) => c.key, { removed: cols.removed, order: o.clusterCols ? null : cols.order });
     let clustering = null;
     const notes = [];
     if (o.clusterRows || o.clusterCols) {
-      const key = [o.rowOrder, o.roiSort, o.odorOrder, o.clusterRows, o.clusterCols, o.metric].join('|');
+      const removed = (e) => [...e.removed].sort().join('\u0001');
+      const key = [o.clusterRows, o.clusterCols, o.metric, removed(rows), removed(cols)].join('|');
       clustering = this.clusterCache.get(key);
       if (!clustering) {
         // show the matrix unclustered, with progress, if clustering takes more than a moment
@@ -494,7 +622,12 @@ class MatrixViewer {
           if (shown && seq === this._seq) this._setNote(progress);
         };
         try {
-          clustering = await clusterNeural(this.clusterPool, this.data, order, o, onProgress);
+          // from the same order whatever is shown, as that decides ties
+          const input = neuralOrder(this.data, CLUSTER_INPUT_ORDER);
+          clustering = await clusterNeural(this.clusterPool, this.data, {
+            unitIdx: arrange(input.unitIdx, (u) => u, { removed: rows.removed, order: null }),
+            conds: arrange(input.conds, (c) => c.key, { removed: cols.removed, order: null }),
+          }, o, onProgress);
           this.clusterCache.set(key, clustering);
         } catch (e) {
           if (e.cancelled) return;
@@ -514,32 +647,85 @@ class MatrixViewer {
 
   _show(model, note = '') {
     const o = this.opts;
+    const neural = this.kind === 'neural';
     const cm = COLORMAPS[o.colormap] || COLORMAPS['oklab-div'];
     const { vmin, vmax } = dataRange(model.values, o.clip);
     let norm;
     if (cm.kind === 'diverging') norm = makeNorm(o.range === 'symmetric' ? 'symmetric' : 'twoslope', vmin, vmax);
     else if (cm.kind === 'binary') norm = makeNorm('linear', 0, 1);
     else norm = makeNorm('linear', vmin, vmax);
+    const dims = neural
+      ? [`${model.rows.length.toLocaleString()} ROIs`, `${model.cols.length} ${o.mode === 'trials' ? 'trials' : 'odors'}`]
+      : [model.rows.length, model.cols.length];
+    // labels can be dragged along axes not clustered
+    const drag = { rows: !(neural && o.clusterRows), cols: !(neural && o.clusterCols) };
+    if (o.transpose) {
+      model = transposeModel(model);
+      dims.reverse();
+      Object.assign(drag, { rows: drag.cols, cols: drag.rows });
+    }
     this.model = model;
     this.norm = norm;
     this.lut = cm.lut;
-    this.heatmap.setModel(model, { cellW: o.cellW, cellH: o.cellH, lut: cm.lut, norm });
+    this.heatmap.setModel(model, { cellW: o.cellW, cellH: o.cellH, lut: cm.lut, norm, reorder: drag });
     drawColorbar(this.colorbar, cm.lut, norm);
-    let text;
-    if (this.kind === 'neural') {
-      text = `${model.rows.length.toLocaleString()} ROIs × ${model.cols.length} ${o.mode === 'trials' ? 'trials' : 'odors'}` +
-        (model.nPanels > 1 ? ` in ${model.nPanels} panels` : '') + ` · range ${fmtNum(vmin)} to ${fmtNum(vmax)}`;
-    } else {
-      text = `${model.rows.length} × ${model.cols.length} · range ${fmtNum(vmin)} to ${fmtNum(vmax)}` + (this.data.meta.value_label ? ` (${this.data.meta.value_label})` : '');
-    }
-    this.statsText = text;
+    this.statsText = `${dims.join(' × ')}` + (neural && model.nPanels > 1 ? ` in ${model.nPanels} panels` : '') + ` · range ${fmtNum(vmin)} to ${fmtNum(vmax)}` +
+      (!neural && this.data.meta.value_label ? ` (${this.data.meta.value_label})` : '');
     this._setNote(note);
+    const grouped = (drag.rows && model.rows.some((r) => r.group != null)) || (drag.cols && model.cols.some((c) => c.group != null));
+    const which = drag.rows && drag.cols ? 'a label' : drag.rows ? 'a row label' : 'a column label';
+    this.hint.textContent = [
+      drag.rows || drag.cols ? `Drag ${which} to move it${grouped ? ' within its group (drag a group’s name to move the group)' : ''}` : '',
+      'right-click (or Ctrl-click) a label to remove it.',
+    ].filter(Boolean).join('; ').replace(/^r/, 'R');
   }
 
   _setNote(note) {
     const el = $('[data-role=stats]', this.toolbar);
     el.textContent = note ? `${this.statsText} · ${note}` : this.statsText;
     el.title = el.textContent; // in full, as it is cut short when it does not fit
+  }
+
+  // the reset button, shown while anything is removed or dragged
+  _syncEdits() {
+    const { rows, cols } = this.edits;
+    const nouns = this.kind === 'neural' ? ['ROI', 'odor'] : ['row', 'column'];
+    const bits = [rows, cols].flatMap((e, k) => (e.removed.size ? [`${e.removed.size} ${nouns[k]}${e.removed.size === 1 ? '' : 's'} removed`] : []));
+    if (rows.order || cols.order) bits.push('reordered');
+    const btn = $('[data-role=reset]', this.toolbar);
+    btn.hidden = !bits.length;
+    btn.title = `Show every ${nouns.join(' and ')} again, in the order chosen above (now: ${bits.join(', ')})`;
+  }
+
+  // axis of the heatmap -> axis of the edits
+  _editAxis(axis) { return this.opts.transpose ? (axis === 'rows' ? 'cols' : 'rows') : axis; }
+
+  _reorder(axis, keys) {
+    this.edits[this._editAxis(axis)].order = keys;
+    this._rebuild();
+  }
+
+  // right- or ctrl-click on a label: remove what it labels (a glomerulus also from every fly)
+  _labelMenu({ axis, level, items, keys, x, y }) {
+    const ax = this._editAxis(axis);
+    const [one, many] = { neural: { rows: ['ROI', 'ROIs'], cols: ['odor', 'odors'] }, generic: { rows: ['row', 'rows'], cols: ['column', 'columns'] } }[this.kind][ax];
+    const shown = new Set(this.model[axis].map((it) => it.key)).size;
+    const it = items[0];
+    const muted = (s) => ` <span class="muted">${esc(s)}</span>`;
+    const entries = [level === 'group'
+      ? { html: `Remove ${esc(it.group)}${muted(`${keys.length} ${keys.length === 1 ? one : many}`)}`, keys }
+      : { html: `Remove ${esc(it.label)}${it.group != null ? muted(it.group) : ''}`, keys }];
+    if (this.kind === 'neural' && ax === 'rows' && level === 'item') {
+      const roi = this.data.units[it.key].roi;
+      const same = this.model[axis].filter((r) => this.data.units[r.key].roi === roi).map((r) => r.key);
+      if (!/^\d+$/.test(roi) && same.length > 1) entries.push({ html: `Remove ${esc(roi)} from every fly${muted(`${same.length} ROIs`)}`, keys: same });
+    }
+    showContextMenu(x, y, entries.map((e) => ({
+      html: e.html,
+      disabled: e.keys.length >= shown,
+      title: e.keys.length >= shown ? `At least one ${one} has to stay` : '',
+      onPick: () => { e.keys.forEach((k) => this.edits[ax].removed.add(k)); this._rebuild(); },
+    })));
   }
 
   async exportFigure(format) {
@@ -1628,7 +1814,7 @@ class OdorsPage {
 
 // ================================================================ REFERENCE
 class Reference {
-  constructor() { this.items = null; this.viewer = null; this.selected = null; }
+  constructor() { this.items = null; this.viewer = null; this.selected = null; this.cache = new Map(); }
 
   async load() {
     if (!this.items) {
@@ -1648,7 +1834,11 @@ class Reference {
     $('#reference-view').hidden = false;
     $('#ref-title').textContent = 'Loading…';
     let ref;
-    try { ref = await api(`/api/reference/${encodeURIComponent(id)}`); } catch (e) { $('#ref-title').textContent = 'Could not load'; $('#ref-desc').textContent = e.message; return; }
+    try {
+      // kept, so that rows and columns removed or moved stay so when it is shown again
+      if (!this.cache.has(id)) this.cache.set(id, await api(`/api/reference/${encodeURIComponent(id)}`));
+      ref = this.cache.get(id);
+    } catch (e) { $('#ref-title').textContent = 'Could not load'; $('#ref-desc').textContent = e.message; return; }
     if (this.selected !== id) return;
     $('#ref-title').textContent = ref.meta.title;
     $('#ref-desc').textContent = [ref.meta.description, ref.meta.source ? `Source: ${ref.meta.source}` : ''].filter(Boolean).join(' ');

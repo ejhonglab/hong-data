@@ -1,13 +1,23 @@
-// Virtualised canvas heatmap: odors (columns) x units (rows), with a column header
-// that stays at the top and row labels that stay at the left while scrolling.
-// Only the visible cells are drawn, so 10k+ rows are fine.
+// Virtualised canvas heatmap: odors (columns) x units (rows), or the other way around,
+// with a column header that stays at the top and row labels that stay at the left while
+// scrolling. Only the visible cells are drawn, so 10k+ rows are fine.
 //
-// model = { rows: [{label, group}], cols: [{label, group, sub}], values: Float32Array (row-major),
-//           rowDendro, colDendro (optional, from cluster.js layoutDendrogram) }
-// options = { cellW, cellH, lut, norm, nanColor, onHover(cellInfo|null) }
+// model = { rows: [{label, group, sub, key}], cols: (the same), values: Float32Array (row-major),
+//           rowDendro, colDendro (optional, from cluster.js layoutDendrogram),
+//           rowTitle, rowGroupTitle, transposed (odors are the rows) }
+// Neighbouring items with the same key (the trials of one odor) share one label; `sub`
+// (a repeat number) is shown next to each.
+// options = { cellW, cellH, lut, norm, nanColor, onHover(cellInfo|null),
+//             reorder: {rows, cols} (labels of these may be dragged), onReorder(axis, keys),
+//             onLabelMenu({axis, level, items, keys, x, y}) (right- or ctrl-click on a label) }
+// A label dragged moves its items within their group, and a group label its group;
+// onReorder then gets the axis's keys in their new order.
 import { fmtNum } from './colormaps.js';
 
 const FONT_FAMILY = 'system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+const SUB_FONT = `9px ${FONT_FAMILY}`;
+const DRAG_SLOP = 4; // px the pointer moves before a press on a label becomes a drag
+const DRAG_EDGE = 28; // px from the edge of the view where a drag scrolls it
 
 function cssVar(el, name, fallback) {
   const v = getComputedStyle(el).getPropertyValue(name).trim();
@@ -30,7 +40,7 @@ export class Heatmap {
     c.innerHTML = `
       <div class="hm-scroll" tabindex="0" aria-label="heatmap">
         <div class="hm-content">
-          <div class="hm-head"><canvas></canvas></div>
+          <div class="hm-head"><canvas class="hm-head-cells"></canvas><canvas class="hm-overlay hm-head-overlay"></canvas></div>
           <div class="hm-view"><canvas class="hm-cells"></canvas><canvas class="hm-overlay"></canvas></div>
         </div>
       </div>
@@ -38,31 +48,48 @@ export class Heatmap {
     this.scroll = c.querySelector('.hm-scroll');
     this.content = c.querySelector('.hm-content');
     this.head = c.querySelector('.hm-head');
-    this.headCanvas = this.head.querySelector('canvas');
+    this.headCanvas = c.querySelector('.hm-head-cells');
+    this.headOverlay = c.querySelector('.hm-head-overlay');
     this.view = c.querySelector('.hm-view');
     this.cellsCanvas = c.querySelector('.hm-cells');
-    this.overlay = c.querySelector('.hm-overlay');
+    this.overlay = c.querySelector('.hm-view .hm-overlay');
     this.tooltip = c.querySelector('.hm-tooltip');
 
-    this._onScroll = () => { if (this._hover || !this.tooltip.hidden) { this._hover = null; this.tooltip.hidden = true; } this._schedule(); };
+    this._onScroll = () => {
+      if (this._drag?.active) this._dragUpdate();
+      else if (this._hover || !this.tooltip.hidden) { this._hover = null; this.tooltip.hidden = true; }
+      this._schedule();
+    };
     this.scroll.addEventListener('scroll', this._onScroll, { passive: true });
     this._ro = new ResizeObserver(() => this._layout());
     this._ro.observe(this.scroll);
     this._onMove = (e) => this._mouse(e);
-    this._onLeave = () => this._setHover(null);
+    this._onLeave = () => { if (!this._drag?.active) this._setHover(null); };
     this.view.addEventListener('mousemove', this._onMove);
     this.view.addEventListener('mouseleave', this._onLeave);
     this.head.addEventListener('mousemove', (e) => this._mouseHead(e));
     this.head.addEventListener('mouseleave', this._onLeave);
+    for (const el of [this.view, this.head]) {
+      el.addEventListener('pointerdown', (e) => this._dragStart(e, el));
+      el.addEventListener('pointermove', (e) => this._dragMove(e));
+      el.addEventListener('pointerup', (e) => this._dragEnd(e, true));
+      el.addEventListener('pointercancel', (e) => this._dragEnd(e, false));
+      el.addEventListener('lostpointercapture', (e) => this._dragEnd(e, false));
+      el.addEventListener('contextmenu', (e) => this._labelMenu(e, el));
+    }
+    this._onKey = (e) => { if (e.key === 'Escape' && this._drag) this._dragEnd(e, false); };
+    window.addEventListener('keydown', this._onKey);
   }
 
   destroy() {
     this._ro.disconnect();
     this.scroll.removeEventListener('scroll', this._onScroll);
+    window.removeEventListener('keydown', this._onKey);
     this.container.innerHTML = '';
   }
 
   setModel(model, options) {
+    if (this._drag) this._dragEnd({}, false); // its items are not these
     this.model = model;
     if (options) Object.assign(this.options, options);
     this._measure();
@@ -90,30 +117,39 @@ export class Heatmap {
     this.hasRowGroups = m.rows.some((r) => r.group != null);
     this.hasColGroups = m.cols.some((c) => c.group != null);
     this.hasColSubs = m.cols.some((c) => c.sub != null);
+    this.hasRowSubs = m.rows.some((r) => r.sub != null);
+
+    // group runs (row and column) for separators and labels, and runs of items sharing a label
+    this.rowRuns = runs(m.rows.map((r) => r.group));
+    this.colRuns = runs(m.cols.map((c) => c.group));
+    this.rowLabelRuns = runs(m.rows.map((r) => r.key));
+    this.colLabelRuns = runs(m.cols.map((c) => c.key));
+    this.rowRunOf = runIndex(this.rowRuns, m.rows.length);
+    this.colRunOf = runIndex(this.colRuns, m.cols.length);
+    this.rowLabelRunOf = runIndex(this.rowLabelRuns, m.rows.length);
+    this.colLabelRunOf = runIndex(this.colLabelRuns, m.cols.length);
 
     ctx.font = this.rowLabelFont;
-    let labelW = 0, groupW = 0;
-    if (this.showRowLabels) for (const r of m.rows) labelW = Math.max(labelW, ctx.measureText(r.label).width);
+    let labelW = 0, groupW = 0, subW = 0;
+    if (this.showRowLabels) for (const run of this.rowLabelRuns) labelW = Math.max(labelW, ctx.measureText(m.rows[run.start].label).width);
     ctx.font = this.groupLabelFont;
-    if (this.hasRowGroups) for (const r of m.rows) groupW = Math.max(groupW, ctx.measureText(r.group).width);
+    if (this.hasRowGroups) for (const run of this.rowRuns) groupW = Math.max(groupW, ctx.measureText(String(run.key ?? '')).width);
+    ctx.font = SUB_FONT;
+    if (this.hasRowSubs) for (const r of m.rows) subW = Math.max(subW, ctx.measureText(String(r.sub ?? '')).width);
     this.rowGroupColW = this.hasRowGroups ? Math.min(150, Math.ceil(groupW) + 12) : 0;
     this.rowLabelColW = this.showRowLabels ? Math.min(160, Math.ceil(labelW) + 12) : 0;
+    this.rowSubColW = this.hasRowSubs && cellH >= 10 ? Math.ceil(subW) + 8 : 0;
     this.rowDendroW = m.rowDendro ? 56 : 0;
-    this.labelW = this.rowDendroW + Math.max(this.rowGroupColW + this.rowLabelColW, this.hasRowGroups || this.showRowLabels ? 40 : 8);
+    this.labelW = this.rowDendroW + Math.max(this.rowGroupColW + this.rowLabelColW + this.rowSubColW, this.hasRowGroups || this.showRowLabels ? 40 : 8);
 
     ctx.font = this.colLabelFont;
     let colW = 0;
-    if (this.showColLabels) for (const c of m.cols) colW = Math.max(colW, ctx.measureText(c.label).width);
+    if (this.showColLabels) for (const run of this.colLabelRuns) colW = Math.max(colW, ctx.measureText(m.cols[run.start].label).width);
     this.colLabelBand = this.showColLabels ? Math.min(200, Math.ceil(colW) + 10) : 6;
     this.colGroupBand = this.hasColGroups ? 18 : 0;
     this.colSubBand = this.hasColSubs && cellW >= 10 ? 13 : 0;
     this.colDendroH = m.colDendro ? 44 : 0;
     this.headerH = this.colDendroH + this.colGroupBand + this.colLabelBand + this.colSubBand;
-
-    // group runs (row and column) for separators and labels
-    this.rowRuns = runs(m.rows.map((r) => r.group));
-    this.colRuns = runs(m.cols.map((c) => c.group));
-    this.colLabelRuns = runs(m.cols.map((c) => `${c.group}\u0000${c.label}`));
   }
 
   _layout() {
@@ -135,7 +171,7 @@ export class Heatmap {
     this.view.style.width = `${viewW}px`;
     this.view.style.height = `${viewH}px`;
     const dpr = window.devicePixelRatio || 1;
-    for (const [cv, w, h] of [[this.headCanvas, viewW, this.headerH], [this.cellsCanvas, viewW, viewH], [this.overlay, viewW, viewH]]) {
+    for (const [cv, w, h] of [[this.headCanvas, viewW, this.headerH], [this.headOverlay, viewW, this.headerH], [this.cellsCanvas, viewW, viewH], [this.overlay, viewW, viewH]]) {
       cv.style.width = `${w}px`; cv.style.height = `${h}px`;
       cv.width = Math.max(1, Math.round(w * dpr)); cv.height = Math.max(1, Math.round(h * dpr));
     }
@@ -213,20 +249,31 @@ export class Heatmap {
         const x = this.labelW + run.start * cellW - sl;
         if (x >= this.labelW - 1 && x <= this.viewW) ctx.fillRect(x, 0, 1, this.viewH);
       }
+      if (this.hasRowSubs && cellH >= 6) for (let k = this.rowLabelRunOf[firstRow] + 1; k <= this.rowLabelRunOf[lastRow]; k++) {
+        ctx.fillRect(this.labelW, this.rowLabelRuns[k].start * cellH - st, this.viewW, 1);
+      }
     }
 
     // ---- row labels (opaque column at the left)
     ctx.fillStyle = surface;
     ctx.fillRect(0, 0, this.labelW, this.viewH);
     ctx.textBaseline = 'middle';
-    if (this.showRowLabels) {
+    if (this.showRowLabels && nvr > 0) {
       ctx.font = this.rowLabelFont;
       ctx.fillStyle = ink;
       ctx.textAlign = 'right';
-      for (let r = firstRow; r <= lastRow; r++) {
-        const y = r * cellH - st + cellH / 2;
-        ctx.fillText(ellipsize(ctx, m.rows[r].label, this.rowLabelColW - 8), this.labelW - 6, y);
+      for (let k = this.rowLabelRunOf[firstRow]; k <= this.rowLabelRunOf[lastRow]; k++) {
+        const run = this.rowLabelRuns[k];
+        const y = ((run.start + run.end) / 2) * cellH - st;
+        ctx.fillText(ellipsize(ctx, m.rows[run.start].label, this.rowLabelColW - 8), this.labelW - this.rowSubColW - 6, y);
       }
+    }
+    if (this.rowSubColW && nvr > 0) {
+      ctx.font = SUB_FONT;
+      ctx.fillStyle = inkMuted;
+      ctx.textAlign = 'center';
+      const x = this.labelW - this.rowSubColW / 2 - 1;
+      for (let r = firstRow; r <= lastRow; r++) ctx.fillText(String(m.rows[r].sub ?? ''), x, r * cellH - st + cellH / 2);
     }
     if (this.hasRowGroups) {
       ctx.font = this.groupLabelFont;
@@ -297,7 +344,7 @@ export class Heatmap {
       }
     }
     if (this.colSubBand) {
-      hc.font = `9px ${FONT_FAMILY}`;
+      hc.font = SUB_FONT;
       hc.fillStyle = inkMuted;
       hc.textAlign = 'center';
       hc.textBaseline = 'middle';
@@ -353,10 +400,14 @@ export class Heatmap {
   }
 
   _drawOverlay() {
-    const ctx = this.overlay.getContext('2d');
     const dpr = window.devicePixelRatio || 1;
+    const hc = this.headOverlay.getContext('2d');
+    hc.setTransform(dpr, 0, 0, dpr, 0, 0);
+    hc.clearRect(0, 0, this.viewW, this.headerH);
+    const ctx = this.overlay.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, this.viewW, this.viewH);
+    if (this._drag?.active) { this._drawDrag(ctx, hc); return; }
     const h = this._hover;
     if (!h) return;
     const { cellW, cellH } = this.options;
@@ -372,15 +423,48 @@ export class Heatmap {
     ctx.fillRect(x, 0, cellW, this.viewH);
   }
 
+  // the items being dragged shaded, and a line where they would go
+  _drawDrag(ctx, hc) {
+    const d = this._drag;
+    const { cellW, cellH } = this.options;
+    const color = cssVar(this.container, '--hm-drag', '#0b6e7a');
+    const { start, end } = d.run;
+    ctx.fillStyle = hc.fillStyle = color;
+    if (d.axis === 'rows') {
+      const st = this.scroll.scrollTop;
+      const x0 = this.rowDendroW + (d.level === 'group' ? 0 : this.rowGroupColW);
+      ctx.globalAlpha = 0.16;
+      ctx.fillRect(x0, start * cellH - st, this.viewW - x0, (end - start) * cellH);
+      ctx.globalAlpha = 1;
+      if (d.to != null) ctx.fillRect(x0, d.to * cellH - st - 1, this.viewW - x0, 2);
+      return;
+    }
+    const sl = this.scroll.scrollLeft;
+    const y0 = this.colDendroH + (d.level === 'group' ? 0 : this.colGroupBand);
+    const x = this.labelW + start * cellW - sl, w = (end - start) * cellW;
+    for (const [c, top, h] of [[hc, y0, this.headerH - y0], [ctx, 0, this.viewH]]) {
+      c.save();
+      c.beginPath();
+      c.rect(this.labelW, 0, this.viewW - this.labelW, top + h);
+      c.clip();
+      c.globalAlpha = 0.16;
+      c.fillRect(x, top, w, h);
+      c.globalAlpha = 1;
+      if (d.to != null) c.fillRect(this.labelW + d.to * cellW - sl - 1, top, 2, h);
+      c.restore();
+    }
+  }
+
   // ---------------------------------------------------------------- hover
   _mouse(e) {
     const m = this.model;
-    if (!m) return;
+    if (!m || this._drag?.active) return;
     const rect = this.view.getBoundingClientRect();
     const x = e.clientX - rect.left, y = e.clientY - rect.top;
     const { cellW, cellH } = this.options;
     const col = Math.floor((x - this.labelW + this.scroll.scrollLeft) / cellW);
     const row = Math.floor((y + this.scroll.scrollTop) / cellH);
+    this._grabCursor(this.view, x, y);
     if (x < this.labelW) {
       // over the row labels: still show the row's identity
       if (row >= 0 && row < m.rows.length) this._setHover({ row, col: -1 }, e);
@@ -393,12 +477,18 @@ export class Heatmap {
 
   _mouseHead(e) {
     const m = this.model;
-    if (!m) return;
+    if (!m || this._drag?.active) return;
     const rect = this.head.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const col = Math.floor((x - this.labelW + this.scroll.scrollLeft) / this.options.cellW);
+    this._grabCursor(this.head, x, e.clientY - rect.top);
     if (x < this.labelW || col < 0 || col >= m.cols.length) { this._setHover(null); return; }
     this._setHover({ row: -1, col }, e);
+  }
+
+  _grabCursor(el, x, y) {
+    const hit = this._labelAt(el, x, y);
+    el.style.cursor = hit && this.options.reorder?.[hit.axis] ? 'grab' : '';
   }
 
   _setHover(h, e) {
@@ -410,11 +500,18 @@ export class Heatmap {
     const row = h.row >= 0 ? m.rows[h.row] : null, col = h.col >= 0 ? m.cols[h.col] : null;
     const v = h.row >= 0 && h.col >= 0 ? m.values[h.row * m.cols.length + h.col] : NaN;
     const info = { row, col, value: v, rowIndex: h.row, colIndex: h.col };
+    // the odor first, then the unit, whichever way round they are shown
+    const [odor, unit] = m.transposed ? [row, col] : [col, row];
     const parts = [];
-    if (col) parts.push(`<b>${esc(col.label)}</b>${col.sub != null ? ` <span class="muted">repeat ${esc(col.sub)}</span>` : ''}${col.group != null ? `<span class="muted"> in ${esc(col.group)}</span>` : ''}`);
-    if (row) parts.push(`${row.group != null ? esc(row.group) + ' ' : ''}<b>${esc(row.label)}</b>`);
+    if (odor) parts.push(`<b>${esc(odor.label)}</b>${odor.sub != null ? ` <span class="muted">repeat ${esc(odor.sub)}</span>` : ''}${odor.group != null ? `<span class="muted"> in ${esc(odor.group)}</span>` : ''}`);
+    if (unit) parts.push(`${unit.group != null ? esc(unit.group) + ' ' : ''}<b>${esc(unit.label)}</b>`);
     if (row && col) parts.push(`<span class="val">${Number.isFinite(v) ? fmtNum(v) : 'missing'}</span>`);
-    this.tooltip.innerHTML = parts.join('<br>');
+    this._tooltipAt(parts.join('<br>'), e);
+    if (this.options.onHover) this.options.onHover(info);
+  }
+
+  _tooltipAt(html, e) {
+    this.tooltip.innerHTML = html;
     this.tooltip.hidden = false;
     const cw = this.container.getBoundingClientRect();
     let tx = e.clientX - cw.left + 14, ty = e.clientY - cw.top + 14;
@@ -423,11 +520,143 @@ export class Heatmap {
     if (ty + th > cw.height - 4) ty = e.clientY - cw.top - th - 10;
     this.tooltip.style.left = `${tx}px`;
     this.tooltip.style.top = `${ty}px`;
-    if (this.options.onHover) this.options.onHover(info);
+  }
+
+  // ------------------------------------------------------------ labels
+  // The label at (x, y) in the row labels (el: the view) or the column header:
+  // {axis, level: 'item' | 'group', run: the items it labels} or null (repeat numbers,
+  // dendrograms and hidden labels are not labels here).
+  _labelAt(el, x, y) {
+    const m = this.model;
+    if (!m) return null;
+    const { cellW, cellH } = this.options;
+    if (el === this.view) {
+      const i = Math.floor((y + this.scroll.scrollTop) / cellH);
+      if (x >= this.labelW || i < 0 || i >= m.rows.length) return null;
+      const labels = this.rowDendroW + this.rowGroupColW;
+      if (this.hasRowGroups && x >= this.rowDendroW && x < labels) return { axis: 'rows', level: 'group', run: this.rowRuns[this.rowRunOf[i]] };
+      if (this.showRowLabels && x >= labels && x < this.labelW - this.rowSubColW) return { axis: 'rows', level: 'item', run: this.rowLabelRuns[this.rowLabelRunOf[i]] };
+      return null;
+    }
+    const j = Math.floor((x - this.labelW + this.scroll.scrollLeft) / cellW);
+    if (x < this.labelW || j < 0 || j >= m.cols.length) return null;
+    const labels = this.colDendroH + this.colGroupBand;
+    if (this.hasColGroups && y >= this.colDendroH && y < labels) return { axis: 'cols', level: 'group', run: this.colRuns[this.colRunOf[j]] };
+    if (this.showColLabels && y >= labels && y < labels + this.colLabelBand) return { axis: 'cols', level: 'item', run: this.colLabelRuns[this.colLabelRunOf[j]] };
+    return null;
+  }
+
+  _labelMenu(e, el) {
+    if (!this.options.onLabelMenu || this._drag?.active) return;
+    const rect = el.getBoundingClientRect();
+    const hit = this._labelAt(el, e.clientX - rect.left, e.clientY - rect.top);
+    if (!hit) return;
+    e.preventDefault();
+    this._setHover(null);
+    const items = this.model[hit.axis].slice(hit.run.start, hit.run.end);
+    this.options.onLabelMenu({ axis: hit.axis, level: hit.level, items, keys: uniqueKeys(items), x: e.clientX, y: e.clientY });
+  }
+
+  // ------------------------------------------------------------- drag
+  _dragStart(e, el) {
+    // ctrl-click as a right click, as it is on macOS
+    if (e.button === 0 && e.ctrlKey) { this._labelMenu(e, el); return; }
+    if (e.button !== 0 || e.metaKey || this._drag) return;
+    const rect = el.getBoundingClientRect();
+    const hit = this._labelAt(el, e.clientX - rect.left, e.clientY - rect.top);
+    if (!hit || !this.options.reorder?.[hit.axis]) return;
+    e.preventDefault();
+    el.setPointerCapture(e.pointerId);
+    // where it may go: between the labels of its group, or between groups
+    const n = this.model[hit.axis].length;
+    const groups = hit.axis === 'rows' ? this.rowRuns : this.colRuns;
+    const groupOf = hit.axis === 'rows' ? this.rowRunOf : this.colRunOf;
+    const within = hit.level === 'group' ? { start: 0, end: n } : groups[groupOf[hit.run.start]];
+    const slots = hit.level === 'group' ? groups : hit.axis === 'rows' ? this.rowLabelRuns : this.colLabelRuns;
+    const slotOf = hit.level === 'group' ? groupOf : hit.axis === 'rows' ? this.rowLabelRunOf : this.colLabelRunOf;
+    this._drag = { ...hit, el, pointerId: e.pointerId, x0: e.clientX, y0: e.clientY, cx: e.clientX, cy: e.clientY, within, slots, slotOf, active: false, to: null, raf: 0 };
+  }
+
+  _dragMove(e) {
+    const d = this._drag;
+    if (!d || e.pointerId !== d.pointerId) return;
+    d.cx = e.clientX; d.cy = e.clientY;
+    if (!d.active) {
+      if (Math.hypot(d.cx - d.x0, d.cy - d.y0) < DRAG_SLOP) return;
+      d.active = true;
+      d.el.style.cursor = 'grabbing';
+      this._hover = null;
+      d.raf = requestAnimationFrame(() => this._dragScroll());
+    }
+    this._dragUpdate();
+  }
+
+  // the boundary between labels nearest the pointer, and the label next to the pointer
+  _dragUpdate() {
+    const d = this._drag;
+    const rect = this.view.getBoundingClientRect();
+    const p = d.axis === 'rows'
+      ? (d.cy - rect.top + this.scroll.scrollTop) / this.options.cellH
+      : (d.cx - rect.left - this.labelW + this.scroll.scrollLeft) / this.options.cellW;
+    const { start, end } = d.within;
+    if (p <= start) d.to = start;
+    else if (p >= end) d.to = end;
+    else { const s = d.slots[d.slotOf[Math.floor(p)]]; d.to = p - s.start < s.end - p ? s.start : s.end; }
+    this._drawOverlay();
+    const it = this.model[d.axis][d.run.start];
+    this._tooltipAt(`<b>${esc(d.level === 'group' ? it.group : it.label)}</b>`, { clientX: d.cx, clientY: d.cy });
+  }
+
+  // scrolls while the pointer is near the edge of the view, in the direction of the drag
+  _dragScroll() {
+    const d = this._drag;
+    if (!d?.active) return;
+    const r = this.view.getBoundingClientRect();
+    const speed = (inside) => Math.min(40, Math.max(2, (DRAG_EDGE - inside) / 2));
+    if (d.axis === 'rows') {
+      if (d.cy < r.top + DRAG_EDGE) this.scroll.scrollTop -= speed(d.cy - r.top);
+      else if (d.cy > r.top + this.viewH - DRAG_EDGE) this.scroll.scrollTop += speed(r.top + this.viewH - d.cy);
+    } else {
+      if (d.cx < r.left + this.labelW + DRAG_EDGE) this.scroll.scrollLeft -= speed(d.cx - r.left - this.labelW);
+      else if (d.cx > r.left + this.viewW - DRAG_EDGE) this.scroll.scrollLeft += speed(r.left + this.viewW - d.cx);
+    }
+    d.raf = requestAnimationFrame(() => this._dragScroll());
+  }
+
+  _dragEnd(e, drop) {
+    const d = this._drag;
+    if (!d || (e.pointerId != null && e.pointerId !== d.pointerId)) return;
+    this._drag = null;
+    cancelAnimationFrame(d.raf);
+    if (d.el.hasPointerCapture(d.pointerId)) d.el.releasePointerCapture(d.pointerId);
+    d.el.style.cursor = '';
+    if (!d.active) return;
+    this.tooltip.hidden = true;
+    this._drawOverlay();
+    const { start, end } = d.run;
+    if (drop && d.to != null && d.to !== start && d.to !== end && this.options.onReorder) {
+      const items = this.model[d.axis];
+      const moved = items.slice(start, end), rest = items.slice(0, start).concat(items.slice(end));
+      rest.splice(d.to < start ? d.to : d.to - (end - start), 0, ...moved);
+      this.options.onReorder(d.axis, uniqueKeys(rest));
+    }
   }
 }
 
 // ---------------------------------------------------------------- helpers
+function uniqueKeys(items) {
+  const seen = new Set();
+  for (const it of items) seen.add(it.key);
+  return [...seen];
+}
+
+// for each item, the index of the run it is in
+function runIndex(rs, n) {
+  const of = new Int32Array(n);
+  rs.forEach((r, k) => of.fill(k, r.start, r.end));
+  return of;
+}
+
 function runs(keys) {
   const out = [];
   let start = 0;

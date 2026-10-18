@@ -86,6 +86,11 @@ the app is described in [README.md](README.md), hosting it in [DEPLOY.md](DEPLOY
   convention) then runs in one worker directly on those blocks, never copied into one
   buffer; blocks are transferred between workers, as they cannot share memory. Memory
   limits it to 15,000 rows.
+- **Rows and columns moved or removed in the viewer are edits of the data's axes**, not
+  of the screen: keys (units, odors) removed and the order they were dragged into,
+  applied to the order chosen in the toolbar, so they hold when the matrix is transposed
+  or shown by trial. Clustering always starts from one fixed order of what is left, as
+  average linkage keeps the input order on ties and in which branch is drawn first.
 - **Movies are read on the server, a few planes at a time.** The browser asks for planes
   (`/api/movie/planes`) and gets plain little-endian numbers, which it colours itself:
   it never parses a TIFF or reads a whole movie, and Z max projections are computed

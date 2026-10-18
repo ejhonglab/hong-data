@@ -13,6 +13,7 @@
   --danger-soft: #fbeae8;
   --warn: #7a4e00;
   --warn-soft: #fff4dc;
+  --orange: #cf650a;
   --ok: #1f6b3a;
   --ok-soft: #e4f3e8;
   /* where an upload form value came from (settings, found on tensor, read from the files added) */
@@ -27,6 +28,7 @@
   --hm-ink-muted: #5c6066;
   --hm-rule: #cfd1cf;
   --hm-highlight: #111111;
+  --hm-drag: #0b6e7a;
   --sidebar-w: 340px;
   --radius: 6px;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -127,6 +129,8 @@ textarea { resize: vertical; }
 .btn.primary:hover { background: #09606b; }
 .btn.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
 .btn.danger:hover { background: #961f19; }
+.btn.reset { background: var(--orange); border-color: var(--orange); color: #fff; font-weight: 600; }
+.btn.reset:hover { background: #b0550a; }
 .btn:disabled { opacity: .55; cursor: default; }
 .btn.small { padding: 2px 8px; font-size: 12px; }
 .actions { display: flex; gap: 10px; margin-top: 16px; align-items: center; }
@@ -288,6 +292,8 @@ table.diff .new { color: var(--ok); }
 .menu-list button { border: 0; background: none; text-align: left; padding: 6px 10px; border-radius: 4px; cursor: pointer; white-space: nowrap; color: var(--ink); }
 .menu-list button:hover, .menu-list button:focus-visible { background: var(--surface-2); }
 .menu-list button .muted { font-size: 12px; margin-left: 4px; }
+.menu-list button:disabled { color: var(--ink-muted); background: none; cursor: default; }
+.ctx-menu { position: fixed; top: 0; left: 0; min-width: 0; }
 .menu-note { margin: 4px 10px 6px; color: var(--ink-muted); font-size: 12px; line-height: 1.4; max-width: 260px; white-space: normal; }
 .content { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; padding: 14px 18px 16px; }
 .empty { color: var(--ink-muted); padding: 40px; text-align: center; }
@@ -358,12 +364,14 @@ table.diff .new { color: var(--ok); }
 .vt-status { flex-basis: 100%; display: flex; align-items: center; gap: 12px; min-width: 0; }
 .vt-stats { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-muted); }
 .vt-status .dl-status { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vt-status .reset { flex: none; }
+.vt-hint { padding: 3px 12px; border-top: 1px solid var(--rule); background: var(--surface); color: var(--ink-muted); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .colorbar { width: 220px; height: 30px; color: var(--ink); }
 .vt-legend { align-self: stretch; }
 .hm-wrap { flex: 1; min-height: 0; position: relative; }
 
 .hm { position: relative; height: 100%; background: var(--hm-surface); }
-.hm-scroll { position: absolute; inset: 0; overflow: auto; overscroll-behavior: contain; }
+.hm-scroll { position: absolute; inset: 0; overflow: auto; overscroll-behavior: contain; user-select: none; }
 .hm-content { position: relative; }
 .hm-head { position: sticky; top: 0; left: 0; z-index: 2; }
 .hm-view { position: sticky; left: 0; z-index: 1; }

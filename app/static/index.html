@@ -544,13 +544,13 @@
       <div class="seg"><button type="button" data-mode="average" class="active">Average over trials</button><button type="button" data-mode="trials">Individual trials</button></div>
     </div>
     <div class="vt-group" data-role="rows">
-      <label>Rows <select data-opt="rowOrder"><option value="fly">fly, then ROI</option><option value="roi">ROI, then fly</option><option value="none">ungrouped</option></select></label>
+      <label><span data-role="rows-label">Rows</span> <select data-opt="rowOrder"><option value="fly">fly, then ROI</option><option value="roi">ROI, then fly</option><option value="none">ungrouped</option></select></label>
       <label>ROI order <select data-opt="roiSort"><option value="file">as in file</option><option value="sorted">sorted</option></select></label>
     </div>
     <div class="vt-group" data-role="cols">
       <label>Odors <select data-opt="odorOrder"><option value="file">as in file</option><option value="name">by name, then conc.</option></select></label>
     </div>
-    <div class="vt-group" data-role="cluster" title="Hierarchical clustering (average linkage) of trial-averaged responses. ROIs are clustered all together, whichever fly they come from (rows are shown ungrouped while this is on). Odors are clustered within each panel, by their responses across all ROIs.">
+    <div class="vt-group" data-role="cluster" title="Hierarchical clustering (average linkage) of trial-averaged responses, of the ROIs and odors not removed (whatever order they are shown in). ROIs are clustered all together, whichever fly they come from (they are shown ungrouped while this is on). Odors are clustered within each panel, by their responses across all ROIs.">
       <span class="vt-label">Cluster</span>
       <label class="check"><input type="checkbox" data-opt="clusterRows"> ROIs</label>
       <label class="check"><input type="checkbox" data-opt="clusterCols"> odors</label>
@@ -559,6 +559,7 @@
     <div class="vt-group">
       <label>Column <input type="range" data-opt="cellW" min="6" max="32" value="16"><span data-out="cellW">16</span>px</label>
       <label>Row <input type="range" data-opt="cellH" min="2" max="32" value="16"><span data-out="cellH">16</span>px</label>
+      <label class="check"><input type="checkbox" data-opt="transpose"> Transpose</label>
     </div>
     <div class="vt-group">
       <label>Colors <select data-opt="colormap"></select></label>
@@ -569,6 +570,7 @@
     <!-- a line of its own: its texts change, and are cut short rather than move a control -->
     <div class="vt-status">
       <span class="vt-stats" data-role="stats"></span>
+      <button type="button" class="btn small reset" data-role="reset" hidden>Reset rows &amp; columns</button>
       <span class="dl-status" data-role="export-status"></span>
       <details class="menu menu-right" data-role="export">
         <summary class="btn small">Export figure</summary>

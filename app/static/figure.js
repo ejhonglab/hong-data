@@ -5,6 +5,7 @@
 // page, the standard Helvetica font) to keep the frontend free of dependencies.
 //
 // model: as for Heatmap (rows, cols, values, rowTitle, rowGroupTitle, rowDendro, colDendro)
+// (either way round)
 // opts: { cellW, cellH, lut, norm, nanColor, valueLabel, title }
 import { fmtNum } from './colormaps.js';
 import { parseColor } from './heatmap.js';
@@ -87,15 +88,18 @@ function layoutFigure(model, o) {
   L.hasRowGroups = model.rows.some((r) => r.group != null);
   L.hasColGroups = model.cols.some((c) => c.group != null);
   L.anySub = model.cols.some((c) => c.sub != null);
+  L.anyRowSub = model.rows.some((r) => r.sub != null);
   L.rowRuns = runs(model.rows.map((r) => r.group));
   L.colRuns = runs(model.cols.map((c) => c.group));
-  L.labelRuns = runs(model.cols.map((c) => `${c.group}\u0000${c.label}`));
+  L.rowLabelRuns = runs(model.rows.map((r) => r.key));
+  L.labelRuns = runs(model.cols.map((c) => c.key));
 
   L.dendroW = model.rowDendro ? 56 : 0;
   L.dendroH = model.colDendro ? 44 : 0;
   L.groupColW = L.hasRowGroups ? Math.min(220, widest(L.rowRuns.map((r) => r.key), GROUP_FONT) + 12) : 0;
-  L.labelColW = L.showRowLabels ? Math.min(300, widest(model.rows.map((r) => r.label), L.rowFont) + 12) : 0;
-  const labelW = L.dendroW + Math.max(L.groupColW + L.labelColW, L.hasRowGroups || L.showRowLabels ? 40 : 4);
+  L.labelColW = L.showRowLabels ? Math.min(300, widest(L.rowLabelRuns.map((r) => model.rows[r.start].label), L.rowFont) + 12) : 0;
+  L.rowSubW = L.anyRowSub && cellH >= 10 ? widest(model.rows.map((r) => r.sub), SUB_FONT) + 8 : 0;
+  const labelW = L.dendroW + Math.max(L.groupColW + L.labelColW + L.rowSubW, L.hasRowGroups || L.showRowLabels ? 40 : 4);
   L.colGroupBand = L.hasColGroups ? 18 : 0;
   L.colLabelBand = L.showColLabels ? Math.min(300, widest(L.labelRuns.map((r) => model.cols[r.start].label), L.colFont) + 10) : 4;
   L.colSubBand = L.anySub && cellW >= 10 ? 13 : 0;
@@ -134,11 +138,19 @@ function drawFigure(f, L, model, o) {
   if (L.hasColGroups) for (const r of L.colRuns.slice(1)) f.rect(gx + r.start * cellW - 1, gy, 2, gh, SURFACE);
   if (L.hasRowGroups) for (const r of L.rowRuns.slice(1)) f.rect(gx, gy + r.start * cellH - 1, gw, 2, SURFACE);
   if (L.anySub && cellW >= 6) for (const r of L.labelRuns.slice(1)) f.rect(gx + r.start * cellW, gy, 1, gh, SURFACE);
+  if (L.anyRowSub && cellH >= 6) for (const r of L.rowLabelRuns.slice(1)) f.rect(gx, gy + r.start * cellH, gw, 1, SURFACE);
 
-  // rows: labels, then groups (with a rule between them) left of the labels
+  // rows: labels (and repeat numbers right of them), then groups (with a rule between
+  // them) left of the labels
   if (L.showRowLabels) {
-    model.rows.forEach((r, i) => f.text(ellipsize(String(r.label), L.labelColW - 8, L.rowFont), gx - 6,
-      gy + (i + 0.5) * cellH + MID * L.rowFont, { size: L.rowFont, color: INK, anchor: 'end' }));
+    for (const r of L.rowLabelRuns) {
+      f.text(ellipsize(String(model.rows[r.start].label), L.labelColW - 8, L.rowFont), gx - L.rowSubW - 6,
+        gy + ((r.start + r.end) / 2) * cellH + MID * L.rowFont, { size: L.rowFont, color: INK, anchor: 'end' });
+    }
+  }
+  if (L.rowSubW) {
+    model.rows.forEach((r, i) => f.text(String(r.sub ?? ''), gx - L.rowSubW / 2 - 1, gy + (i + 0.5) * cellH + MID * SUB_FONT,
+      { size: SUB_FONT, color: INK_MUTED, anchor: 'middle' }));
   }
   if (L.hasRowGroups) {
     const x = L.x0 + L.dendroW;

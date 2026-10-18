@@ -188,13 +188,23 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   top and fly/ROI labels at the left while scrolling, with hover tooltips. Average over
   repeats or show individual trials; rows by fly→ROI, ROI→fly or ungrouped; odors as in
   the file or by name. The default colormap is blue–white–red, with lightness linear in
-  |value| and white at 0, over the full data range.
+  |value| and white at 0, over the full data range. *Transpose* shows odors as rows
+  and ROIs as columns (in reference matrices too, rows as columns).
+  - *Moving and removing rows and columns* (also in reference matrices): drag a label
+    to move it within its group (fly, panel, ...), or a group's name to move the whole
+    group; with individual trials, an odor's trials move with its label (the repeat
+    numbers are not handles). Labels of clustered ROIs or odors stay put. Right-click (or
+    Ctrl-click) a label to remove it, or a whole fly or panel, or a glomerulus from every
+    fly. Choosing another order in the toolbar replaces the dragged one. The orange
+    *Reset rows & columns* brings back everything removed, in the toolbar's order.
+    Edits are kept for each dataset while you look at others.
   - *Clustering*: ROIs and/or odors ordered by hierarchical clustering (average
     linkage, correlation or Euclidean distance on trial-averaged responses, missing
     values skipped pairwise), with dendrograms. ROIs are always clustered all
     together, whichever fly they come from, and shown ungrouped in the clustered
     order (up to 15,000 ROIs; 15,000 need ~450 MB in the browser). Odors are clustered
-    within each panel, by their responses across all ROIs.
+    within each panel, by their responses across all ROIs. Only what is not removed is
+    clustered, and the result is the same whatever order it was shown in.
   - *Export figure*: SVG, PDF or PNG of the whole matrix as shown (order, colors,
     cell size, dendrograms) with a colorbar; cells are an embedded image, labels and
     lines stay vector in SVG/PDF.
