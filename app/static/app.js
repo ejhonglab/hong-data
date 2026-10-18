@@ -1313,7 +1313,9 @@ class OdorsPage {
     }
     if (p.unchanged && !nothing) parts.push(`<p class="muted">${p.unchanged} odors unchanged.</p>`);
     if (!nothing && !p.errors.length) {
-      parts.push(`<div class="actions"><label class="check">Your name <input id="odor-sync-name" value="${esc(LS.get('olfdb.uploader_name', ''))}"></label>
+      // a sync from the sheet goes in its history with a name; a CSV import with none
+      const name = where === 'sheet' ? `<label class="check">Your name <input id="odor-sync-name" value="${esc(LS.get('olfdb.uploader_name', ''))}"></label>` : '';
+      parts.push(`<div class="actions">${name}
         <button type="button" class="btn primary" id="odor-apply"></button><button type="button" class="btn" id="odor-cancel">Cancel</button></div>
         <div id="odor-apply-result"></div>`);
     }
@@ -1336,11 +1338,12 @@ class OdorsPage {
 
   async apply() {
     const box = this.previewBox, out = $('#odor-apply-result');
-    const name = $('#odor-sync-name').value.trim();
-    if (!name) { out.replaceChildren(msgBox('error', 'Your name is required (it goes in the sync history).')); return; }
-    settings.rememberName(name);
+    const sheet = this.preview.source === 'Google sheet';
+    const name = sheet ? $('#odor-sync-name').value.trim() : '';
+    if (sheet && !name) { out.replaceChildren(msgBox('error', 'Your name is required (it goes in the sync history).')); return; }
+    if (sheet) settings.rememberName(name);
     const json = {
-      fingerprint: this.preview.fingerprint, applied_by: name,
+      fingerprint: this.preview.fingerprint, ...(sheet ? { applied_by: name } : {}),
       changes: $$('[data-change]:checked', box).map((x) => +x.dataset.change),
       deletions: $$('[data-delete]:checked', box).map((x) => +x.dataset.delete),
     };
@@ -1396,7 +1399,7 @@ class OdorsPage {
           d.deleted?.length ? `<div><b>deleted:</b> ${names(d.deleted)}</div>` : '',
           d.not_applied?.length ? `<div class="muted">changes not applied: ${names(d.not_applied)}</div>` : '',
         ].join('');
-        return `<tr><td>${esc(fmtWhen(s.applied_at))}</td><td>${esc(s.applied_by)}</td><td>${esc(s.source)}</td><td>${what || syncCounts(s)}</td></tr>`;
+        return `<tr><td>${esc(fmtWhen(s.applied_at))}</td><td>${s.applied_by ? esc(s.applied_by) : '<span class="muted">—</span>'}</td><td>${esc(s.source)}</td><td>${what || syncCounts(s)}</td></tr>`;
       }).join('')}</tbody></table>` : '<p class="muted">No syncs yet.</p>';
   }
 }

@@ -788,6 +788,9 @@ def _apply(fp: str, change_ids: set[int], delete_ids: set[int], applied_by: str)
     saved = json.loads(path.read_text())
     if saved["errors"]:
         return {"ok": False, "errors": ["the sheet has errors: fix them and check it again"]}
+    sheet = saved["source"] == SHEET_SOURCE
+    if sheet and not applied_by:
+        return {"ok": False, "errors": ["your name is required"]}
     d = odormeta.diff(saved["rows"], db.list_odors())
     changes = [c for c in d["changed"] if c["id"] in change_ids]
     deletions = [o for o in d["missing"] if o["id"] in delete_ids]
@@ -800,7 +803,7 @@ def _apply(fp: str, change_ids: set[int], delete_ids: set[int], applied_by: str)
     try:
         db.apply_odor_sync(
             added=d["added"], changed=[(c["id"], c["row"]) for c in changes], deleted=[o["id"] for o in deletions],
-            applied_by=applied_by, source=saved["source"], fingerprint=fp, details=details,
+            applied_by=applied_by if sheet else "", source=saved["source"], fingerprint=fp, details=details,
             when=dt.datetime.now().isoformat(timespec="seconds"),
         )
     except sqlite3.IntegrityError as e:
@@ -809,14 +812,14 @@ def _apply(fp: str, change_ids: set[int], delete_ids: set[int], applied_by: str)
 
 
 async def odors_apply(request: Request) -> Response:
-    """Apply a preview: all new odors, plus the changes and deletions listed (by odor id)."""
+    """Apply a preview: all new odors, plus the changes and deletions listed (by odor id).
+    ``applied_by``, the name of whoever applies it, is required for the sheet; a CSV import
+    is not tied to anyone (any name given is ignored)."""
     body = await request.json()
     fp = str(body.get("fingerprint", ""))
     applied_by = str(body.get("applied_by") or "").strip()
     if not re.fullmatch(r"[0-9a-f]{64}", fp):
         return json_error(400, "missing or malformed fingerprint")
-    if not applied_by:
-        return JSONResponse({"ok": False, "errors": ["your name is required"]}, status_code=422)
     try:
         change_ids = {int(x) for x in body.get("changes") or []}
         delete_ids = {int(x) for x in body.get("deletions") or []}
