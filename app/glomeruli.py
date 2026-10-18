@@ -26,7 +26,7 @@ DEFAULT_GLOMERULI = [
 ]
 
 
-def _config_path() -> Path:
+def config_path() -> Path:
     env = os.environ.get("OLFDB_GLOMERULI_FILE")
     if env:
         return Path(env)
@@ -34,7 +34,7 @@ def _config_path() -> Path:
 
 
 def load_glomeruli() -> list[str]:
-    p = _config_path()
+    p = config_path()
     if p.exists():
         names = []
         for line in p.read_text().splitlines():

@@ -1444,6 +1444,30 @@ function localDirProblem(path) {
   return null;
 }
 
+// a row of a .dirlist (folders, one per input, with a last empty one to add another)
+function dirRow(list, value) {
+  const row = document.createElement('div');
+  row.className = 'dir-row';
+  row.innerHTML = `<input class="dir" spellcheck="false" autocomplete="off">
+    <span class="dir-mark" aria-hidden="true"></span><button type="button" class="btn small" data-remove title="Remove this folder">×</button>
+    <div class="dir-msg"></div>`;
+  const input = $('input', row);
+  input.placeholder = list.dataset.placeholder;
+  input.setAttribute('aria-label', list.dataset.label || 'Folder on tensor');
+  input.value = value;
+  return row;
+}
+
+// c: a check from the server (or a local one), or null to clear it; one with a warning is still ok
+function showDirCheck(row, c) {
+  const warn = !!c?.ok && !!c.warning;
+  row.classList.toggle('ok', !!c?.ok && !warn);
+  row.classList.toggle('warn', warn);
+  row.classList.toggle('bad', !!c && !c.ok);
+  $('.dir-mark', row).textContent = c ? (c.ok ? (warn ? '!' : '✓') : '✗') : '';
+  $('.dir-msg', row).textContent = c ? (c.ok ? c.warning || '' : c.error) : '';
+}
+
 class SettingsPage {
   constructor() {
     this.name = LS.get('olfdb.uploader_name', '');
@@ -1460,7 +1484,7 @@ class SettingsPage {
     box.addEventListener('click', (e) => {
       const row = e.target.closest('[data-remove]')?.closest('.dir-row');
       if (!row) return;
-      if (row.nextElementSibling) row.remove(); else { $('input', row).value = ''; this._showRow(row, null); }
+      if (row.nextElementSibling) row.remove(); else { $('input', row).value = ''; showDirCheck(row, null); }
       this.check();
     });
     const f = $('#settings-defaults');
@@ -1524,36 +1548,16 @@ class SettingsPage {
   _setDirs(dirs) {
     for (const kind of DIR_KINDS) {
       const list = $(`.dirlist[data-kind=${kind}]`);
-      list.replaceChildren(...[...(dirs[kind] || []), ''].map((p) => this._dirRow(list, p)));
+      list.replaceChildren(...[...(dirs[kind] || []), ''].map((p) => dirRow(list, p)));
     }
-  }
-
-  _dirRow(list, value) {
-    const row = document.createElement('div');
-    row.className = 'dir-row';
-    row.innerHTML = `<input class="dir" spellcheck="false" autocomplete="off" aria-label="Folder on tensor">
-      <span class="dir-mark" aria-hidden="true"></span><button type="button" class="btn small" data-remove title="Remove this folder">×</button>
-      <div class="dir-msg"></div>`;
-    const input = $('input', row);
-    input.placeholder = list.dataset.placeholder;
-    input.value = value;
-    return row;
   }
 
   _dirEdited(input) {
     const row = input.closest('.dir-row');
     const problem = localDirProblem(input.value);
-    this._showRow(row, problem ? { ok: false, error: problem } : null);
-    if (!row.nextElementSibling && input.value.trim()) row.parentElement.appendChild(this._dirRow(row.parentElement, ''));
+    showDirCheck(row, problem ? { ok: false, error: problem } : null);
+    if (!row.nextElementSibling && input.value.trim()) row.parentElement.appendChild(dirRow(row.parentElement, ''));
     this._status('pending', 'Not Checked Yet', 'Folders are checked on the server when you leave their field.');
-  }
-
-  // c: a check from the server (or a local one), or null to clear it
-  _showRow(row, c) {
-    row.classList.toggle('ok', !!c?.ok);
-    row.classList.toggle('bad', !!c && !c.ok);
-    $('.dir-mark', row).textContent = c ? (c.ok ? '✓' : '✗') : '';
-    $('.dir-msg', row).textContent = c && !c.ok ? c.error : '';
   }
 
   _status(kind, label, detail = '') {
@@ -1596,7 +1600,7 @@ class SettingsPage {
         const input = $('input', rows[kind][i]);
         if (input.value.trim() !== c.input) return; // changed since
         if (c.ok && document.activeElement !== input) input.value = c.path;
-        this._showRow(rows[kind][i], c);
+        showDirCheck(rows[kind][i], c);
       });
     }
     if (res.saved) {
@@ -1677,18 +1681,205 @@ class SettingsPage {
   }
 }
 
+// ===================================================================== ADMIN
+// The folders on the server the app may read and write. The server fixes them when it
+// starts, so saved changes wait for a restart, which can be asked for here too. Shown
+// each time the tab is opened, once the user says they may change these settings.
+const ADMIN_KINDS = ['read_dirs', 'write_dirs'];
+
+// what is wrong with a folder as typed, as far as can be told without the server
+function localServerDirProblem(path) {
+  if (!/^\s*\//.test(path)) return 'give the absolute path on the server, starting with /';
+  if (path.split('/').includes('..')) return "'..' is not allowed: give the folder itself";
+  return null;
+}
+
+class AdminPage {
+  constructor() {
+    this.state = null; // as from GET /api/admin
+    this.back = 'browse'; // where to go if the user may not change these settings
+    this._checkSeq = 0;
+    const box = $('#admin-folders');
+    box.addEventListener('input', (e) => { if (e.target.matches('input.dir')) this._dirEdited(e.target); });
+    box.addEventListener('change', (e) => { if (e.target.matches('input.dir')) this.check(); });
+    box.addEventListener('click', (e) => {
+      const row = e.target.closest('[data-remove]')?.closest('.dir-row');
+      if (!row) return;
+      if (row.nextElementSibling) row.remove(); else { $('input', row).value = ''; showDirCheck(row, null); }
+      this.check();
+    });
+    $('#admin-save').addEventListener('click', () => this.save());
+    $('#admin-restart').addEventListener('click', () => this.restart());
+    $('#admin-confirm').addEventListener('close', () => this._answered());
+  }
+
+  // the tab was opened; `back`: the place to return to if the answer is not yes
+  enter(back) {
+    this.back = back;
+    $('#admin-page').hidden = true;
+    const dialog = $('#admin-confirm');
+    if (dialog.open) return;
+    dialog.returnValue = '';
+    dialog.showModal();
+  }
+
+  // another tab was opened (with the browser's back button, while the question was asked)
+  leave() {
+    const dialog = $('#admin-confirm');
+    if (dialog.open) dialog.close('left');
+  }
+
+  _answered() {
+    const answer = $('#admin-confirm').returnValue; // '' if dismissed with Escape
+    if (answer === 'left') return;
+    if (answer === 'yes') { $('#admin-page').hidden = false; this.load(); } else location.replace(`#${this.back}`);
+  }
+
+  async load() {
+    if (!$('#admin-name').value) $('#admin-name').value = settings.name;
+    $('#admin-result').replaceChildren();
+    let s;
+    try { s = await api('/api/admin'); } catch (e) { $('#admin-result').replaceChildren(msgBox('error', `Could not load the settings: ${esc(e.message)}`)); return; }
+    this._show(s);
+  }
+
+  _show(s) {
+    this.state = s;
+    $('#admin-data-dir').textContent = s.data_dir;
+    $('#admin-tensor-root').textContent = s.tensor_root;
+    for (const kind of ADMIN_KINDS) {
+      const list = $(`#admin-folders .dirlist[data-kind=${kind}]`);
+      list.dataset.label = 'Folder on the server';
+      list.replaceChildren(...[...s.saved[kind], ''].map((p) => dirRow(list, p)));
+      s.checks[kind].forEach((c, i) => showDirCheck(list.children[i], c));
+    }
+    this._showServer();
+  }
+
+  _rows(kind) { return $$(`#admin-folders .dirlist[data-kind=${kind}] .dir-row`).filter((r) => $('input', r).value.trim()); }
+
+  _dirEdited(input) {
+    const row = input.closest('.dir-row');
+    const problem = input.value.trim() ? localServerDirProblem(input.value) : null;
+    showDirCheck(row, problem ? { ok: false, error: problem } : null);
+    if (!row.nextElementSibling && input.value.trim()) row.parentElement.appendChild(dirRow(row.parentElement, ''));
+    $('#admin-result').replaceChildren();
+  }
+
+  // checks of the server (rows: by kind, those with a folder in them, as sent)
+  _showChecks(rows, checks) {
+    for (const kind of ADMIN_KINDS) {
+      checks[kind].forEach((c, i) => {
+        const input = $('input', rows[kind][i]);
+        if (input.value.trim() !== c.input) return; // changed since
+        if (c.ok && document.activeElement !== input) input.value = c.path;
+        showDirCheck(rows[kind][i], c);
+      });
+    }
+  }
+
+  _collect() {
+    const rows = Object.fromEntries(ADMIN_KINDS.map((k) => [k, this._rows(k)]));
+    return { rows, dirs: Object.fromEntries(ADMIN_KINDS.map((k) => [k, rows[k].map((r) => $('input', r).value.trim())])) };
+  }
+
+  async check() {
+    const seq = ++this._checkSeq;
+    const { rows, dirs } = this._collect();
+    let res;
+    try { res = await api('/api/admin/check', { method: 'POST', json: dirs }); } catch { return; }
+    if (seq === this._checkSeq) this._showChecks(rows, res.checks);
+  }
+
+  async save() {
+    const out = $('#admin-result');
+    const by = $('#admin-name').value.trim();
+    if (!by) { out.replaceChildren(msgBox('error', 'Your name is required (it is kept with the settings).')); return; }
+    settings.rememberName(by);
+    const { rows, dirs } = this._collect();
+    let res;
+    try { res = await api('/api/admin', { method: 'POST', json: { ...dirs, by } }); } catch (e) { out.replaceChildren(msgBox('error', `Not saved: ${esc(e.message)}`)); return; }
+    if (!res.ok) {
+      this._showChecks(rows, res.checks);
+      out.replaceChildren(msgBox('error', `Not saved:${listHtml(res.errors)}`));
+      return;
+    }
+    this._show(res);
+    out.replaceChildren(msgBox('ok', res.pending ? 'Saved. These folders take effect when the server restarts (below).' : 'Saved: these are the folders in effect now.'));
+  }
+
+  _showServer() {
+    const s = this.state, k = s.kernel;
+    const [kind, label, detail] = s.pending
+      ? ['warn', 'Restart Needed', 'The folders saved above take effect when the server restarts.']
+      : ['ok', 'In Effect', 'The server has been held to the folders above since it started.'];
+    $('#admin-status').innerHTML = `<span class="indicator ${kind}">${label}</span> <span class="muted">${detail}</span>`;
+    const folders = (dirs) => (dirs.length ? dirs.map((d) => `<code>${esc(d)}</code>`).join(' ') : 'none');
+    const rows = [['Started', s.started_at ? esc(fmtWhen(s.started_at)) : '?']];
+    if (s.pending && s.active) rows.push(['Reading now', folders(s.active.read_dirs)], ['Writing now', `${folders(s.active.write_dirs)} (and its data folder)`]);
+    rows.push(
+      ['Held to them by', k?.enforced ? `the kernel (Landlock, ABI ${k.abi}) and the app's own checks` : `the app's own checks only (Landlock: ${esc(k?.reason || 'not in use')})`],
+      ['Last changed', s.saved.updated_at ? `${esc(fmtWhen(s.saved.updated_at))} by ${esc(s.saved.updated_by)}` : 'never (these are the defaults)'],
+      ['Started again by', s.restart.possible ? esc(s.restart.by) : 'nothing: restart it by hand on the server (DEPLOY.md)'],
+    );
+    $('#admin-info').innerHTML = rows.map(([a, b]) => `<span>${a}</span><span>${b}</span>`).join('');
+    const btn = $('#admin-restart');
+    btn.disabled = !s.restart.possible;
+    btn.title = s.restart.possible ? '' : 'The server is not run by Docker or systemd, which would start it again';
+    btn.classList.toggle('primary', s.pending);
+  }
+
+  // Asks the server to restart, then waits until it answers again, started anew.
+  async restart() {
+    const btn = $('#admin-restart'), status = $('#admin-restart-status');
+    btn.disabled = true;
+    setStatus(status, 'Asking the server to restart…');
+    let res;
+    try {
+      res = await api('/api/admin/restart', { method: 'POST', json: { by: $('#admin-name').value.trim() } });
+    } catch (e) {
+      setStatus(status, `Could not restart: ${e.message}`, 'error');
+      btn.disabled = false;
+      return;
+    }
+    const t0 = Date.now();
+    for (;;) {
+      await new Promise((r) => { setTimeout(r, 1000); });
+      const health = await api('/api/health').catch(() => null);
+      if (health && health.started !== res.started_at) break;
+      const secs = Math.round((Date.now() - t0) / 1000);
+      if (secs > 90) {
+        setStatus(status, `The server has not come back after ${secs} s: see its logs (DEPLOY.md, section 7).`, 'error');
+        btn.disabled = false;
+        return;
+      }
+      setStatus(status, `Restarting… ${secs} s`);
+    }
+    setStatus(status, 'Restarted.');
+    $('#topbar-status').textContent = '';
+    await this.load();
+  }
+}
+
 // ==================================================================== router
 const upload = new UploadFlow();
 const browse = new Browse();
 const odorsPage = new OdorsPage();
 const reference = new Reference();
 const settings = new SettingsPage();
+const admin = new AdminPage();
+
+let currentTab = null;
+let lastPlace = 'browse'; // the hash of the last place shown other than the Admin tab
 
 function route() {
   const [tab, id] = location.hash.replace(/^#/, '').split('/');
-  const name = ['upload', 'browse', 'odors', 'reference', 'settings'].includes(tab) ? tab : 'browse';
+  const name = ['upload', 'browse', 'odors', 'reference', 'settings', 'admin'].includes(tab) ? tab : 'browse';
   $$('.tab').forEach((s) => { s.hidden = s.id !== `tab-${name}`; });
   $$('.tabs a').forEach((a) => a.classList.toggle('active', a.dataset.tab === name));
+  if (name === 'admin' && currentTab !== 'admin') admin.enter(lastPlace);
+  if (name !== 'admin') { admin.leave(); lastPlace = location.hash.replace(/^#/, '') || 'browse'; }
+  currentTab = name;
   if (name === 'browse') { browse.load().then(() => { if (id) browse.show(+id); }); }
   if (name === 'odors') { odorsPage.highlightId = id ? +id : null; odorsPage.load().then(() => { if (id) odorsPage.highlight(+id); }); }
   if (name === 'reference') { reference.load().then(() => { if (id) reference.show(id); }); }

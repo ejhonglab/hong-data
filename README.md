@@ -68,8 +68,8 @@ section 6), would remove all of the above except the macOS item.
 ## Hosting
 
 [DEPLOY.md](DEPLOY.md): running it on an intranet server (Docker or a plain venv, with
-systemd), setting up the odor sheet and the tensor mount, configuration, backups and
-maintenance.
+systemd), setting up the odor sheet and the tensor mount, which folders the server may
+read and write (set in the Admin tab), configuration, backups and maintenance.
 
 ## Data file format
 
@@ -156,6 +156,12 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     lines stay vector in SVG/PDF.
 - **Reference matrices**: any CSV in `reference_data/` listed in its `manifest.json`
   (format in [reference_data/README.md](reference_data/README.md)).
+- **Admin** (to the right of Docs; it first asks whether you are Tom, Jon or Betty, or
+  have asked one of them): the folders on the server the app may read (by default
+  tensor) and also write (none by default: for backups, later), besides its own data
+  folder. Saved changes take effect when the server restarts, which a button there
+  does when it runs under Docker or systemd. How these are enforced:
+  [DEPLOY.md](DEPLOY.md#folders-it-may-read-and-write).
 
 ## Scripting
 

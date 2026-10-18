@@ -19,7 +19,11 @@
     <a href="#settings" data-tab="settings">Settings</a>
   </nav>
   <span class="topbar-status" id="topbar-status"></span>
-  <a class="topbar-link" href="https://github.com/ejhonglab/hong-data#readme-ov-file" target="_blank" rel="noopener">Docs</a>
+  <nav class="tabs" aria-label="Help and administration">
+    <a href="https://github.com/ejhonglab/hong-data#readme-ov-file" target="_blank" rel="noopener">Docs</a>
+    <span class="tabs-sep" aria-hidden="true"></span>
+    <a href="#admin" data-tab="admin">Admin</a>
+  </nav>
 </header>
 
 <main id="main">
@@ -312,6 +316,47 @@
     </form>
   </section>
 
+  <!-- ========================================================= ADMIN -->
+  <section id="tab-admin" class="tab" hidden>
+    <div id="admin-page" hidden>
+      <div class="page-head">
+        <h1>Admin</h1>
+        <p class="lede">Which folders on the server this app may read and write. They are fixed when the server starts, so changes saved here take effect when it restarts, which can be done below.</p>
+      </div>
+
+      <div class="step" id="admin-folders">
+        <div class="step-head"><h2>Folders on the server</h2></div>
+        <p class="muted">Absolute paths on the server. Besides these, the app reads its own code and the system's, and reads and writes its data folder (<code id="admin-data-dir">…</code>), where it keeps everything it stores; it writes nowhere else.</p>
+        <div class="dir-section">
+          <h3>May read</h3>
+          <p class="muted">Users' folders on tensor (<code id="admin-tensor-root">…</code>) can only be used where they are in one of these.</p>
+          <div class="dirlist" data-kind="read_dirs" data-placeholder="e.g. /mnt/tank0/tensor"></div>
+        </div>
+        <div class="dir-section">
+          <h3>May also write</h3>
+          <p class="muted">These can be read too. Nothing is written to them yet: they are meant for backups, later.</p>
+          <div class="dirlist" data-kind="write_dirs" data-placeholder="e.g. /mnt/tank0/tensor/olfdb_backups"></div>
+        </div>
+        <div id="admin-result" aria-live="polite"></div>
+        <div class="actions">
+          <label class="check">Your name <input id="admin-name" autocomplete="off"></label>
+          <button type="button" class="btn primary" id="admin-save">Save</button>
+        </div>
+      </div>
+
+      <div class="step" id="admin-server">
+        <div class="step-head"><h2>Server</h2></div>
+        <div class="paths-status" id="admin-status" aria-live="polite"></div>
+        <div class="kv" id="admin-info"></div>
+        <div class="actions">
+          <button type="button" class="btn" id="admin-restart">Restart the server</button>
+          <span class="dl-status" id="admin-restart-status" aria-live="polite"></span>
+        </div>
+        <p class="muted small">It takes a few seconds; uploads and downloads under way are given up to 30 s to finish.</p>
+      </div>
+    </div>
+  </section>
+
   <!-- ===================================================== REFERENCE -->
   <section id="tab-reference" class="tab" hidden>
     <aside class="sidebar">
@@ -329,6 +374,16 @@
     </div>
   </section>
 </main>
+
+<dialog id="admin-confirm" class="confirm" aria-labelledby="admin-confirm-q">
+  <form method="dialog">
+    <p id="admin-confirm-q">Is your name Tom/Jon/Betty, or have you asked one of them to change these settings?</p>
+    <div class="actions">
+      <button type="submit" value="yes" class="btn danger">Yes</button>
+      <button type="submit" value="no" class="btn" autofocus>No</button>
+    </div>
+  </form>
+</dialog>
 
 <template id="viewer-toolbar">
   <div class="vt">

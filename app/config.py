@@ -16,6 +16,8 @@ DATASETS_DIR = DATA_DIR / "datasets"
 EXPORTS_DIR = DATA_DIR / "exports"  # downloads being sent (deleted once sent)
 STRUCTURES_DIR = DATA_DIR / "odor_structures"  # PubChem structure images, by CID
 ODOR_PREVIEWS_DIR = DATA_DIR / "odor_previews"  # parsed sheets awaiting confirmation, by fingerprint
+TMP_DIR = DATA_DIR / "tmp"  # the server's temporary files (uploads being received), so it writes nothing outside DATA_DIR
+ADMIN_FILE = DATA_DIR / "admin.json"  # folders the server may read and write (Admin tab, see sandbox.py)
 
 MAX_UPLOAD_MB = float(os.environ.get("OLFDB_MAX_UPLOAD_MB", "1024"))
 STAGE_TTL_HOURS = float(os.environ.get("OLFDB_STAGE_TTL_HOURS", "48"))
@@ -28,7 +30,10 @@ ODOR_TEMPLATE = ROOT / "config" / "odor_sheet_template.csv"
 # the lab NAS as mounted on the server; users' data folders are given relative to it
 TENSOR_ROOT = Path(os.environ.get("OLFDB_TENSOR_ROOT", "/mnt/tank0/tensor"))
 
+# have the kernel (Landlock) deny the server any folder but those set in the Admin tab (and its own)
+LANDLOCK = os.environ.get("OLFDB_LANDLOCK", "1").strip().lower() not in ("0", "false", "no", "off")
+
 
 def ensure_dirs() -> None:
-    for d in (DATA_DIR, STAGING_DIR, DATASETS_DIR, EXPORTS_DIR, STRUCTURES_DIR, ODOR_PREVIEWS_DIR):
+    for d in (DATA_DIR, STAGING_DIR, DATASETS_DIR, EXPORTS_DIR, STRUCTURES_DIR, ODOR_PREVIEWS_DIR, TMP_DIR):
         d.mkdir(parents=True, exist_ok=True)

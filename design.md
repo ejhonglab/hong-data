@@ -17,7 +17,9 @@ the app is described in [README.md](README.md), hosting it in [DEPLOY.md](DEPLOY
   name, upload form defaults in the browser (localStorage). It is plain HTTP unless a
   reverse proxy adds TLS (DEPLOY.md, section 6), hence the browser warnings in the
   README, and web workers cannot share memory (that needs HTTPS and cross-origin
-  isolation), which shapes the clustering below.
+  isolation), which shapes the clustering below. The question the Admin tab asks first
+  (are you Tom, Jon or Betty, or did one of them ask you) is a reminder, not a lock; a
+  reverse proxy can put a password on `/api/admin`.
 - **Uploads are staged.** A dropped file is parsed and validated into
   `data/staging/<id>/` and shown before anything is stored. Odor YAMLs, the
   `Experiment.xml`, tensor lookups and README generation all act on the staged upload,
@@ -42,6 +44,19 @@ the app is described in [README.md](README.md), hosting it in [DEPLOY.md](DEPLOY
   YAMLs are picked greedily until they describe every odor in the matrix: each time the
   one describing the most odors not yet covered, preferring, on ties, ones named in the
   recordings' ThorImage notes over ones found by a fly's date in their path.
+- **The folders the server may use are limited in two layers.** The deployment decides
+  what it can reach at all (the container's mounts, a read-only image, no capabilities;
+  or the systemd unit's sandboxing), which the app cannot change. Within that, the Admin
+  tab sets folders it may read and folders it may also write (`app/sandbox.py`, saved in
+  `data/admin.json`), fixed when the server starts: the app checks the paths it reads on
+  tensor against them (to explain refusals), and has the kernel hold it to them through
+  Landlock, its code, Python and system folders readable too, and its data folder the
+  only other one writable. A process cannot lift Landlock, so changes wait for a
+  restart, which the Admin tab asks for by stopping the server (SIGTERM, as `docker
+  stop` does) for Docker's restart policy or systemd to start it again: a server that
+  could widen its own limits while running would not be limited. So that it writes
+  nothing outside its data folder, temporary files go to `data/tmp/`, and SQLite keeps
+  its temporary tables in memory.
 - **The laser wavelength is never read from `Experiment.xml`**: ThorImage's
   `MultiPhotonLaser` value does not follow changes made to the wavelength at the laser,
   so the wavelength is only ever entered in the form.
@@ -88,6 +103,7 @@ app/reference.py   fixed reference matrices
 app/export.py      downloads: zips of dataset files, concatenated wide/long matrices
 app/odormeta.py    odor table: sheet parsing / validation, sync diff, links, dataset matching
 app/tensor.py      users' folders on tensor: path checks, finding a dataset's flies, recordings, YAMLs
+app/sandbox.py     folders the server may read and write (Admin tab): settings, path checks, Landlock
 config/odor_sheet_template.csv   odor sheet columns, with the odors from the thesis tables
 app/static/        frontend: index.html, app.js, heatmap.js, colormaps.js (+ mpl_luts.js),
                    app.css, cluster.js (+ cluster-worker.js), figure.js (SVG/PDF/PNG export)
@@ -104,15 +120,16 @@ tests/             pytest tests
 fast serving), `users` (each user's folders on tensor), `odors` and `odor_syncs`, and
 `pubchem` (each odor CID's InChI). Files: `data/datasets/<id>/` holds the original data
 file, `README.md`, `metadata.json`, `odor_yaml/*.yaml` and the `Experiment.xml`. Also
-under `data/`: `staging/`, `exports/`, `odor_structures/` and `odor_previews/` (parsed
-sheets awaiting confirmation).
+under `data/`: `admin.json` (the folders set in the Admin tab), `staging/`, `exports/`,
+`odor_structures/`, `odor_previews/` (parsed sheets awaiting confirmation) and `tmp/`
+(temporary files, such as uploads being received).
 
 ## HTTP API
 
 Used by the frontend; handy for scripts too.
 
 ```
-GET    /api/health                          {"ok": true, "time"}
+GET    /api/health                          {"ok": true, "time", "started"} (when the server started)
 GET    /api/options                         dropdown values (indicators, drivers, panels, ...)
 POST   /api/metadata/check                  {"metadata": {...}} → problems with upload form defaults
 GET    /api/user?name=                      a user's folders on tensor ("user": null if none saved)
@@ -145,6 +162,13 @@ POST   /api/odors/apply                     {"fingerprint", "applied_by", "chang
 GET    /api/odors/structure/{cid}           PubChem structure image (cached)
 GET    /api/odors/template.csv              config/odor_sheet_template.csv
 GET    /api/reference, /api/reference/{id}
+GET    /api/admin                           the folders the server may read and write: saved, in
+                                            effect since it started, checked; Landlock, restarts
+POST   /api/admin/check                     {"read_dirs", "write_dirs"} → each folder checked
+POST   /api/admin                           {"read_dirs", "write_dirs", "by"} → saved, in effect
+                                            from the next restart
+POST   /api/admin/restart                   {"by"} → the server stops, for Docker or systemd to
+                                            start it again (409 if neither would)
 ```
 
 Matrix payloads carry `values_b64`: little-endian float32, row-major

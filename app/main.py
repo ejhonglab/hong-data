@@ -1,12 +1,16 @@
 """HTTP API + static frontend (Starlette)."""
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import hashlib
 import json
+import logging
+import os
 import re
 import secrets
 import shutil
+import signal
 import sqlite3
 import threading
 import time
@@ -25,7 +29,7 @@ from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, R
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import config, export, odormeta, reference, tensor, thorimage, yamlcheck
+from . import config, export, odormeta, reference, sandbox, tensor, thorimage, yamlcheck
 from .db import Database
 from .glomeruli import load_glomeruli
 from .ingest import ParsedData, ValidationError, load_file, load_parsed, save_parsed
@@ -42,6 +46,7 @@ from .metadata import (
 
 config.ensure_dirs()
 db = Database(config.DB_PATH)
+log = logging.getLogger("uvicorn.error")
 
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -129,7 +134,8 @@ async def index(request: Request) -> Response:
 
 
 async def health(request: Request) -> Response:
-    return JSONResponse({"ok": True, "time": dt.datetime.now().isoformat(timespec="seconds")})
+    return JSONResponse({"ok": True, "time": dt.datetime.now().isoformat(timespec="seconds"),
+                         "started": sandbox.STATUS["started_at"]})
 
 
 async def options(request: Request) -> Response:
@@ -858,6 +864,98 @@ async def reference_get(request: Request) -> Response:
     return JSONResponse(data)
 
 
+# ----------------------------------------------------------------------- admin
+
+RESTART_DEADLINE_S = 30
+
+
+def _supervisor() -> Optional[str]:
+    """What starts the server again when it exits: Docker (given a restart policy, as in
+    docker-compose.yml) or systemd (running it directly, as deploy/olfdb-venv.service
+    does); None if neither."""
+    if os.path.exists("/.dockerenv"):
+        return "Docker"
+    if os.environ.get("SYSTEMD_EXEC_PID") == str(os.getpid()):
+        return "systemd"
+    return None
+
+
+def _admin_state() -> dict:
+    saved = sandbox.load()
+    active = sandbox.STATUS["settings"]
+    by = _supervisor()
+    return {
+        "saved": saved,
+        "active": {k: active[k] for k in sandbox.KINDS} if active else None,
+        "pending": active is not None and any(saved[k] != active[k] for k in sandbox.KINDS),
+        "checks": sandbox.check_folders(saved)[0],
+        "data_dir": str(config.DATA_DIR),
+        "tensor_root": str(config.TENSOR_ROOT),
+        "started_at": sandbox.STATUS["started_at"],
+        "kernel": sandbox.STATUS["kernel"],
+        "restart": {"possible": by is not None, "by": by},
+    }
+
+
+def _folder_lists(body: Any) -> bool:
+    return isinstance(body, dict) and all(isinstance(body.get(k) or [], list) for k in sandbox.KINDS)
+
+
+async def admin_get(request: Request) -> Response:
+    """The folders the server may read and write: as saved, as in effect since it started, and checked."""
+    return JSONResponse(await run_in_threadpool(_admin_state))
+
+
+async def admin_check(request: Request) -> Response:
+    """Check folders for the Admin tab ({"read_dirs", "write_dirs"}), without saving them."""
+    body = await request.json()
+    if not _folder_lists(body):
+        return json_error(400, f"expected lists of paths in {', '.join(sandbox.KINDS)}")
+    checks, _ = await run_in_threadpool(sandbox.check_folders, body)
+    return JSONResponse({"ok": all(c["ok"] for cs in checks.values() for c in cs), "checks": checks})
+
+
+async def admin_save(request: Request) -> Response:
+    """Save the folders the server may read and write ({"read_dirs", "write_dirs", "by"}),
+    in effect from the next restart; nothing is saved if any of them is malformed."""
+    body = await request.json()
+    if not _folder_lists(body):
+        return json_error(400, f"expected lists of paths in {', '.join(sandbox.KINDS)}")
+    by = _user_name(body.get("by"))
+    checks, dirs = await run_in_threadpool(sandbox.check_folders, body)
+    errors = [f"{c['input']}: {c['error']}" for cs in checks.values() for c in cs if not c["ok"]]
+    if not by:
+        errors.append("your name is required")
+    if errors:
+        return JSONResponse({"ok": False, "errors": errors, "checks": checks}, status_code=422)
+    await run_in_threadpool(sandbox.save, dirs, by)
+    return JSONResponse({"ok": True, **await run_in_threadpool(_admin_state)})
+
+
+def _restart() -> None:
+    """Shut down as for `docker stop` (uvicorn finishes the requests under way; at once if
+    that takes over `RESTART_DEADLINE_S`), for Docker or systemd to start the server again."""
+    deadline = threading.Timer(RESTART_DEADLINE_S, os._exit, args=(1,))
+    deadline.daemon = True
+    deadline.start()
+    os.kill(os.getpid(), signal.SIGTERM)
+
+
+async def admin_restart(request: Request) -> Response:
+    """Restart the server ({"by"}, optional), if Docker or systemd starts it again after it exits."""
+    try:
+        by = _user_name((await request.json() or {}).get("by"))
+    except (ValueError, AttributeError):
+        by = ""
+    supervisor = _supervisor()
+    if supervisor is None:
+        return json_error(409, "the server cannot restart itself here: it is not run by Docker or systemd, which would "
+                               "start it again (DEPLOY.md). Restart it by hand.")
+    log.info("restart requested by %s", by or "someone who did not give their name")
+    return JSONResponse({"ok": True, "by": supervisor, "started_at": sandbox.STATUS["started_at"]},
+                        background=BackgroundTask(_restart))
+
+
 async def http_exception(request: Request, exc: HTTPException) -> Response:
     return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
 
@@ -892,7 +990,20 @@ routes = [
     Route("/api/odors/template.csv", odor_template),
     Route("/api/reference", reference_list),
     Route("/api/reference/{ref_id}", reference_get),
+    Route("/api/admin", admin_get),
+    Route("/api/admin", admin_save, methods=["POST"]),
+    Route("/api/admin/check", admin_check, methods=["POST"]),
+    Route("/api/admin/restart", admin_restart, methods=["POST"]),
     Mount("/static", RevalidatedStaticFiles(directory=str(config.STATIC_DIR)), name="static"),
 ]
 
-app = Starlette(routes=routes, exception_handlers={HTTPException: http_exception})
+
+
+@contextlib.asynccontextmanager
+async def lifespan(app: Starlette):
+    # before the first request, so before any worker thread starts (see sandbox.start)
+    sandbox.start()
+    yield
+
+
+app = Starlette(routes=routes, exception_handlers={HTTPException: http_exception}, lifespan=lifespan)

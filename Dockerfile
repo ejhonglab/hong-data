@@ -13,9 +13,10 @@ COPY config ./config
 COPY reference_data ./reference_data
 COPY manage.py .
 
-# uploaded data (SQLite DB + files) lives in a volume mounted here
+# uploaded data (SQLite DB + files) lives in a volume mounted here; the code stays root's,
+# so the app cannot change it
 ENV OLFDB_DATA_DIR=/data OLFDB_REFERENCE_DIR=/srv/olfdb/reference_data
-RUN mkdir -p /data && chown -R olfdb:olfdb /data /srv/olfdb
+RUN mkdir -p /data && chown -R olfdb:olfdb /data
 VOLUME ["/data"]
 USER olfdb
 EXPOSE 8000

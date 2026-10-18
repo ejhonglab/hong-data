@@ -67,8 +67,6 @@ button, input, select, textarea { font: inherit; color: inherit; }
 /* between the datasets' tabs (Browse, Upload) and the rest */
 .tabs-sep { align-self: center; width: 1px; height: 20px; margin: 0 10px; background: var(--rule-strong); }
 .topbar-status { margin-left: auto; color: var(--ink-muted); font-size: 12px; }
-.topbar-link { color: var(--ink); text-decoration: none; }
-.topbar-link:hover { text-decoration: underline; }
 
 main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .tab { flex: 1; min-height: 0; }
@@ -127,6 +125,8 @@ textarea { resize: vertical; }
 .btn:hover { background: var(--surface-2); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .btn.primary:hover { background: #09606b; }
+.btn.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.btn.danger:hover { background: #961f19; }
 .btn:disabled { opacity: .55; cursor: default; }
 .btn.small { padding: 2px 8px; font-size: 12px; }
 .actions { display: flex; gap: 10px; margin-top: 16px; align-items: center; }
@@ -183,6 +183,20 @@ input[data-src], select[data-src], textarea[data-src] { background: var(--src-so
 .indicator.ok { color: var(--ok); background: var(--ok-soft); border-color: #c4e3cd; }
 .indicator.bad { color: var(--danger); background: var(--danger-soft); border-color: #efc7c3; }
 .indicator.pending, .indicator.none { color: var(--ink-muted); background: var(--surface-2); border-color: var(--rule); }
+.indicator.warn { color: var(--warn); background: var(--warn-soft); border-color: #f0dcae; }
+
+/* ---------------------------------------------------------------- admin */
+#tab-admin { overflow: auto; padding: 24px 20px 60px; }
+.dir-row.warn .dir-mark, .dir-row.warn .dir-msg { color: var(--warn); }
+.dir-row.warn input { border-color: #e0b85c; background: var(--warn-soft); }
+#admin-status { margin-top: 0; padding-top: 0; border-top: 0; }
+#admin-server .kv { margin: 12px 0 0; }
+#admin-server .kv code { white-space: nowrap; }
+#admin-server .small { margin: 8px 0 0; }
+dialog.confirm { max-width: 440px; padding: 20px 22px 16px; border: 1px solid var(--rule-strong); border-radius: var(--radius); background: var(--panel); color: var(--ink); box-shadow: 0 10px 40px rgba(0,0,0,.25); }
+dialog.confirm::backdrop { background: rgba(29,31,34,.45); }
+dialog.confirm p { font-size: 14.5px; margin: 0; }
+dialog.confirm .actions { justify-content: flex-end; }
 
 /* --------------------------------------------------------------- odors */
 #tab-odors { overflow: auto; padding: 24px 20px 60px; }

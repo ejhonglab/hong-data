@@ -179,6 +179,7 @@ class Database:
         con.execute("PRAGMA foreign_keys = ON")
         con.execute("PRAGMA journal_mode = WAL")
         con.execute("PRAGMA synchronous = NORMAL")
+        con.execute("PRAGMA temp_store = MEMORY")  # no temporary files outside the data folder (see sandbox.py)
         try:
             yield con
             con.commit()

@@ -8,6 +8,7 @@ Their data is looked for in the layout hong2p uses::
 (dates may also be written YYYYMMDD or YYYY_MM_DD, fly folders ``fly1``, ``fly_01``, ...),
 and odor YAMLs up to `YAML_DEPTH` folders below an odor metadata folder: those named in
 the notes of a fly's ThorImage recordings, or with one of the flies' dates in their path.
+Only what is in the folders the server may read (`sandbox.can_read`) is listed or read.
 """
 from __future__ import annotations
 
@@ -19,7 +20,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from . import thorimage, yamlcheck
+from . import sandbox, thorimage, yamlcheck
 from .odors import format_conc
 
 USER_DIR_KINDS = ("raw_dirs", "mocorr_dirs", "odor_dirs")
@@ -34,6 +35,7 @@ MAX_XMLS_READ = 100
 MAX_YAMLS_PARSED = 200
 MAX_FILE_BYTES = 20 * 1024 * 1024
 
+NOT_ALLOWED = "outside the folders the server may read (set in the Admin tab)"
 NAMED = "named in the notes of an Experiment.xml"
 DATED = "a fly's date in its path"
 
@@ -79,6 +81,8 @@ def normalize(path: str, root: Path) -> str:
 
 
 def _entries(d: Path) -> list[os.DirEntry]:
+    if not sandbox.can_read(d):
+        return []
     try:
         with os.scandir(d) as it:
             return sorted(itertools.islice(it, MAX_LISTING), key=lambda e: e.name)
@@ -100,12 +104,15 @@ def _subdirs(d: Path) -> list[Path]:
 def root_status(root: Path) -> dict:
     """Whether tensor is there on the server: ``{'path', 'ok', 'error'}``."""
     error = None
+    allowed = sandbox.readable_within(root)
     if not os.path.isdir(root):
         error = f"tensor is not available on the server ({root} does not exist)"
+    elif not allowed:
+        error = f"no folder on tensor ({root}) is among those the server may read (set in the Admin tab)"
     elif not os.access(root, os.R_OK | os.X_OK):
         error = f"the server is not allowed to read tensor ({root})"
-    elif not _entries(root):
-        error = f"tensor looks unmounted on the server ({root} is empty)"
+    elif not any(_entries(d) for d in allowed):
+        error = f"tensor looks unmounted on the server ({', '.join(map(str, allowed))} {'is' if len(allowed) == 1 else 'are'} empty)"
     return {"path": str(root), "ok": error is None, "error": error}
 
 
@@ -137,6 +144,8 @@ def _locate(path: str, root: Path) -> tuple[str, Path]:
     real = target.resolve()
     if real != real_root and real_root not in real.parents:
         raise PathError("leads outside tensor (through a link)")
+    if not sandbox.can_read(real):
+        raise PathError(NOT_ALLOWED)
     return rel, target
 
 
@@ -212,6 +221,8 @@ def _yaml_files(folder: Path) -> list[Path]:
 
 
 def _read(path: Path) -> Optional[str]:
+    if not sandbox.can_read(path):
+        return None
     try:
         if os.path.getsize(path) > MAX_FILE_BYTES:
             return None
