@@ -1,96 +1,48 @@
 # Odor response database
 
-A small intranet web app for a fly olfaction lab: upload matrices of mean neural
-responses (per fly and ROI) to panels of odors, validate them, describe the
-experiment, and browse everything as scrollable heatmaps. Fixed reference
-matrices (chemicals × fruits, chemicals × pathways, ...) get their own tab.
+A small intranet web app for a fly olfaction lab, to collect matrices of mean neural
+responses (per fly and ROI) to panels of odors. Each upload is checked and described
+with its experiment details, then everything can be browsed, clustered, exported and
+downloaded as scrollable heatmaps, next to fixed reference matrices (chemicals × fruits,
+chemicals × pathways, ...) and the lab's table of odor metadata.
 
-- **Upload**: drop a CSV/parquet → it is checked and shown as a heatmap *before*
-  anything is saved → fill in the experiment details (required: your name, indicator,
-  Gal4 driver, coding unit) → optional odor YAML (every odor in the matrix must appear
-  with the same abbreviation and concentration), ThorImage `Experiment.xml`,
-  power/age/wavelength/rig/paths/notes → a README.md is generated and can be edited →
-  saved to SQLite plus files on disk. The details are filled in from your settings,
-  from the file (panel names; glomerulus ROIs mean coding unit "glomeruli") and from
-  your data on tensor: the server looks for each fly (`<folder>/<date>/<fly>/`, as in
-  hong2p) in your raw and motion-corrected data folders, attaches the Experiment.xml of
-  the first recording and the fewest odor YAMLs
-  that together describe every odor (those named in the recordings' ThorImage notes
-  first, then ones with a fly's date in their path), and fills in the raw and
-  motion-corrected data paths. Each field is colored by where its value came from
-  (settings, tensor, the files), until you change it; the README says which files came
-  from tensor, and from where.
-- **Settings**: your name, and your raw data, motion-corrected data and odor YAML
-  folders on tensor (relative to its top; absolute paths are refused). Each folder is
-  checked on the server as you leave its field, and once all are found there ("All
-  Paths Accessible") they are saved on the server under your name, so that any
-  computer you use, and the upload form, gets them. Below that, defaults for the
-  upload form, checked as the form checks its fields and kept in the browser only.
-- **Browse**: datasets grouped by panel or by the date of their last fly; README and
-  original files one click away; the same viewer as the upload preview.
-- **Download** (one dataset from its page, or several ticked in the list): a zip with
-  the original files, or the response matrices concatenated into one wide CSV
-  (trials × ROIs, with `dataset_id` as an extra column level; trials matched on panel,
-  odor components and repeat) or long CSV (one row per value), always with
-  `datasets.csv` (every dataset's details), `odors.csv` (their odors, with metadata and
-  links) and the READMEs. The matrix of a single dataset is just one CSV instead, laid
-  out as uploaded (less the row levels dropped on upload) and named
-  `<panels>_<uploader>_<coding unit>_<last fly date>.csv`: the panels in the data,
-  sorted, without diagnostic ones (unless there are only those), and the uploader's
-  name lowercased without periods, e.g. `megamat_tom_glomeruli_2023-11-19.csv` (the
-  long one ends in `_long.csv`). API: `/api/download?ids=1,2&format=files|wide|long`
-  (see `app/export.py`).
-- **Odors**: the app's own table of odor metadata, one row per chemical (name and
-  aliases, abbreviation, PubChem CID, CAS, solvent, supplier + catalog number, MetaCyc
-  and LOTUS IDs, inventory codes, notes), with links and PubChem structure images
-  (cached on the server); each CID's InChI is fetched from PubChem along with them and
-  kept in the database (`inchi` of each odor in `/api/odors`). It is synced one way from a Google sheet (or an imported CSV)
-  with the columns of `config/odor_sheet_template.csv`, which starts it off with the
-  odors from the thesis tables: the app shows what a sync would do, adds new odors,
-  and applies changes to existing ones and deletions only where ticked, warning about
-  renames that would unlink datasets. A badge on the tab shows when the sheet changed
-  since its last sync. Each dataset has a thesis-style odor table, its odors matched
-  through its odor YAML when it has one, otherwise by abbreviation (setup in DEPLOY.md).
-- **Viewer**: canvas heatmap virtualised to ~10k ROIs, odor labels pinned at the top
-  and fly/ROI labels at the left while scrolling, average over repeats or individual
-  trials, rows by fly→ROI, ROI→fly or ungrouped, odor order as in the file or by name, a
-  blue–white–red colormap built in Oklab (lightness linear in |value|, white at 0,
-  full data range by default), hover tooltips.
-  - *Clustering*: ROIs and/or odors ordered by hierarchical clustering (average
-    linkage, correlation or Euclidean distance on trial-averaged responses, missing
-    values skipped pairwise), with dendrograms. ROIs are always clustered all
-    together, whichever fly they come from, and shown ungrouped in the clustered
-    order (up to 15,000 ROIs; 15,000 need ~450 MB in the browser). Odors are clustered
-    within each panel, by their responses across all ROIs. Distances are computed in
-    parallel web workers, the linkage in one of them.
-  - *Export figure*: SVG, PDF or PNG of the whole matrix as shown (order, colors,
-    cell size, dendrograms) with a colorbar; cells are an embedded image, labels and
-    lines stay vector in SVG/PDF.
-- **Reference matrices**: any CSV in `reference_data/` listed in its `manifest.json`.
+## Using it
 
-Hosting instructions: [DEPLOY.md](DEPLOY.md).
+Open `http://<server>:8080/` in a browser on the lab network (type the `http://`, and
+bookmark it). There is no login. The browser calls the site "Not secure": that is
+expected, and nothing secret is entered. If a download or the page is blocked, see
+[Browser warnings](#browser-warnings) below.
 
-## Opening it in a browser
+1. **Settings** (once): your name, and your raw data, motion-corrected data and odor
+   YAML folders on tensor, written from the top of tensor (e.g. `tom/raw_data`). Once
+   all of them are found, they are saved under your name for any computer you use.
+2. **Upload**: drop your CSV or parquet file of responses (see
+   [Data file format](#data-file-format)). It is checked and shown as a heatmap before
+   anything is saved; if problems are listed, fix them all and drop the file again. Fill
+   in the experiment details (your name, indicator, Gal4 driver and coding unit are
+   required). Most are filled in for you from your settings, the file and your data on
+   tensor, each colored by where it came from. Generate the README, edit it if you like,
+   and save.
+3. **Browse**: datasets by panel, or by the date of their last fly. Click one for its
+   heatmap, README, original files and odors.
+4. **Download**: from a dataset's page, or tick several in the list: the original files
+   (a zip), or the response matrices as CSV.
 
-The site is plain HTTP, reachable only from the intranet: `http://<server>:8080/` (type
-and bookmark it with the `http://`). Browsers label it "Not secure", which is expected:
-there is no login and nothing secret is entered. Usually only Chrome's download
-warnings need dealing with:
+### Browser warnings
 
 - **Chrome** (Edge, Brave and other Chromium-based browsers are similar)
-  - *Downloads*: dataset downloads that are zips, PDF/SVG figure exports and single
-    original files other than CSV (parquet, YAML, XML, README.md) are stopped with
-    "Insecure download blocked" (CSV and PNG files are not). Open the download bubble
-    (or `chrome://downloads`) and click **Download insecure file**. To stop this for
-    the site for good: click "Not secure" at the left of the address bar →
-    *Site settings* → *Insecure content* → *Allow*.
+  - *Downloads*: zips, PDF/SVG figure exports and single original files other than CSV
+    (parquet, YAML, XML, README.md) are stopped with "Insecure download blocked" (CSV
+    and PNG files are not). Open the download bubble (or `chrome://downloads`) and click
+    **Download insecure file**. To stop this for the site for good: click "Not secure"
+    at the left of the address bar → *Site settings* → *Insecure content* → *Allow*.
   - *Pages*: since Chrome 154 (October 2026), *Always use secure connections* is on by
-    default, set to *Warns you for insecure public sites*. That setting leaves private
-    IP addresses, single-label hostnames (`http://olfdb/`) and non-default ports
-    (`:8080`) alone. If you chose *Warns you for insecure public & private sites*
-    (Settings → Privacy and security → Security), or the site is proxied on port 80
-    under a public domain name, a visit can first show "The connection to … is not
-    secure": click **Continue to site** (remembered for a while).
+    default, set to *Warns you for insecure public sites*, which leaves private IP
+    addresses, single-label hostnames (`http://olfdb/`) and non-default ports (`:8080`)
+    alone. If you chose *Warns you for insecure public & private sites* (Settings →
+    Privacy and security → Security), or the site is proxied on port 80 under a public
+    domain name, a visit can first show "The connection to … is not secure": click
+    **Continue to site** (remembered for a while).
 - **Firefox**: nothing to change. HTTPS-First (on by default) skips non-default ports
   and local addresses, and otherwise falls back to HTTP by itself; downloads from an
   HTTP page are not blocked. Only with *HTTPS-Only Mode* on (Settings → Privacy &
@@ -112,6 +64,12 @@ warnings need dealing with:
 
 Serving the site over HTTPS, with a certificate browsers already trust (DEPLOY.md,
 section 6), would remove all of the above except the macOS item.
+
+## Hosting
+
+[DEPLOY.md](DEPLOY.md): running it on an intranet server (Docker or a plain venv, with
+systemd), setting up the odor sheet and the tensor mount, configuration, backups and
+maintenance.
 
 ## Data file format
 
@@ -136,8 +94,8 @@ glomeruli_diagnostics,False,3mtp @ -5,solvent,0,-0.0377,0.13,...
   row, and `odor<n>` (from `odor2` on) together with every odor level after it, if all
   their values are the same one of: empty, `solvent`, `pfo`, `water`, `pfo @ 0`,
   `water @ 0` (with the 0 written any way: `pfo @ 0.0` too). (Only there are `pfo` and
-  `water` accepted without a concentration.) Datasets stored before
-  this are shown and downloaded the same way.
+  `water` accepted without a concentration.) Datasets stored before this are shown and
+  downloaded the same way.
 - A long layout (`date, fly_num, roi, [panel,] odor1, ..., [repeat,] value`) is also
   accepted for CSV and parquet (parquet with integer `fly_num` column labels cannot be
   written in the wide layout by pandas, so use long there).
@@ -145,68 +103,86 @@ glomeruli_diagnostics,False,3mtp @ -5,solvent,0,-0.0377,0.13,...
 Validation reports every problem it finds at once (bad odor strings with the exact
 reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
 
-## Running it locally for development
+## The tabs in detail
+
+- **Upload**: an optional odor YAML must have every odor in the matrix, with the same
+  abbreviation and concentration. Other optional details: ThorImage `Experiment.xml`,
+  power, age, wavelength, rig, data paths, notes. Details are filled in from your
+  settings, from the file (panel names; glomerulus ROIs mean coding unit "glomeruli")
+  and from tensor: each fly (`<folder>/<date>/<fly>/`, as in hong2p) is looked for in
+  your raw and motion-corrected data folders, which give the data paths, the
+  `Experiment.xml` of the first recording, and the fewest odor YAMLs that together
+  describe every odor (those named in the recordings' ThorImage notes first, then ones
+  with a fly's date in their path). A field stays colored by where its value came from
+  (settings, tensor, the files) until you change it, and the README says which files
+  came from tensor, and from where. Every value is stored on its own, whatever is
+  changed in the README.
+- **Settings**: folders are relative to the top of tensor (absolute paths are refused),
+  each checked on the server as you leave its field; once all are found ("All Paths
+  Accessible") they are saved on the server under your name. Below that, defaults for
+  the upload form, checked as the form checks its fields and kept in this browser only.
+- **Browse**: each dataset has a thesis-style odor table, its odors matched to the Odors
+  tab through its odor YAML when it has one, otherwise by abbreviation.
+- **Download**: the matrices of several datasets are concatenated into one wide CSV
+  (trials × ROIs, with `dataset_id` as an extra column level; trials matched on panel,
+  odor components and repeat) or long CSV (one row per value). Zips always have
+  `datasets.csv` (every dataset's details), `odors.csv` (their odors, with metadata and
+  links) and the READMEs. The matrix of a single dataset is just one CSV instead, laid
+  out as uploaded (less the row levels dropped on upload) and named
+  `<panels>_<uploader>_<coding unit>_<last fly date>.csv`: the panels in the data,
+  sorted, without diagnostic ones (unless there are only those), and the uploader's
+  name lowercased without periods, e.g. `megamat_tom_glomeruli_2023-11-19.csv` (the
+  long one ends in `_long.csv`).
+- **Odors**: the app's own table of odor metadata, one row per chemical, with links and
+  PubChem structure images. It is synced one way from a Google sheet (or an imported
+  CSV) with the columns of `config/odor_sheet_template.csv`, which starts it off with
+  the odors from the thesis tables: the tab shows what a sync would do, adds new odors,
+  and applies changes to existing ones and deletions only where ticked, warning about
+  renames that would unlink datasets. A badge on the tab shows when the sheet changed
+  since its last sync.
+- **Viewer** (datasets and the upload preview): odor labels stay at the
+  top and fly/ROI labels at the left while scrolling, with hover tooltips. Average over
+  repeats or show individual trials; rows by fly→ROI, ROI→fly or ungrouped; odors as in
+  the file or by name. The default colormap is blue–white–red, with lightness linear in
+  |value| and white at 0, over the full data range.
+  - *Clustering*: ROIs and/or odors ordered by hierarchical clustering (average
+    linkage, correlation or Euclidean distance on trial-averaged responses, missing
+    values skipped pairwise), with dendrograms. ROIs are always clustered all
+    together, whichever fly they come from, and shown ungrouped in the clustered
+    order (up to 15,000 ROIs; 15,000 need ~450 MB in the browser). Odors are clustered
+    within each panel, by their responses across all ROIs.
+  - *Export figure*: SVG, PDF or PNG of the whole matrix as shown (order, colors,
+    cell size, dendrograms) with a colorbar; cells are an embedded image, labels and
+    lines stay vector in SVG/PDF.
+- **Reference matrices**: any CSV in `reference_data/` listed in its `manifest.json`
+  (format in [reference_data/README.md](reference_data/README.md)).
+
+## Scripting
+
+Downloads: `/api/download?ids=1,2&format=files|wide|long` (as from the Browse tab).
+Datasets: `/api/datasets`, and each one's matrix at `/api/datasets/{id}/matrix`; the
+odor table, with each odor's InChI: `/api/odors`. Every endpoint is listed in
+[design.md](design.md#http-api). On the server, `manage.py` lists, shows, exports and
+deletes datasets ([DEPLOY.md](DEPLOY.md), section 7).
+
+## Development
 
 ```bash
 python3 -m venv venv && . venv/bin/activate
 pip install -r requirements-dev.txt
 uvicorn app.main:app --reload --port 8080      # data goes to ./data
+```
+
+Settings and upload lookups need tensor mounted (at `/mnt/tank0/tensor`, or wherever
+`OLFDB_TENSOR_ROOT` points), and syncing the odor table from a sheet needs
+`OLFDB_ODOR_SHEET_URL`;
+the rest of the configuration is in [DEPLOY.md](DEPLOY.md#configuration-reference).
+
+[design.md](design.md) describes how the app is put together and why: the main design
+decisions, the code layout, storage and the HTTP API.
+
+Tests:
+
+```bash
 python -m pytest tests/
 ```
-
-## Layout
-
-```
-app/main.py        HTTP API (Starlette) and static file serving
-app/ingest.py      CSV/parquet loading + validation → units, trials, float32 matrix
-app/odors.py       odor string parsing/formatting (port of the relevant olf.py bits)
-app/glomeruli.py   accepted glomerulus names (config/glomeruli.txt overrides)
-app/yamlcheck.py   odor YAML parsing and the matrix ⊂ YAML check
-app/thorimage.py   Experiment.xml summary
-app/metadata.py    form model (pydantic) and README.md generation
-app/db.py          SQLite schema and queries
-app/reference.py   fixed reference matrices
-app/export.py      downloads: zips of dataset files, concatenated wide/long matrices
-app/odormeta.py    odor table: sheet parsing / validation, sync diff, links, dataset matching
-app/tensor.py      users' folders on tensor: path checks, finding a dataset's flies, recordings, YAMLs
-config/odor_sheet_template.csv   odor sheet columns, with the odors from the thesis tables
-app/static/        frontend: index.html, app.js, heatmap.js, colormaps.js, app.css,
-                   cluster.js (+ cluster-worker.js), figure.js (SVG/PDF/PNG export)
-manage.py          list / show / export / delete datasets from the server
-deploy/            systemd units; Dockerfile + docker-compose.yml at the top level
-```
-
-## Storage
-
-`data/olfdb.sqlite3` tables: `datasets` (metadata, README, summary), `dataset_panels`,
-`units` (date, fly_num, roi), `trials` (panel, odor, components, repeat), `responses`
-(one row per cell, for SQL queries), `matrices` (the same values as a float32 blob
-for fast serving), `users` (each user's folders on tensor), `odors` and `odor_syncs`, and
-`pubchem` (each odor CID's InChI). Files: `data/datasets/<id>/` holds the original data file,
-`README.md`, `metadata.json`, `odor_yaml/*.yaml` and the `Experiment.xml`.
-
-## API (used by the frontend; handy for scripts)
-
-```
-GET  /api/options                       dropdown values (indicators, drivers, panels, ...)
-POST /api/metadata/check                {"metadata": {...}} → problems with upload form defaults
-GET  /api/user?name=                    a user's folders on tensor ("user": null if none saved)
-POST /api/user                          {"name", "raw_dirs", "mocorr_dirs", "odor_dirs"} → each
-                                        folder checked on tensor; saved if all are there
-POST /api/stage                         multipart 'file' → validation + matrix payload
-POST /api/stage/{id}/lookup             {"name"} → that user's folders searched for the flies,
-                                        recordings and odor YAMLs of the staged dataset
-POST /api/stage/{id}/odor_yaml          multipart 'file' (repeatable), or {"tensor_paths": [...]}
-                                        → subset check
-POST /api/stage/{id}/experiment_xml     multipart 'file', or {"tensor_path"}
-POST /api/stage/{id}/readme             {"metadata": {...}} → README.md text
-POST /api/stage/{id}/commit             {"metadata", "readme", "readme_edited"} → {"dataset_id"}
-GET  /api/datasets                      list
-GET  /api/datasets/{id}                 metadata + README (markdown and HTML)
-GET  /api/datasets/{id}/matrix          units, trials, base64 float32 values
-GET  /api/datasets/{id}/files/{path}    original files
-GET  /api/reference, /api/reference/{id}
-```
-
-Matrix payloads carry `values_b64`: little-endian float32, row-major
-`(n_units, n_trials)`; `NaN` marks missing cells.
