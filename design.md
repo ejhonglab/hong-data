@@ -19,7 +19,9 @@ the app is described in [README.md](README.md), hosting it in [DEPLOY.md](DEPLOY
   README, and web workers cannot share memory (that needs HTTPS and cross-origin
   isolation), which shapes the clustering below. The question the Admin tab asks first
   (are you Tom, Jon or Betty, or did one of them ask you) is a reminder, not a lock; a
-  reverse proxy can put a password on `/api/admin`.
+  reverse proxy can put a password on `/api/admin`, which is also where datasets are
+  deleted. A deleted dataset's folder is moved to `data/deleted/<id>/` in the same
+  transaction that deletes its rows, rather than erased, as no one has to log in to do it.
 - **Uploads are staged.** A dropped file is parsed and validated into
   `data/staging/<id>/` and shown before anything is stored. Odor YAMLs, the
   `Experiment.xml`, tensor lookups and README generation all act on the staged upload,
@@ -156,7 +158,8 @@ fast serving), `users` (each user's folders on tensor), `odors` and `odor_syncs`
 `pubchem` (each odor CID's InChI), and `settings` (site-wide settings from the Admin tab:
 the odor sheet's link). Files: `data/datasets/<id>/` holds the original data
 file, `README.md`, `metadata.json`, `odor_yaml/*.yaml` and the `Experiment.xml`. Also
-under `data/`: `admin.json` (the folders set in the Admin tab), `staging/`, `exports/`,
+under `data/`: `admin.json` (the folders set in the Admin tab), `deleted/<id>/` (the
+folders of datasets deleted in the Admin tab), `staging/`, `exports/`,
 `odor_structures/`, `odor_previews/` (parsed sheets awaiting confirmation) and `tmp/`
 (temporary files, such as uploads being received).
 
@@ -230,6 +233,8 @@ POST   /api/admin/odor_sheet                {"url"} (empty to clear it) → save
 GET    /api/admin/host                      the server's name and IP addresses
 POST   /api/admin/restart                   the server stops, for Docker or systemd to start it
                                             again (409 if neither would)
+DELETE /api/admin/datasets/{id}             the dataset deleted, its folder moved to
+                                            data/deleted/<id>/ → {"files": where it went}
 ```
 
 Matrix payloads carry `values_b64`: little-endian float32, row-major

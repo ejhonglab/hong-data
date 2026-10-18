@@ -16,6 +16,7 @@ DATASETS_DIR = DATA_DIR / "datasets"
 EXPORTS_DIR = DATA_DIR / "exports"  # downloads being sent (deleted once sent)
 STRUCTURES_DIR = DATA_DIR / "odor_structures"  # PubChem structure images, by CID
 ODOR_PREVIEWS_DIR = DATA_DIR / "odor_previews"  # parsed sheets awaiting confirmation, by fingerprint
+DELETED_DIR = DATA_DIR / "deleted"  # the files of datasets deleted in the Admin tab, by id
 TMP_DIR = DATA_DIR / "tmp"  # the server's temporary files (uploads being received), so it writes nothing outside DATA_DIR
 ADMIN_FILE = DATA_DIR / "admin.json"  # folders the server may read and write (Admin tab, see sandbox.py)
 

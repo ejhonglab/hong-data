@@ -392,7 +392,7 @@
     <div id="admin-page" hidden>
       <div class="page-head">
         <h1>Admin</h1>
-        <p class="lede">Settings for the whole site: which folders on the server this app may read and write (fixed when the server starts, so changes take effect when it restarts, which can be done below), and the odor sheet it syncs the odor table from.</p>
+        <p class="lede">Settings for the whole site: which folders on the server this app may read and write (fixed when the server starts, so changes take effect when it restarts, which can be done below), and the odor sheet it syncs the odor table from. Datasets can be deleted at the bottom.</p>
       </div>
 
       <div class="step" id="admin-folders">
@@ -446,6 +446,14 @@
         <div class="step-head"><h2>This server</h2></div>
         <div class="kv" id="admin-host-info"><span>Name</span><span class="muted">…</span></div>
       </div>
+
+      <div class="step" id="admin-datasets">
+        <div class="step-head"><h2>Delete datasets</h2></div>
+        <p class="muted">A dataset deleted here is gone from the site at once: from Browse, downloads and merges. Its files (the data file as uploaded, odor YAMLs, <code>Experiment.xml</code>, README and <code>metadata.json</code>, which has every detail entered) are moved on the server to <code id="admin-deleted-dir">…</code>, from where it could be uploaded again. Delete them there to free the space.</p>
+        <input type="search" id="admin-ds-filter" spellcheck="false" autocomplete="off" placeholder="Filter by number, title, uploader, panel or coding unit" aria-label="Filter datasets">
+        <div id="admin-ds-result" aria-live="polite"></div>
+        <div id="admin-ds-list"></div>
+      </div>
     </div>
   </section>
 
@@ -473,6 +481,17 @@
     <div class="actions">
       <button type="submit" value="yes" class="btn danger">Yes</button>
       <button type="submit" value="no" class="btn" autofocus>No</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="delete-confirm" class="confirm" aria-labelledby="delete-confirm-q">
+  <form method="dialog">
+    <p id="delete-confirm-q">Delete this dataset?</p>
+    <p class="muted small" id="delete-confirm-detail"></p>
+    <div class="actions">
+      <button type="submit" value="delete" class="btn danger">Delete</button>
+      <button type="submit" value="cancel" class="btn" autofocus>Cancel</button>
     </div>
   </form>
 </dialog>

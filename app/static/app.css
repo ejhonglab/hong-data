@@ -342,6 +342,13 @@ table.diff .new { color: var(--ok); }
 #readme-confirm { max-width: 580px; }
 #readme-confirm .small { margin-top: 8px; }
 #readme-confirm code { word-break: break-all; }
+#delete-confirm { max-width: 520px; }
+#delete-confirm .small { margin-top: 8px; }
+#delete-confirm code { word-break: break-all; }
+#admin-ds-filter { max-width: 420px; margin-bottom: 10px; }
+#admin-ds-list { max-height: 480px; overflow: auto; }
+#admin-ds-list td.num { text-align: right; font-variant-numeric: tabular-nums; }
+#admin-ds-list td:last-child { text-align: right; }
 .ds-files { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--rule); display: flex; gap: 12px; flex-wrap: wrap; font-size: 12.5px; }
 .viewer-main { flex: 1; min-height: 300px; }
 

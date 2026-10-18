@@ -21,7 +21,7 @@ import json
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator, Optional
+from typing import Any, Callable, Iterator, Optional
 
 import numpy as np
 
@@ -402,9 +402,17 @@ class Database:
         with self.connect() as con:
             con.execute("UPDATE datasets SET readme_md = ?, readme_edited = 1 WHERE id = ?", (readme_md, ds_id))
 
-    def delete_dataset(self, ds_id: int) -> bool:
+    def delete_dataset(self, ds_id: int, before_commit: Optional[Callable[[], None]] = None) -> bool:
+        """Delete a dataset and all its rows; False if there is no such dataset.
+
+        Args:
+            before_commit: called once the rows are deleted but before that is committed;
+                nothing is deleted if it raises.
+        """
         with self.connect() as con:
             cur = con.execute("DELETE FROM datasets WHERE id = ?", (ds_id,))
+            if cur.rowcount and before_commit:
+                before_commit()
             return cur.rowcount > 0
 
     # ------------------------------------------------------------------- odors

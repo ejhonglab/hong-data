@@ -1203,6 +1203,7 @@ def _admin_state() -> dict:
         "checks": sandbox.check_folders(saved)[0],
         "odor_sheet": _odor_sheet(),
         "data_dir": str(config.DATA_DIR),
+        "deleted_dir": str(config.DELETED_DIR),
         "tensor_root": str(config.TENSOR_ROOT),
         "started_at": sandbox.STATUS["started_at"],
         "kernel": sandbox.STATUS["kernel"],
@@ -1307,6 +1308,37 @@ async def admin_host(request: Request) -> Response:
     return JSONResponse(await run_in_threadpool(_host))
 
 
+def _delete_dataset(ds_id: int) -> tuple[int, dict]:
+    """Delete a dataset from the database, its folder moved to data/deleted/<id>/ (from
+    where it could be uploaded again) as part of it: (status, response)."""
+    src = config.DATASETS_DIR / str(ds_id)
+    dest = config.DELETED_DIR / str(ds_id)
+    if dest.exists():  # put there by hand
+        dest = dest.with_name(f"{ds_id}_{dt.datetime.now():%Y%m%d-%H%M%S}")
+    moved = []
+
+    def move() -> None:
+        if src.exists():
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src), dest)
+            moved.append(dest)
+
+    try:
+        with _readme_lock:  # not while its README is being overwritten
+            if not db.delete_dataset(ds_id, before_commit=move):
+                return 404, {"error": "dataset not found"}
+    except OSError as e:
+        return 500, {"error": f"its folder could not be moved to {dest.parent}, so nothing was deleted ({e})"}
+    log.info("dataset %d deleted in the Admin tab; its files: %s", ds_id, moved[0] if moved else "none")
+    return 200, {"ok": True, "files": str(moved[0]) if moved else None}
+
+
+async def admin_dataset_delete(request: Request) -> Response:
+    """Delete a dataset (see `_delete_dataset`)."""
+    status, result = await run_in_threadpool(_delete_dataset, int(request.path_params["ds_id"]))
+    return JSONResponse(result, status_code=status)
+
+
 def _restart() -> None:
     """Shut down as for `docker stop` (uvicorn finishes the requests under way; at once if
     that takes over `RESTART_DEADLINE_S`), for Docker or systemd to start the server again."""
@@ -1379,6 +1411,7 @@ routes = [
     Route("/api/admin/odor_sheet", admin_odor_sheet, methods=["POST"]),
     Route("/api/admin/host", admin_host),
     Route("/api/admin/restart", admin_restart, methods=["POST"]),
+    Route("/api/admin/datasets/{ds_id:int}", admin_dataset_delete, methods=["DELETE"]),
     Mount("/static", RevalidatedStaticFiles(directory=str(config.STATIC_DIR)), name="static"),
 ]
 

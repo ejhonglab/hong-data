@@ -34,7 +34,8 @@ sudo chown -R 10001:10001 data        # the container runs as uid 10001 ("olfdb"
 ```
 
 `data/` is the only thing that needs backing up: it holds `olfdb.sqlite3`, every
-uploaded file (`data/datasets/<id>/...`), the odor table and its sync history, the
+uploaded file (`data/datasets/<id>/...`; those of datasets deleted in the Admin tab in
+`data/deleted/<id>/`), the odor table and its sync history, the
 folders set in the Admin tab (`data/admin.json`), the short-lived staging area,
 downloads being sent (`data/exports/`, deleted once sent), cached odor structure images
 (`data/odor_structures/`) and temporary files (`data/tmp/`).
@@ -127,8 +128,8 @@ folder only added in the Admin tab gets a warning there: not on the server (not 
 into the container), or not writable (mounted read-only).
 
 The Admin tab first asks whether you are Tom, Jon or Betty, or have asked one of them: a
-reminder, not a lock. Anyone who can open the site can change these settings and
-restart it; to require a password, see section 6.
+reminder, not a lock. Anyone who can open the site can change these settings, restart
+it and delete datasets; to require a password, see section 6.
 
 ## 4. Manage it with systemd (start on boot, restart on failure, logs in journald)
 
@@ -189,7 +190,7 @@ server {
         proxy_set_header Host $host;
         # auth_basic "olfdb"; auth_basic_user_file /etc/nginx/olfdb.htpasswd;
     }
-    location /api/admin {                # the Admin tab: changing its settings, restarting
+    location /api/admin {                # the Admin tab: changing its settings, restarting, deleting datasets
         auth_basic "olfdb admin"; auth_basic_user_file /etc/nginx/olfdb-admin.htpasswd;
         proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host $host;
@@ -208,7 +209,8 @@ and restrict the port with the firewall, e.g. `sudo ufw allow from 10.0.0.0/8 to
 docker compose exec olfdb python manage.py list            # datasets in the DB
 docker compose exec olfdb python manage.py show 3
 docker compose exec olfdb python manage.py export 3 /data/export-3   # files + long CSV
-docker compose exec -it olfdb python manage.py delete 3    # asks for confirmation
+docker compose exec -it olfdb python manage.py delete 3    # asks for confirmation; erases its files
+                                                           # (the Admin tab moves them to data/deleted/)
 docker compose exec olfdb python manage.py cleanup-staging
 sqlite3 data/olfdb.sqlite3 '.tables'                       # direct SQL access (apt install sqlite3)
 ```

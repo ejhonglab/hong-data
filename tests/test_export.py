@@ -264,3 +264,40 @@ def test_edit_readme(main, store, tmp_path, two, monkeypatch):  # noqa: F811
             assert zf.read(f"{stem}/dataset-{ia}/README.md").decode() == "# new\n\nedited"
     status, r = call(main.dataset_get, path_params={"ds_id": ia})
     assert r["readme_path"] == str(datasets_dir / str(ia) / "README.md")
+
+
+def test_delete_dataset(main, store, tmp_path, two, monkeypatch):  # noqa: F811
+    db, datasets_dir = store  # the same database as main's
+    deleted = tmp_path / "deleted"
+    monkeypatch.setattr(config, "DATASETS_DIR", datasets_dir)
+    monkeypatch.setattr(config, "DELETED_DIR", deleted)
+    (ia, _), (ib, _) = two
+    delete = lambda i: call(main.admin_dataset_delete, path_params={"ds_id": i})
+
+    def rows(i):  # in each table
+        with db.connect() as con:
+            return {t: con.execute(f"SELECT COUNT(*) FROM {t} WHERE dataset_id = ?", (i,)).fetchone()[0]
+                    for t in ("dataset_panels", "units", "trials", "responses", "matrices")}
+
+    assert all(rows(ia).values())
+
+    # nothing is deleted if its folder cannot be moved
+    def fail(*args):
+        raise OSError("read-only")
+
+    with monkeypatch.context() as m:  # (undoing only this)
+        m.setattr(main.shutil, "move", fail)
+        status, r = delete(ia)
+    assert status == 500 and "nothing was deleted (read-only)" in r["error"]
+    assert db.get_dataset(ia) is not None and all(rows(ia).values()) and (datasets_dir / str(ia) / "data.csv").exists()
+    # its rows go, its folder is moved
+    assert delete(ia) == (200, {"ok": True, "files": str(deleted / str(ia))})
+    assert db.get_dataset(ia) is None and not any(rows(ia).values()) and all(rows(ib).values())
+    assert [d["id"] for d in db.list_datasets()] == [ib]
+    assert not (datasets_dir / str(ia)).exists() and (deleted / str(ia) / "data.csv").read_text() == "original"
+    assert delete(ia)[0] == 404 and call(main.dataset_get, path_params={"ds_id": ia})[0] == 404
+    # beside a folder of the same name put there by hand
+    (deleted / str(ib)).mkdir()
+    status, r = delete(ib)
+    assert status == 200 and r["files"].startswith(str(deleted / f"{ib}_")) and (Path(r["files"]) / "README.md").exists()
+    assert not list((deleted / str(ib)).iterdir()) and db.list_datasets() == []

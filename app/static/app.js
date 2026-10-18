@@ -1332,6 +1332,13 @@ class Browse {
 
   invalidate() { this.datasets = null; this.cache.clear(); }
 
+  // a dataset deleted (in the Admin tab)
+  forget(id) {
+    this.invalidate();
+    this.picked.delete(id);
+    this.readmeDrafts.delete(id);
+  }
+
   async load() {
     if (!this.datasets) {
       try { this.datasets = (await api('/api/datasets')).datasets; } catch (e) { $('#dataset-list').replaceChildren(msgBox('error', esc(e.message))); return; }
@@ -2203,8 +2210,8 @@ class MergePage {
 // ===================================================================== ADMIN
 // Site-wide settings: the folders on the server the app may read and write (fixed when
 // the server starts, so saved changes wait for a restart, which can be asked for here
-// too) and the odor sheet's link; the server's name and addresses. Shown each time the
-// tab is opened, once the user says they may change these settings.
+// too) and the odor sheet's link; the server's name and addresses; deleting datasets.
+// Shown each time the tab is opened, once the user says they may change these settings.
 const ADMIN_KINDS = ['read_dirs', 'write_dirs'];
 
 // what is wrong with a folder as typed, as far as can be told without the server
@@ -2217,6 +2224,7 @@ function localServerDirProblem(path) {
 class AdminPage {
   constructor() {
     this.state = null; // as from GET /api/admin
+    this.datasets = null; // as from GET /api/datasets
     this.back = 'browse'; // where to go if the user may not change these settings
     this._checkSeq = 0;
     const box = $('#admin-folders');
@@ -2233,6 +2241,11 @@ class AdminPage {
     $('#admin-sheet-url').addEventListener('keydown', (e) => { if (e.key === 'Enter') this.saveSheet(); });
     $('#admin-restart').addEventListener('click', () => this.restart());
     $('#admin-confirm').addEventListener('close', () => this._answered());
+    $('#admin-ds-filter').addEventListener('input', () => this._showDatasets());
+    $('#admin-ds-list').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-delete]');
+      if (b) this.deleteDataset(+b.dataset.delete);
+    });
   }
 
   // the tab was opened; `back`: the place to return to if the answer is not yes
@@ -2259,8 +2272,10 @@ class AdminPage {
 
   async load() {
     this.loadHost();
+    this.loadDatasets();
     $('#admin-result').replaceChildren();
     $('#admin-sheet-result').replaceChildren();
+    $('#admin-ds-result').replaceChildren();
     let s;
     try { s = await api('/api/admin'); } catch (e) { $('#admin-result').replaceChildren(msgBox('error', `Could not load the settings: ${esc(e.message)}`)); return; }
     this._show(s);
@@ -2271,6 +2286,7 @@ class AdminPage {
     $('#admin-data-dir').textContent = s.data_dir;
     $('#admin-data-dir-where').textContent = s.restart.by === 'Docker' ? ' in the container; on the server, the folder docker-compose.yml mounts there' : '';
     $('#admin-tensor-root').textContent = s.tensor_root;
+    $('#admin-deleted-dir').textContent = s.deleted_dir;
     for (const kind of ADMIN_KINDS) {
       const list = $(`#admin-folders .dirlist[data-kind=${kind}]`);
       list.dataset.label = 'Folder on the server';
@@ -2367,6 +2383,50 @@ class AdminPage {
       [h.source === 'mounted' ? 'IP addresses (by DNS)' : 'IP addresses', addresses],
       ['Reached here at', `<code>${esc(location.origin)}</code>`],
     ].map(([a, b]) => `<span>${a}</span><span>${b}</span>`).join('');
+  }
+
+  async loadDatasets() {
+    try { this.datasets = (await api('/api/datasets')).datasets; } catch (e) {
+      $('#admin-ds-list').replaceChildren(msgBox('error', `Could not load the datasets: ${esc(e.message)}`));
+      return;
+    }
+    this._showDatasets();
+  }
+
+  // newest upload first, those with every word of the filter somewhere
+  _showDatasets() {
+    if (!this.datasets) return;
+    const box = $('#admin-ds-list');
+    if (!this.datasets.length) { box.innerHTML = '<p class="muted">No datasets have been uploaded.</p>'; return; }
+    const words = $('#admin-ds-filter').value.toLowerCase().split(/\s+/).filter(Boolean);
+    const text = (d) => `#${d.id} ${d.title} ${d.uploader_name} ${d.panel_names || ''} ${d.coding_unit}`.toLowerCase();
+    const shown = this.datasets.filter((d) => words.every((w) => text(d).includes(w))).sort((a, b) => b.id - a.id);
+    if (!shown.length) { box.innerHTML = '<p class="muted">No dataset matches.</p>'; return; }
+    box.innerHTML = `<table class="odor-table"><thead><tr><th>#</th><th>Dataset</th><th>Uploaded</th><th>Last fly</th><th>Flies</th><th>ROIs</th><th>Odors</th><th></th></tr></thead><tbody>
+      ${shown.map((d) => `<tr><td class="num">${d.id}</td><td><a href="#browse/${d.id}">${esc(d.title)}</a></td>
+        <td>${esc(d.uploader_name)}, ${esc(d.created_at.slice(0, 10))}</td><td>${esc(d.last_fly_date || '')}</td>
+        <td class="num">${d.n_flies}</td><td class="num">${d.n_units.toLocaleString()}</td><td class="num">${d.n_odors}</td>
+        <td><button type="button" class="btn small" data-delete="${d.id}">Delete…</button></td></tr>`).join('')}</tbody></table>`;
+  }
+
+  async deleteDataset(id) {
+    const d = this.datasets.find((x) => x.id === id), out = $('#admin-ds-result');
+    if (!d) return;
+    const where = `${this.state?.deleted_dir ?? 'data/deleted'}/${id}`;
+    $('#delete-confirm-q').textContent = `Delete dataset #${id}, “${d.title}”?`;
+    $('#delete-confirm-detail').innerHTML = `Uploaded by ${esc(d.uploader_name)} on ${esc(d.created_at.slice(0, 10))}: ${d.n_flies} flies, `
+      + `${d.n_units.toLocaleString()} ROIs, ${d.n_odors} odors. It is gone from the site at once; its files are moved to <code>${esc(where)}</code> on the server.`;
+    if (await askDialog($('#delete-confirm')) !== 'delete') return;
+    let res;
+    try { res = await api(`/api/admin/datasets/${id}`, { method: 'DELETE' }); } catch (e) {
+      out.replaceChildren(msgBox('error', `#${id} was not deleted: ${esc(e.message)}`));
+      this.loadDatasets();
+      return;
+    }
+    out.replaceChildren(msgBox('ok', `Deleted #${id}, ${esc(d.title)}. ${res.files ? `Its files are in <code>${esc(res.files)}</code> on the server.` : 'It had no files on the server.'}`));
+    this.datasets = this.datasets.filter((x) => x.id !== id);
+    this._showDatasets();
+    browse.forget(id);
   }
 
   _showServer() {

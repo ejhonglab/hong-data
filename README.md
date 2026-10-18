@@ -221,6 +221,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     CSV instead (with the template to start from).
   - *This server*: its name, and its IP addresses (in Docker, those the network's DNS
     gives its name).
+  - *Delete datasets*: every dataset, newest upload first (with a filter), each with a
+    Delete button that asks first. A deleted dataset is gone from the site at once; its
+    files (as uploaded, with `metadata.json` holding every detail entered) are moved to
+    `data/deleted/<id>/` on the server, from where it could be uploaded again.
 
 ## Scripting
 
