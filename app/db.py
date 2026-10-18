@@ -386,6 +386,11 @@ class Database:
                 "genotypes": distinct("SELECT DISTINCT genotype FROM datasets ORDER BY genotype"),
             }
 
+    def update_readme(self, ds_id: int, readme_md: str) -> None:
+        """Replace a dataset's README (marking it as edited)."""
+        with self.connect() as con:
+            con.execute("UPDATE datasets SET readme_md = ?, readme_edited = 1 WHERE id = ?", (readme_md, ds_id))
+
     def delete_dataset(self, ds_id: int) -> bool:
         with self.connect() as con:
             cur = con.execute("DELETE FROM datasets WHERE id = ?", (ds_id,))

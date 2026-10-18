@@ -226,7 +226,16 @@
           </div>
         </div>
         <div id="ds-readme" class="readme-panel" hidden>
+          <div class="readme-tools">
+            <span class="dl-status" id="ds-readme-status" aria-live="polite"></span>
+            <button type="button" class="btn small" id="ds-readme-edit">Edit</button>
+            <button type="button" class="btn small primary" id="ds-readme-save" hidden>Save</button>
+          </div>
           <div class="readme-html" id="ds-readme-html"></div>
+          <div class="readme-editor" id="ds-readme-editor" hidden>
+            <textarea id="ds-readme-text" rows="20" spellcheck="false" aria-label="README (Markdown)"></textarea>
+            <div class="readme-preview" id="ds-readme-preview"></div>
+          </div>
           <div class="ds-files" id="ds-files"></div>
         </div>
         <div id="ds-odors" class="readme-panel" hidden></div>
@@ -411,6 +420,18 @@
     <div class="actions">
       <button type="submit" value="yes" class="btn danger">Yes</button>
       <button type="submit" value="no" class="btn" autofocus>No</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="readme-confirm" class="confirm" aria-labelledby="readme-confirm-q">
+  <form method="dialog">
+    <p id="readme-confirm-q">Overwrite this dataset's README with your edits, or discard your edits?</p>
+    <p class="muted small">The README on the server: <code id="readme-confirm-path"></code></p>
+    <div class="actions">
+      <button type="submit" value="overwrite" class="btn danger">Overwrite README</button>
+      <button type="submit" value="discard" class="btn">Discard my edits</button>
+      <button type="submit" value="keep" class="btn" autofocus>Keep editing</button>
     </div>
   </form>
 </dialog>

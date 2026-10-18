@@ -8,11 +8,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from app import odormeta
+from app import config, odormeta
 from app.db import Database
 from app.export import ExportError, dataset_stem, trial_keys, write_download
 from app.ingest import ParsedData, load_file
 from tests.test_ingest import COLS, ROWS, make_wide, write_csv
+from tests.test_tensor import call, main, root  # noqa: F401 (fixtures)
 
 
 @pytest.fixture
@@ -236,3 +237,30 @@ def test_extra_levels(tmp_path):
     levels, keys = levels_of(with_pair, no_pair)
     assert levels == ["panel", "is_pair", "odor1", "repeat"]
     assert keys[1] == [(None, None, "va @ -3", 0), (None, None, "ea @ -2", 0)]
+
+
+def test_edit_readme(main, store, tmp_path, two, monkeypatch):  # noqa: F811
+    db, datasets_dir = store  # the same database as main's
+    monkeypatch.setattr(config, "DATASETS_DIR", datasets_dir)
+    (ia, _), (ib, _) = two
+    (datasets_dir / str(ia) / "metadata.json").write_text('{"readme_edited": false}')
+    save = lambda body, i=ia: call(main.dataset_readme_save, body=body, path_params={"ds_id": i})
+    status, r = save({"readme": "# new\n\nedited", "base": "# readme\n"})
+    assert status == 200 and r["readme_path"] == str(datasets_dir / str(ia) / "README.md") and "<h1>new</h1>" in r["readme_html"]
+    assert (datasets_dir / str(ia) / "README.md").read_text() == "# new\n\nedited"
+    d = db.get_dataset(ia)
+    assert d["readme_md"] == "# new\n\nedited" and d["readme_edited"] == 1
+    assert '"readme_edited": true' in (datasets_dir / str(ia) / "metadata.json").read_text()
+    assert db.get_dataset(ib)["readme_md"] == "# readme\n"
+    # refused if it changed since the edit began, if empty, or for no dataset
+    assert save({"readme": "# again", "base": "# readme\n"})[0] == 409 and db.get_dataset(ia)["readme_md"] == "# new\n\nedited"
+    assert save({"readme": "  ", "base": "# new\n\nedited"})[0] == 422 and save({"readme": "# x"})[0] == 400
+    assert save({"readme": "# x", "base": ""}, i=ib + 1)[0] == 404
+    # downloads have the new README, from the files and from the database
+    for fmt in ("files", "long"):
+        out = tmp_path / f"{fmt}.zip"
+        stem = write_zip(db, [ia, ib], fmt, out, datasets_dir)[:-4]
+        with zipfile.ZipFile(out) as zf:
+            assert zf.read(f"{stem}/dataset-{ia}/README.md").decode() == "# new\n\nedited"
+    status, r = call(main.dataset_get, path_params={"ds_id": ia})
+    assert r["readme_path"] == str(datasets_dir / str(ia) / "README.md")

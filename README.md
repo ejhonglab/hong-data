@@ -128,7 +128,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   tensor (to copy, as browsers cannot open folders on your computer) and what is in
   them. They are red, saying why, when no path was entered at upload, or the server
   cannot find it (from the top of tensor, or from a folder set in the Admin tab) or may
-  not read it.
+  not read it. Its README can be edited there too (Edit, in the README box): saving asks
+  whether to overwrite the README on the server (its path is shown) or discard the
+  edits, and refuses if someone else changed it meanwhile. Unsaved edits are kept while
+  you look at other datasets.
 - **Download**: the matrices of several datasets are concatenated into one wide CSV
   (trials × ROIs, with `dataset_id` as an extra column level; trials matched on panel,
   odor components and repeat) or long CSV (one row per value). Zips always have

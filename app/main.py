@@ -550,18 +550,66 @@ async def datasets_list(request: Request) -> Response:
     return JSONResponse({"datasets": rows})
 
 
+def _readme_path(ds_id: int) -> Path:
+    return config.DATASETS_DIR / str(ds_id) / "README.md"
+
+
 async def dataset_get(request: Request) -> Response:
     ds_id = int(request.path_params["ds_id"])
     d = await run_in_threadpool(db.get_dataset, ds_id)
     if d is None:
         return json_error(404, "dataset not found")
     d["readme_html"] = _readme_html(d["readme_md"])
+    d["readme_path"] = str(_readme_path(ds_id))
     files = [d["data_file"], "README.md", "metadata.json"]
     files += [f"odor_yaml/{y}" for y in d["odor_yaml_files"]]
     if d.get("experiment_xml_file"):
         files.append(d["experiment_xml_file"])
     d["files"] = files
     return JSONResponse(d)
+
+
+_readme_lock = threading.Lock()
+
+
+def _save_readme(ds_id: int, readme: str, base: str) -> tuple[int, dict]:
+    """Overwrite a dataset's README (file and database) if it is still `base`: (status, response)."""
+    with _readme_lock:  # one at a time, so that what is saved is what `base` was checked against
+        d = db.get_dataset(ds_id)
+        if d is None:
+            return 404, {"error": "dataset not found"}
+        if d["readme_md"] != base:
+            return 409, {"error": "the README was changed on the server since you started editing it; "
+                                  "copy your edits somewhere, and reload the page to see the new one"}
+        path = _readme_path(ds_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name("README.md.tmp")
+        tmp.write_text(readme, encoding="utf-8")
+        tmp.replace(path)
+        db.update_readme(ds_id, readme)
+        meta = path.with_name("metadata.json")
+        try:
+            m = json.loads(meta.read_text(encoding="utf-8"))
+            m["readme_edited"] = True
+            meta.write_text(json.dumps(m, indent=1), encoding="utf-8")
+        except (OSError, ValueError):
+            pass
+    log.info("README of dataset %d overwritten: %s", ds_id, path)
+    return 200, {"ok": True, "readme_md": readme, "readme_html": _readme_html(readme), "readme_path": str(path)}
+
+
+async def dataset_readme_save(request: Request) -> Response:
+    """Overwrite a dataset's README ({"readme", "base": the README the edit started from});
+    409 if it was changed on the server since then."""
+    ds_id = int(request.path_params["ds_id"])
+    body = await request.json()
+    readme, base = (body.get("readme"), body.get("base")) if isinstance(body, dict) else (None, None)
+    if not isinstance(readme, str) or not isinstance(base, str):
+        return json_error(400, 'expected {"readme": ..., "base": ...}')
+    if not readme.strip():
+        return json_error(422, "the README is empty")
+    status, result = await run_in_threadpool(_save_readme, ds_id, readme, base)
+    return JSONResponse(result, status_code=status)
 
 
 async def dataset_matrix(request: Request) -> Response:
@@ -1072,6 +1120,7 @@ routes = [
     Route("/api/datasets", datasets_list),
     Route("/api/datasets/{ds_id:int}", dataset_get),
     Route("/api/datasets/{ds_id:int}/matrix", dataset_matrix),
+    Route("/api/datasets/{ds_id:int}/readme", dataset_readme_save, methods=["PUT"]),
     Route("/api/datasets/{ds_id:int}/files/{path:path}", dataset_file),
     Route("/api/datasets/{ds_id:int}/odors", dataset_odor_table),
     Route("/api/datasets/{ds_id:int}/data_paths", dataset_data_paths),

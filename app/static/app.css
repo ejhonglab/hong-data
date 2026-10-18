@@ -298,6 +298,14 @@ table.diff .new { color: var(--ok); }
 .odor-table td.inchi { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; word-break: break-all; min-width: 150px; max-width: 220px; }
 #ds-odors .odor-table td:first-child code { white-space: nowrap; }
 .readme-panel { border: 1px solid var(--rule); border-radius: var(--radius); background: var(--panel); padding: 12px 16px; margin-bottom: 12px; max-height: 45%; overflow: auto; }
+.readme-panel.editing { max-height: 75%; }
+.readme-tools { display: flex; justify-content: flex-end; align-items: center; gap: 8px; position: sticky; top: -12px; z-index: 1; margin: -6px 0 4px; padding: 4px 0; background: var(--panel); }
+.readme-tools .dl-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#ds-readme-editor textarea { min-height: 320px; }
+#ds-readme-editor .readme-preview { max-height: none; }
+#readme-confirm { max-width: 580px; }
+#readme-confirm .small { margin-top: 8px; }
+#readme-confirm code { word-break: break-all; }
 .ds-files { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--rule); display: flex; gap: 12px; flex-wrap: wrap; font-size: 12.5px; }
 .viewer-main { flex: 1; min-height: 300px; }
 

@@ -113,6 +113,15 @@ async function copyText(text) {
   if (!ok) throw new Error('the browser did not allow it');
 }
 
+// shows a <dialog> of buttons; resolves to the value of the one chosen ('' if dismissed with Escape)
+function askDialog(dialog) {
+  return new Promise((resolve) => {
+    dialog.returnValue = '';
+    dialog.addEventListener('close', () => resolve(dialog.returnValue), { once: true });
+    dialog.showModal();
+  });
+}
+
 // <details class="menu"> dropdowns: onPick(button.dataset) for the chosen entry
 function wireMenu(menu, onPick) {
   $$('.menu-list button', menu).forEach((b) => b.addEventListener('click', () => { menu.open = false; onPick(b.dataset); }));
@@ -1054,6 +1063,16 @@ class Browse {
       p.hidden = !p.hidden;
       $('#ds-readme-toggle').setAttribute('aria-expanded', String(!p.hidden));
     });
+    this.readmeDrafts = new Map(); // dataset id -> its README as being edited (kept while another is shown)
+    $('#ds-readme-edit').addEventListener('click', () => this.editReadme());
+    $('#ds-readme-save').addEventListener('click', () => this.saveReadme());
+    $('#ds-readme-text').addEventListener('input', (e) => {
+      if (this.selected != null) this.readmeDrafts.set(this.selected, e.target.value);
+      $('#ds-readme-preview').innerHTML = renderMarkdown(e.target.value);
+    });
+    window.addEventListener('beforeunload', (e) => {
+      if ([...this.readmeDrafts].some(([id, text]) => text !== this.cache.get(id)?.d.readme_md)) { e.preventDefault(); e.returnValue = ''; }
+    });
     this.odorCache = new Map();
     $('#ds-odors-toggle').addEventListener('click', () => {
       const p = $('#ds-odors');
@@ -1173,7 +1192,8 @@ class Browse {
     if (md.power_mw) bits.push(`${md.power_mw} mW${md.power_tolerance_mw != null ? ' ±' + md.power_tolerance_mw : ''}`);
     if (md.recording_system) bits.push(md.recording_system);
     $('#ds-sub').textContent = bits.join('; ');
-    $('#ds-readme-html').innerHTML = d.readme_html;
+    setStatus($('#ds-readme-status'), '');
+    this._showReadme(id);
     $('#ds-files').innerHTML = d.files.map((f) => `<a href="/api/datasets/${id}/files/${encodeURI(f)}" download>${esc(f)}</a>`).join('');
     if (!this.viewer) this.viewer = new MatrixViewer($('#dataset-viewer'));
     this.viewer.setNeuralData(m, { title: d.title, fileStem: `olfdb_dataset-${id}` });
@@ -1217,6 +1237,54 @@ class Browse {
       </div>
       ${r.is_dir ? (r.n_entries ? `<ul class="data-entries">${entries}</ul>${r.n_entries > r.entries.length ? `<p class="menu-note">… and ${r.n_entries - r.entries.length} more</p>` : ''}` : '<p class="menu-note">The folder is empty.</p>') : '<p class="menu-note">A file, not a folder.</p>'}
       <p class="menu-note">Browsers cannot open folders on your computer from a web page: open it from where tensor is mounted on yours.</p>`;
+  }
+
+  // the README of the dataset shown, or the edit of it under way
+  _showReadme(id) {
+    const { d } = this.cache.get(id), draft = this.readmeDrafts.get(id), editing = draft != null;
+    $('#ds-readme').classList.toggle('editing', editing);
+    $('#ds-readme-html').hidden = editing;
+    $('#ds-readme-editor').hidden = !editing;
+    $('#ds-readme-edit').hidden = editing;
+    $('#ds-readme-save').hidden = !editing;
+    $('#ds-readme-html').innerHTML = d.readme_html;
+    if (editing) {
+      $('#ds-readme-text').value = draft;
+      $('#ds-readme-preview').innerHTML = renderMarkdown(draft);
+    }
+  }
+
+  editReadme() {
+    const id = this.selected;
+    if (id == null) return;
+    this.readmeDrafts.set(id, this.cache.get(id).d.readme_md);
+    setStatus($('#ds-readme-status'), '');
+    this._showReadme(id);
+    $('#ds-readme-text').focus();
+  }
+
+  // Asks whether to overwrite the README on the server with the edit, or to discard the edit.
+  async saveReadme() {
+    const id = this.selected, status = $('#ds-readme-status');
+    const { d } = this.cache.get(id);
+    const text = $('#ds-readme-text').value;
+    const done = (msg) => { this.readmeDrafts.delete(id); this._showReadme(id); setStatus(status, msg); };
+    if (text === d.readme_md) { done('Nothing was changed.'); return; }
+    $('#readme-confirm-path').textContent = d.readme_path;
+    const answer = await askDialog($('#readme-confirm'));
+    if (answer === 'discard') { done('Your edits were discarded.'); return; }
+    if (answer !== 'overwrite') return;
+    setStatus(status, 'Saving…');
+    let res;
+    try {
+      res = await api(`/api/datasets/${id}/readme`, { method: 'PUT', json: { readme: text, base: d.readme_md } });
+    } catch (e) {
+      setStatus(status, `Not saved: ${e.message}`, 'error');
+      return;
+    }
+    Object.assign(d, { readme_md: res.readme_md, readme_html: res.readme_html });
+    if (this.selected === id) done(`Saved to ${res.readme_path}.`);
+    else this.readmeDrafts.delete(id);
   }
 
   async showOdors(id) {

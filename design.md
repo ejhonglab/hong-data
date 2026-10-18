@@ -28,7 +28,9 @@ the app is described in [README.md](README.md), hosting it in [DEPLOY.md](DEPLOY
   problem it can find, so a file can be fixed in one go.
 - **Original files are kept verbatim** (data file, odor YAMLs, `Experiment.xml`), and
   every form value is stored on its own (database and `metadata.json`), apart from the
-  README, which can be edited freely. Anything parsed from them can be redone.
+  README, which can be edited freely, at upload and later from the dataset's page (its
+  file and database copy both overwritten, once the user confirms, unless it changed
+  since the edit began). Anything parsed from them can be redone.
 - **Each matrix is stored twice**: as a long `responses` table (one row per cell) for
   SQL queries, and as a float32 blob (`matrices`) for fast serving to the viewer.
 - **Row levels that say nothing are dropped on upload** (`ingest.uninformative_levels`),
@@ -152,7 +154,9 @@ DELETE /api/stage/{id}/experiment_xml
 POST   /api/stage/{id}/readme               {"metadata": {...}} → README.md text
 POST   /api/stage/{id}/commit               {"metadata", "readme", "readme_edited"} → {"dataset_id"}
 GET    /api/datasets                        list
-GET    /api/datasets/{id}                   metadata + README (markdown and HTML)
+GET    /api/datasets/{id}                   metadata + README (markdown and HTML, and its path)
+PUT    /api/datasets/{id}/readme            {"readme", "base"} → the README overwritten (409 if it is
+                                            no longer "base", the one the edit started from)
 GET    /api/datasets/{id}/matrix            units, trials, base64 float32 values
 GET    /api/datasets/{id}/files/{path}      original files
 GET    /api/datasets/{id}/odors             its odors (per panel) matched to the odor table
