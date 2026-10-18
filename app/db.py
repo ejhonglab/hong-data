@@ -386,6 +386,17 @@ class Database:
                 "genotypes": distinct("SELECT DISTINCT genotype FROM datasets ORDER BY genotype"),
             }
 
+    def update_data_paths(self, ds_id: int, paths: dict[str, Optional[str]]) -> dict:
+        """Set some of a dataset's data paths (raw_data_path, mocorr_data_path), in their
+        columns and its metadata; returns the metadata."""
+        assert paths and set(paths) <= {"raw_data_path", "mocorr_data_path"}
+        with self.connect() as con:
+            r = con.execute("SELECT metadata_json FROM datasets WHERE id = ?", (ds_id,)).fetchone()
+            metadata = {**json.loads(r["metadata_json"]), **paths}
+            con.execute(f"UPDATE datasets SET {', '.join(f'{k} = ?' for k in paths)}, metadata_json = ? WHERE id = ?",
+                        (*paths.values(), json.dumps(metadata), ds_id))
+        return metadata
+
     def update_readme(self, ds_id: int, readme_md: str) -> None:
         """Replace a dataset's README (marking it as edited)."""
         with self.connect() as con:

@@ -113,6 +113,30 @@ async function copyText(text) {
   if (!ok) throw new Error('the browser did not allow it');
 }
 
+// shows a check of a dataset's data path by its input (as from /api/tensor/check, or a
+// local one; null to clear it); one with a warning is still ok
+function showPathCheck(input, msg, c) {
+  const warn = !!c?.ok && !!c.warning;
+  input.classList.toggle('invalid', !!c && !c.ok);
+  input.classList.toggle('path-warn', warn);
+  msg.className = `path-msg${c ? (c.ok ? (warn ? ' warn' : ' ok') : ' bad') : ''}`;
+  msg.textContent = c ? (c.ok ? c.warning || '✓ found on tensor' : c.error) : '';
+}
+
+// Checks a dataset's data path as typed, then on the server (as the Settings tab checks
+// folders), writing it as normalized there if it is found and no longer being typed in.
+async function checkPathInput(input, msg) {
+  const value = input.value.trim();
+  const problem = value ? localDirProblem(value) : null;
+  showPathCheck(input, msg, problem ? { ok: false, error: problem } : null);
+  if (!value || problem) return;
+  let c;
+  try { c = await api('/api/tensor/check', { method: 'POST', json: { path: value } }); } catch { return; }
+  if (input.value.trim() !== c.input) return; // changed since
+  if (c.ok && document.activeElement !== input) input.value = c.path;
+  showPathCheck(input, msg, c);
+}
+
 // shows a <dialog> of buttons; resolves to the value of the one chosen ('' if dismissed with Escape)
 function askDialog(dialog) {
   return new Promise((resolve) => {
@@ -646,6 +670,8 @@ class UploadFlow {
     form.addEventListener('input', (e) => this._changedByUser(e.target), true);
     form.addEventListener('change', (e) => this._changedByUser(e.target), true);
     form.uploader_name.addEventListener('change', () => { if (this.stage) this.lookup(); });
+    // checked on the server when left, as folders are in the Settings tab
+    for (const key of DATASET_FIELDS) form[key].addEventListener('change', () => checkPathInput(form[key], $(`[data-msg-for=${key}]`)));
     form.addEventListener('submit', (e) => { e.preventDefault(); this.generateReadme(); });
 
     $('#yaml-btn').addEventListener('click', () => $('#yaml-input').click());
@@ -688,6 +714,7 @@ class UploadFlow {
       $('#step-meta')[key].value = v;
     }
     if (key === 'power_mw') this._syncPower();
+    if (DATASET_FIELDS.includes(key)) showPathCheck($('#step-meta')[key], $(`[data-msg-for=${key}]`), null);
   }
 
   _fieldEls(key) {
@@ -1083,12 +1110,25 @@ class Browse {
     const downloadUrl = (ids, format) => `/api/download?ids=${ids.join(',')}&format=${format}`;
     wireMenu($('#ds-download'), ({ format }) => { if (this.selected != null) download(downloadUrl([this.selected], format), $('#ds-download-status')); });
     wireMenu($('#pick-download'), ({ format }) => download(downloadUrl([...this.picked].sort((a, b) => a - b), format), $('#pick-status')));
-    $$('.data-link').forEach((menu) => menu.addEventListener('click', async (e) => {
-      const b = e.target.closest('[data-copy]');
-      if (!b) return;
-      try { await copyText(b.dataset.copy); b.textContent = 'Copied'; } catch (err) { b.textContent = `Could not copy: ${err.message}`; }
-      setTimeout(() => { b.textContent = 'Copy'; }, 1500);
-    }));
+    $$('.data-link').forEach((menu) => {
+      menu.addEventListener('click', async (e) => {
+        if (e.target.closest('[data-save-path]')) { this.saveDataPath(menu); return; }
+        const b = e.target.closest('[data-copy]');
+        if (!b) return;
+        try { await copyText(b.dataset.copy); b.textContent = 'Copied'; } catch (err) { b.textContent = `Could not copy: ${err.message}`; }
+        setTimeout(() => { b.textContent = 'Copy'; }, 1500);
+      });
+      // a path entered here is checked as in the upload form
+      menu.addEventListener('input', (e) => {
+        if (!e.target.matches('.data-path-input')) return;
+        const problem = e.target.value.trim() ? localDirProblem(e.target.value) : null;
+        showPathCheck(e.target, $('.path-msg', menu), problem ? { ok: false, error: problem } : null);
+      });
+      menu.addEventListener('change', (e) => { if (e.target.matches('.data-path-input')) checkPathInput(e.target, $('.path-msg', menu)); });
+      menu.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && e.target.matches('.data-path-input')) { e.preventDefault(); this.saveDataPath(menu); }
+      });
+    });
     $('#pick-clear').addEventListener('click', () => { this.picked.clear(); this._syncPicks(); });
     $('#dataset-list').addEventListener('change', (e) => {
       const cb = e.target;
@@ -1173,6 +1213,7 @@ class Browse {
     if (this.datasets) this.renderList();
     $('#browse-empty').hidden = true;
     $('#dataset-view').hidden = false;
+    $$('#dataset-view details.menu').forEach((menu) => { menu.open = false; }); // they were about another dataset
     $('#ds-title').textContent = 'Loading…';
     $('#ds-sub').textContent = '';
     let d, m;
@@ -1223,10 +1264,20 @@ class Browse {
     $('summary', menu).innerHTML = `${label}${why ? ` <span class="why">${why}</span>` : ''}`;
     $('summary', menu).title = r && r.status !== 'ok' ? `${label}: ${r.error}` : '';
     if (!r) { list.innerHTML = '<p class="menu-note">Looking for it on the server…</p>'; return; }
+    const kind = menu.dataset.kind;
+    const edit = `<div class="data-edit">
+        <label class="data-edit-label" for="data-path-${kind}">${r.status === 'none' ? 'Enter its path' : 'Its path'} on tensor, from the top (as at upload)</label>
+        <div class="data-edit-row"><input id="data-path-${kind}" class="data-path-input" spellcheck="false" autocomplete="off"
+          placeholder="e.g. tom/${kind === 'raw' ? 'raw_data' : 'analysis'}/2023-11-19" value="${esc(r.input || '')}">
+          <button type="button" class="btn small primary" data-save-path>Save</button></div>
+        <span class="path-msg"></span>
+        <p class="menu-note">Saving changes the dataset's details, not its README: edit that too if it gives the path.</p>
+      </div>`;
     if (r.status !== 'ok') {
-      list.innerHTML = r.status === 'none'
-        ? `<p class="menu-note">No ${label.toLowerCase()} path was entered for this dataset at upload.</p>`
-        : `<p class="menu-note">Entered at upload: <code>${esc(r.input || '')}</code></p><p class="menu-note data-error">${esc(r.error)}</p>`;
+      list.innerHTML = (r.status === 'none'
+        ? `<p class="menu-note">No ${label.toLowerCase()} path was entered for this dataset.</p>`
+        : `<p class="menu-note">Entered: <code>${esc(r.input || '')}</code></p><p class="menu-note data-error">${esc(r.error)}</p>`) + edit;
+      this._showDataSaved(menu);
       return;
     }
     const shown = r.tensor_path ?? r.path;
@@ -1236,7 +1287,40 @@ class Browse {
         ${r.tensor_path != null ? `<span>On the server</span><span><code>${esc(r.path)}</code></span>` : ''}
       </div>
       ${r.is_dir ? (r.n_entries ? `<ul class="data-entries">${entries}</ul>${r.n_entries > r.entries.length ? `<p class="menu-note">… and ${r.n_entries - r.entries.length} more</p>` : ''}` : '<p class="menu-note">The folder is empty.</p>') : '<p class="menu-note">A file, not a folder.</p>'}
-      <p class="menu-note">Browsers cannot open folders on your computer from a web page: open it from where tensor is mounted on yours.</p>`;
+      <p class="menu-note">Browsers cannot open folders on your computer from a web page: open it from where tensor is mounted on yours.</p>
+      ${edit}`;
+    this._showDataSaved(menu);
+  }
+
+  _showDataSaved(menu) {
+    if (this._dataSaved !== menu.dataset.kind) return;
+    this._dataSaved = null;
+    const msg = $('.path-msg', menu);
+    msg.className = 'path-msg ok';
+    msg.textContent = 'Saved.';
+  }
+
+  // Saves the path entered in a data menu as the dataset's (checked by the server as at upload).
+  async saveDataPath(menu) {
+    const id = this.selected, key = `${menu.dataset.kind}_data_path`;
+    const input = $('.data-path-input', menu), msg = $('.path-msg', menu);
+    const value = input.value.trim();
+    const problem = value ? localDirProblem(value) : null;
+    if (problem) { showPathCheck(input, msg, { ok: false, error: problem }); return; }
+    msg.className = 'path-msg';
+    msg.textContent = 'Saving…';
+    let res;
+    try {
+      res = await api(`/api/datasets/${id}/data_paths`, { method: 'PUT', json: { [key]: value } });
+    } catch (e) {
+      showPathCheck(input, msg, { ok: false, error: `not saved: ${e.message}` });
+      return;
+    }
+    if (!res.ok) { showPathCheck(input, msg, res.checks[key] || { ok: false, error: res.errors.join('; ') }); return; }
+    const entry = this.cache.get(id);
+    if (entry) entry.d.metadata = res.metadata;
+    this._dataSaved = menu.dataset.kind;
+    if (this.selected === id) await this.showDataPaths(id);
   }
 
   // the README of the dataset shown, or the edit of it under way

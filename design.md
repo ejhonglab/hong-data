@@ -142,6 +142,7 @@ POST   /api/metadata/check                  {"metadata": {...}} → problems wit
 GET    /api/user?name=                      a user's folders on tensor ("user": null if none saved)
 POST   /api/user                            {"name", "raw_dirs", "mocorr_dirs", "odor_dirs"} → each
                                             folder checked on tensor; saved if all are there
+POST   /api/tensor/check                    {"path"} → a dataset's data folder checked on tensor
 POST   /api/stage                           multipart 'file' → validation + matrix payload
 GET    /api/stage/{id}                      a staged upload and its matrix payload
 POST   /api/stage/{id}/lookup               {"name"} → that user's folders searched for the flies,
@@ -162,6 +163,8 @@ GET    /api/datasets/{id}/files/{path}      original files
 GET    /api/datasets/{id}/odors             its odors (per panel) matched to the odor table
 GET    /api/datasets/{id}/data_paths        where its raw and motion-corrected data are on the
                                             server, and what is in them (or why they are not)
+PUT    /api/datasets/{id}/data_paths        {"raw_data_path", "mocorr_data_path"} (either) → set, if
+                                            found on tensor
 GET    /api/download?ids=1,2&format=files|wide|long
                                             a zip, or a CSV for the matrix of a single dataset
 GET    /api/odors                           the odor table (with each odor's `inchi`)

@@ -292,6 +292,21 @@ table.diff .new { color: var(--ok); }
 .data-menu code { white-space: normal; word-break: break-all; }
 .data-menu .btn.small { border: 1px solid var(--rule-strong); background: #fff; padding: 0 8px; margin-left: 4px; }
 .data-menu .data-error { color: var(--danger); }
+.data-menu .btn.small.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.data-edit { margin: 8px 10px 2px; padding-top: 8px; border-top: 1px solid var(--rule); }
+.data-edit-label { display: block; font-size: 12.5px; color: var(--ink-muted); margin-bottom: 4px; }
+.data-edit-row { display: flex; align-items: center; gap: 6px; }
+.data-edit-row input { flex: 1; min-width: 0; padding: 4px 6px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
+.data-edit .path-msg { margin-top: 4px; }
+.data-edit .menu-note { margin: 6px 0 0; }
+/* a dataset's data path as checked on the server (upload form, data menus) */
+.path-msg { display: block; font-size: 12px; }
+.path-msg:empty { display: none; }
+.path-msg.ok { color: var(--ok); }
+.path-msg.warn { color: var(--warn); }
+.path-msg.bad { color: var(--danger); }
+.field input.invalid, .data-edit input.invalid { border-color: var(--danger); background: var(--danger-soft); }
+.field input.path-warn, .data-edit input.path-warn { border-color: #e0b85c; }
 .data-entries { list-style: none; margin: 0 10px 6px; padding: 6px 0 0; border-top: 1px solid var(--rule); columns: 2; column-gap: 20px; font-size: 12.5px; }
 .data-entries li { break-inside: avoid; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .data-entries li.dir { font-weight: 600; }

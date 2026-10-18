@@ -108,7 +108,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
 
 - **Upload**: an optional odor YAML must have every odor in the matrix, with the same
   abbreviation and concentration. Other optional details: ThorImage `Experiment.xml`,
-  power, age, wavelength, rig, data paths, notes. Details are filled in from your
+  power, age, wavelength, rig, data paths, notes. The raw and motion-corrected data paths
+  are folders from the top of tensor, checked on the server as you leave their field
+  (as in Settings), and must be found there to save (unless tensor itself is not on the
+  server, when they are taken as entered). Details are filled in from your
   settings, from the file (panel names; glomerulus ROIs mean coding unit "glomeruli")
   and from tensor: each fly (`<folder>/<date>/<fly>/`, as in hong2p) is looked for in
   your raw and motion-corrected data folders, which give the data paths, the
@@ -126,9 +129,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   its odors matched to the Odors tab through its odor YAML when it has one, otherwise by
   abbreviation. "Raw data" and "Motion corrected / traces" show where those are on
   tensor (to copy, as browsers cannot open folders on your computer) and what is in
-  them. They are red, saying why, when no path was entered at upload, or the server
-  cannot find it (from the top of tensor, or from a folder set in the Admin tab) or may
-  not read it. Its README can be edited there too (Edit, in the README box): saving asks
+  them. They are red, saying why, when no path was entered, or the server cannot find
+  it (from the top of tensor, or from a folder set in the Admin tab) or may not read it.
+  The path can be entered or corrected in their menus, checked as at upload (the README
+  is left as it is). Its README can be edited there too (Edit, in the README box): saving asks
   whether to overwrite the README on the server (its path is shown) or discard the
   edits, and refuses if someone else changed it meanwhile. Unsaved edits are kept while
   you look at other datasets.

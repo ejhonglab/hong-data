@@ -431,12 +431,55 @@ async def metadata_check(request: Request) -> Response:
     return JSONResponse({"ok": True, "errors": []})
 
 
+DATA_PATH_FIELDS = {"raw_data_path": "raw data path", "mocorr_data_path": "motion-corrected data path"}
+
+
+def _check_data_paths(values: dict) -> tuple[dict[str, Optional[str]], dict[str, dict], list[str]]:
+    """Check a dataset's data paths (`DATA_PATH_FIELDS` -> as entered, empty for none) as the
+    Settings tab checks folders on tensor (`tensor.check_data_path`).
+
+    Returns:
+        (the paths, normalized, None for none; each one's check; problems as messages)
+    """
+    paths, checks, errors = {}, {}, []
+    for key, value in values.items():
+        value = (value or "").strip()
+        if not value:
+            paths[key] = None
+            continue
+        c = checks[key] = tensor.check_data_path(value, config.TENSOR_ROOT)
+        paths[key] = c["path"]
+        if not c["ok"]:
+            errors.append(f"{DATA_PATH_FIELDS[key]}: {c['error']}")
+    return paths, checks, errors
+
+
+def _set_data_paths(m: Metadata) -> list[str]:
+    """Check an upload's data paths, normalizing them in `m`; problems as messages."""
+    paths, _, errors = _check_data_paths({k: getattr(m, k) for k in DATA_PATH_FIELDS})
+    if not errors:
+        for k, v in paths.items():
+            setattr(m, k, v)
+    return errors
+
+
+async def tensor_check(request: Request) -> Response:
+    """Check a dataset's data folder on tensor as entered ({"path"}): see `tensor.check_data_path`."""
+    body = await request.json()
+    path = body.get("path") if isinstance(body, dict) else None
+    if not isinstance(path, str):
+        return json_error(400, 'expected {"path": ...}')
+    return JSONResponse(await run_in_threadpool(tensor.check_data_path, path, config.TENSOR_ROOT))
+
+
 async def stage_readme(request: Request) -> Response:
     """Generate a README.md from the metadata (not yet saved)."""
     d = _stage_dir(request.path_params["stage_id"])
     meta = _stage_meta(d)
     body = await request.json()
     m, errors = _parse_metadata(body.get("metadata"))
+    if not errors:
+        errors = await run_in_threadpool(_set_data_paths, m)
     if errors:
         return JSONResponse({"ok": False, "errors": errors}, status_code=422)
     parsed = await run_in_threadpool(load_parsed, d / "parsed")
@@ -528,6 +571,8 @@ async def stage_commit(request: Request) -> Response:
     meta = _stage_meta(d)
     body = await request.json()
     m, errors = _parse_metadata(body.get("metadata"))
+    if not errors:
+        errors = await run_in_threadpool(_set_data_paths, m)
     if errors:
         return JSONResponse({"ok": False, "errors": errors}, status_code=422)
     readme = body.get("readme")
@@ -636,6 +681,36 @@ async def dataset_data_paths(request: Request) -> Response:
     if result is None:
         return json_error(404, "dataset not found")
     return JSONResponse(result)
+
+
+async def dataset_data_paths_save(request: Request) -> Response:
+    """Set a dataset's data paths ({"raw_data_path", "mocorr_data_path"}: either or both,
+    empty for none), checked as at upload; nothing is saved if one is wrong."""
+    ds_id = int(request.path_params["ds_id"])
+    body = await request.json()
+    values = {k: body[k] for k in DATA_PATH_FIELDS if k in body} if isinstance(body, dict) else {}
+    if not values or any(v is not None and not isinstance(v, str) for v in values.values()):
+        return json_error(400, f"expected {' and/or '.join(DATA_PATH_FIELDS)}")
+
+    def run() -> tuple[int, dict]:
+        if db.get_dataset(ds_id) is None:
+            return 404, {"error": "dataset not found"}
+        paths, checks, errors = _check_data_paths(values)
+        if errors:
+            return 422, {"ok": False, "errors": errors, "checks": checks}
+        metadata = db.update_data_paths(ds_id, paths)
+        meta = config.DATASETS_DIR / str(ds_id) / "metadata.json"
+        try:
+            m = json.loads(meta.read_text(encoding="utf-8"))
+            m.setdefault("metadata", {}).update(paths)
+            meta.write_text(json.dumps(m, indent=1), encoding="utf-8")
+        except (OSError, ValueError):
+            pass
+        log.info("data paths of dataset %d set: %s", ds_id, paths)
+        return 200, {"ok": True, "metadata": metadata, "checks": checks}
+
+    status, result = await run_in_threadpool(run)
+    return JSONResponse(result, status_code=status)
 
 
 async def dataset_file(request: Request) -> Response:
@@ -1124,6 +1199,8 @@ routes = [
     Route("/api/datasets/{ds_id:int}/files/{path:path}", dataset_file),
     Route("/api/datasets/{ds_id:int}/odors", dataset_odor_table),
     Route("/api/datasets/{ds_id:int}/data_paths", dataset_data_paths),
+    Route("/api/datasets/{ds_id:int}/data_paths", dataset_data_paths_save, methods=["PUT"]),
+    Route("/api/tensor/check", tensor_check, methods=["POST"]),
     Route("/api/download", download),
     Route("/api/odors", odors_list),
     Route("/api/odors/status", odors_status),

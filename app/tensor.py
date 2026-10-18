@@ -174,6 +174,21 @@ def check_dir(path: str, root: Path) -> dict:
     return out
 
 
+def check_data_path(path: str, root: Path) -> dict:
+    """Check a dataset's data folder as entered (from the top of tensor), as `check_dir`
+    does, and give a ``warning`` too: while tensor itself is not there to look in
+    (`root_status`), a well-formed path is accepted with one, as it cannot be told wrong."""
+    out = {**check_dir(path, root), "warning": None}
+    if not out["ok"]:
+        status = root_status(root)
+        if not status["ok"]:
+            try:
+                out.update(path=normalize(path, root), ok=True, error=None, warning=f"not checked: {status['error']}")
+            except PathError:
+                pass
+    return out
+
+
 def file_path(path: str, root: Path, suffixes: tuple[str, ...]) -> tuple[str, Path]:
     """Normalized path and location on the server of a file on tensor ending in one of `suffixes`.
 

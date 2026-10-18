@@ -200,6 +200,25 @@ def test_stage_from_tensor(main, root, tmp_path, monkeypatch):
     readme = call(main.stage_readme, body={"metadata": md}, path_params=stage)[1]["readme"]
     assert "- odor metadata: `ann_odors.yml` (from tensor: `ann/yaml/ann_odors.yml`)" in readme
     assert "- ThorImage: `Experiment.xml` (from tensor: `ann/raw/2024-01-01/1/t1/Experiment.xml`)" in readme
+    # data paths are checked as folders in the Settings tab are, and kept normalized
+    assert "| Raw data (tensor) | `ann/raw` |" in readme
+    status, r = call(main.stage_readme, body={"metadata": {**md, "raw_data_path": "ann/nothing"}}, path_params=stage)
+    assert status == 422 and r["errors"] == ["raw data path: not found on tensor: 'ann' has no 'nothing'"]
+    r = call(main.stage_readme, body={"metadata": {**md, "mocorr_data_path": f"{root}/ann/raw"}}, path_params=stage)[1]
+    assert r["errors"][0].startswith("motion-corrected data path: absolute paths are not accepted")
+    readme = call(main.stage_readme, body={"metadata": {**md, "raw_data_path": " ann//raw/ "}}, path_params=stage)[1]["readme"]
+    assert "| Raw data (tensor) | `ann/raw` |" in readme
+    assert call(main.stage_commit, body={"metadata": {**md, "raw_data_path": "x"}, "readme": "#"}, path_params=stage)[0] == 422
+
+
+def test_check_data_path(root, tmp_path):
+    assert tensor.check_data_path("tom//raw/", root) == {"input": "tom//raw/", "path": "tom/raw", "ok": True, "error": None,
+                                                          "warning": None}
+    assert not tensor.check_data_path("tom/nothing", root)["ok"] and not tensor.check_data_path("/tom/raw", root)["ok"]
+    # tensor not there: well-formed paths are taken as they are, with a warning
+    r = tensor.check_data_path("tom/raw/", tmp_path / "unmounted")
+    assert r["ok"] and r["path"] == "tom/raw" and r["warning"].startswith("not checked: tensor is not available")
+    assert not tensor.check_data_path("/tom/raw", tmp_path / "unmounted")["ok"]
 
 
 def test_find_data(root, tmp_path, monkeypatch):
@@ -238,3 +257,17 @@ def test_dataset_data_paths(main, root, tmp_path):
     assert status == 200 and r["raw"]["status"] == "ok" and [e["name"] for e in r["raw"]["entries"]] == ["2023-11-19", "20231120"]
     assert r["mocorr"]["status"] == "not_found" and r["mocorr"]["input"] == "tom/mocorr-typo"
     assert call(main.dataset_data_paths, path_params={"ds_id": ds_id + 1})[0] == 404
+
+    # entered from the dataset's page, checked as at upload
+    assert call(main.tensor_check, body={"path": "tom/mocorr/"})[1]["path"] == "tom/mocorr"
+    put = lambda body: call(main.dataset_data_paths_save, body=body, path_params={"ds_id": ds_id})
+    status, r = put({"mocorr_data_path": "tom/mocorr-typo2"})
+    assert status == 422 and not r["checks"]["mocorr_data_path"]["ok"] and main.db.get_dataset(ds_id)["mocorr_data_path"] == "tom/mocorr-typo"
+    status, r = put({"mocorr_data_path": " tom//mocorr/ "})
+    assert status == 200 and r["metadata"]["mocorr_data_path"] == "tom/mocorr" and r["metadata"]["raw_data_path"] == "tom/raw"
+    d = main.db.get_dataset(ds_id)
+    assert d["mocorr_data_path"] == "tom/mocorr" and d["metadata"]["mocorr_data_path"] == "tom/mocorr"
+    assert call(main.dataset_data_paths, path_params={"ds_id": ds_id})[1]["mocorr"]["status"] == "ok"
+    status, r = put({"raw_data_path": ""})
+    assert status == 200 and main.db.get_dataset(ds_id)["raw_data_path"] is None and r["metadata"]["mocorr_data_path"] == "tom/mocorr"
+    assert put({"title": "x"})[0] == 400 and put({"raw_data_path": 3})[0] == 400
