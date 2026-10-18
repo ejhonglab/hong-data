@@ -150,6 +150,13 @@ def activate(settings: dict) -> None:
     ACTIVE = {"read": [_real(p) for p in settings["read_dirs"]] + write, "write": write}
 
 
+def folders() -> list[str]:
+    """The folders set in the Admin tab (read, then write) in effect, or as saved if the
+    server was not started with `start`."""
+    settings = STATUS["settings"] or load()
+    return [*settings["read_dirs"], *settings["write_dirs"]]
+
+
 def can_read(path) -> bool:
     """Whether the server may read `path` (following links), by the folders in effect."""
     return ACTIVE is None or _within(path, ACTIVE["read"])

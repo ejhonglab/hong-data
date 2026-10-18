@@ -199,18 +199,30 @@
             <p class="muted" id="ds-sub"></p>
           </div>
           <div class="ds-actions">
-            <span class="dl-status" id="ds-download-status"></span>
-            <button type="button" class="btn" id="ds-odors-toggle" aria-expanded="false">Odors</button>
-            <button type="button" class="btn" id="ds-readme-toggle" aria-expanded="false">README</button>
-            <details class="menu menu-right" id="ds-download">
-              <summary class="btn">Download</summary>
-              <div class="menu-list">
-                <button type="button" data-format="files">Original files <span class="muted">as uploaded</span></button>
-                <button type="button" data-format="wide">Response matrix, wide CSV</button>
-                <button type="button" data-format="long">Response matrix, long CSV</button>
-                <p class="menu-note">Original files: a zip, with the README and the details entered at upload. Matrix: one CSV laid out as uploaded, named &lt;panels&gt;_&lt;uploader&gt;_&lt;coding unit&gt;_&lt;last fly date&gt;.</p>
-              </div>
-            </details>
+            <div class="ds-data-links">
+              <details class="menu menu-right data-link" id="ds-raw" data-kind="raw">
+                <summary class="btn">Raw data</summary>
+                <div class="menu-list data-menu"></div>
+              </details>
+              <details class="menu menu-right data-link" id="ds-mocorr" data-kind="mocorr">
+                <summary class="btn">Motion corrected / traces</summary>
+                <div class="menu-list data-menu"></div>
+              </details>
+            </div>
+            <div class="ds-buttons">
+              <span class="dl-status" id="ds-download-status"></span>
+              <button type="button" class="btn" id="ds-odors-toggle" aria-expanded="false">Odors</button>
+              <button type="button" class="btn" id="ds-readme-toggle" aria-expanded="false">README</button>
+              <details class="menu menu-right" id="ds-download">
+                <summary class="btn">Download</summary>
+                <div class="menu-list">
+                  <button type="button" data-format="wide">Response matrix, wide CSV</button>
+                  <button type="button" data-format="long">Response matrix, long CSV</button>
+                  <button type="button" data-format="files">Original files <span class="muted">with metadata</span></button>
+                  <p class="menu-note">Matrix: one CSV laid out as uploaded, named &lt;panels&gt;_&lt;uploader&gt;_&lt;coding unit&gt;_&lt;last fly date&gt;.<br><br>Original files: a zip, with the README and the details entered at upload.</p>
+                </div>
+              </details>
+            </div>
           </div>
         </div>
         <div id="ds-readme" class="readme-panel" hidden>

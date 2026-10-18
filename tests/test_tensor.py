@@ -200,3 +200,41 @@ def test_stage_from_tensor(main, root, tmp_path, monkeypatch):
     readme = call(main.stage_readme, body={"metadata": md}, path_params=stage)[1]["readme"]
     assert "- odor metadata: `ann_odors.yml` (from tensor: `ann/yaml/ann_odors.yml`)" in readme
     assert "- ThorImage: `Experiment.xml` (from tensor: `ann/raw/2024-01-01/1/t1/Experiment.xml`)" in readme
+
+
+def test_find_data(root, tmp_path, monkeypatch):
+    from app import sandbox
+
+    monkeypatch.setattr(sandbox, "ACTIVE", None)
+    find = lambda p, bases=(): tensor.find_data(p, root, list(bases))
+    r = find("tom/raw/2023-11-19")
+    assert r["status"] == "ok" and r["path"] == str(root / "tom/raw/2023-11-19") and r["tensor_path"] == "tom/raw/2023-11-19"
+    assert r["is_dir"] and r["entries"] == [{"name": "1", "dir": True, "size": None}] and r["n_entries"] == 1
+    assert find("tom/notes.txt")["is_dir"] is False and find("tom/notes.txt")["entries"] == []
+    # absolute paths: on the server, or as on a computer that mounts tensor
+    assert find(f"{root}/tom/raw/")["tensor_path"] == "tom/raw"
+    assert find("Z:\\tom\\raw")["tensor_path"] == "tom/raw" and find("/Volumes/tensor/tom/raw")["tensor_path"] == "tom/raw"
+    assert find(None)["status"] == "none" and find("  ")["status"] == "none"
+    r = find("tom/nothing")
+    assert r["status"] == "not_found" and "Admin" not in r["error"] and find("../tensor/tom")["status"] == "not_found"
+    # from a folder set in the Admin tab, which need not be in tensor
+    (tmp_path / "elsewhere/2024").mkdir(parents=True)
+    r = find("2024", [tmp_path / "elsewhere"])
+    assert r["status"] == "ok" and r["tensor_path"] is None and r["path"] == str(tmp_path / "elsewhere/2024")
+    # only what the server may read
+    sandbox.activate({"read_dirs": [str(root / "other")], "write_dirs": []})
+    assert find("tom/raw")["status"] == "not_allowed" and "Admin tab" in find("tom/raw")["error"]
+
+
+def test_dataset_data_paths(main, root, tmp_path):
+    parsed = load_file(write_csv(make_wide(ROWS, COLS), tmp_path))
+    md = {"uploader_name": "me", "indicator": "GCaMP6f", "driver": "GH146", "coding_unit": "glomeruli",
+          "raw_data_path": "tom/raw", "mocorr_data_path": "tom/mocorr-typo"}
+    ds_id = main.db.insert_dataset(
+        created_at="2026-01-02T03:04:05", title="t", metadata=md, readme_md="#", readme_edited=False, data_file="x.csv",
+        data_format=parsed.source_format, data_sha256="0" * 64, odor_yaml_files=[], experiment_xml_file=None,
+        experiment_xml_info=None, summary=parsed.summary(), units=parsed.units, trials=parsed.trials, values=parsed.values)
+    status, r = call(main.dataset_data_paths, path_params={"ds_id": ds_id})
+    assert status == 200 and r["raw"]["status"] == "ok" and [e["name"] for e in r["raw"]["entries"]] == ["2023-11-19", "20231120"]
+    assert r["mocorr"]["status"] == "not_found" and r["mocorr"]["input"] == "tom/mocorr-typo"
+    assert call(main.dataset_data_paths, path_params={"ds_id": ds_id + 1})[0] == 404

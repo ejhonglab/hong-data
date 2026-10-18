@@ -572,6 +572,24 @@ async def dataset_matrix(request: Request) -> Response:
     return JSONResponse(m)
 
 
+async def dataset_data_paths(request: Request) -> Response:
+    """Where a dataset's raw and motion-corrected data are on the server, and what is in
+    them (``raw``, ``mocorr``: see `tensor.find_data`)."""
+    ds_id = int(request.path_params["ds_id"])
+
+    def run() -> Optional[dict]:
+        d = db.get_dataset(ds_id)
+        if d is None:
+            return None
+        bases = [Path(p) for p in sandbox.folders()]
+        return {k: tensor.find_data(d["metadata"].get(f"{k}_data_path"), config.TENSOR_ROOT, bases) for k in ("raw", "mocorr")}
+
+    result = await run_in_threadpool(run)
+    if result is None:
+        return json_error(404, "dataset not found")
+    return JSONResponse(result)
+
+
 async def dataset_file(request: Request) -> Response:
     ds_id = int(request.path_params["ds_id"])
     rel = request.path_params["path"]
@@ -1056,6 +1074,7 @@ routes = [
     Route("/api/datasets/{ds_id:int}/matrix", dataset_matrix),
     Route("/api/datasets/{ds_id:int}/files/{path:path}", dataset_file),
     Route("/api/datasets/{ds_id:int}/odors", dataset_odor_table),
+    Route("/api/datasets/{ds_id:int}/data_paths", dataset_data_paths),
     Route("/api/download", download),
     Route("/api/odors", odors_list),
     Route("/api/odors/status", odors_status),

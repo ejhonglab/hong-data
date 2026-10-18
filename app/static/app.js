@@ -100,6 +100,19 @@ async function download(url, status) {
   }
 }
 
+// navigator.clipboard needs HTTPS (or localhost); the site is usually plain HTTP
+async function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return; }
+  const t = document.createElement('textarea');
+  t.value = text;
+  t.style.cssText = 'position: fixed; opacity: 0;';
+  document.body.appendChild(t);
+  t.select();
+  const ok = document.execCommand('copy');
+  t.remove();
+  if (!ok) throw new Error('the browser did not allow it');
+}
+
 // <details class="menu"> dropdowns: onPick(button.dataset) for the chosen entry
 function wireMenu(menu, onPick) {
   $$('.menu-list button', menu).forEach((b) => b.addEventListener('click', () => { menu.open = false; onPick(b.dataset); }));
@@ -1051,6 +1064,12 @@ class Browse {
     const downloadUrl = (ids, format) => `/api/download?ids=${ids.join(',')}&format=${format}`;
     wireMenu($('#ds-download'), ({ format }) => { if (this.selected != null) download(downloadUrl([this.selected], format), $('#ds-download-status')); });
     wireMenu($('#pick-download'), ({ format }) => download(downloadUrl([...this.picked].sort((a, b) => a - b), format), $('#pick-status')));
+    $$('.data-link').forEach((menu) => menu.addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-copy]');
+      if (!b) return;
+      try { await copyText(b.dataset.copy); b.textContent = 'Copied'; } catch (err) { b.textContent = `Could not copy: ${err.message}`; }
+      setTimeout(() => { b.textContent = 'Copy'; }, 1500);
+    }));
     $('#pick-clear').addEventListener('click', () => { this.picked.clear(); this._syncPicks(); });
     $('#dataset-list').addEventListener('change', (e) => {
       const cb = e.target;
@@ -1159,6 +1178,45 @@ class Browse {
     if (!this.viewer) this.viewer = new MatrixViewer($('#dataset-viewer'));
     this.viewer.setNeuralData(m, { title: d.title, fileStem: `olfdb_dataset-${id}` });
     if (!$('#ds-odors').hidden) this.showOdors(id);
+    this.showDataPaths(id);
+  }
+
+  // The links to the dataset's raw and motion-corrected data on tensor, red with the
+  // reason when there is none to follow: looked up afresh each time (tensor may come and
+  // go, and so may the folders set in the Admin tab), after the rest is shown.
+  async showDataPaths(id) {
+    const menus = $$('.data-link');
+    menus.forEach((m) => this._dataLink(m, null));
+    let res;
+    try { res = await api(`/api/datasets/${id}/data_paths`); } catch (e) {
+      if (this.selected === id) menus.forEach((m) => this._dataLink(m, { status: 'unchecked', error: `could not ask the server (${e.message})` }));
+      return;
+    }
+    if (this.selected === id) menus.forEach((m) => this._dataLink(m, res[m.dataset.kind]));
+  }
+
+  // r: as from tensor.find_data, or null while it is looked up
+  _dataLink(menu, r) {
+    const label = DATA_LINKS[menu.dataset.kind], list = $('.menu-list', menu);
+    menu.classList.toggle('missing', !!r && r.status !== 'ok');
+    const why = r ? DATA_WHY[r.status] : 'checking…';
+    $('summary', menu).innerHTML = `${label}${why ? ` <span class="why">${why}</span>` : ''}`;
+    $('summary', menu).title = r && r.status !== 'ok' ? `${label}: ${r.error}` : '';
+    if (!r) { list.innerHTML = '<p class="menu-note">Looking for it on the server…</p>'; return; }
+    if (r.status !== 'ok') {
+      list.innerHTML = r.status === 'none'
+        ? `<p class="menu-note">No ${label.toLowerCase()} path was entered for this dataset at upload.</p>`
+        : `<p class="menu-note">Entered at upload: <code>${esc(r.input || '')}</code></p><p class="menu-note data-error">${esc(r.error)}</p>`;
+      return;
+    }
+    const shown = r.tensor_path ?? r.path;
+    const entries = r.entries.map((x) => `<li${x.dir ? ' class="dir"' : ''}>${esc(x.name)}${x.dir ? '/' : ''}${x.size != null ? ` <span class="muted">${fmtBytes(x.size)}</span>` : ''}</li>`).join('');
+    list.innerHTML = `<div class="kv data-where">
+        <span>${r.tensor_path != null ? 'On tensor' : 'On the server'}</span><span><code>${esc(shown)}</code> <button type="button" class="btn small" data-copy="${esc(shown)}">Copy</button></span>
+        ${r.tensor_path != null ? `<span>On the server</span><span><code>${esc(r.path)}</code></span>` : ''}
+      </div>
+      ${r.is_dir ? (r.n_entries ? `<ul class="data-entries">${entries}</ul>${r.n_entries > r.entries.length ? `<p class="menu-note">… and ${r.n_entries - r.entries.length} more</p>` : ''}` : '<p class="menu-note">The folder is empty.</p>') : '<p class="menu-note">A file, not a folder.</p>'}
+      <p class="menu-note">Browsers cannot open folders on your computer from a web page: open it from where tensor is mounted on yours.</p>`;
   }
 
   async showOdors(id) {
@@ -1170,6 +1228,9 @@ class Browse {
     if (this.selected === id) panel.innerHTML = datasetOdorTable(this.odorCache.get(id));
   }
 }
+
+const DATA_LINKS = { raw: 'Raw data', mocorr: 'Motion corrected / traces' };
+const DATA_WHY = { ok: '', none: 'not entered', not_found: 'not found', not_allowed: 'not allowed', unreadable: 'not readable', unchecked: 'not checked' };
 
 // ==================================================================== ODORS
 const ODOR_FIELDS = {
@@ -1200,7 +1261,7 @@ function idCells(o) {
 // a dataset's odors (GET /api/datasets/<id>/odors), per panel, like the thesis odor tables
 function datasetOdorTable({ rows, odors }) {
   const hasGlom = rows.some((r) => r.yaml?.glomerulus);
-  const nCols = hasGlom ? 11 : 10;
+  const nCols = hasGlom ? 12 : 11;
   const body = runsOf(rows, (r) => r.panel).map((g) => {
     const title = g.key != null ? `<tr class="group"><td colspan="${nCols}">${esc(g.key)}</td></tr>` : '';
     return title + rows.slice(g.start, g.end).map((r) => {
@@ -1210,15 +1271,16 @@ function datasetOdorTable({ rows, odors }) {
       if (o) name = `<a href="#odors/${o.id}">${esc(o.name)}</a>`;
       else if (r.match === 'ambiguous') name = `<span class="muted">ambiguous: ${r.candidates.map((i) => `<a href="#odors/${i}">${esc(odors[i].name)}</a>`).join(' or ')}</span>`;
       else name = `<span class="muted">${r.yaml?.name ? `${esc(r.yaml.name)}, ` : ''}not in the odor table</span>`;
-      return `<tr><td><code>${esc(r.odor)}</code></td><td>${name}</td><td>${r.log10_conc ?? ''}</td><td>${esc(r.yaml?.solvent || o?.solvent || '')}</td>
-        ${hasGlom ? `<td>${esc(r.yaml?.glomerulus || '')}</td>` : ''}<td>${c.cid || ''}</td><td>${c.cas || ''}</td><td>${c.catalog || ''}</td>
-        <td>${c.metacyc || ''}</td><td>${c.lotus || ''}</td><td class="structure-cell">${o ? structureImg(o) : ''}</td></tr>`;
+      return `<tr><td><code>${esc(r.odor)}</code></td><td>${name}</td><td>${r.log10_conc ?? ''}</td><td>${c.cid || ''}</td>
+        <td class="inchi">${esc(o?.inchi || '')}</td><td>${esc(r.yaml?.solvent || o?.solvent || '')}</td>
+        ${hasGlom ? `<td>${esc(r.yaml?.glomerulus || '')}</td>` : ''}<td>${c.catalog || ''}</td><td>${c.metacyc || ''}</td><td>${c.lotus || ''}</td>
+        <td class="structure-cell">${o ? structureImg(o) : ''}</td><td>${c.cas || ''}</td></tr>`;
     }).join('');
   }).join('');
   const n = rows.filter((r) => r.odor_id != null).length;
   return `<p class="muted">${n} of ${rows.length} odors are in the <a href="#odors">odor table</a> (matched through the dataset's odor YAML where it has one, otherwise by abbreviation).</p>
-    <table class="odor-table"><thead><tr><th>Odor</th><th>Name</th><th>log<sub>10</sub> conc.</th><th>Solvent</th>${hasGlom ? '<th>Target glomerulus</th>' : ''}
-    <th>CID</th><th>CAS</th><th>Catalog no.</th><th>MetaCyc</th><th>LOTUS</th><th>Structure</th></tr></thead><tbody>${body}</tbody></table>`;
+    <table class="odor-table"><thead><tr><th>Odor</th><th>Name</th><th>log<sub>10</sub> conc.</th><th>CID</th><th>InChI</th><th>Solvent</th>
+    ${hasGlom ? '<th>Target glomerulus</th>' : ''}<th>Catalog no.</th><th>MetaCyc</th><th>LOTUS</th><th>Structure</th><th>CAS</th></tr></thead><tbody>${body}</tbody></table>`;
 }
 
 class OdorsPage {

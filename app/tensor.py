@@ -34,6 +34,7 @@ MAX_YAML_FILES = 20000
 MAX_XMLS_READ = 100
 MAX_YAMLS_PARSED = 200
 MAX_FILE_BYTES = 20 * 1024 * 1024
+LISTED = 200  # entries listed of a dataset's data folder
 
 NOT_ALLOWED = "outside the folders the server may read (set in the Admin tab)"
 NAMED = "named in the notes of an Experiment.xml"
@@ -44,8 +45,10 @@ class PathError(ValueError):
     pass
 
 
-def _absolute_error(p: str, root: Path) -> str:
-    msg = "absolute paths are not accepted: give the folder relative to the top of tensor"
+def _guess_relative(p: str, root: Path) -> str:
+    """The path from the top of tensor that an absolute path (``/`` separated) seems to mean:
+    after tensor's top on the server, a drive letter, or a folder named like tensor's top
+    (``/Volumes/tensor/...``); '' if it cannot be told."""
     top = str(root).rstrip("/") + "/"
     drive = re.match(r"[A-Za-z]:/*(.*)", p)
     if p.startswith(top):
@@ -56,7 +59,12 @@ def _absolute_error(p: str, root: Path) -> str:
         parts = p.split("/")
         at = [i for i, x in enumerate(parts) if x.casefold() == root.name.casefold()]
         rest = "/".join(parts[at[-1] + 1:]) if at else ""
-    rest = rest.strip("/")
+    return rest.strip("/")
+
+
+def _absolute_error(p: str, root: Path) -> str:
+    msg = "absolute paths are not accepted: give the folder relative to the top of tensor"
+    rest = _guess_relative(p, root)
     return f"{msg} (did you mean '{rest}'?)" if rest else msg
 
 
@@ -182,6 +190,64 @@ def file_path(path: str, root: Path, suffixes: tuple[str, ...]) -> tuple[str, Pa
     if os.path.getsize(target) > MAX_FILE_BYTES:
         raise PathError(f"'{rel}' is larger than {MAX_FILE_BYTES >> 20} MB")
     return rel, target
+
+
+def find_data(path: Optional[str], root: Path, bases: list[Path]) -> dict:
+    """Where a dataset's data (its raw or motion-corrected data path, as entered at upload) is on the server.
+
+    The path is looked for from the top of tensor (`root`), then from each of `bases` (the
+    folders set in the Admin tab). An absolute path is also looked for as it is, and as
+    the path on tensor it seems to mean (one copied on a computer that mounts tensor as
+    ``Z:``, say). Only what the server may read counts as found.
+
+    Returns:
+        dict with ``input`` (as entered), ``status`` ('ok'; 'none' if nothing was entered,
+        'not_found', 'not_allowed': outside the folders the server may read, or
+        'unreadable'), ``error`` (the reason, if not ok), ``path`` (where it is on the
+        server), ``tensor_path`` (from the top of tensor, if it is in it), ``is_dir``, and
+        for a folder its first `LISTED` ``entries`` (``name``, ``dir``, ``size``) of ``n_entries``.
+    """
+    out = {"input": path, "status": "none", "error": "none was entered at upload", "path": None, "tensor_path": None,
+           "is_dir": None, "entries": [], "n_entries": 0}
+    p = (path or "").strip().replace("\\", "/")
+    if not p:
+        return out
+    absolute = p.startswith(("/", "~")) or bool(re.match(r"[A-Za-z]:", p))
+    parts = [x for x in (_guess_relative(p, root) if absolute else p).split("/") if x not in ("", ".")]
+    candidates = [Path(posixpath.normpath(p))] if p.startswith("/") else []
+    if parts and ".." not in parts:
+        candidates += [base.joinpath(*parts) for base in [root, *bases]]
+    found = None
+    out.update(status="not_found", error=f"not found on the server (looked in {root}"
+                                          + (" and the folders set in the Admin tab)" if bases else ")"))
+    for c in dict.fromkeys(candidates):
+        if not os.path.exists(c):
+            continue
+        if not sandbox.can_read(c):
+            out.update(status="not_allowed", error=NOT_ALLOWED)
+        elif not os.access(c, os.R_OK):
+            out.update(status="unreadable", error="the server is not allowed to read it")
+        else:
+            found = c
+            break
+    if found is None:
+        return out
+    real_root = root.resolve()
+    real = found.resolve()
+    out.update(status="ok", error=None, path=str(found), is_dir=os.path.isdir(found),
+               tensor_path=real.relative_to(real_root).as_posix() if real_root in real.parents else None)
+    if out["is_dir"]:
+        entries = _entries(found)
+
+        def size(e: os.DirEntry) -> Optional[int]:
+            try:
+                return e.stat().st_size
+            except OSError:
+                return None
+
+        out["n_entries"] = len(entries)
+        out["entries"] = [{"name": e.name, "dir": _is_dir(e), "size": None if _is_dir(e) else size(e)} for e in entries[:LISTED]]
+    return out
 
 
 # ------------------------------------------------------------------ lookup

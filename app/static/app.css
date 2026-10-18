@@ -280,7 +280,23 @@ table.diff .new { color: var(--ok); }
 #dataset-view[hidden], #reference-view[hidden] { display: none; }
 .ds-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 10px; }
 .ds-head h2 { font-size: 17px; }
-.ds-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+/* the data links above the other buttons when they do not fit on one line */
+.ds-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px 8px; flex: 0 1 auto; }
+.ds-actions > div { display: flex; align-items: center; gap: 8px; }
+/* links to a dataset's data on tensor: red, with the reason, when there is none to follow */
+.data-link > summary .why { font-size: 12px; color: var(--ink-muted); }
+.data-link.missing > summary { color: var(--danger); border-color: #efc7c3; background: var(--danger-soft); }
+.data-link.missing > summary .why { color: inherit; opacity: .85; }
+.data-menu { width: min(560px, 90vw); max-height: 60vh; overflow: auto; padding: 8px 4px; }
+.data-menu .kv { margin: 0 10px 8px; }
+.data-menu code { white-space: normal; word-break: break-all; }
+.data-menu .btn.small { border: 1px solid var(--rule-strong); background: #fff; padding: 0 8px; margin-left: 4px; }
+.data-menu .data-error { color: var(--danger); }
+.data-entries { list-style: none; margin: 0 10px 6px; padding: 6px 0 0; border-top: 1px solid var(--rule); columns: 2; column-gap: 20px; font-size: 12.5px; }
+.data-entries li { break-inside: avoid; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.data-entries li.dir { font-weight: 600; }
+.odor-table td.inchi { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; word-break: break-all; min-width: 150px; max-width: 220px; }
+#ds-odors .odor-table td:first-child code { white-space: nowrap; }
 .readme-panel { border: 1px solid var(--rule); border-radius: var(--radius); background: var(--panel); padding: 12px 16px; margin-bottom: 12px; max-height: 45%; overflow: auto; }
 .ds-files { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--rule); display: flex; gap: 12px; flex-wrap: wrap; font-size: 12.5px; }
 .viewer-main { flex: 1; min-height: 300px; }

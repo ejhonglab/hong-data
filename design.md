@@ -156,6 +156,8 @@ GET    /api/datasets/{id}                   metadata + README (markdown and HTML
 GET    /api/datasets/{id}/matrix            units, trials, base64 float32 values
 GET    /api/datasets/{id}/files/{path}      original files
 GET    /api/datasets/{id}/odors             its odors (per panel) matched to the odor table
+GET    /api/datasets/{id}/data_paths        where its raw and motion-corrected data are on the
+                                            server, and what is in them (or why they are not)
 GET    /api/download?ids=1,2&format=files|wide|long
                                             a zip, or a CSV for the matrix of a single dataset
 GET    /api/odors                           the odor table (with each odor's `inchi`)

@@ -24,7 +24,8 @@ expected, and nothing secret is entered. If a download or the page is blocked, s
    tensor, each colored by where it came from. Generate the README, edit it if you like,
    and save.
 3. **Browse**: datasets by panel, or by the date of their last fly. Click one for its
-   heatmap, README, original files and odors.
+   heatmap, README, original files, odors, and where its raw and motion-corrected data
+   are on tensor.
 4. **Download**: from a dataset's page, or tick several in the list: the original files
    (a zip), or the response matrices as CSV.
 
@@ -121,8 +122,13 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   each checked on the server as you leave its field; once all are found ("All Paths
   Accessible") they are saved on the server under your name. Below that, defaults for
   the upload form, checked as the form checks its fields and kept in this browser only.
-- **Browse**: each dataset has a thesis-style odor table, its odors matched to the Odors
-  tab through its odor YAML when it has one, otherwise by abbreviation.
+- **Browse**: each dataset has a thesis-style odor table (with each odor's CID and InChI),
+  its odors matched to the Odors tab through its odor YAML when it has one, otherwise by
+  abbreviation. "Raw data" and "Motion corrected / traces" show where those are on
+  tensor (to copy, as browsers cannot open folders on your computer) and what is in
+  them. They are red, saying why, when no path was entered at upload, or the server
+  cannot find it (from the top of tensor, or from a folder set in the Admin tab) or may
+  not read it.
 - **Download**: the matrices of several datasets are concatenated into one wide CSV
   (trials × ROIs, with `dataset_id` as an extra column level; trials matched on panel,
   odor components and repeat) or long CSV (one row per value). Zips always have
