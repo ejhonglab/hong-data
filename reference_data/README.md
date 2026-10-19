@@ -1,6 +1,6 @@
-# Reference matrices
+# Reference data
 
-Matrices shown in the "Reference matrices" tab, built in. Others can be added in the
+Tables shown in the "Reference data" tab, built in. Others can be added in the
 Admin tab, from any file on the server, in the same layout. These are read from this
 directory when asked for, so adding or editing a file needs no restart.
 

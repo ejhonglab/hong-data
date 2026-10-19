@@ -1,10 +1,10 @@
 """Which folders on the server the app may read and write, and holding it to them.
 
 Two lists of absolute paths, set in the Admin tab and saved in `config.ADMIN_FILE`:
-folders (or single files) the server may read (by default, tensor; a reference matrix
+folders (or single files) the server may read (by default, tensor; a reference dataset
 added in the Admin tab adds its file when it is outside them) and folders it may also
 write (none by default; for backups, later). The app's own data folder is always
-readable and writable, and its built-in reference matrices readable.
+readable and writable, and its built-in reference data readable.
 Both lists are fixed when the server starts (`start`), and changes wait for a restart:
 
 - the app checks what it reads outside its own folders (users' folders on tensor) against

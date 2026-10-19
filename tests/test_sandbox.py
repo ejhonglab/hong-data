@@ -35,7 +35,7 @@ def test_check_folder(tmp_path):
     assert sandbox.check_folder(f"{tmp_path}/ro/") == {"input": f"{tmp_path}/ro/", "path": f"{tmp_path}/ro", "ok": True,
                                                        "error": None, "warning": None}
     assert "not on the server" in sandbox.check_folder(f"{tmp_path}/nothing")["warning"]
-    assert sandbox.check_folder(f"{tmp_path}/f")["ok"]  # a file alone may be read (as a reference matrix is)
+    assert sandbox.check_folder(f"{tmp_path}/f")["ok"]  # a file alone may be read (as a reference dataset is)
     assert sandbox.check_folder(f"{tmp_path}/f", write=True)["error"] == "this is a file, not a folder"
     assert not sandbox.check_folder("relative")["ok"]
     if os.geteuid() != 0:  # root may write anywhere

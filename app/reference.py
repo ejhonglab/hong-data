@@ -1,5 +1,5 @@
-"""Reference matrices (chemicals x fruits, chemicals x pathways, ...), for the Reference
-matrices tab. Two kinds:
+"""Reference datasets (chemicals x fruits, chemicals x pathways, ...), for the Reference
+data tab. Two kinds:
 
 - built in: listed in ``reference_data/manifest.json`` (format in reference_data/README.md),
   read from there when asked for;
@@ -107,7 +107,7 @@ def read_table(path: Path) -> pd.DataFrame:
 
 
 def parse(path: Path, chemical_axis: str = "detect", kind: str = "detect") -> tuple[dict, np.ndarray]:
-    """A reference matrix file read: (record, values).
+    """A reference dataset file read: (record, values).
 
     Args:
         chemical_axis: where the chemicals are: 'rows', 'cols', 'none', or 'detect' (rows
@@ -246,7 +246,7 @@ def _write(path: Path, data: bytes) -> None:
 
 
 def state(ref: dict) -> dict:
-    """An added reference matrix's state, importing its file if it changed since it was
+    """An added reference dataset's state, importing its file if it changed since it was
     last imported (or never was).
 
     Returns:
@@ -295,7 +295,7 @@ def _values(ref_id: str, record: dict) -> np.ndarray:
 
 
 def chemicals(record: dict, index: odormeta.OdorIndex) -> dict:
-    """A reference matrix's chemicals matched to the odor table (`OdorIndex.match_chemical`).
+    """A reference dataset's chemicals matched to the odor table (`OdorIndex.match_chemical`).
 
     Returns:
         ``axis`` ('rows' | 'cols' | None), ``items`` (per item of that axis: ``odor_id``,
@@ -352,7 +352,7 @@ def warning(chem: dict) -> Optional[str]:
 
 
 def manifest() -> list[dict]:
-    """The built-in reference matrices, from reference_data/manifest.json."""
+    """The built-in reference datasets, from reference_data/manifest.json."""
     p = config.REFERENCE_DIR / "manifest.json"
     if not p.exists():
         return []
@@ -371,7 +371,7 @@ def _builtin_state(entry: dict) -> dict:
 
 
 def entries(db) -> list[dict]:
-    """Every reference matrix, built in then added: its settings, ``origin`` ('builtin' |
+    """Every reference dataset, built in then added: its settings, ``origin`` ('builtin' |
     'admin') and `state` (built-in ones are read when asked for, and never pending)."""
     out = [{**e, "origin": "builtin", "path": str(config.REFERENCE_DIR / e["file"]), **_builtin_state(e)} for e in manifest()]
     out += [{**r, "origin": "admin", **state(r)} for r in db.list_references()]
@@ -379,7 +379,7 @@ def entries(db) -> list[dict]:
 
 
 def listing(db, index: odormeta.OdorIndex) -> list[dict]:
-    """`entries` for the list in the Reference matrices tab and the Admin tab."""
+    """`entries` for the list in the Reference data tab and the Admin tab."""
     out = []
     for e in entries(db):
         rec = e.pop("record")
@@ -395,7 +395,7 @@ def listing(db, index: odormeta.OdorIndex) -> list[dict]:
 
 
 def load(db, ref_id: str, index: odormeta.OdorIndex) -> Optional[dict[str, Any]]:
-    """A reference matrix for the viewer (None if there is none by that id; ``error`` set if it cannot be read)."""
+    """A reference dataset for the viewer (None if there is none by that id; ``error`` set if it cannot be read)."""
     e = next((e for e in entries(db) if e["id"] == ref_id), None)
     if e is None:
         return None
@@ -429,7 +429,7 @@ def load(db, ref_id: str, index: odormeta.OdorIndex) -> Optional[dict[str, Any]]
 
 
 def check(path_input: str, chemical_axis: str, kind: str, index: odormeta.OdorIndex, supervisor: Optional[str]) -> dict:
-    """Check a file entered in the Admin tab as a reference matrix.
+    """Check a file entered in the Admin tab as a reference dataset.
 
     Returns:
         ``input``, ``path`` (normalized, or None), ``ok`` (it can be added), ``error``,
@@ -470,7 +470,7 @@ def _slug(title: str, taken: set[str]) -> str:
 
 
 def add(db, body: dict, index: odormeta.OdorIndex, supervisor: Optional[str]) -> tuple[int, dict]:
-    """Add a reference matrix entered in the Admin tab: (status, response). A file the
+    """Add a reference dataset entered in the Admin tab: (status, response). A file the
     server may not read yet is added to the folders it may read (as itself), to be read
     once it restarts."""
     fields = {k: (str(body.get(k) or "").strip() or None) for k in ("title", "description", "value_label", "row_label",
@@ -498,7 +498,7 @@ def add(db, body: dict, index: odormeta.OdorIndex, supervisor: Optional[str]) ->
 
 
 def delete(db, ref_id: str) -> tuple[int, dict]:
-    """Delete a reference matrix added in the Admin tab: its import (never its file), and
+    """Delete a reference dataset added in the Admin tab: its import (never its file), and
     the path added for it to the folders the server may read, if no other one needs that:
     (status, response)."""
     refs = db.list_references()
@@ -506,7 +506,7 @@ def delete(db, ref_id: str) -> tuple[int, dict]:
     if ref is None:
         if any(e["id"] == ref_id for e in manifest()):
             return 409, {"error": "it is built in: remove it from reference_data/manifest.json on the server"}
-        return 404, {"error": "reference matrix not found"}
+        return 404, {"error": "reference dataset not found"}
     with _lock:
         db.delete_reference(ref_id)
         shutil.rmtree(cache_dir(ref_id), ignore_errors=True)

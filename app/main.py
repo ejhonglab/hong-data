@@ -1165,14 +1165,14 @@ def _odor_index() -> odormeta.OdorIndex:
 
 
 async def reference_list(request: Request) -> Response:
-    """Every reference matrix, with whether it can be shown (and why not) and whether its chemicals are identified."""
+    """Every reference dataset, with whether it can be shown (and why not) and whether its chemicals are identified."""
     return JSONResponse({"datasets": await run_in_threadpool(lambda: reference.listing(db, _odor_index()))})
 
 
 async def reference_get(request: Request) -> Response:
     data = await run_in_threadpool(lambda: reference.load(db, request.path_params["ref_id"], _odor_index()))
     if data is None:
-        return json_error(404, "reference matrix not found")
+        return json_error(404, "reference dataset not found")
     return JSONResponse(data)
 
 
@@ -1334,7 +1334,7 @@ def _delete_dataset(ds_id: int) -> tuple[int, dict]:
 
 
 async def admin_reference_check(request: Request) -> Response:
-    """Check a file to add as a reference matrix ({"path", "chemical_axis", "kind"}), see `reference.check`."""
+    """Check a file to add as a reference dataset ({"path", "chemical_axis", "kind"}), see `reference.check`."""
     body = await request.json()
     if not isinstance(body, dict):
         return json_error(400, 'expected {"path": ...}')
@@ -1345,23 +1345,23 @@ async def admin_reference_check(request: Request) -> Response:
 
 
 async def admin_reference_add(request: Request) -> Response:
-    """Add a reference matrix ({"path", "title", "description", "kind", "chemical_axis",
+    """Add a reference dataset ({"path", "title", "description", "kind", "chemical_axis",
     "value_label", "row_label", "col_label", "source"}), see `reference.add`."""
     body = await request.json()
     if not isinstance(body, dict):
         return json_error(400, 'expected {"path": ..., "title": ...}')
     status, result = await run_in_threadpool(lambda: reference.add(db, body, _odor_index(), _supervisor()))
     if status == 200:
-        log.info("reference matrix %s added in the Admin tab: %s", result["id"], body.get("path"))
+        log.info("reference dataset %s added in the Admin tab: %s", result["id"], body.get("path"))
     return JSONResponse(result, status_code=status)
 
 
 async def admin_reference_delete(request: Request) -> Response:
-    """Delete a reference matrix added in the Admin tab (its import, not its file), see `reference.delete`."""
+    """Delete a reference dataset added in the Admin tab (its import, not its file), see `reference.delete`."""
     ref_id = request.path_params["ref_id"]
     status, result = await run_in_threadpool(reference.delete, db, ref_id)
     if status == 200:
-        log.info("reference matrix %s deleted in the Admin tab", ref_id)
+        log.info("reference dataset %s deleted in the Admin tab", ref_id)
     return JSONResponse(result, status_code=status)
 
 

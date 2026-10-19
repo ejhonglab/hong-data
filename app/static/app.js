@@ -379,7 +379,7 @@ function buildNeuralModel(data, order, { mode, rowOrder }, clustering) {
   return model;
 }
 
-// A chemical of a reference matrix labelled by its name or abbreviation in the odor table
+// A chemical of a reference dataset labelled by its name or abbreviation in the odor table
 // (as matched there), or as in the file: {label, detail (the rest, for the tooltip)}
 function chemLabel(it, by) {
   const c = it.chem;
@@ -1874,19 +1874,19 @@ class OdorsPage {
 }
 
 // ================================================================ REFERENCE
-// Matrices that cannot be read (or not yet) are listed by their names alone, with why;
+// Reference datasets that cannot be read (or not yet) are listed by their names alone, with why;
 // those with chemicals not identified by a CID or InChI, with a warning.
 function setAdminBadge(items) {
   const broken = items.filter((it) => it.state === 'error');
   const badge = $('#admin-badge');
   badge.hidden = !broken.length;
-  badge.title = `${broken.length} reference matri${broken.length === 1 ? 'x' : 'ces'} cannot be read (see the Admin tab)`;
+  badge.title = `${broken.length} reference dataset${broken.length === 1 ? '' : 's'} cannot be read (see the Admin tab)`;
 }
 
 class Reference {
   constructor() { this.items = null; this.viewer = null; this.selected = null; this.cache = new Map(); }
 
-  // after reference matrices were added or deleted, or the odor table changed
+  // after reference datasets were added or deleted, or the odor table changed
   invalidate() { this.items = null; this.cache.clear(); }
 
   async load() {
@@ -1895,7 +1895,7 @@ class Reference {
       setAdminBadge(this.items);
     }
     const list = $('#reference-list');
-    if (!this.items.length) { list.innerHTML = '<div class="empty">No reference matrices yet: they are added in the Admin tab.</div>'; return; }
+    if (!this.items.length) { list.innerHTML = '<div class="empty">No reference data yet: it is added in the Admin tab.</div>'; return; }
     list.innerHTML = this.items.map((it) => {
       const ok = it.state === 'ok';
       const why = ok ? (it.warning ? `<span class="s warn">⚠ ${esc(it.warning)}</span>` : '')
@@ -2305,12 +2305,12 @@ class MergePage {
 // ===================================================================== ADMIN
 // Site-wide settings: the folders on the server the app may read and write (fixed when
 // the server starts, so saved changes wait for a restart, which can be asked for here
-// too), the odor sheet's link and the reference matrices; the server's name and
-// addresses; deleting datasets.
+// too), the reference data; deleting datasets; the odor sheet's link; the server's name
+// and addresses.
 // Shown each time the tab is opened, once the user says they may change these settings.
 const ADMIN_KINDS = ['read_dirs', 'write_dirs'];
 
-// A reference matrix's file as checked (see /api/admin/references/check), under its field
+// A reference dataset's file as checked (see /api/admin/references/check), under its field
 function showRefCheck(c) {
   const input = $('#ref-path'), msg = $('#ref-path-msg'), box = $('#ref-check');
   input.classList.toggle('invalid', !!c && !c.ok);
@@ -2334,7 +2334,7 @@ function showRefCheck(c) {
   if (lines.length) box.appendChild(Object.assign(document.createElement('p'), { className: 'muted small', innerHTML: lines.join(' ') }));
   if (p.warning) {
     const list = ch.unidentified?.length ? `: ${ch.unidentified.slice(0, 20).map(esc).join(', ')}${ch.unidentified.length > 20 ? ', …' : ''}` : '';
-    box.appendChild(msgBox('warn', `⚠ ${esc(p.warning)}${list}. It can be added anyway, with a warning by it in the Reference matrices tab.`));
+    box.appendChild(msgBox('warn', `⚠ ${esc(p.warning)}${list}. It can be added anyway, with a warning by it in the Reference data tab.`));
   }
 }
 
@@ -2527,7 +2527,7 @@ class AdminPage {
     ].map(([a, b]) => `<span>${a}</span><span>${b}</span>`).join('');
   }
 
-  // the folders and restart state again (after a reference matrix added a folder, say),
+  // the folders and restart state again (after a reference dataset added a folder, say),
   // leaving messages shown
   async _reloadState() {
     try { this._show(await api('/api/admin')); } catch { /* shown when the tab is opened again */ }
@@ -2535,14 +2535,16 @@ class AdminPage {
 
   async loadRefs() {
     try { this.refs = (await api('/api/reference')).datasets; } catch (e) {
-      $('#admin-refs-list').replaceChildren(msgBox('error', `Could not load the reference matrices: ${esc(e.message)}`));
+      $('#admin-refs-list').replaceChildren(msgBox('error', `Could not load the reference data: ${esc(e.message)}`));
       return;
     }
     setAdminBadge(this.refs);
     const broken = this.refs.filter((r) => r.state === 'error');
     $('#admin-refs-status').replaceChildren(...(broken.length ? [msgBox('error',
-      `<b>${broken.length} reference matri${broken.length === 1 ? 'x cannot' : 'ces cannot'} be read</b>, and ${broken.length === 1 ? 'is' : 'are'} listed by name alone in the Reference matrices tab: ${broken.map((r) => esc(r.title)).join(', ')} (why: below).`)] : []));
-    if (!this.refs.length) { $('#admin-refs-list').innerHTML = '<p class="muted">None yet.</p>'; return; }
+      `<b>${broken.length} reference dataset${broken.length === 1 ? '' : 's'} cannot be read</b>, and ${broken.length === 1 ? 'is' : 'are'} listed by name alone in the Reference data tab: ${broken.map((r) => esc(r.title)).join(', ')} (why: below).`)] : []));
+    // those added here (the built-in examples are only in the Reference data tab), and any that cannot be read
+    const listed = this.refs.filter((r) => r.origin === 'admin' || r.state === 'error');
+    if (!listed.length) { $('#admin-refs-list').innerHTML = '<p class="muted">None added yet.</p>'; return; }
     const stateHtml = (r) => {
       if (r.state === 'error') return `<span class="bad">Cannot be read: ${esc(r.error)}</span>`;
       if (r.state === 'pending') return '<span class="warn">Read once the server restarts (below)</span>';
@@ -2550,8 +2552,8 @@ class AdminPage {
       return `${nr.toLocaleString()} × ${nc.toLocaleString()}, ${esc(r.kind)}${r.imported_at ? `, read ${esc(fmtWhen(r.imported_at))}` : ''}`
         + (r.warning ? `<br><span class="warn">⚠ ${esc(r.warning)}</span>` : '');
     };
-    $('#admin-refs-list').innerHTML = `<table class="odor-table"><thead><tr><th>Matrix</th><th>File</th><th>State</th><th></th></tr></thead><tbody>
-      ${this.refs.map((r) => `<tr><td><a href="#reference/${esc(r.id)}">${esc(r.title)}</a></td>
+    $('#admin-refs-list').innerHTML = `<table class="odor-table"><thead><tr><th>Title</th><th>File</th><th>State</th><th></th></tr></thead><tbody>
+      ${listed.map((r) => `<tr><td><a href="#reference/${esc(r.id)}">${esc(r.title)}</a></td>
         <td><code>${esc(r.path)}</code>${r.origin === 'builtin' ? ' <span class="muted">(built in)</span>' : ''}</td><td>${stateHtml(r)}</td>
         <td>${r.origin === 'admin' ? `<button type="button" class="btn small" data-delete-ref="${esc(r.id)}">Delete…</button>`
           : '<span class="muted small" title="Remove it from reference_data/manifest.json on the server">built in</span>'}</td></tr>`).join('')}</tbody></table>`;
@@ -2594,7 +2596,7 @@ class AdminPage {
       out.replaceChildren(msgBox('warn', `<b>Added “${title}”. The server reads it once it restarts.</b>${added}<ol class="steps">${res.steps.map((s) => `<li>${s}</li>`).join('')}</ol>`
         + 'After the restart, it is listed above as read, or with why it cannot be.'));
     } else if (res.state === 'ok') {
-      out.replaceChildren(msgBox('ok', `Added “${title}”: it is in the Reference matrices tab.`));
+      out.replaceChildren(msgBox('ok', `Added “${title}”: it is in the Reference data tab.`));
     } else {
       out.replaceChildren(msgBox('error', `Added “${title}”, but it cannot be read: ${esc(res.error)}`));
     }
@@ -2608,9 +2610,9 @@ class AdminPage {
   async deleteRef(id) {
     const r = this.refs.find((x) => x.id === id), out = $('#ref-result');
     if (!r) return;
-    $('#delete-confirm-q').textContent = `Delete the reference matrix “${r.title}”?`;
+    $('#delete-confirm-q').textContent = `Delete the reference dataset “${r.title}”?`;
     $('#delete-confirm-detail').innerHTML = `Only the app's copy of it is deleted: its file, <code>${esc(r.path)}</code>, is left as it is.`
-      + (r.read_grant ? ' It was added to the folders the server may read for it; it is taken off them again, unless another matrix needs it.' : '');
+      + (r.read_grant ? ' It was added to the folders the server may read for it; it is taken off them again, unless another reference dataset needs it.' : '');
     if (await askDialog($('#delete-confirm')) !== 'delete') return;
     let res;
     try { res = await api(`/api/admin/references/${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch (e) {

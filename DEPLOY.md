@@ -53,7 +53,7 @@ uploaded file (`data/datasets/<id>/...`; those of datasets deleted in the Admin 
 `data/deleted/<id>/`), the odor table and its sync history, the
 folders set in the Admin tab (`data/admin.json`), the short-lived staging area,
 downloads being sent (`data/exports/`, deleted once sent), cached odor structure images
-(`data/odor_structures/`), copies of the reference matrices added in the Admin tab
+(`data/odor_structures/`), copies of the reference datasets added in the Admin tab
 (`data/references/`; their files stay where they are, to be backed up there) and
 temporary files (`data/tmp/`).
 

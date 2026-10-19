@@ -437,7 +437,7 @@ class OdorIndex:
         return None, "none", sorted(folded)
 
     def match_chemical(self, ids: dict, label: str) -> tuple[Optional[int], str]:
-        """The odor a chemical of a reference matrix is: by its CID, else its InChI, else by
+        """The odor a chemical of a reference dataset is: by its CID, else its InChI, else by
         its CAS, MetaCyc or LOTUS ID, name, abbreviation, or `label` (as a name, then an
         abbreviation); but never an odor whose CID or InChI differs from one given.
 

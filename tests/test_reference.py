@@ -1,4 +1,4 @@
-"""Tests of reference matrices (built in, and added in the Admin tab). Run with:
+"""Tests of reference datasets (built in, and added in the Admin tab). Run with:
 OLFDB_DATA_DIR=<a scratch folder> python -m pytest tests/"""
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ INCHI_LIN = "InChI=1S/C10H18O/c1-5-10(4,11)8-6-7-9(2)3/h5,7,11H,1,6,8H2,2-4H3"
 
 @pytest.fixture
 def env(main, tmp_path, monkeypatch):  # noqa: F811
-    """main, with an odor table, a built-in reference matrix, and the app's folders in tmp_path."""
+    """main, with an odor table, a built-in reference dataset, and the app's folders in tmp_path."""
     monkeypatch.setattr(config, "DATA_DIR", tmp_path / "data")
     monkeypatch.setattr(config, "ADMIN_FILE", tmp_path / "admin.json")
     monkeypatch.setattr(config, "REFERENCE_CACHE_DIR", tmp_path / "data" / "references")

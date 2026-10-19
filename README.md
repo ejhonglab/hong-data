@@ -3,7 +3,7 @@
 A small intranet web app for a fly olfaction lab, to collect matrices of mean neural
 responses (per fly and ROI) to panels of odors. Each upload is checked and described
 with its experiment details, then everything can be browsed, clustered, exported and
-downloaded as scrollable heatmaps, next to fixed reference matrices (chemicals × fruits,
+downloaded as scrollable heatmaps, next to fixed reference data (chemicals × fruits,
 chemicals × pathways, ...) and the lab's table of odor metadata.
 
 ## Using it
@@ -189,8 +189,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   repeats or show individual trials; rows by fly→ROI, ROI→fly or ungrouped; odors as in
   the file or by name. The default colormap is blue–white–red, with lightness linear in
   |value| and white at 0, over the full data range. *Transpose* shows odors as rows
-  and ROIs as columns (in reference matrices too, rows as columns).
-  - *Moving and removing rows and columns* (also in reference matrices): drag a label
+  and ROIs as columns (in reference data too, rows as columns).
+  - *Moving and removing rows and columns* (also in reference data): drag a label
     to move it within its group (fly, panel, ...), or a group's name to move the whole
     group; with individual trials, an odor's trials move with its label (the repeat
     numbers are not handles). Labels of clustered ROIs or odors stay put. Ctrl-click a
@@ -209,12 +209,12 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   - *Export figure*: SVG, PDF or PNG of the whole matrix as shown (order, colors,
     cell size, dendrograms) with a colorbar; cells are an embedded image, labels and
     lines stay vector in SVG/PDF.
-- **Reference matrices**: tables added in the Admin tab (below), and any in
+- **Reference data**: tables added in the Admin tab (below), and any in
   `reference_data/` listed in its `manifest.json` (format in
   [reference_data/README.md](reference_data/README.md)). Their chemicals are labelled by
   their names in the Odors tab where they can be matched (or abbreviations, or as in the
   file: *Chemicals* in the viewer), the rest as in the file. A yellow warning is by a
-  matrix with chemicals not identified by a CID or InChI (in the file, or through the
+  table with chemicals not identified by a CID or InChI (in the file, or through the
   Odors tab), naming them; one that cannot be read is listed by its name alone, with why.
 - **Admin** (to the right of Docs; it first asks whether you are Tom, Jon or Betty, or
   have asked one of them): settings for the whole site.
@@ -223,9 +223,7 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     effect when the server restarts, which a button there does when it runs under
     Docker or systemd. How they are enforced:
     [DEPLOY.md](DEPLOY.md#folders-it-may-read-and-write).
-  - *Odor sheet*: the Google sheet's link, used as soon as it is saved, and importing a
-    CSV instead (with the template to start from).
-  - *Reference matrices*: add a CSV, TSV or parquet file on the server (checked as you
+  - *Reference data*: add a CSV, TSV or parquet file on the server (checked as you
     type its path, when the server may read it: its size, and how many of its chemicals
     match the Odors tab), with a title, description, source, labels, colors (or from its
     values) and whether its rows or columns are chemicals (or found from identifier
@@ -238,12 +236,14 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     InChI given. Deleting one deletes the copy (never the file), and takes its file off
     the folders the server may read if it was added there for it. When one cannot be
     read, it says why, with a red dot on the Admin tab.
-  - *This server*: its name, and its IP addresses (in Docker, those the network's DNS
-    gives its name).
   - *Delete datasets*: every dataset, newest upload first (with a filter), each with a
     Delete button that asks first. A deleted dataset is gone from the site at once; its
     files (as uploaded, with `metadata.json` holding every detail entered) are moved to
     `data/deleted/<id>/` on the server, from where it could be uploaded again.
+  - *Odor sheet*: the Google sheet's link, used as soon as it is saved, and importing a
+    CSV instead (with the template to start from).
+  - *This server*: its name, and its IP addresses (in Docker, those the network's DNS
+    gives its name).
 
 ## Scripting
 

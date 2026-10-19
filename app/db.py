@@ -519,14 +519,14 @@ class Database:
                 con.execute("INSERT INTO settings (key, value, updated_at) VALUES (?,?,?) ON CONFLICT (key) DO UPDATE "
                             "SET value = excluded.value, updated_at = excluded.updated_at", (key, value, when))
 
-    # -------------------------------------------------------- reference matrices
+    # ---------------------------------------------------------- reference data
     def list_references(self) -> list[dict]:
-        """The reference matrices added in the Admin tab, in the order they were added."""
+        """The reference datasets added in the Admin tab, in the order they were added."""
         with self.connect() as con:
             return [dict(r) for r in con.execute("SELECT * FROM reference_datasets ORDER BY created_at, id")]
 
     def add_reference(self, ref: dict) -> None:
-        """Add a reference matrix (a dict with `REFERENCE_COLUMNS`)."""
+        """Add a reference dataset (a dict with `REFERENCE_COLUMNS`)."""
         with self.connect() as con:
             con.execute(f"INSERT INTO reference_datasets ({', '.join(REFERENCE_COLUMNS)}) VALUES ({', '.join('?' * len(REFERENCE_COLUMNS))})",
                         [ref.get(c) for c in REFERENCE_COLUMNS])
