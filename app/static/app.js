@@ -1294,15 +1294,20 @@ class UploadFlow {
 }
 
 // =================================================================== BROWSE
+// a coding unit matched as the Merge tab matches it: in any case, spaces collapsed
+const unitKey = (u) => (u || '').trim().replace(/\s+/g, ' ').toLowerCase();
+
 class Browse {
   constructor() {
     this.datasets = null;
     this.group = LS.get('olfdb.browse_group', 'panel');
+    this.unit = LS.get('olfdb.browse_unit', ''); // unitKey of the one coding unit listed, '' for all
     this.selected = null;
     this.picked = new Set(); // ticked for download
     this.viewer = null;
     this.cache = new Map();
     $$('#tab-browse .seg button').forEach((b) => b.addEventListener('click', () => { this.group = b.dataset.group; LS.set('olfdb.browse_group', this.group); this.renderList(); }));
+    $('#browse-unit').addEventListener('change', (e) => { this.unit = e.target.value; LS.set('olfdb.browse_unit', this.unit); this.renderList(); });
     $('#ds-readme-toggle').addEventListener('click', () => {
       const p = $('#ds-readme');
       p.hidden = !p.hidden;
@@ -1391,8 +1396,10 @@ class Browse {
     });
     const n = this.picked.size;
     const units = (this.datasets || []).filter((d) => this.picked.has(d.id)).reduce((s, d) => s + d.n_units, 0);
+    const listed = new Set($$('.pick', list).map((cb) => +cb.dataset.id));
+    const unlisted = [...this.picked].filter((id) => !listed.has(id)).length; // ticked under another coding unit
     const text = $('#pick-text');
-    text.textContent = n ? `${n} selected · ${units.toLocaleString()} ROIs` : 'Tick datasets to download several together.';
+    text.textContent = n ? `${n} selected${unlisted ? ` (${unlisted} not listed)` : ''} · ${units.toLocaleString()} ROIs` : 'Tick datasets to download several together.';
     text.classList.toggle('muted', !n);
     $('#pick-download').hidden = !n;
     $('#pick-clear').hidden = !n;
@@ -1402,7 +1409,9 @@ class Browse {
     $$('#tab-browse .seg button').forEach((b) => b.classList.toggle('active', b.dataset.group === this.group));
     const list = $('#dataset-list');
     if (!this.datasets) return;
+    $('.unit-filter').hidden = !this.datasets.length;
     if (!this.datasets.length) { list.innerHTML = '<div class="empty">Nothing uploaded yet. Use the Upload tab.</div>'; this._syncPicks(); return; }
+    const datasets = this._unitFilter();
     const item = (d) => `<div class="ds-item${this.selected === d.id ? ' active' : ''}">
         <input type="checkbox" class="pick" data-id="${d.id}" aria-label="Select dataset #${d.id} for download">
         <button type="button" class="list-item" data-id="${d.id}">
@@ -1416,7 +1425,7 @@ class Browse {
     let html = '';
     if (this.group === 'panel') {
       const groups = new Map();
-      for (const d of this.datasets) {
+      for (const d of datasets) {
         const panels = (d.panels.some((p) => p.source === 'form') ? d.panels.filter((p) => p.source === 'form') : d.panels).map((p) => p.panel);
         for (const p of panels.length ? panels : ['(no panel name)']) {
           if (!groups.has(p)) groups.set(p, []);
@@ -1429,13 +1438,32 @@ class Browse {
         html += groupHead(k, ds) + ds.map(item).join('');
       }
     } else {
-      const ds = this.datasets.slice().sort((a, b) => (b.last_fly_date || '').localeCompare(a.last_fly_date || '') || b.id - a.id);
+      const ds = datasets.slice().sort((a, b) => (b.last_fly_date || '').localeCompare(a.last_fly_date || '') || b.id - a.id);
       const months = runsOf(ds, (d) => (d.last_fly_date || '').slice(0, 7) || 'unknown date');
       for (const m of months) html += groupHead(m.key, ds.slice(m.start, m.end)) + ds.slice(m.start, m.end).map(item).join('');
     }
     list.innerHTML = html;
     $$('.list-item', list).forEach((b) => b.addEventListener('click', () => { location.hash = `#browse/${b.dataset.id}`; }));
     this._syncPicks();
+  }
+
+  // The coding unit menu, each unit spelled as first uploaded, the most common first (as in
+  // the Merge tab); returns the datasets to list. A unit no longer uploaded lists them all.
+  _unitFilter() {
+    const units = new Map();
+    for (const d of this.datasets.slice().sort((a, b) => a.id - b.id)) {
+      const k = unitKey(d.coding_unit);
+      if (!units.has(k)) units.set(k, { label: d.coding_unit.trim().replace(/\s+/g, ' '), n: 0 });
+      units.get(k).n++;
+    }
+    const keys = [...units.keys()].sort((a, b) => units.get(b).n - units.get(a).n || a.localeCompare(b));
+    const sel = $('#browse-unit');
+    const html = `<option value="">All (${this.datasets.length})</option>`
+      + keys.map((k) => `<option value="${esc(k)}">${esc(units.get(k).label)} (${units.get(k).n})</option>`).join('');
+    if (sel.innerHTML !== html) sel.innerHTML = html;
+    const unit = units.has(this.unit) ? this.unit : '';
+    sel.value = unit;
+    return unit ? this.datasets.filter((d) => unitKey(d.coding_unit) === unit) : this.datasets;
   }
 
   async show(id) {

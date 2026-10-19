@@ -23,9 +23,9 @@ expected, and nothing secret is entered. If a download or the page is blocked, s
    required). Most are filled in for you from your settings, the file and your data on
    tensor, each colored by where it came from. Generate the README, edit it if you like,
    and save.
-3. **Browse**: datasets by panel, or by the date of their last fly. Click one for its
-   heatmap, README, original files, odors, and where its raw and motion-corrected data
-   are on tensor.
+3. **Browse**: datasets by panel, or by the date of their last fly, of every coding unit
+   or just one. Click one for its heatmap, README, original files, odors, and where its
+   raw and motion-corrected data are on tensor.
 4. **Download**: from a dataset's page, or tick several in the list: the original files
    (a zip), or the response matrices as CSV.
 5. **Merge**: every dataset of a coding unit (e.g. glomeruli) in one download, optionally
