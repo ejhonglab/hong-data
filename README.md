@@ -193,9 +193,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   - *Moving and removing rows and columns* (also in reference matrices): drag a label
     to move it within its group (fly, panel, ...), or a group's name to move the whole
     group; with individual trials, an odor's trials move with its label (the repeat
-    numbers are not handles). Labels of clustered ROIs or odors stay put. Right-click (or
-    Ctrl-click) a label to remove it, or a whole fly or panel, or a glomerulus from every
-    fly. Choosing another order in the toolbar replaces the dragged one. The orange
+    numbers are not handles). Labels of clustered ROIs or odors stay put. Ctrl-click a
+    label to remove what it labels at once (an ROI, an odor with its trials, or a whole
+    fly or panel by its name); right-click it for a menu that asks first, and can also
+    remove a glomerulus from every fly. Choosing another order in the toolbar replaces the dragged one. The orange
     *Reset rows & columns* brings back everything removed, in the toolbar's order.
     Edits are kept for each dataset while you look at others.
   - *Clustering*: ROIs and/or odors ordered by hierarchical clustering (average

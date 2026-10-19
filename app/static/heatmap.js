@@ -9,7 +9,8 @@
 // (a repeat number) is shown next to each.
 // options = { cellW, cellH, lut, norm, nanColor, onHover(cellInfo|null),
 //             reorder: {rows, cols} (labels of these may be dragged), onReorder(axis, keys),
-//             onLabelMenu({axis, level, items, keys, x, y}) (right- or ctrl-click on a label) }
+//             onLabelMenu({axis, level, items, keys, x, y}) (right-click on a label),
+//             onLabelRemove({axis, level, items, keys}) (ctrl-click on a label) }
 // A label dragged moves its items within their group, and a group label its group;
 // onReorder then gets the axis's keys in their new order.
 import { fmtNum } from './colormaps.js';
@@ -70,7 +71,7 @@ export class Heatmap {
     this.head.addEventListener('mousemove', (e) => this._mouseHead(e));
     this.head.addEventListener('mouseleave', this._onLeave);
     for (const el of [this.view, this.head]) {
-      el.addEventListener('pointerdown', (e) => this._dragStart(e, el));
+      el.addEventListener('pointerdown', (e) => this._pointerDown(e, el));
       el.addEventListener('pointermove', (e) => this._dragMove(e));
       el.addEventListener('pointerup', (e) => this._dragEnd(e, true));
       el.addEventListener('pointercancel', (e) => this._dragEnd(e, false));
@@ -546,21 +547,42 @@ export class Heatmap {
     return null;
   }
 
-  _labelMenu(e, el) {
-    if (!this.options.onLabelMenu || this._drag?.active) return;
+  // the label under a pointer event, with the items it labels: {axis, level, items, keys}
+  _labelHit(e, el) {
     const rect = el.getBoundingClientRect();
     const hit = this._labelAt(el, e.clientX - rect.left, e.clientY - rect.top);
+    if (!hit) return null;
+    const items = this.model[hit.axis].slice(hit.run.start, hit.run.end);
+    return { axis: hit.axis, level: hit.level, items, keys: uniqueKeys(items) };
+  }
+
+  _labelMenu(e, el) {
+    // macOS makes a right click of a ctrl-click, whose label was removed already
+    if (this._removedByCtrl) { this._removedByCtrl = false; e.preventDefault(); return; }
+    if (!this.options.onLabelMenu || this._drag?.active) return;
+    const hit = this._labelHit(e, el);
     if (!hit) return;
     e.preventDefault();
     this._setHover(null);
-    const items = this.model[hit.axis].slice(hit.run.start, hit.run.end);
-    this.options.onLabelMenu({ axis: hit.axis, level: hit.level, items, keys: uniqueKeys(items), x: e.clientX, y: e.clientY });
+    this.options.onLabelMenu({ ...hit, x: e.clientX, y: e.clientY });
+  }
+
+  // ctrl-click (with either button) on a label removes what it labels; a press on one
+  // that may be dragged starts a drag
+  _pointerDown(e, el) {
+    this._removedByCtrl = false;
+    if (!e.ctrlKey) { this._dragStart(e, el); return; }
+    if (e.button !== 0 && e.button !== 2) return;
+    const hit = this.options.onLabelRemove && !this._drag && this._labelHit(e, el);
+    if (!hit) return;
+    e.preventDefault();
+    this._removedByCtrl = true;
+    this._setHover(null);
+    this.options.onLabelRemove(hit);
   }
 
   // ------------------------------------------------------------- drag
   _dragStart(e, el) {
-    // ctrl-click as a right click, as it is on macOS
-    if (e.button === 0 && e.ctrlKey) { this._labelMenu(e, el); return; }
     if (e.button !== 0 || e.metaKey || this._drag) return;
     const rect = el.getBoundingClientRect();
     const hit = this._labelAt(el, e.clientX - rect.left, e.clientY - rect.top);

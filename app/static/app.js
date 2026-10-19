@@ -421,7 +421,11 @@ class MatrixViewer {
     this.hint = document.createElement('div');
     this.hint.className = 'vt-hint';
     container.appendChild(this.hint);
-    this.heatmap = new Heatmap(this.wrap, { onReorder: (axis, keys) => this._reorder(axis, keys), onLabelMenu: (info) => this._labelMenu(info) });
+    this.heatmap = new Heatmap(this.wrap, {
+      onReorder: (axis, keys) => this._reorder(axis, keys),
+      onLabelMenu: (info) => this._labelMenu(info),
+      onLabelRemove: ({ axis, keys }) => this._remove(axis, keys),
+    });
     this.colorbar = $('.colorbar', container);
     const saved = LS.get('olfdb.viewer', {});
     this.opts = Object.assign(
@@ -676,8 +680,8 @@ class MatrixViewer {
     const which = drag.rows && drag.cols ? 'a label' : drag.rows ? 'a row label' : 'a column label';
     this.hint.textContent = [
       drag.rows || drag.cols ? `Drag ${which} to move it${grouped ? ' within its group (drag a group’s name to move the group)' : ''}` : '',
-      'right-click (or Ctrl-click) a label to remove it.',
-    ].filter(Boolean).join('; ').replace(/^r/, 'R');
+      'Ctrl-click a label to remove it, or right-click it for a menu.',
+    ].filter(Boolean).join('; ');
   }
 
   _setNote(note) {
@@ -705,11 +709,22 @@ class MatrixViewer {
     this._rebuild();
   }
 
-  // right- or ctrl-click on a label: remove what it labels (a glomerulus also from every fly)
+  // how many items of the heatmap's axis are shown (the trials of an odor being one)
+  _nShown(axis) { return new Set(this.model[axis].map((it) => it.key)).size; }
+
+  // removes keys of the heatmap's axis, unless none would be left (ctrl-click on a label)
+  _remove(axis, keys) {
+    if (keys.length >= this._nShown(axis)) return;
+    const { removed } = this.edits[this._editAxis(axis)];
+    keys.forEach((k) => removed.add(k));
+    this._rebuild();
+  }
+
+  // right-click on a label: remove what it labels (a glomerulus also from every fly)
   _labelMenu({ axis, level, items, keys, x, y }) {
     const ax = this._editAxis(axis);
     const [one, many] = { neural: { rows: ['ROI', 'ROIs'], cols: ['odor', 'odors'] }, generic: { rows: ['row', 'rows'], cols: ['column', 'columns'] } }[this.kind][ax];
-    const shown = new Set(this.model[axis].map((it) => it.key)).size;
+    const shown = this._nShown(axis);
     const it = items[0];
     const muted = (s) => ` <span class="muted">${esc(s)}</span>`;
     const entries = [level === 'group'
@@ -724,7 +739,7 @@ class MatrixViewer {
       html: e.html,
       disabled: e.keys.length >= shown,
       title: e.keys.length >= shown ? `At least one ${one} has to stay` : '',
-      onPick: () => { e.keys.forEach((k) => this.edits[ax].removed.add(k)); this._rebuild(); },
+      onPick: () => this._remove(axis, e.keys),
     })));
   }
 
