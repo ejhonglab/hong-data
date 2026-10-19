@@ -1,8 +1,10 @@
 """Which folders on the server the app may read and write, and holding it to them.
 
 Two lists of absolute paths, set in the Admin tab and saved in `config.ADMIN_FILE`:
-folders the server may read (by default, tensor) and folders it may also write (none by
-default; for backups, later). The app's own data folder is always readable and writable.
+folders (or single files) the server may read (by default, tensor; a reference matrix
+added in the Admin tab adds its file when it is outside them) and folders it may also
+write (none by default; for backups, later). The app's own data folder is always
+readable and writable, and its built-in reference matrices readable.
 Both lists are fixed when the server starts (`start`), and changes wait for a restart:
 
 - the app checks what it reads outside its own folders (users' folders on tensor) against
@@ -19,6 +21,7 @@ from __future__ import annotations
 
 import ctypes
 import datetime as dt
+import html
 import json
 import logging
 import os
@@ -100,9 +103,10 @@ def normalize(path: str) -> str:
 
 
 def check_folder(path: str, write: bool = False) -> dict:
-    """Check a folder entered in the Admin tab: ``{'input', 'path' (normalized, or None),
-    'ok', 'error', 'warning'}``. Folders that are not there, or that the server cannot read
-    (or write, with `write`) yet, are accepted with a warning: tensor may just be unmounted."""
+    """Check a folder entered in the Admin tab (or a file, to read): ``{'input', 'path'
+    (normalized, or None), 'ok', 'error', 'warning'}``. Folders that are not there, or that
+    the server cannot read (or write, with `write`) yet, are accepted with a warning:
+    tensor may just be unmounted."""
     out = {"input": path, "path": None, "ok": False, "error": None, "warning": None}
     try:
         out["path"] = p = normalize(path)
@@ -111,7 +115,7 @@ def check_folder(path: str, write: bool = False) -> dict:
         return out
     if not os.path.exists(p):
         out["warning"] = "not on the server (now, at least; with Docker, only folders mounted into the container are)"
-    elif not os.path.isdir(p):
+    elif write and not os.path.isdir(p):
         out["error"] = "this is a file, not a folder"
         return out
     elif not os.access(p, os.R_OK | os.X_OK):
@@ -147,7 +151,7 @@ def activate(settings: dict) -> None:
     """Hold the app's own checks to `settings` (read: `KINDS` and the data folder; write: write_dirs and the data folder)."""
     global ACTIVE
     write = [_real(p) for p in [*settings["write_dirs"], config.DATA_DIR]]
-    ACTIVE = {"read": [_real(p) for p in settings["read_dirs"]] + write, "write": write}
+    ACTIVE = {"read": [_real(p) for p in [*settings["read_dirs"], config.REFERENCE_DIR]] + write, "write": write}
 
 
 def folders() -> list[str]:
@@ -165,6 +169,57 @@ def can_read(path) -> bool:
 def can_write(path) -> bool:
     """Whether the server may write `path` (following links), by the folders in effect."""
     return ACTIVE is None or _within(path, ACTIVE["write"])
+
+
+def readable_after_restart(path) -> bool:
+    """Whether the server may read `path` once it restarts, by the folders saved."""
+    saved = load()
+    return _within(path, [_real(p) for p in [*saved["read_dirs"], *saved["write_dirs"], config.DATA_DIR, config.REFERENCE_DIR]])
+
+
+def grant_read(path: str) -> Optional[str]:
+    """Add `path` (normalized) to the saved folders the server may read, unless it will be
+    readable anyway: the path added, or None."""
+    if readable_after_restart(path):
+        return None
+    saved = load()
+    save({"read_dirs": [*saved["read_dirs"], path], "write_dirs": saved["write_dirs"]})
+    return path
+
+
+def revoke_read(path: str) -> bool:
+    """Take `path` (as `grant_read` added it) off the saved folders the server may read:
+    whether it was there."""
+    saved = load()
+    if path not in saved["read_dirs"]:
+        return False
+    save({"read_dirs": [p for p in saved["read_dirs"] if p != path], "write_dirs": saved["write_dirs"]})
+    return True
+
+
+def access_steps(path: str, supervisor: Optional[str]) -> list[str]:
+    """What it takes for the server to read `path`, just added to the folders it may read
+    (see `grant_read`), by what runs it: "Docker", "systemd" or None (by hand)."""
+    folder = html.escape(path if os.path.isdir(path) else posixpath.dirname(path))
+    on_server = os.path.exists(path)
+    restart = ("Restart the server (below)." if supervisor else
+               "Restart the server by hand: it is not run by Docker or systemd, which would start it again (DEPLOY.md).")
+    if supervisor == "Docker" and not on_server:
+        return [f"It is not inside the container: on the server, add <code>- {folder}:{folder}:ro</code> under "
+                "<code>volumes:</code> in docker-compose.yml, then run <code>docker compose up -d</code> there, "
+                "which restarts it with the folder mounted read-only."]
+    if supervisor == "systemd":
+        unit = "/etc/systemd/system/olfdb.service"
+        then = "then <code>sudo systemctl daemon-reload &amp;&amp; sudo systemctl restart olfdb</code>"
+        tensor = str(config.TENSOR_ROOT).rstrip("/") + "/"
+        if path.startswith(("/home/", "/root/", "/run/user/")):
+            return [f"The service cannot see home folders (<code>ProtectHome=true</code> in {unit}): move the file "
+                    f"elsewhere (e.g. under /srv) and add it again, or set <code>ProtectHome=read-only</code> there, {then}."]
+        if path.startswith("/mnt/") and not path.startswith(tensor):
+            return [f"Of /mnt, the service sees only tensor: add <code>BindReadOnlyPaths=-{folder}</code> to {unit}, {then}."]
+        if path.startswith(("/tmp/", "/var/tmp/")):
+            return ["The service has a /tmp of its own (<code>PrivateTmp=true</code>): move the file elsewhere and add it again."]
+    return ([] if on_server else ["It is not on the server now: put it there first."]) + [restart]
 
 
 def readable_within(root: Path) -> list[Path]:

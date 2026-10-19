@@ -38,7 +38,9 @@ uploaded file (`data/datasets/<id>/...`; those of datasets deleted in the Admin 
 `data/deleted/<id>/`), the odor table and its sync history, the
 folders set in the Admin tab (`data/admin.json`), the short-lived staging area,
 downloads being sent (`data/exports/`, deleted once sent), cached odor structure images
-(`data/odor_structures/`) and temporary files (`data/tmp/`).
+(`data/odor_structures/`), copies of the reference matrices added in the Admin tab
+(`data/references/`; their files stay where they are, to be backed up there) and
+temporary files (`data/tmp/`).
 
 Before the first start, have a look at:
 
@@ -47,8 +49,13 @@ Before the first start, have a look at:
   read and write" below). It also mounts the server's `/etc/hostname`, for the Admin
   tab to show the server's name (the container's own is random).
 - `config/glomeruli.txt`: glomerulus names accepted as ROI labels.
-- `reference_data/manifest.json`: the fixed matrices shown in the "Reference matrices"
-  tab (format in `reference_data/README.md`). Replace the two synthetic examples.
+- `reference_data/manifest.json`: the built-in matrices shown in the "Reference
+  matrices" tab (format in `reference_data/README.md`). Replace the two synthetic
+  examples, or add matrices in the Admin tab instead. A file added there from outside
+  the folders the server may read also has to be within its reach: in Docker, a
+  read-only volume in `docker-compose.yml` (`- /srv/refs:/srv/refs:ro`, then
+  `docker compose up -d`); with systemd, outside home folders, `/tmp` and `/mnt` (or
+  with a `BindReadOnlyPaths=` for it). The Admin tab says which, when it is added.
 
 ## 3. Build and start it
 

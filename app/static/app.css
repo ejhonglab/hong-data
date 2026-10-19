@@ -252,6 +252,7 @@ table.diff .new { color: var(--ok); }
 .sync-history { margin-top: 24px; }
 .sync-history summary { cursor: pointer; color: var(--ink-muted); margin-bottom: 8px; }
 .tab-badge { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #d08a00; margin-left: 5px; vertical-align: super; }
+.tab-badge.error { background: var(--danger); }
 #ds-odors .odor-table th { top: -12px; }
 
 /* ------------------------------------------------------------- browse */
@@ -266,6 +267,8 @@ table.diff .new { color: var(--ok); }
 .list-item.active { background: var(--accent-soft); border-left-color: var(--accent); }
 .list-item .t { font-weight: 600; display: block; }
 .list-item .s { color: var(--ink-muted); font-size: 12px; display: block; }
+.list-item .s.warn { color: var(--warn); }
+.list-item .s.bad { color: var(--danger); }
 .list-group label { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
 .list-group input, .ds-item .pick { margin: 0; }
 .ds-item { display: flex; align-items: flex-start; border-left: 3px solid transparent; }
@@ -346,6 +349,17 @@ table.diff .new { color: var(--ok); }
 #delete-confirm .small { margin-top: 8px; }
 #delete-confirm code { word-break: break-all; }
 #admin-ds-filter { max-width: 420px; margin-bottom: 10px; }
+#admin-refs-list { margin-bottom: 6px; }
+#admin-refs-list td { vertical-align: top; }
+#admin-refs-list code { word-break: break-all; }
+#admin-refs-list .bad { color: var(--danger); }
+#admin-refs-list .warn { color: var(--warn); }
+.ref-axis-labels { gap: 14px 16px; }
+#ref-check, #ref-result { margin-top: 10px; }
+#ref-check p { margin: 0; }
+.msg ol.steps { margin: 6px 0; padding-left: 22px; }
+.msg ol.steps li { margin: 3px 0; }
+.ref-notes { margin: 0 0 8px; }
 #admin-ds-list { max-height: 480px; overflow: auto; }
 #admin-ds-list td.num { text-align: right; font-variant-numeric: tabular-nums; }
 #admin-ds-list td:last-child { text-align: right; }

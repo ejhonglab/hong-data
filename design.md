@@ -118,8 +118,18 @@ the app is described in [README.md](README.md), hosting it in [DEPLOY.md](DEPLOY
   each response more than one of them has. By power, groups are made greedily in order
   of power, a dataset joining the first group it is close enough to every member of, so
   that no two in a group are further apart than allowed.
-- **Reference matrices** are read from `reference_data/` at request time, so adding or
-  editing one needs no restart.
+- **Reference matrices** are built in (`reference_data/`, read when asked for) or added in
+  the Admin tab: a file anywhere on the server that the app only reads, into a copy in
+  `data/references/<id>/` (its labels and identifiers as JSON, its numbers as float32),
+  made again whenever the file's size or time changes; a failed read is kept too, so a
+  broken file is not read on every listing. A file outside the folders the server may
+  read is added to them as itself (Landlock takes a rule on a single file), not its
+  folder, and read after the next restart, like any other change to them; deleting the
+  matrix takes it off again unless another one needs it. Its chemicals are matched to
+  the odor table when it is served, not when it is read, so that the names shown follow
+  the Odors tab: by CID, else InChI, else CAS, MetaCyc or LOTUS ID, name or
+  abbreviation, never against a CID or InChI given (a name alone can name another
+  isomer).
 
 ## Code layout
 
@@ -133,7 +143,7 @@ app/yamlcheck.py   odor YAML parsing and the matrix ⊂ YAML check
 app/thorimage.py   Experiment.xml summary
 app/metadata.py    form model (pydantic) and README.md generation
 app/db.py          SQLite schema and queries
-app/reference.py   fixed reference matrices
+app/reference.py   reference matrices: built-in and added ones, reading them, matching their chemicals
 app/export.py      downloads: zips of dataset files, concatenated wide/long matrices
 app/merge.py       merged downloads of a coding unit: grouping datasets, scaling groups to each other
 app/odormeta.py    odor table: sheet parsing / validation, sync diff, links, dataset matching
@@ -155,11 +165,12 @@ tests/             pytest tests
 `units` (date, fly_num, roi), `trials` (panel, odor, components, repeat), `responses`
 (one row per cell, for SQL queries), `matrices` (the same values as a float32 blob for
 fast serving), `users` (each user's folders on tensor), `odors` and `odor_syncs`,
-`pubchem` (each odor CID's InChI), and `settings` (site-wide settings from the Admin tab:
-the odor sheet's link). Files: `data/datasets/<id>/` holds the original data
+`pubchem` (each odor CID's InChI), `settings` (site-wide settings from the Admin tab:
+the odor sheet's link), and `reference_datasets` (reference matrices added there). Files: `data/datasets/<id>/` holds the original data
 file, `README.md`, `metadata.json`, `odor_yaml/*.yaml` and the `Experiment.xml`. Also
 under `data/`: `admin.json` (the folders set in the Admin tab), `deleted/<id>/` (the
-folders of datasets deleted in the Admin tab), `staging/`, `exports/`,
+folders of datasets deleted in the Admin tab), `references/<id>/` (reference matrices
+added there, as read), `staging/`, `exports/`,
 `odor_structures/`, `odor_previews/` (parsed sheets awaiting confirmation) and `tmp/`
 (temporary files, such as uploads being received).
 
@@ -221,7 +232,9 @@ POST   /api/odors/apply                     {"fingerprint", "applied_by", "chang
                                             (applied_by: for the sheet; a CSV import has none)
 GET    /api/odors/structure/{cid}           PubChem structure image (cached)
 GET    /api/odors/template.csv              config/odor_sheet_template.csv
-GET    /api/reference, /api/reference/{id}
+GET    /api/reference                       every reference matrix: whether it can be read (why
+                                            not), how many of its chemicals are identified
+GET    /api/reference/{id}                  one, for the viewer (its chemicals as in the odor table)
 GET    /api/admin                           the folders the server may read and write (saved, in
                                             effect since it started, checked), the odor sheet's
                                             link; Landlock, restarts
@@ -235,6 +248,13 @@ POST   /api/admin/restart                   the server stops, for Docker or syst
                                             again (409 if neither would)
 DELETE /api/admin/datasets/{id}             the dataset deleted, its folder moved to
                                             data/deleted/<id>/ → {"files": where it went}
+POST   /api/admin/references/check          {"path", "chemical_axis", "kind"} → whether it can be
+                                            added, read now (a preview) or after a restart (steps)
+POST   /api/admin/references                {"path", "title", "description", "source", "kind",
+                                            "chemical_axis", "value_label", "row_label", "col_label"}
+                                            → added (its file to the folders it may read, if need be)
+DELETE /api/admin/references/{id}           its copy deleted (never its file) → {"revoked": the path
+                                            taken off the folders it may read, if any}
 ```
 
 Matrix payloads carry `values_b64`: little-endian float32, row-major

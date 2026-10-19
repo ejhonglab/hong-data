@@ -2,7 +2,7 @@
 // with a column header that stays at the top and row labels that stay at the left while
 // scrolling. Only the visible cells are drawn, so 10k+ rows are fine.
 //
-// model = { rows: [{label, group, sub, key}], cols: (the same), values: Float32Array (row-major),
+// model = { rows: [{label, group, sub, key, detail (for the tooltip)}], cols: (the same), values: Float32Array (row-major),
 //           rowDendro, colDendro (optional, from cluster.js layoutDendrogram),
 //           rowTitle, rowGroupTitle, transposed (odors are the rows) }
 // Neighbouring items with the same key (the trials of one odor) share one label; `sub`
@@ -504,8 +504,9 @@ export class Heatmap {
     // the odor first, then the unit, whichever way round they are shown
     const [odor, unit] = m.transposed ? [row, col] : [col, row];
     const parts = [];
-    if (odor) parts.push(`<b>${esc(odor.label)}</b>${odor.sub != null ? ` <span class="muted">repeat ${esc(odor.sub)}</span>` : ''}${odor.group != null ? `<span class="muted"> in ${esc(odor.group)}</span>` : ''}`);
-    if (unit) parts.push(`${unit.group != null ? esc(unit.group) + ' ' : ''}<b>${esc(unit.label)}</b>`);
+    const detail = (it) => (it.detail ? ` <span class="muted">${esc(it.detail)}</span>` : '');
+    if (odor) parts.push(`<b>${esc(odor.label)}</b>${odor.sub != null ? ` <span class="muted">repeat ${esc(odor.sub)}</span>` : ''}${odor.group != null ? `<span class="muted"> in ${esc(odor.group)}</span>` : ''}${detail(odor)}`);
+    if (unit) parts.push(`${unit.group != null ? esc(unit.group) + ' ' : ''}<b>${esc(unit.label)}</b>${detail(unit)}`);
     if (row && col) parts.push(`<span class="val">${Number.isFinite(v) ? fmtNum(v) : 'missing'}</span>`);
     this._tooltipAt(parts.join('<br>'), e);
     if (this.options.onHover) this.options.onHover(info);

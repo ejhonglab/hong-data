@@ -1165,14 +1165,19 @@ async def dataset_odor_table(request: Request) -> Response:
     return JSONResponse(result)
 
 
+def _odor_index() -> odormeta.OdorIndex:
+    return odormeta.OdorIndex(db.list_odors())
+
+
 async def reference_list(request: Request) -> Response:
-    return JSONResponse({"datasets": reference.manifest()})
+    """Every reference matrix, with whether it can be shown (and why not) and whether its chemicals are identified."""
+    return JSONResponse({"datasets": await run_in_threadpool(lambda: reference.listing(db, _odor_index()))})
 
 
 async def reference_get(request: Request) -> Response:
-    data = await run_in_threadpool(reference.load, request.path_params["ref_id"])
+    data = await run_in_threadpool(lambda: reference.load(db, request.path_params["ref_id"], _odor_index()))
     if data is None:
-        return json_error(404, "reference dataset not found")
+        return json_error(404, "reference matrix not found")
     return JSONResponse(data)
 
 
@@ -1333,6 +1338,38 @@ def _delete_dataset(ds_id: int) -> tuple[int, dict]:
     return 200, {"ok": True, "files": str(moved[0]) if moved else None}
 
 
+async def admin_reference_check(request: Request) -> Response:
+    """Check a file to add as a reference matrix ({"path", "chemical_axis", "kind"}), see `reference.check`."""
+    body = await request.json()
+    if not isinstance(body, dict):
+        return json_error(400, 'expected {"path": ...}')
+    axis = body.get("chemical_axis") if body.get("chemical_axis") in reference.AXES else "detect"
+    kind = body.get("kind") if body.get("kind") in reference.KINDS else "detect"
+    return JSONResponse(await run_in_threadpool(
+        lambda: reference.check(str(body.get("path") or ""), axis, kind, _odor_index(), _supervisor())))
+
+
+async def admin_reference_add(request: Request) -> Response:
+    """Add a reference matrix ({"path", "title", "description", "kind", "chemical_axis",
+    "value_label", "row_label", "col_label", "source"}), see `reference.add`."""
+    body = await request.json()
+    if not isinstance(body, dict):
+        return json_error(400, 'expected {"path": ..., "title": ...}')
+    status, result = await run_in_threadpool(lambda: reference.add(db, body, _odor_index(), _supervisor()))
+    if status == 200:
+        log.info("reference matrix %s added in the Admin tab: %s", result["id"], body.get("path"))
+    return JSONResponse(result, status_code=status)
+
+
+async def admin_reference_delete(request: Request) -> Response:
+    """Delete a reference matrix added in the Admin tab (its import, not its file), see `reference.delete`."""
+    ref_id = request.path_params["ref_id"]
+    status, result = await run_in_threadpool(reference.delete, db, ref_id)
+    if status == 200:
+        log.info("reference matrix %s deleted in the Admin tab", ref_id)
+    return JSONResponse(result, status_code=status)
+
+
 async def admin_dataset_delete(request: Request) -> Response:
     """Delete a dataset (see `_delete_dataset`)."""
     status, result = await run_in_threadpool(_delete_dataset, int(request.path_params["ds_id"]))
@@ -1412,6 +1449,9 @@ routes = [
     Route("/api/admin/host", admin_host),
     Route("/api/admin/restart", admin_restart, methods=["POST"]),
     Route("/api/admin/datasets/{ds_id:int}", admin_dataset_delete, methods=["DELETE"]),
+    Route("/api/admin/references/check", admin_reference_check, methods=["POST"]),
+    Route("/api/admin/references", admin_reference_add, methods=["POST"]),
+    Route("/api/admin/references/{ref_id}", admin_reference_delete, methods=["DELETE"]),
     Mount("/static", RevalidatedStaticFiles(directory=str(config.STATIC_DIR)), name="static"),
 ]
 

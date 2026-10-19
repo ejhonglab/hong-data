@@ -379,21 +379,27 @@ def fetch_inchis(cids: list[int]) -> dict[int, str]:
 
 
 class OdorIndex:
-    """Looks up database odors by name or alias, abbreviation, or CID."""
+    """Looks up database odors by name or alias, abbreviation, CID, InChI, CAS, MetaCyc or LOTUS ID."""
 
     def __init__(self, odors: list[dict]):
         self.by_id = {o["id"]: o for o in odors}
         self.by_name: dict[str, list[int]] = {}
         self.by_label: dict[str, list[int]] = {}
+        self.by_folded_label: dict[str, list[int]] = {}
         self.by_cid: dict[int, list[int]] = {}
+        self.by_id_field: dict[str, dict[str, list[int]]] = {f: {} for f in ("inchi", "cas", "metacyc", "lotus")}
         for o in odors:
             for n in [o["name"], *(o.get("aliases") or [])]:
                 self._add(self.by_name, n.casefold(), o["id"])
             for lab in [o.get("abbrev"), *(o.get("aliases") or [])]:
                 if lab:
                     self._add(self.by_label, lab, o["id"])
+                    self._add(self.by_folded_label, lab.casefold(), o["id"])
             if o.get("cid"):
                 self._add(self.by_cid, o["cid"], o["id"])
+            for f, index in self.by_id_field.items():
+                if o.get(f):
+                    self._add(index, o[f].strip(), o["id"])
 
     @staticmethod
     def _add(index: dict, key, odor_id: int) -> None:
@@ -429,6 +435,41 @@ class OdorIndex:
         if len(folded) == 1:
             return folded.pop(), "abbrev", []
         return None, "none", sorted(folded)
+
+    def match_chemical(self, ids: dict, label: str) -> tuple[Optional[int], str]:
+        """The odor a chemical of a reference matrix is: by its CID, else its InChI, else by
+        its CAS, MetaCyc or LOTUS ID, name, abbreviation, or `label` (as a name, then an
+        abbreviation); but never an odor whose CID or InChI differs from one given.
+
+        Args:
+            ids: the chemical's identifiers in the file (``cid``, ``inchi``, ``cas``,
+                ``metacyc``, ``lotus``, ``name``, ``abbrev``; any may be missing).
+            label: its label in the file.
+
+        Returns:
+            (odor id or None, how: 'cid' | 'inchi' | 'cas' | 'metacyc' | 'lotus' | 'name' |
+            'abbrev' | 'ambiguous' | 'none')
+        """
+        cid, inchi = ids.get("cid"), ids.get("inchi")
+
+        def agrees(i: int) -> bool:
+            o = self.by_id[i]
+            return not (cid and o.get("cid") and o["cid"] != cid) and not (inchi and o.get("inchi") and o["inchi"] != inchi)
+
+        names = [n.casefold() for n in (ids.get("name"), label) if n]
+        labels = [a for a in (ids.get("abbrev"), label) if a]
+        tries = [("cid", self.by_cid.get(cid, []) if cid else []),
+                 *((f, self.by_id_field[f].get(str(ids[f]).strip(), [])) for f in ("inchi", "cas", "metacyc", "lotus") if ids.get(f)),
+                 *(("name", self.by_name.get(n, [])) for n in names),
+                 *(("abbrev", self.by_label.get(a, [])) for a in labels),
+                 *(("abbrev", self.by_folded_label.get(a.casefold(), [])) for a in labels)]
+        for how, found in tries:
+            found = [i for i in found if agrees(i)]
+            if len(found) == 1:
+                return found[0], how
+            if len(found) > 1:
+                return None, "ambiguous"
+        return None, "none"
 
 
 def dataset_yaml_odors(ds: dict, datasets_dir: Path) -> list[yamlcheck.YamlOdor]:

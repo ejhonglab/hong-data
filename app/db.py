@@ -151,6 +151,20 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS reference_datasets (  -- added in the Admin tab (see reference.py)
+    id TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    path TEXT NOT NULL,                -- the file on the server (never written to)
+    title TEXT NOT NULL,
+    description TEXT,
+    kind TEXT NOT NULL,                -- 'detect' | 'sequential' | 'diverging' | 'binary'
+    chemical_axis TEXT NOT NULL,       -- 'detect' | 'rows' | 'cols' | 'none'
+    value_label TEXT,
+    row_label TEXT,
+    col_label TEXT,
+    source TEXT,
+    read_grant TEXT                    -- the path added to the folders the server may read for it, if one was
+);
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -166,6 +180,8 @@ ADDED_COLUMNS = [("datasets", "mocorr_data_path", "TEXT")]
 USER_DIR_COLUMNS = ("raw_dirs", "mocorr_dirs", "odor_dirs")
 ODOR_COLUMNS = ("name", "abbrev", "aliases", "cid", "cas", "solvent", "supplier", "catalog_no", "catalog_url",
                 "metacyc", "lotus", "inventory", "notes")
+REFERENCE_COLUMNS = ("id", "created_at", "path", "title", "description", "kind", "chemical_axis", "value_label",
+                     "row_label", "col_label", "source", "read_grant")
 
 
 class Database:
@@ -501,6 +517,22 @@ class Database:
             else:
                 con.execute("INSERT INTO settings (key, value, updated_at) VALUES (?,?,?) ON CONFLICT (key) DO UPDATE "
                             "SET value = excluded.value, updated_at = excluded.updated_at", (key, value, when))
+
+    # -------------------------------------------------------- reference matrices
+    def list_references(self) -> list[dict]:
+        """The reference matrices added in the Admin tab, in the order they were added."""
+        with self.connect() as con:
+            return [dict(r) for r in con.execute("SELECT * FROM reference_datasets ORDER BY created_at, id")]
+
+    def add_reference(self, ref: dict) -> None:
+        """Add a reference matrix (a dict with `REFERENCE_COLUMNS`)."""
+        with self.connect() as con:
+            con.execute(f"INSERT INTO reference_datasets ({', '.join(REFERENCE_COLUMNS)}) VALUES ({', '.join('?' * len(REFERENCE_COLUMNS))})",
+                        [ref.get(c) for c in REFERENCE_COLUMNS])
+
+    def delete_reference(self, ref_id: str) -> bool:
+        with self.connect() as con:
+            return con.execute("DELETE FROM reference_datasets WHERE id = ?", (ref_id,)).rowcount > 0
 
     # ------------------------------------------------------------------- users
     @staticmethod

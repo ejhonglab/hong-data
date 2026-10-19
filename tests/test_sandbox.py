@@ -35,7 +35,8 @@ def test_check_folder(tmp_path):
     assert sandbox.check_folder(f"{tmp_path}/ro/") == {"input": f"{tmp_path}/ro/", "path": f"{tmp_path}/ro", "ok": True,
                                                        "error": None, "warning": None}
     assert "not on the server" in sandbox.check_folder(f"{tmp_path}/nothing")["warning"]
-    assert sandbox.check_folder(f"{tmp_path}/f")["error"] == "this is a file, not a folder"
+    assert sandbox.check_folder(f"{tmp_path}/f")["ok"]  # a file alone may be read (as a reference matrix is)
+    assert sandbox.check_folder(f"{tmp_path}/f", write=True)["error"] == "this is a file, not a folder"
     assert not sandbox.check_folder("relative")["ok"]
     if os.geteuid() != 0:  # root may write anywhere
         os.chmod(tmp_path / "ro", 0o555)
@@ -192,7 +193,8 @@ LANDLOCK_SCRIPT = """
 import json, os, sys
 from app import config, sandbox
 config.ensure_dirs()
-json.dump({"read_dirs": [sys.argv[1] + "/allowed"], "write_dirs": [sys.argv[1] + "/out"]}, open(config.ADMIN_FILE, "w"))
+json.dump({"read_dirs": [sys.argv[1] + "/allowed", sys.argv[1] + "/single/f"], "write_dirs": [sys.argv[1] + "/out"]},
+          open(config.ADMIN_FILE, "w"))
 status = sandbox.start()
 
 def can(f):
@@ -208,6 +210,9 @@ print(json.dumps({
     "read allowed": can(lambda: open(t + "/allowed/f").read()),
     "read elsewhere": can(lambda: open(t + "/denied/f").read()),
     "list elsewhere": can(lambda: os.listdir(t + "/denied")),
+    "stat elsewhere": can(lambda: os.stat(t + "/denied/f")),
+    "read a file allowed alone": can(lambda: open(t + "/single/f").read()),
+    "read the file beside it": can(lambda: open(t + "/single/g").read()),
     "write out": can(lambda: open(t + "/out/f", "w").close()),
     "write allowed": can(lambda: open(t + "/allowed/g", "w").close()),
     "write data": can(lambda: open(os.path.join(os.environ["OLFDB_DATA_DIR"], "f"), "w").close()),
@@ -218,13 +223,15 @@ print(json.dumps({
 
 @pytest.mark.skipif(not sandbox.landlock_abi(), reason="the kernel has no Landlock")
 def test_landlock(tmp_path):
-    for d in ("allowed", "denied", "out"):
+    for d in ("allowed", "denied", "out", "single"):
         (tmp_path / d).mkdir()
         (tmp_path / d / "f").write_text("x")
+    (tmp_path / "single" / "g").write_text("x")
     env = {**os.environ, "OLFDB_DATA_DIR": str(tmp_path / "data"), "OLFDB_LANDLOCK": "1"}
     out = subprocess.run([sys.executable, "-c", LANDLOCK_SCRIPT, str(tmp_path)], cwd=Path(__file__).parent.parent, env=env,
                          capture_output=True, text=True, check=True).stdout
     r = json.loads(out)
     assert r.pop("kernel")["enforced"]
-    assert r == {"read allowed": True, "read elsewhere": False, "list elsewhere": False, "write out": True,
+    assert r == {"read allowed": True, "read elsewhere": False, "list elsewhere": False, "stat elsewhere": True,
+                 "read a file allowed alone": True, "read the file beside it": False, "write out": True,
                  "write allowed": False, "write data": True, "temporary file": True}

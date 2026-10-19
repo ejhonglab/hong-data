@@ -23,7 +23,7 @@
   <nav class="tabs" aria-label="Help and administration">
     <a href="https://github.com/ejhonglab/hong-data#readme-ov-file" target="_blank" rel="noopener">Docs</a>
     <span class="tabs-sep" aria-hidden="true"></span>
-    <a href="#admin" data-tab="admin">Admin</a>
+    <a href="#admin" data-tab="admin">Admin<span class="tab-badge error" id="admin-badge" hidden title="A reference matrix cannot be read (see the Admin tab)"></span></a>
   </nav>
 </header>
 
@@ -392,7 +392,7 @@
     <div id="admin-page" hidden>
       <div class="page-head">
         <h1>Admin</h1>
-        <p class="lede">Settings for the whole site: which folders on the server this app may read and write (fixed when the server starts, so changes take effect when it restarts, which can be done below), and the odor sheet it syncs the odor table from. Datasets can be deleted at the bottom.</p>
+        <p class="lede">Settings for the whole site: which folders on the server this app may read and write (fixed when the server starts, so changes take effect when it restarts, which can be done below), the odor sheet it syncs the odor table from, and the reference matrices it shows. Datasets can be deleted at the bottom.</p>
       </div>
 
       <div class="step" id="admin-folders">
@@ -400,7 +400,7 @@
         <p class="muted">Absolute paths on the server. Besides these, the app reads its own code and the system's, and reads and writes its data folder (<code id="admin-data-dir">…</code><span id="admin-data-dir-where"></span>), where it keeps everything it stores; it writes nowhere else.</p>
         <div class="dir-section">
           <h3>May read</h3>
-          <p class="muted">Users' folders on tensor (<code id="admin-tensor-root">…</code>) can only be used where they are in one of these.</p>
+          <p class="muted">Users' folders on tensor (<code id="admin-tensor-root">…</code>) can only be used where they are in one of these. A file alone may be listed too: a reference matrix added below adds its file here when it is outside these.</p>
           <div class="dirlist" data-kind="read_dirs" data-placeholder="e.g. /mnt/tank0/tensor"></div>
         </div>
         <div class="dir-section">
@@ -429,6 +429,34 @@
           <a class="btn" href="/api/odors/template.csv" download>Template CSV</a>
         </div>
         <div id="admin-odor-preview"></div>
+      </div>
+
+      <div class="step" id="admin-refs">
+        <div class="step-head"><h2>Reference matrices</h2></div>
+        <p class="muted">Tables shown in the Reference matrices tab, each a CSV, TSV or parquet file on the server, which the app never changes: it reads it into its data folder, and again whenever it changes. Deleting one deletes only that copy. The file has row labels in its first column, an optional <code>group</code> column, then one column of numbers per matrix column (blank: missing). Its chemicals are shown by their names in the Odors tab, matched by CID (a column such as <code>cid</code> or <code>pubchem_cid</code>), else InChI (<code>inchi</code>), else CAS, MetaCyc or LOTUS ID, name or abbreviation (columns of these, or the labels themselves). When its columns are the chemicals, give these as rows instead (labelled <code>cid</code>, ...).</p>
+        <div id="admin-refs-status" aria-live="polite"></div>
+        <div id="admin-refs-list"></div>
+        <h3 class="subhead">Add one</h3>
+        <div class="grid">
+          <label class="field span2"><span>File on the server *</span><input id="ref-path" spellcheck="false" autocomplete="off" placeholder="e.g. /mnt/tank0/tensor/tom/reference/fruit_volatiles.csv"><span class="path-msg" id="ref-path-msg" aria-live="polite"></span></label>
+          <label class="field"><span>Title *</span><input id="ref-title" placeholder="e.g. Volatile concentrations across fruits"></label>
+          <label class="field"><span>Source</span><input id="ref-source" placeholder="citation or URL"></label>
+          <label class="field span2"><span>Description</span><input id="ref-description" placeholder="one or two sentences shown under the title"></label>
+          <label class="field"><span>Chemicals are</span><select id="ref-axis">
+            <option value="detect">found from identifiers or names</option><option value="rows">its rows</option>
+            <option value="cols">its columns</option><option value="none">neither (not about chemicals)</option></select></label>
+          <label class="field"><span>Colors</span><select id="ref-kind">
+            <option value="detect">from its values</option><option value="sequential">sequential (magnitudes)</option>
+            <option value="diverging">diverging (signed, white at 0)</option><option value="binary">binary (0/1, presence)</option></select></label>
+          <label class="field"><span>Values are</span><input id="ref-value-label" placeholder="e.g. log10 ng/g"></label>
+          <div class="grid ref-axis-labels">
+            <label class="field"><span>Rows are</span><input id="ref-row-label" placeholder="e.g. chemical"></label>
+            <label class="field"><span>Columns are</span><input id="ref-col-label" placeholder="e.g. fruit"></label>
+          </div>
+        </div>
+        <div id="ref-check" aria-live="polite"></div>
+        <div id="ref-result" aria-live="polite"></div>
+        <div class="actions"><button type="button" class="btn primary" id="ref-add">Add</button></div>
       </div>
 
       <div class="step" id="admin-server">
@@ -460,15 +488,16 @@
   <!-- ===================================================== REFERENCE -->
   <section id="tab-reference" class="tab" hidden>
     <aside class="sidebar">
-      <div class="sidebar-head"><h1>Reference matrices</h1><p class="muted">Fixed datasets maintained on the server.</p></div>
+      <div class="sidebar-head"><h1>Reference matrices</h1><p class="muted">Tables kept on the server, added in the Admin tab.</p></div>
       <div id="reference-list" class="list"></div>
     </aside>
     <div class="content">
       <div class="empty" id="reference-empty">Choose a matrix on the left.</div>
       <div id="reference-view" hidden>
         <div class="ds-head">
-          <div><h2 id="ref-title"></h2><p class="muted" id="ref-desc"></p></div>
+          <div><h2 id="ref-view-title"></h2><p class="muted" id="ref-desc"></p></div>
         </div>
+        <div id="ref-msgs"></div>
         <div id="reference-viewer" class="viewer viewer-main"></div>
       </div>
     </div>
@@ -568,6 +597,9 @@
     </div>
     <div class="vt-group" data-role="cols">
       <label>Odors <select data-opt="odorOrder"><option value="file">as in file</option><option value="name">by name, then conc.</option></select></label>
+    </div>
+    <div class="vt-group" data-role="chem" title="How the chemicals matched to the Odors tab are labelled">
+      <label>Chemicals <select data-opt="chemLabels"><option value="name">names (Odors tab)</option><option value="abbrev">abbreviations</option><option value="file">as in the file</option></select></label>
     </div>
     <div class="vt-group" data-role="cluster" title="Hierarchical clustering (average linkage) of trial-averaged responses, of the ROIs and odors not removed (whatever order they are shown in). ROIs are clustered all together, whichever fly they come from (they are shown ungrouped while this is on). Odors are clustered within each panel, by their responses across all ROIs.">
       <span class="vt-label">Cluster</span>
