@@ -39,8 +39,10 @@ Docker) when the other set is already there.
 ```bash
 sudo mkdir -p /opt/olfdb
 sudo chown "$USER" /opt/olfdb
-# copy the project there (git clone, scp, rsync ...), e.g.:
-rsync -a --exclude data/ ./olfdb/ server:/opt/olfdb/
+# the project goes in /opt/olfdb itself, not a folder inside it (the systemd units below
+# expect /opt/olfdb/docker-compose.yml):
+git clone https://github.com/ejhonglab/hong-data.git /opt/olfdb
+# (or from another computer: rsync -a --exclude data/ ./hong-data/ server:/opt/olfdb/)
 cd /opt/olfdb
 mkdir -p data
 sudo chown -R 10001:10001 data        # the container runs as uid 10001 ("olfdb")
@@ -67,8 +69,9 @@ Before the first start, have a look at:
   examples, or add matrices in the Admin tab instead. A file added there from outside
   the folders the server may read also has to be within its reach: in Docker, a
   read-only volume in `docker-compose.yml` (`- /srv/refs:/srv/refs:ro`, then
-  `docker compose up -d`); with systemd, outside home folders, `/tmp`, `/mnt` and `/local` (or
-  with a `BindReadOnlyPaths=` for it). The Admin tab says which, when it is added.
+  `docker compose up -d`); with systemd, outside home folders, `/tmp`, `/mnt` and
+  `/local` (or with a `BindReadOnlyPaths=` for it). The Admin tab says which, when it is
+  added.
 
 ## 3. Build and start it
 
@@ -78,6 +81,9 @@ docker compose up -d --build
 curl -s http://localhost:8080/api/health     # {"ok":true,...}
 docker compose logs -f                       # Ctrl-C to stop following
 ```
+
+Go on only once the health check answers `{"ok":true,...}`: the systemd unit in section
+4 runs the same command, so whatever stops it here stops the unit too.
 
 Open `http://<server>:8080/` from any machine on the intranet. The container has
 `restart: unless-stopped`, so Docker already restarts it after a crash and after a
@@ -157,9 +163,14 @@ it and delete datasets; to require a password, see section 6.
 sudo cp deploy/olfdb.service /etc/systemd/system/olfdb.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now olfdb
-systemctl status olfdb
+systemctl status olfdb     # "active (running)", and still a minute later
 journalctl -u olfdb -f
 ```
+
+If it fails again and again, the unit gives up after 5 starts in 10 minutes, and
+`systemctl status olfdb` shows it as failed. `journalctl -u olfdb -n 100` says why
+("Assertion failed" if the code is not in `/opt/olfdb` itself). Once that is fixed:
+`sudo systemctl reset-failed olfdb && sudo systemctl start olfdb`.
 
 The unit runs `docker compose up --build` in the foreground with `Restart=always`, so
 systemd supervises the compose process while Docker supervises the container. To
@@ -244,16 +255,23 @@ sudo apt install python3-venv
 sudo useradd --system --home /opt/olfdb --shell /usr/sbin/nologin olfdb
 cd /opt/olfdb
 python3 -m venv venv && venv/bin/pip install -r requirements.txt
+mkdir -p data
 sudo chown -R olfdb:olfdb /opt/olfdb
+# a first run in the foreground, as the service runs it: once
+# `curl -s http://localhost:8080/api/health` (in another terminal) answers {"ok":true,...},
+# stop it with Ctrl-C
+sudo -u olfdb env OLFDB_DATA_DIR=/opt/olfdb/data venv/bin/uvicorn app.main:app --port 8080
 sudo cp deploy/olfdb-venv.service /etc/systemd/system/olfdb.service
 sudo systemctl daemon-reload && sudo systemctl enable --now olfdb
+systemctl status olfdb     # "active (running)", and still a minute later
 ```
 
-Same behaviour (boot start, restart on crash or from the Admin tab). Instead of a
+Same behaviour (boot start, restart on crash or from the Admin tab; giving up after 5
+starts in 2 minutes, restarts from the Admin tab included, as in section 4). Instead of a
 container, the unit's sandboxing limits what the server can reach: every file read-only
-but `data/`, no home folders, and of `/mnt` and `/local` only tensor, read-only (see "Folders it may
-read and write"). A folder it may write needs `ReadWritePaths=` there too (and
-`BindPaths=` if it is under `/mnt` or `/local`).
+but `data/`, no home folders, and of `/mnt` and `/local` only tensor, read-only (see
+"Folders it may read and write"). A folder it may write needs `ReadWritePaths=` there too
+(and `BindPaths=` if it is under `/mnt` or `/local`).
 
 ## Configuration reference
 

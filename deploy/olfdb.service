@@ -6,6 +6,12 @@ Description=Odor response database (Docker Compose)
 Requires=docker.service
 After=docker.service network-online.target
 Wants=network-online.target
+# Restart= below starts it again when it fails, but gives up (status: failed) after 5 starts
+# in 10 minutes, when something is broken that restarting will not fix (journalctl -u olfdb)
+StartLimitIntervalSec=10min
+StartLimitBurst=5
+# the code must be in /opt/olfdb itself, not a folder inside it
+AssertPathExists=/opt/olfdb/docker-compose.yml
 
 [Service]
 Type=simple

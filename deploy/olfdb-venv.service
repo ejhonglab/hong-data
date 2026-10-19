@@ -2,12 +2,20 @@
 # Install (as root):
 #   useradd --system --home /opt/olfdb --shell /usr/sbin/nologin olfdb
 #   python3 -m venv /opt/olfdb/venv && /opt/olfdb/venv/bin/pip install -r /opt/olfdb/requirements.txt
-#   chown -R olfdb:olfdb /opt/olfdb
+#   mkdir -p /opt/olfdb/data && chown -R olfdb:olfdb /opt/olfdb
 #   cp deploy/olfdb-venv.service /etc/systemd/system/olfdb.service && systemctl daemon-reload && systemctl enable --now olfdb
 [Unit]
 Description=Odor response database (uvicorn)
 After=network-online.target remote-fs.target
 Wants=network-online.target
+# Restart= below starts it again when it exits (also to restart from the Admin tab), but gives
+# up (status: failed) after 5 starts in 2 minutes, when something is broken that restarting
+# will not fix (journalctl -u olfdb)
+StartLimitIntervalSec=2min
+StartLimitBurst=5
+# the code must be in /opt/olfdb itself, not a folder inside it, with its venv and data/
+AssertPathExists=/opt/olfdb/venv/bin/uvicorn
+AssertPathExists=/opt/olfdb/data
 
 [Service]
 Type=simple
