@@ -919,6 +919,23 @@ class UploadFlow {
     dz.addEventListener('dragleave', () => dz.classList.remove('over'));
     dz.addEventListener('drop', (e) => { e.preventDefault(); dz.classList.remove('over'); if (e.dataTransfer.files[0]) this.stageFile(e.dataTransfer.files[0]); });
     fi.addEventListener('change', () => { if (fi.files[0]) this.stageFile(fi.files[0]); fi.value = ''; });
+    // the example file saved from GitHub (which allows that from any site), rather than shown
+    // there: browsers ignore `download` on a link to another site
+    const example = $('.example-file a');
+    example.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const out = example.nextElementSibling;
+      setStatus(out, 'Downloading…');
+      try {
+        const res = await fetch(example.href);
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        saveBlob(new Blob([await res.blob()], { type: 'text/csv' }), example.textContent.trim());
+        setStatus(out, '');
+      } catch (err) {
+        setStatus(out, `Could not download it (${err.message}): opened instead`, 'error');
+        window.open(example.href, '_blank', 'noopener');
+      }
+    });
 
     const form = $('#step-meta');
     $('#power-mw').addEventListener('input', () => this._syncPower());
