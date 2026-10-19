@@ -32,7 +32,7 @@ from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, R
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import config, export, filelog, merge, movies, odormeta, reference, sandbox, tensor, thorimage, yamlcheck
+from . import backup, config, export, filelog, merge, movies, odormeta, reference, sandbox, tensor, thorimage, yamlcheck
 from .db import Database
 from .glomeruli import load_glomeruli
 from .ingest import ParsedData, ValidationError, load_file, load_parsed, save_parsed
@@ -1325,6 +1325,22 @@ async def admin_files(request: Request) -> Response:
     return JSONResponse(await run_in_threadpool(run))
 
 
+async def admin_backups(request: Request) -> Response:
+    """The backups, in the folders the server may write, and whether the last one is current (see `backup.status`)."""
+    return JSONResponse(await run_in_threadpool(backup.status, db))
+
+
+async def admin_backup_start(request: Request) -> Response:
+    """Start a backup into one of the folders the server may write ({"folder"}), made in
+    the background (see `backup.make`); the backups then, as from GET."""
+    body = await request.json()
+    error = backup.start(db, str(body.get("folder") or "") if isinstance(body, dict) else "")
+    if error:
+        return json_error(409, error)
+    log.info("backup into %s started from the Admin tab", body["folder"])
+    return JSONResponse(await run_in_threadpool(backup.status, db))
+
+
 async def admin_check(request: Request) -> Response:
     """Check folders for the Admin tab ({"read_dirs", "write_dirs"}), without saving them."""
     body = await request.json()
@@ -1547,6 +1563,8 @@ routes = [
     Route("/api/admin", admin_save, methods=["POST"]),
     Route("/api/admin/check", admin_check, methods=["POST"]),
     Route("/api/admin/files", admin_files),
+    Route("/api/admin/backups", admin_backups),
+    Route("/api/admin/backups", admin_backup_start, methods=["POST"]),
     Route("/api/admin/odor_sheet", admin_odor_sheet, methods=["POST"]),
     Route("/api/admin/host", admin_host),
     Route("/api/admin/restart", admin_restart, methods=["POST"]),

@@ -2762,6 +2762,9 @@ class AdminPage {
       this.check();
     });
     $('#admin-save').addEventListener('click', () => this.save());
+    $('#admin-backup-btn').addEventListener('click', () => this.backup());
+    this._backupTimer = 0;
+    this._watchingBackup = false; // a backup started here is being made
     $('#admin-sheet-save').addEventListener('click', () => this.saveSheet());
     $('#admin-sheet-url').addEventListener('keydown', (e) => { if (e.key === 'Enter') this.saveSheet(); });
     $('#admin-restart').addEventListener('click', () => this.restart());
@@ -2811,6 +2814,7 @@ class AdminPage {
   async load() {
     this.loadHost();
     this.loadFiles();
+    this.loadBackups();
     this.loadDatasets();
     this.loadRefs();
     $('#ref-result').replaceChildren();
@@ -2936,6 +2940,82 @@ class AdminPage {
     const tree = document.createElement('div');
     tree.innerHTML = res.files.length ? fileTreeHtml(fileTree(res.files), `${res.root.replace(/\/$/, '')}/`, true) : '<p class="muted">None yet.</p>';
     box.replaceChildren(...(res.note ? [msgBox('warn', `Paths as in the Docker container: ${esc(res.note)}.`)] : []), ...tree.childNodes);
+  }
+
+  async loadBackups() {
+    clearTimeout(this._backupTimer);
+    let s;
+    try { s = await api('/api/admin/backups'); } catch (e) {
+      $('#admin-backup-status').replaceChildren(msgBox('error', `Could not read the backups: ${esc(e.message)}`));
+      return;
+    }
+    this._showBackups(s);
+  }
+
+  // the backups (as from /api/admin/backups): whether the last is current, the folders to
+  // make one into, and every backup in them; checked again every second while one is made
+  _showBackups(s) {
+    const { job, last, current: c } = s, out = $('#admin-backup-msg');
+    const select = $('#admin-backup-folder'), chosen = select.value;
+    select.innerHTML = s.folders.map((f) => `<option value="${esc(f.path)}"${f.ok ? '' : ' disabled'}>${esc(f.path)}${f.ok ? '' : ` (${esc(f.error)})`}</option>`).join('');
+    const ok = s.folders.filter((f) => f.ok);
+    if (ok.some((f) => f.path === chosen)) select.value = chosen; else if (ok.length) select.value = ok[0].path;
+    $('.backup-folder').hidden = !s.folders.length;
+    select.disabled = job.running;
+    $('#admin-backup-btn').disabled = job.running || !ok.length;
+
+    let kind, label, detail;
+    if (job.running) {
+      [kind, label] = ['pending', 'Backing Up…'];
+      detail = `into <code>${esc(job.folder)}</code>: ${job.total ? `${job.done.toLocaleString()} of ${job.total.toLocaleString()} files` : 'the database'}`;
+    } else if (!last) [kind, label, detail] = ['none', 'No Backup Yet', ''];
+    else if (c.ok) [kind, label, detail] = ['ok', 'Backup Current', 'nothing has changed since the last backup'];
+    else {
+      const files = (n, what) => n && `${n.toLocaleString()} file${n === 1 ? '' : 's'} ${what}`;
+      [kind, label] = ['bad', 'Backup Not Current'];
+      detail = `changed since the last backup: ${[c.database && 'the database', files(c.added, 'new'), files(c.changed, 'changed'),
+        files(c.removed, 'removed')].filter(Boolean).join(', ')}`;
+    }
+    const parts = [`<p><span class="indicator ${kind}">${label}</span>${detail ? ` <span class="muted">${detail}</span>` : ''}</p>`];
+    if (last) {
+      parts.push(`<p>Last backup: <b>${esc(fmtWhen(last.created_at))}</b>, into <code>${esc(last.folder)}</code>
+        (${last.database.datasets} dataset${last.database.datasets === 1 ? '' : 's'}, ${last.n_files.toLocaleString()} files, ${fmtBytes(last.bytes)}).</p>`);
+    }
+    if (!s.folders.length) {
+      const pending = s.pending.length ? ` <code>${s.pending.map(esc).join('</code>, <code>')}</code> ${s.pending.length === 1 ? 'is' : 'are'} saved there: in effect once the server restarts (below).` : '';
+      parts.push(msgBox('info', `No folder to back up into: add one above, under <i>May also write</i> (in Docker, also mounted writable in
+        <code>docker-compose.yml</code>), save, then restart the server.${pending}`).outerHTML);
+    } else if (!ok.length) parts.push(msgBox('error', 'None of the folders it may write can be written now (see the list to choose from).').outerHTML);
+    if (!job.running && job.error && !this._watchingBackup) parts.push(msgBox('error', `The last backup failed: ${esc(job.error)}`).outerHTML);
+    $('#admin-backup-status').innerHTML = parts.join('');
+
+    if (this._watchingBackup && !job.running) {
+      this._watchingBackup = false;
+      setStatus(out, job.error ? `Failed: ${job.error}` : `✓ Backed up as ${job.name}`, job.error ? 'error' : '');
+    }
+    if (job.running) this._backupTimer = setTimeout(() => this.loadBackups(), 1000);
+
+    const rows = s.folders.flatMap((f) => f.backups.map((b) => ({ ...b, folder: f.path }))).sort((a, b) => b.name.localeCompare(a.name));
+    const many = s.folders.length > 1;
+    $('#admin-backup-list').innerHTML = !rows.length ? '' : `<table class="odor-table backups"><thead><tr><th>Backup</th><th>Made</th>
+      <th>Datasets</th><th>Files</th><th>Size</th><th title="what it does not share with the backup before it">New in it</th>${many ? '<th>Folder</th>' : ''}</tr></thead>
+      <tbody>${rows.map((b) => `<tr${b === rows.find((r) => r.complete) ? ' class="hl"' : ''}><td><code>${esc(b.name)}</code></td>${b.complete
+        ? `<td>${esc(fmtWhen(b.created_at))}</td><td>${b.database.datasets}</td><td>${b.n_files.toLocaleString()}</td><td>${fmtBytes(b.bytes)}</td>
+          <td>${fmtBytes(b.copied_bytes)}</td>`
+        : `<td colspan="5" class="muted">${job.running && job.folder === b.folder ? 'being made' : 'unfinished (interrupted): removed by the next backup into this folder'}</td>`}
+        ${many ? `<td><code>${esc(b.folder)}</code></td>` : ''}</tr>`).join('')}</tbody></table>`;
+  }
+
+  async backup() {
+    const out = $('#admin-backup-msg');
+    setStatus(out, '');
+    let s;
+    try { s = await api('/api/admin/backups', { method: 'POST', json: { folder: $('#admin-backup-folder').value } }); } catch (e) {
+      setStatus(out, `Not started: ${e.message}`, 'error');
+      return;
+    }
+    this._watchingBackup = true;
+    this._showBackups(s);
   }
 
   // the folders and restart state again (after a reference dataset added a folder, say),

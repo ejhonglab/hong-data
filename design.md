@@ -72,6 +72,15 @@ the app is described in [README.md](README.md), hosting it in [DEPLOY.md](DEPLOY
   stops. In Docker, Compose gives the container the folder it was run from
   (`OLFDB_HOST_DIR`), checked against the data folder's mount in `/proc/self/mountinfo`,
   so that paths in the container are shown as on the server.
+- **Backups are made by the server itself**, from the Admin tab, into a folder it may
+  write (`app/backup.py`), so that they need nothing set up on the server but that folder.
+  Each is whole on its own (a folder laid out like `data/`, restored by copying it back),
+  while files unchanged since the one before are hard links to it (as `rsync
+  --link-dest` does), so keeping many costs the space of what changed. The database is
+  copied with SQLite's backup API, from one moment. Whether the last is current is told by
+  its `backup.json`: the size and time of each file, and a fingerprint of the database's
+  rows (but `file_log`, which changes as the server merely reads; the tables written only
+  with a dataset by their row counts, as its row in `datasets` tells of any change).
 - **The laser wavelength is never read from `Experiment.xml`**: ThorImage's
   `MultiPhotonLaser` value does not follow changes made to the wavelength at the laser,
   so the wavelength is only ever entered in the form.
@@ -166,6 +175,7 @@ app/odormeta.py    odor table: sheet parsing / validation, sync diff, links, dat
 app/tensor.py      users' folders on tensor: path checks, finding a dataset's flies, recordings, YAMLs
 app/sandbox.py     folders the server may read and write (Admin tab): settings, path checks, Landlock
 app/filelog.py     the files the server has read and written in its own folders (Admin tab), paths on the server
+app/backup.py      backups of the database and files into a folder the server may write (Admin tab)
 app/movies.py      a dataset's movies on tensor: finding them, reading their planes, their ImageJ ROIs
 config/odor_sheet_template.csv   odor sheet columns, with the odors from the thesis tables
 app/static/        frontend: index.html, app.js, heatmap.js, colormaps.js (+ mpl_luts.js),
@@ -266,6 +276,10 @@ GET    /api/admin                           the folders the server may read and 
                                             effect since it started, checked), the odor sheet's
                                             link; Landlock, restarts
 POST   /api/admin/check                     {"read_dirs", "write_dirs"} → each folder checked
+GET    /api/admin/backups                   the backups in the folders it may write, the one being
+                                            made, the last one and whether it is current
+POST   /api/admin/backups                   {"folder"} → a backup started there (409 if one is being
+                                            made, or it may not write there); as from GET
 GET    /api/admin/files                     the files the server has read or written in its own
                                             folders (not the repository's), as paths on the server
 POST   /api/admin                           {"read_dirs", "write_dirs"} → saved, in effect from

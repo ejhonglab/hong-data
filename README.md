@@ -248,7 +248,7 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
 - **Admin** (to the right of Docs; it first asks whether you are Tom, Jon or Betty, or
   have asked one of them): settings for the whole site.
   - *Folders on the server* the app may read (by default tensor) and also write (none
-    by default: for backups, later), besides its own data folder. Saved changes take
+    by default: for backups), besides its own data folder. Saved changes take
     effect when the server restarts, which a button there does when it runs under
     Docker or systemd. How they are enforced:
     [DEPLOY.md](DEPLOY.md#folders-it-may-read-and-write). Below them, a tree of each
@@ -256,6 +256,16 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     as a path on the server even in Docker), with sizes and modification times, those
     deleted since struck through: its database, uploads and the rest of `data/`, but not
     the repository's own files, nor those in the folders above or of reference data.
+  - *Backups*: a button copying everything the site keeps into one of the folders it may
+    write: the SQLite database (a consistent copy), and every dataset's files as uploaded,
+    odor YAMLs, `Experiment.xml`, README and `metadata.json`, with reference data as read
+    in, datasets deleted there and odor structure images (not raw or motion-corrected
+    data, nor uploads under way). Each backup is a folder `olfdb-backup-<date>_<time>`
+    laid out like `data/`; files unchanged since the backup before it there are hard
+    links to it, so each takes the space of what changed only. Listed with when each was
+    made, its size and what is new in it; above them, when the last was made and whether
+    it is current (else what changed since: the database, or files new, changed or
+    removed).
   - *Reference data*: add a CSV, TSV or parquet file on the server (checked as you
     type its path, when the server may read it: its size, and how many of its chemicals
     match the Odors tab), with a title, description, source, labels, colors (or from its

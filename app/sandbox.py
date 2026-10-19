@@ -3,7 +3,7 @@
 Two lists of absolute paths, set in the Admin tab and saved in `config.ADMIN_FILE`:
 folders (or single files) the server may read (by default, tensor; a reference dataset
 added in the Admin tab adds its file when it is outside them) and folders it may also
-write (none by default; for backups, later). The app's own data folder is always
+write (none by default; for backups, see backup.py). The app's own data folder is always
 readable and writable, and its built-in reference data readable.
 Both lists are fixed when the server starts (`start`), and changes wait for a restart:
 

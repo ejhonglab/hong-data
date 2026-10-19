@@ -226,6 +226,9 @@ input[data-src], select[data-src], textarea[data-src] { background: var(--src-so
 .admin-sheet input { flex: 1 1 320px; width: auto; }
 #admin-sheet-source { margin: 6px 0 0; }
 #admin-odor-preview .odor-table { display: block; overflow-x: auto; }
+.backup-status p { margin: 6px 0; }
+.backup-folder select { width: auto; max-width: 420px; margin-left: 6px; }
+table.backups { margin-top: 12px; }
 .file-tree { margin-top: 6px; font-size: 13px; }
 .file-tree ul { list-style: none; margin: 2px 0 4px 5px; padding-left: 14px; border-left: 1px solid var(--rule); }
 .file-tree li { margin: 1px 0; }

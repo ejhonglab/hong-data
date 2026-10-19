@@ -17,6 +17,7 @@ settings        site-wide settings from the Admin tab (the odor sheet's link), b
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import sqlite3
 from contextlib import contextmanager
@@ -188,6 +189,27 @@ ODOR_COLUMNS = ("name", "abbrev", "aliases", "cid", "cas", "solvent", "supplier"
                 "metacyc", "lotus", "inventory", "notes")
 REFERENCE_COLUMNS = ("id", "created_at", "path", "title", "description", "kind", "chemical_axis", "value_label",
                      "row_label", "col_label", "source", "read_grant")
+
+
+# tables written only along with their dataset (whose row in `datasets` tells of any change)
+DATASET_TABLES = ("dataset_panels", "units", "trials", "responses", "matrices")
+
+
+def content_fingerprint(con: sqlite3.Connection) -> str:
+    """A fingerprint of what a database holds (to tell whether a backup is current): every
+    row of its tables but the record of files read and written (`file_log`), and the
+    number of rows of `DATASET_TABLES`."""
+    h = hashlib.sha256()
+    tables = [r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' "
+                                        "AND name != 'file_log' ORDER BY name")]
+    for t in tables:
+        h.update(f"\0{t}\0".encode())
+        if t in DATASET_TABLES:
+            h.update(repr(tuple(con.execute(f"SELECT count(*) FROM {t}").fetchone())).encode())
+            continue
+        for row in con.execute(f"SELECT * FROM {t} ORDER BY rowid"):
+            h.update(repr(tuple(row)).encode())
+    return h.hexdigest()
 
 
 class Database:
@@ -564,6 +586,11 @@ class Database:
             )
             r = con.execute("SELECT * FROM users WHERE name_key = ?", (name.casefold(),)).fetchone()
         return self._user(r)
+
+    def fingerprint(self) -> str:
+        """See `content_fingerprint`."""
+        with self.connect() as con:
+            return content_fingerprint(con)
 
     # ---------------------------------------------------------------- file log
     def file_log(self) -> list[dict]:

@@ -410,7 +410,7 @@
         </div>
         <div class="dir-section">
           <h3>May also write</h3>
-          <p class="muted">These can be read too. Nothing is written to them yet: they are meant for backups, later.</p>
+          <p class="muted">These can be read too. Backups (below) are made into one of them.</p>
           <div class="dirlist" data-kind="write_dirs" data-placeholder="e.g. /local/tensor/olfdb_backups"></div>
         </div>
         <div id="admin-result" aria-live="polite"></div>
@@ -420,6 +420,18 @@
           <p class="muted">Each file the server has read or written in the folder it runs from (<code id="admin-files-root">…</code>)<span id="admin-files-since"></span>: its database, uploads and the rest of its data folder. Not listed: the repository's own files (its code and configuration), and those in the folders above or of reference data. Struck through: deleted since.</p>
           <div id="admin-files" class="file-tree"></div>
         </div>
+      </div>
+
+      <div class="step" id="admin-backup">
+        <div class="step-head"><h2>Backups</h2></div>
+        <p class="muted">Copies everything the site keeps into a folder it may write (above, under <i>May also write</i>): its database, and each dataset's data file as uploaded, odor YAMLs, <code>Experiment.xml</code>, README and <code>metadata.json</code>, with the reference data it read in, the datasets deleted here and odor structure images. Not the raw and motion-corrected data, which stay on tensor, nor uploads still under way. Each backup is a folder <code>olfdb-backup-&lt;date&gt;_&lt;time&gt;</code> laid out like the data folder: to restore one, stop the server and put its contents into the data folder. Files unchanged since the backup before it in that folder are hard links to the copies there, so each backup takes only the space of what changed.</p>
+        <div class="backup-status" id="admin-backup-status" aria-live="polite"></div>
+        <div class="actions">
+          <label class="backup-folder">Into <select id="admin-backup-folder"></select></label>
+          <button type="button" class="btn primary" id="admin-backup-btn">Back up now</button>
+          <span class="status" id="admin-backup-msg"></span>
+        </div>
+        <div id="admin-backup-list"></div>
       </div>
 
       <div class="step" id="admin-refs">

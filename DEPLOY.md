@@ -138,8 +138,8 @@ What the app may touch on the server is limited in two layers:
    NAS's own: mount it read-only, or as a user that may only read.
 2. **What it may use of that**, set in the Admin tab (to the right of Docs) and saved in
    `data/admin.json`: folders it may read (by default `OLFDB_TENSOR_ROOT`) and folders it
-   may also write (none by default; nothing writes there yet: they are meant for
-   backups). Its data folder is always readable and writable, and it writes nowhere
+   may also write (none by default; backups made from the Admin tab go into one of
+   them). Its data folder is always readable and writable, and it writes nowhere
    else (temporary files go to `data/tmp/`). Both lists are fixed when the server
    starts: the app checks the paths it reads on tensor against them, and has the kernel
    deny it everything else, through
@@ -190,7 +190,16 @@ container as it is, without picking up new code.
 
 ## 5. Backups
 
-Everything lives in `/opt/olfdb/data`. A consistent copy of the SQLite file is made
+Everything lives in `/opt/olfdb/data`. The Admin tab can back it up (*Backups*) into a
+folder it may write: mount one writable (the commented-out line in
+`docker-compose.yml`), add it in the Admin tab under *May also write*, and restart from
+there. Each backup is a folder `olfdb-backup-<date>_<time>` laid out like `data/` (but
+for uploads under way, downloads and temporary files), with files unchanged since the
+one before hard-linked to it. To restore one: stop the server, copy its contents
+(`backup.json` aside) into `/opt/olfdb/data`, fix their owner for the container
+(`sudo chown -R 10001:10001 data`), start it.
+
+Without the Admin tab, e.g. from cron: a consistent copy of the SQLite file is made
 with the sqlite backup API; the dataset files can simply be copied:
 
 ```bash
