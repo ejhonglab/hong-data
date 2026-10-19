@@ -139,7 +139,7 @@ app/config.py      runtime configuration (environment variables)
 app/ingest.py      CSV/parquet loading + validation → units, trials, float32 matrix
 app/odors.py       odor string parsing/formatting (port of the relevant olf.py bits)
 app/glomeruli.py   accepted glomerulus names (config/glomeruli.txt overrides)
-app/yamlcheck.py   odor YAML parsing and the matrix ⊂ YAML check
+app/yamlcheck.py   odor YAML parsing, what looks wrong in one, and the matrix ⊂ YAML check
 app/thorimage.py   Experiment.xml summary
 app/metadata.py    form model (pydantic) and README.md generation
 app/db.py          SQLite schema and queries
@@ -191,8 +191,9 @@ GET    /api/stage/{id}                      a staged upload and its matrix paylo
 POST   /api/stage/{id}/lookup               {"name"} → that user's folders searched for the flies,
                                             recordings and odor YAMLs of the staged dataset
 POST   /api/stage/{id}/odor_yaml            multipart 'file' (repeatable), or {"tensor_paths": [...]}
-                                            → subset check
-DELETE /api/stage/{id}/odor_yaml/{name}
+                                            → what was added (or replaced), each file's own check
+                                            (against the odor table), and the subset check
+DELETE /api/stage/{id}/odor_yaml/{name}     → the same, without that file
 POST   /api/stage/{id}/experiment_xml       multipart 'file', or {"tensor_path"}
 DELETE /api/stage/{id}/experiment_xml
 POST   /api/stage/{id}/readme               {"metadata": {...}} → README.md text

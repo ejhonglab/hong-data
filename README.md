@@ -109,7 +109,11 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
 ## The tabs in detail
 
 - **Upload**: an optional odor YAML must have every odor in the matrix, with the same
-  abbreviation and concentration. Other optional details: ThorImage `Experiment.xml`,
+  abbreviation and concentration. Each YAML added is also checked on its own, as a
+  warning only: its odors against the odor table (missing, or named, abbreviated or with
+  a CID unlike there), odors without a concentration, and an abbreviation used for two
+  odors. A YAML of the same name replaces the one attached, if it can be read. Other
+  optional details: ThorImage `Experiment.xml`,
   power, age, wavelength, rig, data paths, notes. The raw and motion-corrected data paths
   are folders from the top of tensor, checked on the server as you leave their field
   (as in Settings), and must be found there to save (unless tensor itself is not on the

@@ -472,6 +472,45 @@ class OdorIndex:
         return None, "none"
 
 
+def check_yaml_odors(odors: list[yamlcheck.YamlOdor], index: OdorIndex) -> dict:
+    """An odor YAML's odors matched to the odor table, as a dataset's odors are matched
+    through it (`OdorIndex.match`), with what may be wrong about each.
+
+    Returns:
+        ``odors``: one dict per odor (each name and abbreviation once): ``name``,
+        ``abbrev``, ``odor_id``, ``table_name`` and ``problem`` (None, or what may be
+        wrong: not in the table, which of several it could be, or a CID, name or
+        abbreviation that differs there); ``n_in_table``; ``table_empty``.
+    """
+    out, seen = [], set()
+    for yo in odors:
+        if (yo.name, yo.abbrev) in seen:
+            continue
+        seen.add((yo.name, yo.abbrev))
+        odor_id, how, candidates = index.match(yo.abbrev or yo.name, yo)
+        o = index.by_id.get(odor_id)
+        problem = None
+        if o is None:
+            problem = (f"could be any of {', '.join(index.by_id[i]['name'] for i in candidates)} in the odor table"
+                       if candidates else "not in the odor table")
+        else:
+            try:
+                cid = int(yo.extra["cid"]) if yo.extra.get("cid") else None
+            except (TypeError, ValueError):
+                cid = None
+            names = {n.casefold() for n in [o["name"], *(o.get("aliases") or [])]}
+            labels = {a.casefold() for a in [o.get("abbrev"), *(o.get("aliases") or [])] if a}
+            if cid and o.get("cid") and cid != o["cid"]:
+                problem = f"CID {cid} here, {o['cid']} in the odor table ({o['name']})"
+            elif yo.name.casefold() not in names:
+                problem = f"named {o['name']} in the odor table"
+            elif yo.abbrev and o.get("abbrev") and yo.abbrev.casefold() not in labels:
+                problem = f"abbreviated {o['abbrev']} in the odor table"
+        out.append({"name": yo.name, "abbrev": yo.abbrev, "odor_id": odor_id, "table_name": o["name"] if o else None,
+                    "problem": problem})
+    return {"odors": out, "n_in_table": sum(r["odor_id"] is not None for r in out), "table_empty": not index.by_id}
+
+
 def dataset_yaml_odors(ds: dict, datasets_dir: Path) -> list[yamlcheck.YamlOdor]:
     out = []
     for name in ds.get("odor_yaml_files") or []:

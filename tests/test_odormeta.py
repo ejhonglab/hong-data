@@ -136,6 +136,42 @@ def test_dataset_matching(tmp_path):
     assert next(t for t in table if t["odor"] == "va @ -3")["pubchem_url"].endswith("/7991")
 
 
+def test_check_yaml_odors(tmp_path):
+    db = Database(tmp_path / "db.sqlite3")
+    index = odormeta.OdorIndex([])
+    yaml_odors, _ = parse_odor_yaml("odors:\n - {name: valeric acid, abbrev: va, log10_conc: -3}\n")
+    assert odormeta.check_yaml_odors(yaml_odors, index)["table_empty"]
+    apply_all(db, rows_of(HEADER + "geosmin,geos,(-)-geosmin,29746,,,,,,,,,\n"
+                                   "perfume geosmin,geos,,1213,,pfo,,,,,,,\n"
+                                   "valeric acid,va,pentanoic acid,7991,,water,,,,,,,\n"
+                                   "1-hexanol,1-6ol,6ol,8103,,,,,,,,,\n"
+                                   "linalool,lin,,6549,,,,,,,,,\n"))
+    index = odormeta.OdorIndex(db.list_odors())
+    yaml_odors, _ = parse_odor_yaml("""odors:
+ - {name: pentanoic acid, abbrev: va, log10_conc: -3, cid: 7991}
+ - {name: valeric acid, abbrev: va, log10_conc: -4}
+ - {name: 1-hexanol, abbrev: hex1, log10_conc: -3}
+ - {name: hexan-1-ol, abbrev: 6ol, log10_conc: -3}
+ - {name: linalool, abbrev: Lin, log10_conc: -3, cid: 443158}
+ - {name: perfume geosmin, abbrev: geos, log10_conc: -5}
+ - {name: geos-something, abbrev: geos, log10_conc: -5}
+ - {name: zzz, log10_conc: -1}
+""")
+    r = odormeta.check_yaml_odors(yaml_odors, index)
+    got = {(o["name"], o["abbrev"]): o["problem"] for o in r["odors"]}
+    assert got == {
+        ("pentanoic acid", "va"): None,  # an alias, at two concentrations: once
+        ("valeric acid", "va"): None,
+        ("1-hexanol", "hex1"): "abbreviated 1-6ol in the odor table",
+        ("hexan-1-ol", "6ol"): "named 1-hexanol in the odor table",  # matched through its abbreviation (an alias)
+        ("linalool", "Lin"): "CID 443158 here, 6549 in the odor table (linalool)",  # abbreviation in another case: fine
+        ("perfume geosmin", "geos"): None,
+        ("geos-something", "geos"): "could be any of geosmin, perfume geosmin in the odor table",
+        ("zzz", None): "not in the odor table",
+    }
+    assert r["n_in_table"] == 6 and not r["table_empty"]
+
+
 class FakePubChem:
     """Stands in for urlopen: answers InChI requests for the CIDs in `inchis`, and counts requests."""
 

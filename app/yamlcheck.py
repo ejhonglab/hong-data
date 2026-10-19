@@ -83,6 +83,24 @@ def parse_odor_yaml(text: str) -> tuple[list[YamlOdor], dict]:
     return odors, meta
 
 
+def lint(odors: list[YamlOdor]) -> list[str]:
+    """What looks wrong in an odor YAML's odors themselves: odors without a concentration,
+    an abbreviation used for different odors, an odor abbreviated two ways."""
+    problems = []
+    no_conc = sorted({o.name for o in odors if o.log10_conc is None})
+    if no_conc:
+        problems.append(f"no log10_conc for {', '.join(no_conc)}")
+    names_of: dict[str, set[str]] = {}
+    abbrevs_of: dict[str, set[str]] = {}
+    for o in odors:
+        if o.abbrev:
+            names_of.setdefault(o.abbrev, set()).add(o.name)
+            abbrevs_of.setdefault(o.name, set()).add(o.abbrev)
+    problems += [f"abbreviation {a} is used for {' and '.join(sorted(ns))}" for a, ns in names_of.items() if len(ns) > 1]
+    problems += [f"{n} is abbreviated both {' and '.join(sorted(abs_))}" for n, abs_ in abbrevs_of.items() if len(abs_) > 1]
+    return problems
+
+
 def conc_equal(a: Optional[float], b: Optional[float]) -> bool:
     if a is None or b is None:
         return a is None and b is None

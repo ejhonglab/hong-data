@@ -295,27 +295,54 @@ def _run_yaml_check(d: Path, meta: dict) -> dict:
     return result
 
 
+def _yaml_files(d: Path, meta: dict) -> list[dict]:
+    """Each attached odor YAML on its own: what looks wrong in it (`yamlcheck.lint`), and its
+    odors against the odor table (`odormeta.check_yaml_odors`)."""
+    index = _odor_index()
+    out = []
+    for y in meta["odor_yamls"]:
+        odors, _ = yamlcheck.parse_odor_yaml((d / "odor_yaml" / y["name"]).read_text(encoding="utf-8"))
+        out.append({"name": y["name"], "problems": yamlcheck.lint(odors), **odormeta.check_yaml_odors(odors, index)})
+    return out
+
+
+def _yaml_response(d: Path, meta: dict, **extra) -> dict:
+    return {**extra, "stage": _public_stage(meta), "files": _yaml_files(d, meta),
+            "check": _run_yaml_check(d, meta) if meta["odor_yamls"] else None}
+
+
 async def stage_add_yaml(request: Request) -> Response:
-    """Add odor YAMLs: uploaded (multipart 'file', repeatable) or on tensor (JSON 'tensor_paths')."""
+    """Add odor YAMLs: uploaded (multipart 'file', repeatable) or on tensor (JSON 'tensor_paths').
+    One with the name of one attached already replaces it, if it can be read (else that one
+    stays). The response says which were added (``added``: ``replaced`` when one was), and
+    has each attached file's own check (``files``) and the matrix's against them all
+    (``check``)."""
     d = _stage_dir(request.path_params["stage_id"])
     meta = _stage_meta(d)
     ydir = d / "odor_yaml"
-    ydir.mkdir(exist_ok=True)
-    saved, errors = await _incoming(request, ydir, json_key="tensor_paths", fallback="odors.yaml",
-                                    suffixes=(".yaml", ".yml"), max_bytes=20 * 1024 * 1024)
-    for name, rel in saved:
-        dest = ydir / name
-        try:
-            odors, _ = yamlcheck.parse_odor_yaml(dest.read_text(encoding="utf-8"))
-        except (yamlcheck.YamlError, UnicodeDecodeError) as e:
-            dest.unlink(missing_ok=True)
-            errors.append(f"{name}: {e}")
-            continue
-        meta["odor_yamls"] = [y for y in meta["odor_yamls"] if y["name"] != name]
-        meta["odor_yamls"].append({"name": name, "n_odors": len(odors), "tensor_path": rel})
+    incoming = ydir / ".incoming"
+    incoming.mkdir(parents=True, exist_ok=True)
+    try:
+        saved, errors = await _incoming(request, incoming, json_key="tensor_paths", fallback="odors.yaml",
+                                        suffixes=(".yaml", ".yml"), max_bytes=20 * 1024 * 1024)
+        added = []
+        for name, rel in saved:
+            try:
+                odors, _ = yamlcheck.parse_odor_yaml((incoming / name).read_text(encoding="utf-8"))
+            except (yamlcheck.YamlError, UnicodeDecodeError) as e:
+                kept = any(y["name"] == name for y in meta["odor_yamls"])
+                errors.append(f"{name}: {e}" + (f" (the {name} attached before is still attached)" if kept else ""))
+                continue
+            os.replace(incoming / name, ydir / name)
+            replaced = any(y["name"] == name for y in meta["odor_yamls"])
+            meta["odor_yamls"] = [y for y in meta["odor_yamls"] if y["name"] != name]
+            meta["odor_yamls"].append({"name": name, "n_odors": len(odors), "tensor_path": rel})
+            added.append({"name": name, "n_odors": len(odors), "tensor_path": rel, "replaced": replaced})
+    finally:
+        shutil.rmtree(incoming, ignore_errors=True)
     _write_stage_meta(d, meta)
-    check = await run_in_threadpool(_run_yaml_check, d, meta) if meta["odor_yamls"] else None
-    return JSONResponse({"ok": not errors, "errors": errors, "stage": _public_stage(meta), "check": check})
+    body = await run_in_threadpool(lambda: _yaml_response(d, meta, ok=not errors, errors=errors, added=added))
+    return JSONResponse(body)
 
 
 async def stage_remove_yaml(request: Request) -> Response:
@@ -325,8 +352,7 @@ async def stage_remove_yaml(request: Request) -> Response:
     (d / "odor_yaml" / name).unlink(missing_ok=True)
     meta["odor_yamls"] = [y for y in meta["odor_yamls"] if y["name"] != name]
     _write_stage_meta(d, meta)
-    check = await run_in_threadpool(_run_yaml_check, d, meta) if meta["odor_yamls"] else None
-    return JSONResponse({"ok": True, "stage": _public_stage(meta), "check": check})
+    return JSONResponse(await run_in_threadpool(lambda: _yaml_response(d, meta, ok=True, removed=name)))
 
 
 async def stage_add_xml(request: Request) -> Response:

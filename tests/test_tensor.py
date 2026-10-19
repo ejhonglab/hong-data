@@ -194,7 +194,21 @@ def test_stage_from_tensor(main, root, tmp_path, monkeypatch):
     r = call(main.stage_add_yaml, body={"tensor_paths": ["ann/yaml/ann_odors.yml", "/ann/x.yml", "ann/raw"]}, path_params=stage)[1]
     assert r["check"]["ok"] and r["stage"]["odor_yamls"] == [{"name": "ann_odors.yml", "n_odors": 2, "tensor_path": "ann/yaml/ann_odors.yml"}]
     assert len(r["errors"]) == 2 and "absolute" in r["errors"][0]
+    assert r["added"] == [{"name": "ann_odors.yml", "n_odors": 2, "tensor_path": "ann/yaml/ann_odors.yml", "replaced": False}]
+    assert [f["name"] for f in r["files"]] == ["ann_odors.yml"] and r["files"][0]["table_empty"]
     assert call(main.stage_add_xml, body={"tensor_path": "ann/yaml/ann_odors.yml"}, path_params=stage)[0] == 422
+    # a file of the same name replaces it, if it can be read; else the one attached stays
+    r = call(main.stage_add_yaml, body={"tensor_paths": ["ann/yaml/ann_odors.yml"]}, path_params=stage)[1]
+    assert r["ok"] and r["added"][0]["replaced"]
+    (root / "ann/yaml/ann_odors.yml").write_text("odors: [")
+    r = call(main.stage_add_yaml, body={"tensor_paths": ["ann/yaml/ann_odors.yml"]}, path_params=stage)[1]
+    assert not r["ok"] and r["added"] == [] and "(the ann_odors.yml attached before is still attached)" in r["errors"][0]
+    assert r["check"]["ok"] and r["stage"]["odor_yamls"][0]["n_odors"] == 2
+    assert not (d / "odor_yaml" / ".incoming").exists()
+    r = call(main.stage_remove_yaml, body={}, path_params={**stage, "name": "ann_odors.yml"})[1]
+    assert r["removed"] == "ann_odors.yml" and r["files"] == [] and r["check"] is None
+    (root / "ann/yaml/ann_odors.yml").write_text(YAML_AB.replace("-4", "-2"))
+    call(main.stage_add_yaml, body={"tensor_paths": ["ann/yaml/ann_odors.yml"]}, path_params=stage)
 
     md = {"uploader_name": "Ann", "indicator": "GCaMP6f", "driver": "GH146", "coding_unit": "glomeruli", "raw_data_path": "ann/raw"}
     readme = call(main.stage_readme, body={"metadata": md}, path_params=stage)[1]["readme"]

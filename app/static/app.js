@@ -829,6 +829,23 @@ function markSource(el, src, detail = '') {
   if (src) { el.dataset.src = src; el.title = detail ? `${SOURCES[src]}: ${detail}` : SOURCES[src]; } else { delete el.dataset.src; el.removeAttribute('title'); }
 }
 
+// An attached odor YAML's own check (`_yaml_files` on the server), shown under it: its odors
+// against the odor table, and what looks wrong in the file. A warning only, unlike the check
+// of the matrix's odors against the YAMLs, which saving waits for.
+function yamlFileCheck(f) {
+  const n = f.odors.length;
+  const odd = f.table_empty ? [] : f.odors.filter((o) => o.problem);
+  const notIn = odd.filter((o) => o.odor_id == null).length;
+  const items = [...f.problems.map(esc), ...odd.map((o) => `<b>${esc(o.name)}</b>${o.abbrev ? ` (${esc(o.abbrev)})` : ''}: ${esc(o.problem)}`)];
+  const table = '<a href="#odors">odor table</a>';
+  const empty = f.table_empty ? `<div class="yaml-file-check muted">The ${table} is empty: its odors were not checked against it.</div>` : '';
+  if (!items.length) return empty || `<div class="yaml-file-check ok">✓ All ${n} odors are in the ${table}, named and abbreviated as there.</div>`;
+  const head = [notIn ? `${notIn} of ${n} odors not in the ${table}` : '', odd.length - notIn ? `${odd.length - notIn} unlike the ${table}` : '',
+    f.problems.length ? `${f.problems.length} problem${f.problems.length === 1 ? '' : 's'} in the file` : ''].filter(Boolean).join('; ');
+  return `<details class="yaml-file-check warn"${items.length <= 5 ? ' open' : ''}><summary>⚠ ${head}</summary>
+    <ul>${items.map((x) => `<li>${x}</li>`).join('')}</ul></details>${empty}`;
+}
+
 class UploadFlow {
   constructor() {
     this.options = null;
@@ -1160,12 +1177,21 @@ class UploadFlow {
     this.stage = res.stage;
     this.yamlCheck = res.check;
     const list = $('#yaml-list');
-    list.innerHTML = res.stage.odor_yamls.map((y) => `<div class="file"${y.tensor_path ? ` data-src="nas" title="${esc(`${SOURCES.nas}: ${y.tensor_path}`)}"` : ''}>
+    const fresh = new Set((res.added || []).map((a) => a.name));
+    const files = new Map((res.files || []).map((f) => [f.name, f]));
+    list.innerHTML = res.stage.odor_yamls.map((y) => `<div class="yaml-file${fresh.has(y.name) ? ' fresh' : ''}">
+      <div class="file"${y.tensor_path ? ` data-src="nas" title="${esc(`${SOURCES.nas}: ${y.tensor_path}`)}"` : ''}>
       <code>${esc(y.name)}</code><span class="muted">${y.n_odors} odors${y.tensor_path ? `, from <code>${esc(y.tensor_path)}</code>` : ''}</span>
-      <button type="button" class="btn small" data-remove="${esc(y.name)}">remove</button></div>`).join('');
+      <button type="button" class="btn small" data-remove="${esc(y.name)}">remove</button></div>
+      ${files.has(y.name) ? yamlFileCheck(files.get(y.name)) : ''}</div>`).join('');
     $$('[data-remove]', list).forEach((b) => b.addEventListener('click', () => this.removeYaml(b.dataset.remove)));
     const box = $('#yaml-check');
     box.innerHTML = '';
+    // what this request did, as a file of the same name replaces one looks the same in the list
+    const done = (res.added || []).map((a) => `${a.replaced ? 'Replaced' : 'Added'} <code>${esc(a.name)}</code>`
+      + `${a.tensor_path ? `, from tensor (<code>${esc(a.tensor_path)}</code>),` : a.replaced ? ' with the file uploaded' : ''} (${a.n_odors} odors).`);
+    if (res.removed) done.push(`Removed <code>${esc(res.removed)}</code>.`);
+    if (done.length) box.appendChild(msgBox('info', done.join('<br>')));
     if (res.errors?.length) box.appendChild(msgBox('error', `Not added:${listHtml(res.errors)}`));
     if (this.nas) this._renderLookup();
     const c = res.check;

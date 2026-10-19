@@ -10,7 +10,7 @@ import pytest
 
 from app.ingest import ValidationError, load_file
 from app.odors import OdorFormatError, format_mix_from_strs, parse_odor, validate_odor_levels
-from app.yamlcheck import check_subset, parse_odor_yaml
+from app.yamlcheck import check_subset, lint, parse_odor_yaml
 
 HERE = Path(__file__).parent
 SAMPLE = HERE / "data" / "validation2_sample.csv"
@@ -259,6 +259,15 @@ odors:
     missing = {m["odor"]: m["hint"] for m in res["missing"]}
     assert "ms @ -4" in missing and "ms @ -3" in missing["ms @ -4"]
     assert "zzz @ -1" in missing
+
+
+def test_yaml_lint():
+    odors, _ = parse_odor_yaml("odors:\n - {name: valeric acid, abbrev: va, log10_conc: -3}\n - {name: valeric acid, abbrev: va, log10_conc: -4}\n"
+                               " - {name: vanillin, abbrev: va, log10_conc: -2}\n - {name: hexanal, abbrev: 6al}\n"
+                               " - {name: hexanal, abbrev: hex, log10_conc: -3}\n")
+    assert lint(odors) == ["no log10_conc for hexanal", "abbreviation va is used for valeric acid and vanillin",
+                           "hexanal is abbreviated both 6al and hex"]
+    assert lint(parse_odor_yaml("odors:\n - {name: valeric acid, abbrev: va, log10_conc: -3}\n")[0]) == []
 
 
 def test_yaml_pins2odors():
