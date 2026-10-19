@@ -1185,7 +1185,9 @@ class UploadFlow {
       yaml += `<ul>${y.panels.map((p) => `<li><b>${esc(p.panel ?? 'its odors')}</b> (${p.n_odors} odors): ${p.complete
         ? `${p.selected.map(file).join(', ')} <span class="muted">(${esc(p.how)})</span>`
         : `<span class="warn">${p.missing.length} described by no YAML found</span> (${esc(p.missing.slice(0, 4).join(', '))}${p.missing.length > 4 ? ', …' : ''})${
-          p.selected.length ? `; the rest by ${p.selected.map(file).join(', ')}` : ''}`}</li>`).join('')}</ul>`;
+          p.selected.length ? `; the rest by ${p.selected.map(file).join(', ')}` : ''}`}${p.remarks?.length
+        ? `<ul class="muted small">${p.remarks.slice(0, 5).map((r) => `<li>${esc(r)}</li>`).join('')}${p.remarks.length > 5 ? `<li>and ${p.remarks.length - 5} more like these</li>` : ''}</ul>`
+        : ''}</li>`).join('')}</ul>`;
     }
     const flyRows = n.flies.map((f) => `<tr><td>${esc(flyName(f))}</td><td>${f.raw.map((p) => `<code>${esc(p)}</code>`).join('<br>') || '—'}</td>
       <td>${f.mocorr.map((p) => `<code>${esc(p)}</code>`).join('<br>') || '—'}</td><td>${f.recordings.length}</td></tr>`).join('');

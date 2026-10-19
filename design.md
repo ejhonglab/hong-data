@@ -48,10 +48,12 @@ the app is described in [README.md](README.md), hosting it in [DEPLOY.md](DEPLOY
   attached. Odor YAMLs are found panel by panel, following how olf (the olfactometer's
   program) makes them: from a panel's config (`<panel>.yaml`) it generates one YAML per
   recording (`<time>_stimuli/<time>_stimuli_<i>.yaml`), whose path goes into that
-  recording's ThorImage notes, and recordings are named `<panel>_<n>` (with `_redo` or
-  `_001` for one replacing another). So each panel's odors are described by the YAMLs
-  named in the notes of one fly's recordings of it (the last fly's that describe them
-  all), which are what was run then; else the fewest of those of any fly, the panel's
+  recording's ThorImage notes, and recordings are named `<panel>_<n>` for its YAML
+  `_stimuli_<n-1>`, or `<panel>` alone if it fits in one (with `_redo` or `_001` for one
+  replacing another). So each panel's odors are described by the YAMLs named in the notes
+  of one fly's recordings of it (the last fly's that describe them all; one whose notes
+  name none taken to be of its number, from its others' run), which are what was run
+  then; else the fewest of those of any fly, the panel's
   config (as it is now, which may have changed since), YAMLs named in the notes of
   recordings of no panel, and YAMLs with a fly's date in their path, in that order. The
   panels' YAMLs need not be in one folder, nor of one date.

@@ -204,6 +204,57 @@ def test_lookup_panels(tmp_path):
         ("glomeruli_diagnostics", True, ["tom/olf/old/glomeruli_diagnostics.yaml"]), ("megamat", False, ["tom/olf/megamat.yaml"])]
 
 
+def test_lookup_recording_numbers(tmp_path):
+    root = tmp_path / "tensor"
+    fly = root / "tom/raw/2024-01-06/1"
+    olf = root / "tom/olf"
+
+    def recording(name, notes, t):
+        (fly / name).mkdir(parents=True)
+        (fly / name / "Experiment.xml").write_text(XML.format(notes=notes))
+        os.utime(fly / name / "Experiment.xml", (t, t))
+
+    def yaml_file(rel, odors):
+        (olf / rel).parent.mkdir(parents=True, exist_ok=True)
+        (olf / rel).write_text(generated(odors))
+
+    # the only recording of a panel is named for it alone, and redone as ThorImage numbers a name used already
+    recording("glomeruli_diagnostics", "20240106_100000_stimuli.yaml", 1e9)
+    recording("glomeruli_diagnostics_001", "20240106_101000_stimuli.yaml", 1e9 + 10)
+    yaml_file("20240106_100000_stimuli.yaml", [("ethyl acetate", "ea", -7)])  # replaced
+    yaml_file("20240106_101000_stimuli.yaml", DIAG)
+    # recording n from olf's YAML n - 1: the one whose notes name none takes it from the others' run
+    recording("megamat_1", r"20240106_110000_stimuli\20240106_110000_stimuli_0.yaml", 1e9 + 20)
+    recording("megamat_2", "", 1e9 + 30)
+    yaml_file("20240106_110000_stimuli/20240106_110000_stimuli_0.yaml", MEGA[:2])
+    yaml_file("20240106_110000_stimuli/20240106_110000_stimuli_1.yaml", MEGA[2:])
+    dirs = {"raw_dirs": ["tom/raw"], "odor_dirs": ["tom/olf"]}
+    flies = [{"date": "2024-01-06", "fly_num": 1}]
+    panel_odors = {"glomeruli_diagnostics": [("ea", -8.0), ("va", -4.0)], "megamat": [(a, float(c)) for _, a, c in MEGA]}
+    r = tensor.lookup(root, dirs, flies, panel_odors)["odor_yamls"]
+    assert [(p["panel"], p["selected"], p["complete"]) for p in r["panels"]] == [
+        ("glomeruli_diagnostics", ["tom/olf/20240106_101000_stimuli.yaml"], True),
+        ("megamat", ["tom/olf/20240106_110000_stimuli/20240106_110000_stimuli_0.yaml",
+                     "tom/olf/20240106_110000_stimuli/20240106_110000_stimuli_1.yaml"], True)]
+    assert r["panels"][0]["remarks"] == []
+    assert r["panels"][1]["remarks"] == [
+        "megamat_2 (fly 1 of 2024-01-06): no YAML in its notes, so 20240106_110000_stimuli_1.yaml, by its number"]
+    # notes naming the YAML of another number are pointed out; numbers past 9 are numbers too
+    (fly / "megamat_2" / "Experiment.xml").write_text(XML.format(notes=r"20240106_110000_stimuli\20240106_110000_stimuli_0.yaml"))
+    os.utime(fly / "megamat_2" / "Experiment.xml", (1e9 + 30, 1e9 + 30))
+    recording("megamat_10", "", 1e9 + 40)
+    r = tensor.lookup(root, dirs, flies, panel_odors)["odor_yamls"]
+    assert r["panels"][1]["remarks"] == [
+        "megamat_2 (fly 1 of 2024-01-06): its notes name 20240106_110000_stimuli_0.yaml, though by its number it would be "
+        "the run's _stimuli_1.yaml",
+        "megamat_10 (fly 1 of 2024-01-06): no YAML in its notes, so 20240106_110000_stimuli_9.yaml, by its number"]
+    # nothing names _stimuli_1 now: it is found by the date in its path
+    assert r["panels"][1]["complete"] and r["panels"][1]["how"] == "named in the notes of its megamat recordings, a fly's date in its path"
+    # with no panel in the data, the same names
+    r = tensor.lookup(root, dirs, flies, [o for odors in panel_odors.values() for o in odors])["odor_yamls"]
+    assert r["panels"][0]["panel"] is None and len(r["panels"][0]["remarks"]) == 2
+
+
 def test_users(tmp_path):
     db = Database(tmp_path / "db.sqlite3")
     assert db.get_user("Tom") is None
