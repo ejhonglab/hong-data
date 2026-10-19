@@ -195,9 +195,12 @@ folder it may write: mount one writable (the commented-out line in
 `docker-compose.yml`), add it in the Admin tab under *May also write*, and restart from
 there. Each backup is a folder `olfdb-backup-<date>_<time>` laid out like `data/` (but
 for uploads under way, downloads and temporary files), with files unchanged since the
-one before hard-linked to it. To restore one: stop the server, copy its contents
-(`backup.json` aside) into `/opt/olfdb/data`, fix their owner for the container
-(`sudo chown -R 10001:10001 data`), start it.
+one before hard-linked to it, and a `backup.json` of its own: the list of what it holds
+(each file's size and modification time, and a fingerprint of the database's
+contents), which the Admin tab compares with the data to tell whether the backup is
+current. To restore one: stop the server, copy its contents into `/opt/olfdb/data`
+(all but `backup.json`, which is not part of the data), fix their owner for the
+container (`sudo chown -R 10001:10001 data`), start it.
 
 Without the Admin tab, e.g. from cron: a consistent copy of the SQLite file is made
 with the sqlite backup API; the dataset files can simply be copied:
