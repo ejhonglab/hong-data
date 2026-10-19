@@ -8,23 +8,31 @@ served on port 8080.
 
 ## 1. Install Docker (once per server)
 
-Ubuntu 26.04 ships Docker and the Compose plugin in its own repositories:
+If the server already has Docker, check it instead, and go on to step 2 if both print a
+version:
+
+```bash
+docker compose version     # v2.x or later (v5.x is fine)
+docker buildx version      # Compose v5 builds the image with buildx
+```
+
+Compose went from v2 to v5 (skipping 3 and 4), and v5 works the same here. Only v1, the
+separate `docker-compose` command, is too old.
+
+Otherwise, Ubuntu 26.04 ships Docker, Compose and buildx in its own repositories:
 
 ```bash
 sudo apt update
 sudo apt install docker.io docker-compose-v2 docker-buildx
 sudo systemctl enable --now docker
 sudo usermod -aG docker "$USER"     # optional: run docker without sudo (re-login afterwards)
-docker compose version               # should print v2.x or later (v5.x is fine)
-docker buildx version                # Compose v5 builds the image with buildx
 ```
-
-Compose went from v2 to v5 (skipping 3 and 4), and v5 works the same here. Only v1, the
-separate `docker-compose` command, is too old.
 
 (If you prefer Docker's upstream packages, follow https://docs.docker.com/engine/install/ubuntu/
 and install `docker-ce docker-buildx-plugin docker-compose-plugin` instead; everything below
-is the same.)
+is the same.) Use one set or the other, never both: they install the same files, so apt
+fails with "trying to overwrite '/usr/libexec/docker/cli-plugins/…'" (or offers to remove
+Docker) when the other set is already there.
 
 ## 2. Put the code on the server
 
