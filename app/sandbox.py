@@ -102,19 +102,39 @@ def normalize(path: str) -> str:
     return p
 
 
-def check_folder(path: str, write: bool = False) -> dict:
+def _mount_fix(path: str, write: bool, supervisor: Optional[str]) -> Optional[str]:
+    """What to change on the server for it to see `path` (to read, or write too), by what
+    runs it (see `access_steps`): HTML, or None if nothing there would."""
+    p = html.escape(path)
+    if supervisor == "Docker":
+        host = os.environ.get("OLFDB_HOST_DIR", "").strip().rstrip("/")
+        where = f"<code>{html.escape(host)}/docker-compose.yml</code>" if host.startswith("/") else "docker-compose.yml"
+        then = (f"then run <code>docker compose up -d</code> {'in <code>' + html.escape(host) + '</code>' if host.startswith('/') else 'there'}"
+                ", which makes the container again with it mounted (restarting it from here does not)")
+        return f"On the server, add <code>- {p}:{p}{'' if write else ':ro'}</code> under <code>volumes:</code> in {where}, {then}."
+    if supervisor == "systemd" and path.startswith(("/mnt/", "/local/")):
+        option = "BindPaths" if write else "BindReadOnlyPaths"
+        return (f"Of /mnt and /local, the service sees only tensor: add <code>{option}=-{p}</code> to "
+                "/etc/systemd/system/olfdb.service, then <code>sudo systemctl daemon-reload &amp;&amp; sudo systemctl restart olfdb</code>.")
+    return None
+
+
+def check_folder(path: str, write: bool = False, supervisor: Optional[str] = None) -> dict:
     """Check a folder entered in the Admin tab (or a file, to read): ``{'input', 'path'
-    (normalized, or None), 'ok', 'error', 'warning'}``. Folders that are not there, or that
-    the server cannot read (or write, with `write`) yet, are accepted with a warning:
-    tensor may just be unmounted."""
-    out = {"input": path, "path": None, "ok": False, "error": None, "warning": None}
+    (normalized, or None), 'ok', 'error', 'warning', 'fix'}``. Folders that are not there, or
+    that the server cannot read (or write, with `write`) yet, are accepted with a warning:
+    tensor may just be unmounted. ``fix`` (HTML) says what would let the server see one it
+    cannot, in the Docker container or the systemd unit (`supervisor`, as in `access_steps`)."""
+    out = {"input": path, "path": None, "ok": False, "error": None, "warning": None, "fix": None}
     try:
         out["path"] = p = normalize(path)
     except SandboxError as e:
         out["error"] = str(e)
         return out
     if not os.path.exists(p):
-        out["warning"] = "not on the server (now, at least; with Docker, only folders mounted into the container are)"
+        out["warning"] = ("not inside the container: only folders mounted into it are" if supervisor == "Docker"
+                          else "not on the server (now, at least)")
+        out["fix"] = _mount_fix(p, write, supervisor)
     elif write and not os.path.isdir(p):
         out["error"] = "this is a file, not a folder"
         return out
@@ -122,15 +142,20 @@ def check_folder(path: str, write: bool = False) -> dict:
         out["warning"] = "the server's user is not allowed to read it"
     elif write and not os.access(p, os.W_OK):
         out["warning"] = "the server cannot write here (mounted read-only, or its user is not allowed to)"
+        fix = _mount_fix(p, write, supervisor)
+        if fix:
+            out["fix"] = (f"If it is in a folder mounted read-only (as tensor is): {fix[0].lower()}{fix[1:]} If it is mounted "
+                          "writable already, its user on the server" + (" (uid 10001)" if supervisor == "Docker" else "")
+                          + " needs to be allowed to write it.")
     out["ok"] = True
     return out
 
 
-def check_folders(body: dict) -> tuple[dict[str, list[dict]], dict[str, list[str]]]:
-    """Checks of the folders in `body` (lists by `KINDS`; empty ones skipped), and the
-    folders normalized and without duplicates."""
-    checks = {k: [check_folder(str(p), write=k == "write_dirs") for p in body.get(k) or [] if str(p).strip()]
-              for k in KINDS}
+def check_folders(body: dict, supervisor: Optional[str] = None) -> tuple[dict[str, list[dict]], dict[str, list[str]]]:
+    """Checks of the folders in `body` (lists by `KINDS`; empty ones skipped; see
+    `check_folder`), and the folders normalized and without duplicates."""
+    checks = {k: [check_folder(str(p), write=k == "write_dirs", supervisor=supervisor)
+                  for p in body.get(k) or [] if str(p).strip()] for k in KINDS}
     dirs = {k: list(dict.fromkeys(c["path"] for c in cs if c["ok"])) for k, cs in checks.items()}
     return checks, dirs
 

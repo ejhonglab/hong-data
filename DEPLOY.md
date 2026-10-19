@@ -153,8 +153,16 @@ What the app may touch on the server is limited in two layers:
 So to let it write somewhere, e.g. backups on tensor: mount that folder writable, as in
 the commented-out line in `docker-compose.yml` (on tensor, the folder has to exist
 already), `docker compose up -d`, then add it in the Admin tab and restart from there. A
-folder only added in the Admin tab gets a warning there: not on the server (not mounted
-into the container), or not writable (mounted read-only).
+folder only added in the Admin tab gets a warning there: not inside the container, or
+not writable (mounted read-only), with the line to add to `docker-compose.yml` (with
+the systemd unit: to the unit). Restarting from the Admin tab does not mount anything:
+`docker compose up -d` makes the container again with the new line.
+
+To add folders from the Admin tab alone later, mount a folder holding them once, e.g.
+`- /local/tensor-archive:/local/tensor-archive` (writable): any folder in it can then
+be added in the Admin tab and used after a restart from there. The Admin tab's lists
+(and Landlock) still decide what the server uses, but the container itself can then
+reach all of that folder, so mount no more than is needed.
 
 The Admin tab first asks whether you are Tom, Jon or Betty, or have asked one of them: a
 reminder, not a lock. Anyone who can open the site can change these settings, restart

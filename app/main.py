@@ -1292,7 +1292,7 @@ def _admin_state() -> dict:
         "saved": saved,
         "active": {k: active[k] for k in sandbox.KINDS} if active else None,
         "pending": active is not None and any(saved[k] != active[k] for k in sandbox.KINDS),
-        "checks": sandbox.check_folders(saved)[0],
+        "checks": sandbox.check_folders(saved, _supervisor())[0],
         "odor_sheet": _odor_sheet(),
         "data_dir": to_server(str(config.DATA_DIR)),
         "deleted_dir": to_server(str(config.DELETED_DIR)),
@@ -1346,7 +1346,7 @@ async def admin_check(request: Request) -> Response:
     body = await request.json()
     if not _folder_lists(body):
         return json_error(400, f"expected lists of paths in {', '.join(sandbox.KINDS)}")
-    checks, _ = await run_in_threadpool(sandbox.check_folders, body)
+    checks, _ = await run_in_threadpool(sandbox.check_folders, body, _supervisor())
     return JSONResponse({"ok": all(c["ok"] for cs in checks.values() for c in cs), "checks": checks})
 
 
@@ -1356,7 +1356,7 @@ async def admin_save(request: Request) -> Response:
     body = await request.json()
     if not _folder_lists(body):
         return json_error(400, f"expected lists of paths in {', '.join(sandbox.KINDS)}")
-    checks, dirs = await run_in_threadpool(sandbox.check_folders, body)
+    checks, dirs = await run_in_threadpool(sandbox.check_folders, body, _supervisor())
     errors = [f"{c['input']}: {c['error']}" for cs in checks.values() for c in cs if not c["ok"]]
     if errors:
         return JSONResponse({"ok": False, "errors": errors, "checks": checks}, status_code=422)

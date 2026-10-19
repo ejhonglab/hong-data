@@ -33,7 +33,7 @@ def test_check_folder(tmp_path):
     (tmp_path / "ro").mkdir()
     (tmp_path / "f").write_text("")
     assert sandbox.check_folder(f"{tmp_path}/ro/") == {"input": f"{tmp_path}/ro/", "path": f"{tmp_path}/ro", "ok": True,
-                                                       "error": None, "warning": None}
+                                                       "error": None, "warning": None, "fix": None}
     assert "not on the server" in sandbox.check_folder(f"{tmp_path}/nothing")["warning"]
     assert sandbox.check_folder(f"{tmp_path}/f")["ok"]  # a file alone may be read (as a reference dataset is)
     assert sandbox.check_folder(f"{tmp_path}/f", write=True)["error"] == "this is a file, not a folder"
@@ -43,6 +43,29 @@ def test_check_folder(tmp_path):
         try:
             assert sandbox.check_folder(str(tmp_path / "ro"))["warning"] is None
             assert "cannot write" in sandbox.check_folder(str(tmp_path / "ro"), write=True)["warning"]
+        finally:
+            os.chmod(tmp_path / "ro", 0o755)
+
+
+def test_check_folder_mounts(tmp_path, monkeypatch):
+    # what it takes for the server to see a folder it cannot, in Docker or the systemd unit
+    monkeypatch.setenv("OLFDB_HOST_DIR", "/opt/olfdb")
+    c = sandbox.check_folder("/local/tensor-archive/Betty/olfdb_backups", write=True, supervisor="Docker")
+    assert c["ok"] and c["warning"] == "not inside the container: only folders mounted into it are"
+    assert ("<code>- /local/tensor-archive/Betty/olfdb_backups:/local/tensor-archive/Betty/olfdb_backups</code> under "
+            "<code>volumes:</code> in <code>/opt/olfdb/docker-compose.yml</code>, then run <code>docker compose up -d</code> "
+            "in <code>/opt/olfdb</code>") in c["fix"]
+    assert ":/local/x:ro</code>" in sandbox.check_folder("/local/x", supervisor="Docker")["fix"]  # to read only
+    assert "BindPaths=-/local/x" in sandbox.check_folder("/local/x", write=True, supervisor="systemd")["fix"]
+    assert "BindReadOnlyPaths=-/local/x" in sandbox.check_folder("/local/x", supervisor="systemd")["fix"]
+    assert sandbox.check_folder("/srv/x", supervisor="systemd")["fix"] is None
+    assert sandbox.check_folder("/srv/x")["fix"] is None and "not on the server" in sandbox.check_folder("/srv/x")["warning"]
+    if os.geteuid() != 0:  # a folder there, but not writable: in a read-only mount, perhaps
+        (tmp_path / "ro").mkdir()
+        os.chmod(tmp_path / "ro", 0o555)
+        try:
+            fix = sandbox.check_folder(str(tmp_path / "ro"), write=True, supervisor="Docker")["fix"]
+            assert fix.startswith("If it is in a folder mounted read-only (as tensor is): on the server, add") and "uid 10001" in fix
         finally:
             os.chmod(tmp_path / "ro", 0o755)
 

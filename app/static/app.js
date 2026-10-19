@@ -2336,7 +2336,10 @@ function showDirCheck(row, c) {
   row.classList.toggle('warn', warn);
   row.classList.toggle('bad', !!c && !c.ok);
   $('.dir-mark', row).textContent = c ? (c.ok ? (warn ? '!' : '✓') : '✗') : '';
-  $('.dir-msg', row).textContent = c ? (c.ok ? c.warning || '' : c.error) : '';
+  const msg = $('.dir-msg', row);
+  msg.textContent = c ? (c.ok ? c.warning || '' : c.error) : '';
+  // what to change on the server for it to see the folder (Admin tab: HTML from the server)
+  if (c?.fix) msg.insertAdjacentHTML('beforeend', `<div class="dir-fix">${c.fix}</div>`);
 }
 
 class SettingsPage {
@@ -2991,7 +2994,9 @@ class AdminPage {
       const pending = s.pending.length ? ` <code>${s.pending.map(esc).join('</code>, <code>')}</code> ${s.pending.length === 1 ? 'is' : 'are'} saved there: in effect once the server restarts (below).` : '';
       parts.push(msgBox('info', `No folder to back up into: add one above, under <i>May also write</i> (in Docker, also mounted writable in
         <code>docker-compose.yml</code>), save, then restart the server.${pending}`).outerHTML);
-    } else if (!ok.length) parts.push(msgBox('error', 'None of the folders it may write can be written now (see the list to choose from).').outerHTML);
+    } else if (!ok.length) {
+      parts.push(msgBox('error', 'None of the folders it may write can be written now: see under <i>May also write</i>, above, for what it takes.').outerHTML);
+    }
     if (!job.running && job.error && !this._watchingBackup) parts.push(msgBox('error', `The last backup failed: ${esc(job.error)}`).outerHTML);
     $('#admin-backup-status').innerHTML = parts.join('');
 

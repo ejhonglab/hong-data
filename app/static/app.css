@@ -218,6 +218,8 @@ input[data-src], select[data-src], textarea[data-src] { background: var(--src-so
 /* ---------------------------------------------------------------- admin */
 #tab-admin { overflow: auto; padding: 24px 20px 60px; }
 .dir-row.warn .dir-mark, .dir-row.warn .dir-msg { color: var(--warn); }
+.dir-row .dir-fix { margin-top: 2px; color: var(--ink); }
+.dir-row .dir-fix code { user-select: all; }
 .dir-row.warn input { border-color: #e0b85c; background: var(--warn-soft); }
 #admin-status { margin-top: 0; padding-top: 0; border-top: 0; }
 #admin-server .kv { margin: 12px 0 0; }
