@@ -135,9 +135,13 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   date and fly number) are used, which give the `Experiment.xml` of the most recent
   functional recording (of the last fly; not those in folders named `anat` or
   `anatomical`, or starting with either then `_`, taken to be anatomical; unless
-  you added or chose one), and the fewest odor YAMLs in your odor YAML folders that
-  together describe every odor (those named in the recordings' ThorImage notes first,
-  then ones with a fly's date in their path). A field stays colored by where its value came from
+  you added or chose one), and the odor YAMLs in your odor YAML folders describing
+  every odor, panel by panel: for each panel, the YAMLs olf generated for its
+  recordings (named `<panel>_<n>`, a `_redo` or `_001` one in place of the one it
+  replaces), as named in their ThorImage notes, of the last fly whose describe all its
+  odors; else the panel's config (`<panel>.yaml`, anywhere in those folders), then
+  YAMLs with a fly's date in their path. What was found for each panel is listed (with
+  why), and attached if every odor is described. A field stays colored by where its value came from
   (settings, tensor, the files) until you change it, and the README says which files
   came from tensor, and from where. Every value is stored on its own, whatever is
   changed in the README.

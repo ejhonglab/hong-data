@@ -62,6 +62,8 @@ def parse_odor_yaml(text: str) -> tuple[list[YamlOdor], dict]:
     odors: list[YamlOdor] = []
     seen = set()
     for i, od in enumerate(raw):
+        if "air_mix" in od and "name" not in od:  # a mixture of odors listed on their own (olfactometer configs)
+            continue
         name = od.get("name")
         if not isinstance(name, str) or not name.strip():
             raise YamlError(f"odor entry #{i + 1} has no 'name'")

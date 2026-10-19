@@ -438,7 +438,7 @@ async def stage_lookup(request: Request) -> Response:
 
     def run() -> dict:
         parsed = load_parsed(d / "parsed")
-        return tensor.lookup(config.TENSOR_ROOT, dirs, parsed.summary()["flies"], parsed.component_odors())
+        return tensor.lookup(config.TENSOR_ROOT, dirs, parsed.summary()["flies"], parsed.panel_odors())
 
     result = await run_in_threadpool(run)
     return JSONResponse({"ok": True, "user": user, "raw_data_path_given": c["path"] if raw else None, **result})

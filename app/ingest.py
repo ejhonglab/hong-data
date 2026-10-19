@@ -152,14 +152,18 @@ class ParsedData:
 
     def component_odors(self) -> list[tuple[str, float]]:
         """Distinct (name, log10_conc) pairs for every non-solvent component odor."""
-        seen: dict[tuple[str, float], None] = {}
+        return list(dict.fromkeys(o for odors in self.panel_odors().values() for o in odors))
+
+    def panel_odors(self) -> dict[Optional[str], list[tuple[str, float]]]:
+        """`component_odors` of each panel (None: trials without one), in trial order."""
+        seen: dict[Optional[str], dict[tuple[str, float], None]] = {}
         for t in self.trials:
             for c in t["components"]:
                 if c == SOLVENT_STR:
                     continue
                 o = parse_odor(c, strict=False)
-                seen.setdefault((o.name, o.log10_conc), None)
-        return list(seen)
+                seen.setdefault(t["panel"], {}).setdefault((o.name, o.log10_conc), None)
+        return {panel: list(odors) for panel, odors in seen.items()}
 
 
 # ---------------------------------------------------------------------- loading

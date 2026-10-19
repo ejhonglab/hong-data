@@ -44,10 +44,17 @@ the app is described in [README.md](README.md), hosting it in [DEPLOY.md](DEPLOY
   relative to its top, so the same paths work from any computer and the browser never
   has to reach the NAS. Flies are looked for in hong2p's layout
   (`<folder>/<date>/<fly>/<recording>/Experiment.xml`, with dates and fly folders in
-  several spellings). The `Experiment.xml` of the first recording is attached, and odor
-  YAMLs are picked greedily until they describe every odor in the matrix: each time the
-  one describing the most odors not yet covered, preferring, on ties, ones named in the
-  recordings' ThorImage notes over ones found by a fly's date in their path.
+  several spellings). The `Experiment.xml` of the most recent functional recording is
+  attached. Odor YAMLs are found panel by panel, following how olf (the olfactometer's
+  program) makes them: from a panel's config (`<panel>.yaml`) it generates one YAML per
+  recording (`<time>_stimuli/<time>_stimuli_<i>.yaml`), whose path goes into that
+  recording's ThorImage notes, and recordings are named `<panel>_<n>` (with `_redo` or
+  `_001` for one replacing another). So each panel's odors are described by the YAMLs
+  named in the notes of one fly's recordings of it (the last fly's that describe them
+  all), which are what was run then; else the fewest of those of any fly, the panel's
+  config (as it is now, which may have changed since), YAMLs named in the notes of
+  recordings of no panel, and YAMLs with a fly's date in their path, in that order. The
+  panels' YAMLs need not be in one folder, nor of one date.
 - **The folders the server may use are limited in two layers.** The deployment decides
   what it can reach at all (the container's mounts, a read-only image, no capabilities;
   or the systemd unit's sandboxing), which the app cannot change. Within that, the Admin

@@ -130,6 +130,80 @@ def test_lookup(root):
     assert r["experiment_xmls"] == []  # the right number, on another date
 
 
+DIAG = [("ethyl acetate", "ea", -8), ("valeric acid", "va", -4)]
+MEGA = [("2-heptanone", "2h", -3), ("hexanal", "6al", -3), ("linalool", "Lin", -3)]
+
+
+def generated(odors) -> str:  # as olf writes them, one per recording
+    return "settings: {}\npins2odors:\n" + "".join(f"  {37 + i}: {{name: {n}, abbrev: {a}, log10_conc: {c}}}\n"
+                                                    for i, (n, a, c) in enumerate(odors))
+
+
+def olf_config(odors) -> str:  # olf's input: a panel's config
+    return ("generator: basic\nodors:\n" + "".join(f"- {{name: {n}, abbrev: {a}, log10_conc: {c}}}\n" for n, a, c in odors)
+            + "- {air_mix: [A, B]}\n")
+
+
+def test_lookup_panels(tmp_path):
+    root = tmp_path / "tensor"
+    fly = root / "tom/raw/2024-01-05/1"
+
+    def recording(name, notes, t):
+        (fly / name).mkdir(parents=True)
+        (fly / name / "Experiment.xml").write_text(XML.format(notes=notes))
+        os.utime(fly / name / "Experiment.xml", (t, t))
+
+    recording("glomeruli_diagnostics_1", r"C:\olf\20240105_110000_stimuli.yaml", 1e9)
+    recording("megamat_1", r"20240105_120000_stimuli\20240105_120000_stimuli_0.yaml", 1e9 + 10)
+    recording("megamat_2", r"20240105_120000_stimuli\20240105_120000_stimuli_1.yaml", 1e9 + 20)
+    recording("megamat_2_redo", r"20240105_130000_stimuli\20240105_130000_stimuli_1.yaml", 1e9 + 30)  # replaces it
+    olf = root / "tom/olf"
+    for rel, text in [("20240105_110000_stimuli.yaml", generated(DIAG)),
+                      ("20240105_120000_stimuli/20240105_120000_stimuli_0.yaml", generated(MEGA[:2])),
+                      ("20240105_120000_stimuli/20240105_120000_stimuli_1.yaml", generated([("linalool", "Lin", -2)])),
+                      ("20240105_130000_stimuli/20240105_130000_stimuli_1.yaml", generated(MEGA[2:])),
+                      ("megamat.yaml", olf_config(MEGA)), ("old/glomeruli_diagnostics.yaml", olf_config(DIAG)),
+                      ("venv/lib/20240105_odors.yaml", generated(DIAG + MEGA))]:  # not looked in
+        (olf / rel).parent.mkdir(parents=True, exist_ok=True)
+        (olf / rel).write_text(text)
+    dirs = {"raw_dirs": ["tom/raw"], "odor_dirs": ["tom/olf"]}
+    flies = [{"date": "2024-01-05", "fly_num": 1}]
+    panel_odors = {"glomeruli_diagnostics": [("ea", -8.0), ("va", -4.0)], "megamat": [(a, float(c)) for _, a, c in MEGA]}
+    gen = ["tom/olf/20240105_110000_stimuli.yaml", "tom/olf/20240105_120000_stimuli/20240105_120000_stimuli_0.yaml",
+           "tom/olf/20240105_130000_stimuli/20240105_130000_stimuli_1.yaml"]
+
+    # each panel by the YAMLs generated for its recordings (the one redone, not the one it replaced)
+    r = tensor.lookup(root, dirs, flies, panel_odors)["odor_yamls"]
+    assert [(p["panel"], p["selected"], p["complete"]) for p in r["panels"]] == [
+        ("glomeruli_diagnostics", gen[:1], True), ("megamat", gen[1:], True)]
+    assert r["panels"][1]["how"] == "named in the notes of its megamat recordings, of fly 1 of 2024-01-05"
+    assert r["selected"] == gen and r["missing"] == [] and r["n_matrix_odors"] == 5
+    assert not any("venv" in c["path"] or c["path"].endswith("120000_stimuli_1.yaml") for c in r["candidates"])
+    # the same with no panel in the data: the names its recordings are named for
+    r = tensor.lookup(root, dirs, flies, [o for odors in panel_odors.values() for o in odors])["odor_yamls"]
+    assert r["selected"] == gen and [p["panel"] for p in r["panels"]] == [None]
+
+    # without the YAMLs generated for its recordings, a panel's config, in whichever folder
+    for rel in gen[1:]:
+        (root / rel).unlink()
+    r = tensor.lookup(root, dirs, flies, panel_odors)["odor_yamls"]
+    assert [(p["selected"], p["how"]) for p in r["panels"]] == [
+        (gen[:1], "named in the notes of its glomeruli_diagnostics recordings, of fly 1 of 2024-01-05"),
+        (["tom/olf/megamat.yaml"], "the megamat panel's config")]
+    (root / gen[0]).unlink()
+    r = tensor.lookup(root, dirs, flies, [o for odors in panel_odors.values() for o in odors])["odor_yamls"]
+    assert r["selected"] == ["tom/olf/megamat.yaml", "tom/olf/old/glomeruli_diagnostics.yaml"]  # the one describing more first
+    assert {c["path"]: c["reason"] for c in r["candidates"]} == {
+        "tom/olf/megamat.yaml": "the megamat panel's config",
+        "tom/olf/old/glomeruli_diagnostics.yaml": "the glomeruli_diagnostics panel's config"}
+
+    # a panel described in part: what for, and what not
+    r = tensor.lookup(root, dirs, flies, {**panel_odors, "megamat": panel_odors["megamat"] + [("x", -1.0)]})["odor_yamls"]
+    assert r["selected"] == [] and r["missing"] == ["x @ -1"]
+    assert [(p["panel"], p["complete"], p["selected"]) for p in r["panels"]] == [
+        ("glomeruli_diagnostics", True, ["tom/olf/old/glomeruli_diagnostics.yaml"]), ("megamat", False, ["tom/olf/megamat.yaml"])]
+
+
 def test_users(tmp_path):
     db = Database(tmp_path / "db.sqlite3")
     assert db.get_user("Tom") is None

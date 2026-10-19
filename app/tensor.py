@@ -6,8 +6,10 @@ Their data is looked for in the layout hong2p uses::
     <raw or motion-corrected folder>/<YYYY-MM-DD>/<fly_num>/<recording>/Experiment.xml
 
 (dates may also be written YYYYMMDD or YYYY_MM_DD, fly folders ``fly1``, ``fly_01``, ...),
-and odor YAMLs up to `YAML_DEPTH` folders below an odor metadata folder: those named in
-the notes of a fly's ThorImage recordings, or with one of the flies' dates in their path.
+and odor YAMLs up to `YAML_DEPTH` folders below an odor metadata folder, panel by panel
+(see `_odor_yamls`): those olf generated for the recordings of a panel (named in their
+ThorImage notes), the panel's own config (``<panel>.yaml``, olf's input), or with one of
+the flies' dates in their path.
 Only what is in the folders the server may read (`sandbox.can_read`) is listed or read.
 """
 from __future__ import annotations
@@ -42,6 +44,12 @@ ANATOMICAL = re.compile(r"(?:anat|anatomical)(?:_.*)?")
 NOT_ALLOWED = "outside the folders the server may read (set in the Admin tab)"
 NAMED = "named in the notes of an Experiment.xml"
 DATED = "a fly's date in its path"
+# folders not looked in for YAMLs (Python environments, caches, hidden ones)
+SKIPPED_DIRS = {"venv", "node_modules", "__pycache__", "site-packages"}
+# a recording of a panel, as named by convention: <panel>_<n>, and <panel>_<n>_redo or
+# <panel>_<n>_001 (ThorImage's numbering of a name used already) for one replacing it
+RECORDING_NUMBER = r"_(\d+)(?:_(?:redo|\d{3}))?"
+RECORDING_NAME = re.compile(rf"(.+?){RECORDING_NUMBER}")
 
 
 class PathError(ValueError):
@@ -310,7 +318,7 @@ def _yaml_files(folder: Path) -> list[Path]:
         n_dirs += 1
         for e in _entries(d):
             if _is_dir(e):
-                if depth < YAML_DEPTH:
+                if depth < YAML_DEPTH and not e.name.startswith(".") and e.name not in SKIPPED_DIRS:
                     todo.append((Path(e.path), depth + 1))
             elif e.name.lower().endswith((".yaml", ".yml")):
                 out.append(Path(e.path))
@@ -334,63 +342,161 @@ def _common(paths: list[str]) -> Optional[str]:
     return posixpath.commonpath(paths) or "; ".join(dict.fromkeys(paths))
 
 
-def _odor_yamls(root: Path, folders: list[Path], xmls: list[Path], flies: list[dict],
-                matrix_odors: list[tuple[str, float]]) -> dict:
-    named: set[str] = set()
-    for x in xmls[:MAX_XMLS_READ]:
+def _recording_panel(name: str, panels: list[str]) -> Optional[tuple[str, int]]:
+    """The panel (of `panels`) a recording's folder is named for, and its number."""
+    for p in sorted(panels, key=len, reverse=True):  # "megamat_long" before "megamat"
+        m = re.fullmatch(re.escape(p) + RECORDING_NUMBER, name)
+        if m:
+            return p, int(m[1])
+    return None
+
+
+def _odor_yamls(root: Path, folders: list[Path], flies: list[dict],
+                panel_odors: dict[Optional[str], list[tuple[str, float]]]) -> dict:
+    """The odor YAMLs in `folders` describing a dataset's odors, panel by panel.
+
+    olf (the olfactometer's program) generates, from a panel's config (``<panel>.yaml``),
+    one YAML per recording (``<time>_stimuli/<time>_stimuli_<i>.yaml``, or one
+    ``<time>_stimuli.yaml``), named in that recording's ThorImage notes; recordings are
+    named ``<panel>_<n>`` (`RECORDING_NAME`). For each panel of the data (or, without
+    one, each name its recordings are named for), the odors of that panel are described
+    by, in this order: the YAMLs named in the notes of one fly's recordings of the panel
+    (the last fly's whose describe them all; a recording redone in place of the one it
+    replaces), else the fewest of: those named in the notes of any of its recordings, the
+    panel's config, those named in the notes of recordings of no panel, those with a
+    fly's date in their path.
+
+    Args:
+        flies: per fly (by date and number), ``recordings``: their Experiment.xml (absolute
+            paths, oldest first).
+        panel_odors: (name, log10_conc) of the odors of each panel (None: of no panel).
+    """
+    panels = [p for p in panel_odors if p is not None]
+    # each fly's recordings by panel (None: those of no panel of the data)
+    by_panel: dict[Optional[str], list[tuple[int, Path]]] = {p: [] for p in panel_odors}
+    others: list[tuple[int, Path]] = []
+    prefixes: list[str] = []  # names recordings of no panel are named for
+    for rank, f in enumerate(flies):
+        kept: dict[tuple[str, int], Path] = {}
+        for x in f["recordings"]:
+            found = _recording_panel(x.parent.name, panels)
+            if found:
+                kept[found] = x  # the later one: a recording redone
+                continue
+            others.append((rank, x))
+            m = RECORDING_NAME.fullmatch(x.parent.name)
+            if m and m[1] not in prefixes:
+                prefixes.append(m[1])
+        for (p, _), x in kept.items():
+            by_panel[p].append((rank, x))
+
+    notes: dict[Path, list[str]] = {}
+    for _, x in itertools.islice([*(r for rs in by_panel.values() for r in rs), *others], MAX_XMLS_READ):
         text = _read(x)
-        if text:
-            named.update(thorimage.notes_yaml_names(text))
-    index = [p for f in folders for p in _yaml_files(f)]
+        notes[x] = thorimage.notes_yaml_names(text) if text else []
+    by_name: dict[str, list[Path]] = {}
+    for p in (p for f in folders for p in _yaml_files(f)):
+        by_name.setdefault(p.name, []).append(p)
     dates = {n for f in flies for n in date_names(f["date"])}
-    reasons: dict[Path, str] = {}
-    for p in index:
-        if p.name in named:
-            reasons.setdefault(p, NAMED)
-    for p in index:
-        if any(n in p.relative_to(root).as_posix() for n in dates):
-            reasons.setdefault(p, DATED)
+    dated = [p for ps in by_name.values() for p in ps if any(n in p.relative_to(root).as_posix() for n in dates)]
 
-    want = {f"{name} @ {format_conc(conc)}" for name, conc in matrix_odors}
-    candidates = []
-    for p, reason in itertools.islice(reasons.items(), MAX_YAMLS_PARSED):
-        text = _read(p)
-        try:
-            odors, _ = yamlcheck.parse_odor_yaml(text or "")
-        except yamlcheck.YamlError:
-            continue
-        covers = {m["odor"] for m in yamlcheck.check_subset(matrix_odors, odors)["matched"]}
-        if covers:
-            candidates.append({"path": p.relative_to(root).as_posix(), "reason": reason, "n_odors": len(odors),
-                               "covers": covers})
+    parsed: dict[Path, Optional[list]] = {}
 
-    # fewest files that together describe every odor, preferring ones named in the notes
-    selected, covered, pool = [], set(), list(candidates)
-    while pool and covered != want:
-        best = max(pool, key=lambda c: (len(c["covers"] - covered), c["reason"] == NAMED))
-        if not best["covers"] - covered:
-            break
-        selected.append(best)
-        covered |= best["covers"]
-        pool.remove(best)
-    complete = bool(want) and covered == want
-    ranked = selected + sorted(pool, key=lambda c: -len(c["covers"]))
+    def odors_of(p: Path) -> Optional[list]:
+        if p not in parsed:
+            parsed[p] = None
+            if len(parsed) <= MAX_YAMLS_PARSED:
+                try:
+                    parsed[p] = yamlcheck.parse_odor_yaml(_read(p) or "")[0]
+                except yamlcheck.YamlError:
+                    pass
+        return parsed[p]
+
+    rel = lambda p: p.relative_to(root).as_posix()
+    show = lambda o: f"{o[0]} @ {format_conc(o[1])}"
+    results, candidates = [], {}
+    for panel, odors in panel_odors.items():
+        want = {show(o) for o in odors}
+        recordings = by_panel[panel] if panel is not None else others
+        configs = [panel] if panel is not None else prefixes
+        named_by = f"named in the notes of its {panel} recordings" if panel is not None else NAMED
+        found = [  # (tier: the lower the better, reason, YAML, fly rank: the higher the more recent)
+            *((0, named_by, y, rank) for rank, x in recordings for n in notes.get(x, []) for y in by_name.get(n, [])),
+            *((1, f"the {c} panel's config", y, -1) for c in configs for ext in (".yaml", ".yml") for y in by_name.get(c + ext, [])),
+            *((2, NAMED, y, rank) for rank, x in (others if panel is not None else []) for n in notes.get(x, [])
+              for y in by_name.get(n, [])),
+            *((3, DATED, y, -1) for y in dated),
+        ]
+        pool: dict[Path, dict] = {}
+        for tier, reason, y, rank in found:
+            c = pool.get(y)
+            if c is None:
+                ys = odors_of(y)
+                if ys is None:
+                    continue
+                covers = {m["odor"] for m in yamlcheck.check_subset(odors, ys)["matched"]}
+                if not covers:
+                    continue
+                c = pool[y] = {"path": y, "reason": reason, "tier": tier, "rank": rank, "covers": covers, "ranks": set()}
+            c["ranks"].add(rank)
+            c["rank"] = max(c["rank"], rank)
+
+        def fewest(cands: list[dict]) -> tuple[list[dict], set]:
+            chosen, covered, left = [], set(), list(cands)
+            while left and covered != want:
+                best = min(left, key=lambda c: (not (c["covers"] - covered), c["tier"], -len(c["covers"] - covered), -c["rank"]))
+                if not best["covers"] - covered:
+                    break
+                chosen.append(best)
+                covered |= best["covers"]
+                left.remove(best)
+            return chosen, covered
+
+        chosen, how = [], None
+        for rank in sorted({r for r, _ in recordings}, reverse=True):  # one fly's, the last first
+            mine = [c for c in pool.values() if c["tier"] == 0 and rank in c["ranks"]]
+            if set().union(*(c["covers"] for c in mine)) >= want:
+                chosen = fewest(mine)[0]
+                f = flies[rank]
+                how = f"{named_by}, of fly {f['fly_num']} of {f['date']}"
+                break
+        if not chosen:
+            chosen = fewest(list(pool.values()))[0]
+            how = ", ".join(dict.fromkeys(c["reason"] for c in chosen)) or None
+        covered = set().union(*(c["covers"] for c in chosen))
+        results.append({
+            "panel": panel, "n_odors": len(want), "selected": [rel(c["path"]) for c in chosen], "how": how,
+            "complete": bool(want) and covered >= want,
+            "missing": sorted(want - set().union(*(c["covers"] for c in pool.values()))),
+        })
+        for c in pool.values():
+            seen = candidates.setdefault(c["path"], {**c, "covers": set()})
+            seen["covers"] |= c["covers"]
+            if c["tier"] < seen["tier"]:
+                seen.update(reason=c["reason"], tier=c["tier"])
+
+    want_all = {show(o) for odors in panel_odors.values() for o in odors}
+    selected = list(dict.fromkeys(p for r in results for p in r["selected"]))
+    ranked = sorted(candidates.values(), key=lambda c: (rel(c["path"]) not in selected, c["tier"], -len(c["covers"])))
     return {
-        "n_matrix_odors": len(want),
-        "candidates": [{**{k: v for k, v in c.items() if k != "covers"}, "n_covered": len(c["covers"])} for c in ranked],
-        "selected": [c["path"] for c in selected] if complete else [],
-        "missing": sorted(want - set().union(*(c["covers"] for c in candidates))),
+        "n_matrix_odors": len(want_all),
+        "candidates": [{"path": rel(c["path"]), "reason": c["reason"], "n_covered": len(c["covers"])} for c in ranked],
+        "selected": selected if results and all(r["complete"] for r in results) else [],
+        "missing": sorted(set().union(*(r["missing"] for r in results))),
+        "panels": results,
     }
 
 
-def lookup(root: Path, dirs: dict[str, list[str]], flies: list[dict], matrix_odors: list[tuple[str, float]]) -> dict:
+def lookup(root: Path, dirs: dict[str, list[str]], flies: list[dict],
+           panel_odors: dict[Optional[str], list[tuple[str, float]]] | list[tuple[str, float]]) -> dict:
     """Find a dataset's flies in a user's folders on tensor, and odor YAMLs describing its odors.
 
     Args:
         root: top of tensor on the server.
         dirs: the user's folders (`USER_DIR_KINDS` -> paths relative to `root`).
         flies: the dataset's flies (dicts with date and fly_num), as in `ParsedData.summary`.
-        matrix_odors: (name, log10_conc) of every odor in the dataset.
+        panel_odors: (name, log10_conc) of the dataset's odors, by panel (as
+            `ParsedData.panel_odors`), or all of them (of no panel).
 
     Returns:
         dict with ``flies`` (per fly: its raw and motion-corrected folders and the
@@ -398,10 +504,12 @@ def lookup(root: Path, dirs: dict[str, list[str]], flies: list[dict], matrix_odo
         by its date and number: see `fly_dirs`), ``raw_data_path`` and ``mocorr_data_path``
         (the folder holding every fly found, or None), ``experiment_xmls`` (of every
         fly, by date and number, each fly's oldest first: the last is the most recent)
-        and ``odor_yamls`` (``candidates``, ``selected``: the fewest of them that together
-        describe every odor, if they do, and ``missing``: odors none of them describe).
-        All paths are relative to `root`.
+        and ``odor_yamls`` (see `_odor_yamls`: ``candidates``, ``selected``: those
+        describing every odor, if they do, ``missing``: odors none of them describe, and
+        ``panels``: what was found for each panel). All paths are relative to `root`.
     """
+    if isinstance(panel_odors, list):
+        panel_odors = {None: panel_odors}
     rel = lambda p: p.relative_to(root).as_posix()
     folders = {k: [root / p for p in dirs.get(k) or []] for k in USER_DIR_KINDS}
     found = []
@@ -418,5 +526,7 @@ def lookup(root: Path, dirs: dict[str, list[str]], flies: list[dict], matrix_odo
         "raw_data_path": _common([d for f in found for d in f["raw"]]),
         "mocorr_data_path": _common([d for f in found for d in f["mocorr"]]),
         "experiment_xmls": xmls,
-        "odor_yamls": _odor_yamls(root, folders["odor_dirs"], [root / x for x in xmls], flies, matrix_odors),
+        "odor_yamls": _odor_yamls(root, folders["odor_dirs"],
+                                  [{**f, "recordings": [root / x for x in f["recordings"]]}
+                                   for f in sorted(found, key=lambda f: (f["date"], f["fly_num"]))], panel_odors),
     }

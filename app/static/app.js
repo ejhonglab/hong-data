@@ -1179,6 +1179,14 @@ class UploadFlow {
     } else if (y.candidates.length) {
       yaml = `${plural(y.candidates.length, 'file')} describing some of the odors, but none for ${esc(y.missing.slice(0, 6).join(', '))}${y.missing.length > 6 ? ', …' : ''}; attach any of them below`;
     } else yaml = '<span class="muted">none describing these odors</span>';
+    // what was found for each panel (YAMLs are looked for panel by panel)
+    const file = (path) => `<code title="${esc(path)}">${esc(path.split('/').pop())}</code>`;
+    if (dirsOf('odor_dirs').length && y.panels?.length && (y.panels.length > 1 || y.panels[0].panel != null)) {
+      yaml += `<ul>${y.panels.map((p) => `<li><b>${esc(p.panel ?? 'its odors')}</b> (${p.n_odors} odors): ${p.complete
+        ? `${p.selected.map(file).join(', ')} <span class="muted">(${esc(p.how)})</span>`
+        : `<span class="warn">${p.missing.length} described by no YAML found</span> (${esc(p.missing.slice(0, 4).join(', '))}${p.missing.length > 4 ? ', …' : ''})${
+          p.selected.length ? `; the rest by ${p.selected.map(file).join(', ')}` : ''}`}</li>`).join('')}</ul>`;
+    }
     const flyRows = n.flies.map((f) => `<tr><td>${esc(flyName(f))}</td><td>${f.raw.map((p) => `<code>${esc(p)}</code>`).join('<br>') || '—'}</td>
       <td>${f.mocorr.map((p) => `<code>${esc(p)}</code>`).join('<br>') || '—'}</td><td>${f.recordings.length}</td></tr>`).join('');
     const yamlRows = y.candidates.map((c) => `<tr><td><code>${esc(c.path)}</code></td><td class="muted">${esc(c.reason)}</td>
