@@ -106,9 +106,15 @@ def test_lookup(root):
     os.utime(root / "tom/raw/2023-11-19/1/t1/Experiment.xml", (2e9, 2e9))
     r = tensor.lookup(root, dirs, flies, odors)
     assert r["experiment_xmls"][:2] == ["tom/raw/2023-11-19/1/t2/Experiment.xml", "tom/raw/2023-11-19/1/t1/Experiment.xml"]
-    # and the folder of a dataset's only fly, given as its raw data folder
-    r = tensor.lookup(root, {"raw_dirs": ["tom/raw/2023-11-19/1"]}, flies[:1], [])
-    assert r["flies"][0]["raw"] == ["tom/raw/2023-11-19/1"] and len(r["experiment_xmls"]) == 2
+    # and the folder of one of the dataset's flies, given as its raw data folder
+    r = tensor.lookup(root, {"raw_dirs": ["tom/raw/2023-11-19/1"]}, flies, [])
+    assert [f["raw"] for f in r["flies"]] == [["tom/raw/2023-11-19/1"], [], []] and len(r["experiment_xmls"]) == 2
+    # but never the recordings of a fly not in the dataset, whatever folder is given
+    for other in ("tom/raw/2023-11-19/1", "tom/raw/2023-11-19", "tom/raw/20231120/fly02", "tom/raw/2023-11-19/1/t1"):
+        r = tensor.lookup(root, {"raw_dirs": [other]}, [{"date": "2023-11-20", "fly_num": 1}], [])
+        assert r["flies"][0]["raw"] == [] and r["experiment_xmls"] == [], other
+    r = tensor.lookup(root, {"raw_dirs": ["tom/raw/20231120/fly02"]}, [{"date": "2023-11-19", "fly_num": 2}], [])
+    assert r["experiment_xmls"] == []  # the right number, on another date
 
 
 def test_users(tmp_path):

@@ -129,9 +129,11 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   glomerulus ROIs mean coding unit "glomeruli") and from tensor. The data paths are your
   raw and motion-corrected data folders in Settings (of several, the one with these
   flies, else the first), or, without any, the folder with the flies found on tensor:
-  each fly (`<folder>/<date>/<fly>/`, as in hong2p) is looked for in the raw data path as
-  entered (else in your raw data folders) and your motion-corrected data folders, which
-  give the `Experiment.xml` of the most recent recording (of the last fly; unless
+  each fly (`<folder>/<date>/<fly>/`, as in hong2p, or the folder given if it is a fly's
+  own) is looked for in the raw data path as entered (else in your raw data folders) and
+  your motion-corrected data folders. Only the folders of the dataset's own flies (by
+  date and fly number) are used, which give the `Experiment.xml` of the most recent
+  recording (of the last fly; unless
   you added or chose one), and the fewest odor YAMLs in your odor YAML folders that
   together describe every odor (those named in the recordings' ThorImage notes first,
   then ones with a fly's date in their path). A field stays colored by where its value came from

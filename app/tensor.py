@@ -275,10 +275,14 @@ def date_names(date: str) -> list[str]:
 
 
 def fly_dirs(folder: Path, date: str, fly_num: int) -> list[Path]:
-    """Folders of one fly under `folder` (``<folder>/<date>/<fly>``, or ``<folder>/<fly>`` if `folder` is named by the date)."""
+    """Folders of one fly (by its date and number) in `folder`: ``<folder>/<date>/<fly>``,
+    or ``<folder>/<fly>`` if `folder` is named by the date, or `folder` itself if it is
+    that fly's (``<date>/<fly>``). Never those of any other fly."""
     names = date_names(date)
-    date_dirs = [folder] if folder.name in names else [folder / n for n in names if os.path.isdir(folder / n)]
     pattern = re.compile(rf"(?:fly)?[_-]?0*{int(fly_num)}", re.IGNORECASE)
+    if folder.parent.name in names and pattern.fullmatch(folder.name):
+        return [folder]
+    date_dirs = [folder] if folder.name in names else [folder / n for n in names if os.path.isdir(folder / n)]
     return [d for dd in date_dirs for d in _subdirs(dd) if pattern.fullmatch(d.name)]
 
 
@@ -385,7 +389,8 @@ def lookup(root: Path, dirs: dict[str, list[str]], flies: list[dict], matrix_odo
 
     Returns:
         dict with ``flies`` (per fly: its raw and motion-corrected folders and the
-        Experiment.xml of its recordings), ``raw_data_path`` and ``mocorr_data_path``
+        Experiment.xml of its recordings, only ever in the folders of a fly of the dataset,
+        by its date and number: see `fly_dirs`), ``raw_data_path`` and ``mocorr_data_path``
         (the folder holding every fly found, or None), ``experiment_xmls`` (of every
         fly, by date and number, each fly's oldest first: the last is the most recent)
         and ``odor_yamls`` (``candidates``, ``selected``: the fewest of them that together
@@ -397,8 +402,6 @@ def lookup(root: Path, dirs: dict[str, list[str]], flies: list[dict], matrix_odo
     found = []
     for f in flies:
         raw = [d for base in folders["raw_dirs"] for d in fly_dirs(base, f["date"], f["fly_num"])]
-        if not raw and len(flies) == 1:  # a folder given may be that of the one fly
-            raw = [base for base in folders["raw_dirs"] if recordings(base)]
         mocorr = [d for base in folders["mocorr_dirs"] for d in fly_dirs(base, f["date"], f["fly_num"])]
         found.append({
             "date": f["date"], "fly_num": f["fly_num"], "raw": [rel(d) for d in raw], "mocorr": [rel(d) for d in mocorr],
