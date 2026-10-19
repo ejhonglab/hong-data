@@ -219,7 +219,9 @@ PUT    /api/datasets/{id}/readme            {"readme", "base"} → the README ov
                                             no longer "base", the one the edit started from)
 GET    /api/datasets/{id}/matrix            units, trials, base64 float32 values
 GET    /api/datasets/{id}/files/{path}      original files
-GET    /api/datasets/{id}/odors             its odors (per panel) matched to the odor table
+GET    /api/datasets/{id}/odors             its odors (per panel) matched to the odor table; rows
+                                            for the odor sheet for those not in it (and as cells
+                                            to paste, in the order of the sheet's columns)
 GET    /api/datasets/{id}/data_paths        where its raw and motion-corrected data are on the
                                             server, and what is in them (or why they are not)
 PUT    /api/datasets/{id}/data_paths        {"raw_data_path", "mocorr_data_path"} (either) → set, if

@@ -136,6 +136,50 @@ def test_dataset_matching(tmp_path):
     assert next(t for t in table if t["odor"] == "va @ -3")["pubchem_url"].endswith("/7991")
 
 
+def test_missing_rows(tmp_path, monkeypatch):
+    db = Database(tmp_path / "db.sqlite3")
+    apply_all(db, rows_of(HEADER + "geosmin,geos,,29746,,,,,,,,,\nperfume geosmin,geos,,1213,,pfo,,,,,,,\n"
+                                   "valeric acid,va,,7991,,water,,,,,,,\n"))
+    index = odormeta.OdorIndex(db.list_odors())
+    trials = [{"panel": "a", "components": ["va @ -4", "2h @ -5"]}, {"panel": "a", "components": ["2h @ -3", "zzz @ -2"]},
+              {"panel": "b", "components": ["2h @ -5", "geos @ -4"]}, {"panel": "b", "components": ["ethyl acetate @ -3"]}]
+    yaml_odors, _ = parse_odor_yaml("odors:\n - {name: 2-heptanone, abbrev: 2h, log10_conc: -5, cid: 8051, cas: 110-43-0, solvent: pfo}\n"
+                                    " - {name: 2-heptanone, abbrev: 2h, log10_conc: -3, cas: 110-43-1}\n"
+                                    " - {name: ethyl acetate, log10_conc: -3}\n")
+    missing = odormeta.missing_rows(odormeta.dataset_odors({}, trials, index, yaml_odors))
+    # one row per chemical, whatever its concentrations and panels; the ambiguous geos is not one
+    assert [(m["name"], m["abbrev"], m["odors"]) for m in missing] == [
+        ("2-heptanone", "2h", ["2h @ -5", "2h @ -3"]), (None, "zzz", ["zzz @ -2"]), ("ethyl acetate", None, ["ethyl acetate @ -3"])]
+    assert missing[0]["cid"] == 8051 and missing[0]["cas"] == "110-43-0" and missing[0]["solvent"] == "pfo"
+    assert missing[0]["supplier"] is None and missing[0]["aliases"] == []
+
+    # pasted in the order of the sheet's columns (its own headers, others left blank), else the template's
+    sheet = "Inventory,Chemical,CAS #,Abbreviation,Notes,PubChem CID\nO-1,valeric acid,109-52-4,va,,7991\n"
+    columns = odormeta.sheet_columns(sheet)
+    assert columns == ["inventory", "name", "cas", "abbrev", "notes", "cid"] and odormeta.sheet_columns("\n\n") is None
+    assert odormeta.sheet_columns("Chemical,Quantity\n") == ["name", None]
+    assert odormeta.sheet_paste(missing, columns) == "\t2-heptanone\t110-43-0\t2h\t\t8051\n\t\t\tzzz\t\t\n\tethyl acetate\t\t\t\t\n"
+    pasted = odormeta.sheet_paste(missing[:1], None)
+    assert pasted.rstrip("\n").split("\t")[:6] == ["2-heptanone", "2h", "", "8051", "110-43-0", "pfo"]
+    rows, errors, _ = odormeta.parse_sheet(HEADER + pasted.replace("\t", ","))  # as the sheet's CSV export would be
+    assert not errors and rows[0]["name"] == "2-heptanone" and rows[0]["cid"] == 8051
+
+    # the endpoint: those rows, in the order of the sheet's columns as last read
+    from app import main
+    monkeypatch.setattr(main, "db", db)
+    monkeypatch.setattr(config, "ODOR_SHEET_URL", "https://docs.google.com/spreadsheets/d/abc/edit")
+    monkeypatch.setattr(odormeta, "fetch_sheet", lambda url, timeout=20: sheet)
+    monkeypatch.setattr(main, "sheet_watch", odormeta.SheetWatch(600))
+    monkeypatch.setattr(main.db, "get_dataset", lambda ds_id: {"id": ds_id, "odor_yaml_files": []})
+    monkeypatch.setattr(main.db, "get_trials", lambda ds_id: trials)
+    from tests.test_tensor import call
+    status, r = call(main.dataset_odor_table, path_params={"ds_id": 1})
+    assert status == 200 and [m["abbrev"] for m in r["missing"]] == ["2h", "zzz", "ethyl acetate"]
+    assert r["sheet"]["columns_from"] == "sheet" and r["sheet"]["paste"].startswith("\t\t\t2h\t") and r["sheet"]["checked_at"]
+    monkeypatch.setattr(main.db, "get_trials", lambda ds_id: [{"panel": "a", "components": ["va @ -4"]}])
+    assert call(main.dataset_odor_table, path_params={"ds_id": 1})[1]["sheet"] is None  # nothing missing
+
+
 def test_check_yaml_odors(tmp_path):
     db = Database(tmp_path / "db.sqlite3")
     index = odormeta.OdorIndex([])

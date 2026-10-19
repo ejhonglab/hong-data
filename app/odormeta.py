@@ -65,6 +65,35 @@ def _header_key(h: str) -> str:
     return re.sub(r"[\s_]+", " ", h.strip().lower()).rstrip(" .:#")
 
 
+def _columns(header: list[str]) -> tuple[dict[int, str], list[str]]:
+    """The fields of a sheet's columns by their header (by index; the first of each), and
+    the headers of the columns ignored."""
+    cols: dict[int, str] = {}
+    ignored = []
+    for j, raw in enumerate(header):
+        f = _HEADER_FIELD.get(_header_key(raw))
+        if f and f not in cols.values():
+            cols[j] = f
+        elif raw.strip():
+            ignored.append(raw.strip())
+    return cols, ignored
+
+
+def _rows(text: str) -> tuple[list[list[str]], Optional[int]]:
+    """A sheet's rows (CSV text), and the index of its header: the first not empty."""
+    lines = list(csv.reader(io.StringIO(text.lstrip("\ufeff"))))
+    return lines, next((i for i, r in enumerate(lines) if any(c.strip() for c in r)), None)
+
+
+def sheet_columns(text: str) -> Optional[list[Optional[str]]]:
+    """The field of each of a sheet's columns, in order (None for those ignored); None if it is empty."""
+    lines, h = _rows(text)
+    if h is None:
+        return None
+    cols, _ = _columns(lines[h])
+    return [cols.get(j) for j in range(len(lines[h]))]
+
+
 def _cas_ok(cas: str) -> bool:
     digits = cas.replace("-", "")
     return int(digits[-1]) == sum(int(c) * (i + 1) for i, c in enumerate(reversed(digits[:-1]))) % 10
@@ -80,20 +109,12 @@ def parse_sheet(text: str) -> tuple[list[dict], list[str], list[str]]:
         the sheet should not be synced; warnings (ignored columns, shared
         abbreviations) do not.
     """
-    lines = list(csv.reader(io.StringIO(text.lstrip("﻿"))))
+    lines, h = _rows(text)
     errors: list[str] = []
     warnings: list[str] = []
-    h = next((i for i, r in enumerate(lines) if any(c.strip() for c in r)), None)
     if h is None:
         return [], ["the sheet is empty"], []
-    cols: dict[int, str] = {}
-    ignored = []
-    for j, raw in enumerate(lines[h]):
-        f = _HEADER_FIELD.get(_header_key(raw))
-        if f and f not in cols.values():
-            cols[j] = f
-        elif raw.strip():
-            ignored.append(raw.strip())
+    cols, ignored = _columns(lines[h])
     if "name" not in cols.values():
         return [], [f"no 'name' column; the first row should be the column names ({', '.join(FIELDS)})"], []
     if ignored:
@@ -255,7 +276,7 @@ def fetch_sheet(sheet_url: str, timeout: float = 20) -> str:
 class SheetWatch:
     """Fingerprint of the odor sheet, refreshed at most every `interval_s`."""
 
-    UNREAD = {"checked_at": None, "fingerprint": None, "n_rows": None, "error": None}
+    UNREAD = {"checked_at": None, "fingerprint": None, "n_rows": None, "columns": None, "error": None}
 
     def __init__(self, interval_s: float):
         self.interval_s = interval_s
@@ -273,19 +294,20 @@ class SheetWatch:
                 self.url, self.checked = url, time.time()
                 state = {"checked_at": dt.datetime.now().isoformat(timespec="seconds"), "error": None}
                 try:
-                    rows, _, _ = parse_sheet(fetch_sheet(url))
-                    state.update(fingerprint=fingerprint(rows), n_rows=len(rows))
+                    text = fetch_sheet(url)
+                    rows, _, _ = parse_sheet(text)
+                    state.update(fingerprint=fingerprint(rows), n_rows=len(rows), columns=sheet_columns(text))
                 except SheetError as e:
-                    state.update(fingerprint=None, n_rows=None, error=str(e))
+                    state.update(fingerprint=None, n_rows=None, columns=None, error=str(e))
                 self.state = state
             return dict(self.state)
 
-    def record(self, url: str, rows: list[dict]) -> None:
-        """Remember a fresh read of the sheet at `url` (from a preview)."""
+    def record(self, url: str, text: str, rows: list[dict]) -> None:
+        """Remember a fresh read of the sheet at `url` (from a preview): its `text`, as parsed into `rows`."""
         with self.lock:
             self.url, self.checked = url, time.time()
-            self.state = {"checked_at": dt.datetime.now().isoformat(timespec="seconds"),
-                          "fingerprint": fingerprint(rows), "n_rows": len(rows), "error": None}
+            self.state = {"checked_at": dt.datetime.now().isoformat(timespec="seconds"), "fingerprint": fingerprint(rows),
+                          "n_rows": len(rows), "columns": sheet_columns(text), "error": None}
 
 
 # ----------------------------------------------------------------------- links
@@ -557,6 +579,48 @@ def dataset_odors(ds: dict, trials: list[dict], index: OdorIndex, yaml_odors: li
                          if yo else None),
             })
     return out
+
+
+def missing_rows(rows: list[dict]) -> list[dict]:
+    """Rows for the odor sheet for a dataset's odors not in the odor table (`dataset_odors`
+    rows, not those it could be more than one of), one per chemical: named as in its odor
+    YAML entry, if it has one (else no name: only a person can tell), abbreviated as in the
+    data (unless that is its name), with the CID, CAS and solvent its entry gives.
+
+    Returns:
+        dicts with every `FIELDS` (None where not known; aliases a list), and ``odors``:
+        the data's odors it is for.
+    """
+    out: dict[str, dict] = {}
+    for r in rows:
+        if r["odor_id"] is not None or r["match"] == "ambiguous":
+            continue
+        y = r["yaml"] or {}
+        name = y.get("name")
+        key = (name or r["label"]).casefold()
+        if key not in out:
+            cid, cas, solvent = str(y.get("cid") or "").strip(), str(y.get("cas") or "").strip(), y.get("solvent")
+            out[key] = {
+                **dict.fromkeys(FIELDS), "aliases": [], "odors": [], "name": name,
+                "abbrev": None if name and r["label"].casefold() == name.casefold() else r["label"],
+                "cid": int(cid) if cid.isdigit() and int(cid) > 0 else None,
+                "cas": cas if _CAS_RE.match(cas) and _cas_ok(cas) else None,
+                "solvent": solvent if isinstance(solvent, str) else None,
+            }
+        if r["odor"] not in out[key]["odors"]:
+            out[key]["odors"].append(r["odor"])
+    return list(out.values())
+
+
+def sheet_paste(rows: list[dict], columns: Optional[list[Optional[str]]]) -> str:
+    """`missing_rows` as cells to paste into the odor sheet (tab-separated), in the order of
+    its `columns` (from `sheet_columns`; the template's, `FIELDS`, if None)."""
+    def cell(row: dict, f: Optional[str]) -> str:
+        v = row.get(f) if f else None
+        v = "; ".join(v) if isinstance(v, list) else "" if v is None else str(v)
+        return re.sub(r"\s+", " ", v)
+
+    return "".join("\t".join(cell(r, f) for f in (columns or FIELDS)) + "\n" for r in rows)
 
 
 def usage(db, datasets_dir: Path, odors: list[dict]) -> dict[int, set[int]]:

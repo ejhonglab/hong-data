@@ -1046,7 +1046,7 @@ def _preview(text: str, source: str, sheet_url: Optional[str] = None) -> dict:
     rows, errors, warnings = odormeta.parse_sheet(text)
     fp = odormeta.fingerprint(rows)
     if sheet_url:
-        sheet_watch.record(sheet_url, rows)
+        sheet_watch.record(sheet_url, text, rows)
     _cleanup_previews()
     (config.ODOR_PREVIEWS_DIR / f"{fp}.json").write_text(json.dumps({"rows": rows, "source": source, "errors": errors}))
     odors = db.list_odors()
@@ -1180,7 +1180,11 @@ async def odor_template(request: Request) -> Response:
 
 
 async def dataset_odor_table(request: Request) -> Response:
-    """A dataset's odors (per panel, as in the data) matched to the odor table."""
+    """A dataset's odors (per panel, as in the data) matched to the odor table; those not
+    in it as rows for the odor sheet (``missing``, see `odormeta.missing_rows`), and these
+    as cells to paste into it (``sheet``: ``paste``, in the order of the sheet's columns as
+    last read, else the template's: ``columns_from`` 'sheet' or 'template', with
+    ``checked_at`` and ``error`` from reading it, and ``configured``)."""
     ds_id = int(request.path_params["ds_id"])
 
     def build() -> Optional[dict]:
@@ -1191,7 +1195,15 @@ async def dataset_odor_table(request: Request) -> Response:
         rows = odormeta.dataset_odors(ds, db.get_trials(ds_id), index, odormeta.dataset_yaml_odors(ds, config.DATASETS_DIR))
         ids = {r["odor_id"] for r in rows} | {i for r in rows for i in r["candidates"]}
         odors = {i: {**index.by_id[i], "links": odormeta.links(index.by_id[i])} for i in ids if i is not None}
-        return {"rows": rows, "odors": odors}
+        missing = odormeta.missing_rows(rows)
+        sheet = None
+        if missing:  # the sheet read only then (at most every few minutes: see SheetWatch)
+            url = _odor_sheet()["url"]
+            state = sheet_watch.check(url) if url else odormeta.SheetWatch.UNREAD
+            sheet = {"paste": odormeta.sheet_paste(missing, state["columns"]),
+                     "columns_from": "sheet" if state["columns"] else "template",
+                     "configured": bool(url), "checked_at": state["checked_at"], "error": state["error"]}
+        return {"rows": rows, "odors": odors, "missing": missing, "sheet": sheet}
 
     result = await run_in_threadpool(build)
     if result is None:

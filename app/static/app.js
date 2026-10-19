@@ -1405,6 +1405,15 @@ class Browse {
       $('#ds-odors-toggle').setAttribute('aria-expanded', String(!p.hidden));
       if (!p.hidden && this.selected != null) this.showOdors(this.selected);
     });
+    $('#ds-odors').addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-copy-sheet]');
+      if (!b) return;
+      const out = b.nextElementSibling;
+      try {
+        await copyText(this.odorCache.get(this.selected).sheet.paste);
+        setStatus(out, '✓ Copied');
+      } catch (err) { setStatus(out, `Could not copy: ${err.message}`, 'error'); }
+    });
     const downloadUrl = (ids, format) => `/api/download?ids=${ids.join(',')}&format=${format}`;
     wireMenu($('#ds-download'), ({ format }) => { if (this.selected != null) download(downloadUrl([this.selected], format), $('#ds-download-status')); });
     wireMenu($('#pick-download'), ({ format }) => download(downloadUrl([...this.picked].sort((a, b) => a - b), format), $('#pick-status')));
@@ -1750,8 +1759,36 @@ function idCells(o) {
   };
 }
 
+// what a dataset's odors not in the odor table (`missing`, `sheet`: GET /api/datasets/<id>/odors)
+// would need in the odor sheet, with a button copying their rows for it
+function missingOdorsHtml({ rows, missing, sheet }) {
+  const parts = [];
+  if (missing.length) {
+    const items = missing.map((m) => `<li>${m.name ? `<b>${esc(m.name)}</b>` : '<b>no name</b> <span class="muted">(no odor YAML names it)</span>'}:
+      ${m.odors.map((o) => `<code>${esc(o)}</code>`).join(', ')}</li>`).join('');
+    const k = missing.length, rowsText = `${k} row${k === 1 ? '' : 's'}`;
+    const order = sheet.columns_from === 'sheet' ? `in the order of the odor sheet's columns (as read ${esc(fmtWhen(sheet.checked_at))})`
+      : `in the order of the template's columns (<code>${esc(Object.keys(ODOR_FIELDS).join(', '))}</code>), as ${sheet.configured
+        ? `the odor sheet could not be read (${esc(sheet.error || 'not yet')})` : 'no odor sheet is set (Admin tab)'}: check that the sheet's are in this order`;
+    const unnamed = missing.filter((m) => !m.name).length;
+    const naming = !unnamed ? '' : unnamed < k ? `, give the ${unnamed} without a name one (the sheet needs it)`
+      : `, give ${k === 1 ? 'it a name' : 'each a name'} (the sheet needs one)`;
+    parts.push(`<p>Not in the odor table (highlighted below):</p><ul class="missing-odors">${items}</ul>
+      <div class="actions"><button type="button" class="btn small" data-copy-sheet>Copy ${rowsText} for the odor sheet</button><span class="status"></span></div>
+      <p class="small">Tab-separated, ${order}. Paste them into the first column of the sheet's first empty row${naming},
+      fill in what else you know, then sync the sheet in the <a href="#odors">Odors tab</a>.</p>`);
+  }
+  const ambiguous = [...new Map(rows.filter((r) => r.match === 'ambiguous').map((r) => [r.label, r])).values()];
+  if (ambiguous.length) {
+    parts.push(`<p>More than one odor in the odor table goes by ${ambiguous.map((r) => `<code>${esc(r.label)}</code>`).join(', ')} (highlighted below):
+      an odor YAML naming the dataset's, or abbreviations of their own in the sheet, would tell which.</p>`);
+  }
+  return parts.length ? `<div class="msg warn">${parts.join('')}</div>` : '';
+}
+
 // a dataset's odors (GET /api/datasets/<id>/odors), per panel, like the thesis odor tables
-function datasetOdorTable({ rows, odors }) {
+function datasetOdorTable(data) {
+  const { rows, odors } = data;
   const hasGlom = rows.some((r) => r.yaml?.glomerulus);
   const nCols = hasGlom ? 12 : 11;
   const body = runsOf(rows, (r) => r.panel).map((g) => {
@@ -1763,15 +1800,16 @@ function datasetOdorTable({ rows, odors }) {
       if (o) name = `<a href="#odors/${o.id}">${esc(o.name)}</a>`;
       else if (r.match === 'ambiguous') name = `<span class="muted">ambiguous: ${r.candidates.map((i) => `<a href="#odors/${i}">${esc(odors[i].name)}</a>`).join(' or ')}</span>`;
       else name = `<span class="muted">${r.yaml?.name ? `${esc(r.yaml.name)}, ` : ''}not in the odor table</span>`;
-      return `<tr><td><code>${esc(r.odor)}</code></td><td>${name}</td><td>${r.log10_conc ?? ''}</td><td>${c.cid || ''}</td>
+      const cls = o ? '' : r.match === 'ambiguous' ? ' class="ambiguous"' : ' class="missing"';
+      return `<tr${cls}><td><code>${esc(r.odor)}</code></td><td>${name}</td><td>${r.log10_conc ?? ''}</td><td>${c.cid || ''}</td>
         <td class="inchi">${esc(o?.inchi || '')}</td><td>${esc(r.yaml?.solvent || o?.solvent || '')}</td>
         ${hasGlom ? `<td>${esc(r.yaml?.glomerulus || '')}</td>` : ''}<td>${c.catalog || ''}</td><td>${c.metacyc || ''}</td><td>${c.lotus || ''}</td>
         <td class="structure-cell">${o ? structureImg(o) : ''}</td><td>${c.cas || ''}</td></tr>`;
     }).join('');
   }).join('');
   const n = rows.filter((r) => r.odor_id != null).length;
-  return `<p class="muted">${n} of ${rows.length} odors are in the <a href="#odors">odor table</a> (matched through the dataset's odor YAML where it has one, otherwise by abbreviation).</p>
-    <table class="odor-table"><thead><tr><th>Odor</th><th>Name</th><th>log<sub>10</sub> conc.</th><th>CID</th><th>InChI</th><th>Solvent</th>
+  return `<p class="muted">${n === rows.length ? `All ${n}` : `${n} of ${rows.length}`} odors are in the <a href="#odors">odor table</a> (matched through the dataset's odor YAML where it has one, otherwise by abbreviation).</p>
+    ${missingOdorsHtml(data)}<table class="odor-table"><thead><tr><th>Odor</th><th>Name</th><th>log<sub>10</sub> conc.</th><th>CID</th><th>InChI</th><th>Solvent</th>
     ${hasGlom ? '<th>Target glomerulus</th>' : ''}<th>Catalog no.</th><th>MetaCyc</th><th>LOTUS</th><th>Structure</th><th>CAS</th></tr></thead><tbody>${body}</tbody></table>`;
 }
 

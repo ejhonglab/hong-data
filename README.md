@@ -135,7 +135,11 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   the upload form, checked as the form checks its fields and kept in this browser only.
 - **Browse**: each dataset has a thesis-style odor table (with each odor's CID and InChI),
   its odors matched to the Odors tab through its odor YAML when it has one, otherwise by
-  abbreviation. "Raw data" and "Motion corrected / traces" show where those are on
+  abbreviation. Those not in the odor table, or that more than one odor there could be,
+  are listed above it and highlighted in it; a button copies rows for the odor sheet for
+  those not in it (one per chemical: name, CID, CAS and solvent from the odor YAML, the
+  abbreviation as in the data), tab-separated in the order of the sheet's own columns,
+  to paste into its first empty row before syncing it. "Raw data" and "Motion corrected / traces" show where those are on
   tensor (to copy, as browsers cannot open folders on your computer) and what is in
   them. They are red, saying why, when no path was entered, or the server cannot find
   it (from the top of tensor, or from a folder set in the Admin tab) or may not read it.
