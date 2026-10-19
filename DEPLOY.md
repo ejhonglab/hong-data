@@ -12,14 +12,19 @@ Ubuntu 26.04 ships Docker and the Compose plugin in its own repositories:
 
 ```bash
 sudo apt update
-sudo apt install -y docker.io docker-compose-v2
+sudo apt install docker.io docker-compose-v2 docker-buildx
 sudo systemctl enable --now docker
 sudo usermod -aG docker "$USER"     # optional: run docker without sudo (re-login afterwards)
-docker compose version               # should print v2.x
+docker compose version               # should print v2.x or later (v5.x is fine)
+docker buildx version                # Compose v5 builds the image with buildx
 ```
 
+Compose went from v2 to v5 (skipping 3 and 4), and v5 works the same here. Only v1, the
+separate `docker-compose` command, is too old.
+
 (If you prefer Docker's upstream packages, follow https://docs.docker.com/engine/install/ubuntu/
-and install `docker-ce docker-compose-plugin` instead; everything below is the same.)
+and install `docker-ce docker-buildx-plugin docker-compose-plugin` instead; everything below
+is the same.)
 
 ## 2. Put the code on the server
 
@@ -227,7 +232,7 @@ Logs: `journalctl -u olfdb` (with the systemd unit) or `docker compose logs`.
 ## 8. Without Docker (plain virtualenv + systemd)
 
 ```bash
-sudo apt install -y python3-venv
+sudo apt install python3-venv
 sudo useradd --system --home /opt/olfdb --shell /usr/sbin/nologin olfdb
 cd /opt/olfdb
 python3 -m venv venv && venv/bin/pip install -r requirements.txt
