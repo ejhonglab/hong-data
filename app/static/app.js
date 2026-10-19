@@ -846,14 +846,22 @@ function yamlFileCheck(f) {
     <ul>${items.map((x) => `<li>${x}</li>`).join('')}</ul></details>${empty}`;
 }
 
+// the upload under way, kept in this browser to be continued (see UploadFlow.resume)
+const UPLOAD_KEY = 'olfdb.upload';
+
 class UploadFlow {
   constructor() {
     this.options = null;
     this.stage = null;
     this.data = null;
+    this.fileName = '';
     this.generatedReadme = '';
     this.viewer = null;
     this.yamlCheck = null;
+    this.odorCheck = null; // its odors against the odor table (GET /api/stage/<id>/odors)
+    this.syncNote = ''; // what syncing the odor sheet from here last did
+    this._odorSeq = 0;
+    this._saveTimer = 0;
     this.nas = null; // what the last lookup found on tensor
     this.manual = new Set(); // fields the user changed
     this.auto = new Set(); // fields filled in automatically
@@ -869,6 +877,7 @@ class UploadFlow {
       this.options = { indicators: ['GCaMP6f', 'GCaMP6s'], coding_units: ['glomeruli', 'KCs'], recording_systems: [], drivers: [], panels: [], uploaders: [], genotypes: [], default_wavelength_nm: 925 };
     }
     this._fillOptions();
+    await this.resume();
   }
 
   _fillOptions() {
@@ -913,13 +922,24 @@ class UploadFlow {
       });
     }
     form.addEventListener('submit', (e) => { e.preventDefault(); this.generateReadme(); });
+    form.addEventListener('input', () => this._saveSoon());
+    form.addEventListener('change', () => this._saveSoon());
+    $('#odor-table-check').addEventListener('click', async (e) => {
+      const sync = e.target.closest('[data-sync-sheet]');
+      if (sync) { this.syncSheet(sync); return; }
+      const b = e.target.closest('[data-copy-sheet]');
+      if (!b) return;
+      try { await copyText(this.odorCheck.sheet.paste); setStatus(b.nextElementSibling, '✓ Copied'); } catch (err) {
+        setStatus(b.nextElementSibling, `Could not copy: ${err.message}`, 'error');
+      }
+    });
 
     $('#yaml-btn').addEventListener('click', () => $('#yaml-input').click());
     $('#yaml-input').addEventListener('change', (e) => { if (e.target.files.length) this.addYaml([...e.target.files]); e.target.value = ''; });
     $('#xml-btn').addEventListener('click', () => $('#xml-input').click());
     $('#xml-input').addEventListener('change', (e) => { if (e.target.files[0]) this.addXml(e.target.files[0]); e.target.value = ''; });
 
-    $('#readme-text').addEventListener('input', () => { $('#readme-preview').innerHTML = renderMarkdown($('#readme-text').value); });
+    $('#readme-text').addEventListener('input', () => { $('#readme-preview').innerHTML = renderMarkdown($('#readme-text').value); this._saveSoon(); });
     $('#readme-regenerate').addEventListener('click', () => this.generateReadme());
     $('#commit-btn').addEventListener('click', () => this.commit());
     $('#done-another').addEventListener('click', () => this.reset());
@@ -1137,8 +1157,11 @@ class UploadFlow {
 
   // ------------------------------------------------------------------- staging
   reset() {
-    this.stage = null; this.data = null; this.yamlCheck = null; this.generatedReadme = '';
+    this.stage = null; this.data = null; this.yamlCheck = null; this.generatedReadme = ''; this.fileName = '';
     this.nas = null; this._lookupSeq++; this.looking = false; this.xmlAuto = false;
+    this.odorCheck = null; this.syncNote = ''; this._odorSeq++;
+    clearTimeout(this._saveTimer);
+    LS.set(UPLOAD_KEY, null);
     for (const key of DATASET_FIELDS) {
       this._setField(key, null);
       this._mark(key, null);
@@ -1152,6 +1175,7 @@ class UploadFlow {
     $('#step-readme').hidden = true;
     $('#step-done').hidden = true;
     $('#yaml-list').innerHTML = ''; $('#yaml-check').innerHTML = ''; $('#xml-info').innerHTML = ''; this._renderXml(); this._renderYamlStatus();
+    $('#odor-table-check').innerHTML = '';
     $('#meta-errors').innerHTML = ''; $('#commit-errors').innerHTML = '';
     window.scrollTo(0, 0);
   }
@@ -1171,10 +1195,22 @@ class UploadFlow {
     }
     this.stage = res.stage;
     this.data = res.data;
-    const s = res.data.summary;
-    const warn = res.data.warnings || [];
+    this.fileName = file.name;
+    this._showStaged();
+    this._autofill();
+    this.lookup();
+    this.checkOdors();
+    this._save();
+    $('#step-meta').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  // the data file staged: its summary and preview, then the form
+  _showStaged() {
+    const result = $('#file-result'), name = this.fileName;
+    const s = this.data.summary;
+    const warn = this.data.warnings || [];
     result.innerHTML = '';
-    const okBox = msgBox('ok', `<b>${esc(file.name)}</b> passed validation (${esc(s.source_format)}).`);
+    const okBox = msgBox('ok', `<b>${esc(name)}</b> passed validation (${esc(s.source_format)}).`);
     okBox.insertAdjacentHTML('beforeend', `<div class="summary-grid">
       <div><span>flies</span>${s.n_flies} (${esc(s.first_date)}${s.first_date !== s.last_date ? ' to ' + esc(s.last_date) : ''})</div>
       <div><span>ROI columns</span>${s.n_units.toLocaleString()} (${esc(s.roi_kind)})</div>
@@ -1189,13 +1225,143 @@ class UploadFlow {
     $('#preview').hidden = false;
     $('#preview-caption').textContent = 'This is exactly what will be shown after saving. Hover a cell for its value.';
     if (!this.viewer) this.viewer = new MatrixViewer($('#preview-viewer'));
-    this.viewer.setNeuralData(res.data, { title: file.name, fileStem: file.name.replace(/\.[^.]*$/, '') || 'preview' });
+    this.viewer.setNeuralData(this.data, { title: name, fileStem: name.replace(/\.[^.]*$/, '') || 'preview' });
+    $('#step-meta').hidden = false;
+  }
 
-    const meta = $('#step-meta');
-    meta.hidden = false;
+  // ------------------------------------------------------- continuing it later
+  _saveSoon() {
+    clearTimeout(this._saveTimer);
+    this._saveTimer = setTimeout(() => this._save(), 300);
+  }
+
+  // the upload under way (its stage on the server, the form as filled in) kept in this
+  // browser, to be continued when the tab is opened again (`resume`)
+  _save() {
+    if (!this.stage) return;
+    const fields = {};
+    for (const el of $('#step-meta').elements) {
+      if (el.name && el.type !== 'file' && (el.type !== 'radio' || el.checked)) fields[el.name] = el.value;
+    }
+    const readme = $('#step-readme').hidden ? null : { text: $('#readme-text').value, generated: this.generatedReadme };
+    LS.set(UPLOAD_KEY, { stage_id: this.stage.stage_id, file: this.fileName, saved_at: Date.now() / 1000, fields,
+      manual: [...this.manual], xml_auto: this.xmlAuto, readme });
+  }
+
+  // Continues the upload kept in this browser (`_save`), while the server still has it.
+  async resume() {
+    const saved = LS.get(UPLOAD_KEY, null);
+    if (!saved?.stage_id || this.stage) return;
+    let res;
+    try { res = await api(`/api/stage/${encodeURIComponent(saved.stage_id)}`); } catch (e) {
+      if (!e.message.startsWith('cannot reach')) LS.set(UPLOAD_KEY, null);
+      $('#file-result').replaceChildren(msgBox('warn', `Your upload of <b>${esc(saved.file)}</b> could not be continued: ${esc(e.message)}.`));
+      return;
+    }
+    if (this.stage) return; // a file was dropped meanwhile
+    this.stage = res.stage;
+    this.data = res.data;
+    this.fileName = saved.file;
+    this._showStaged();
+    const form = $('#step-meta');
+    for (const el of form.elements) {
+      if (!el.name || !(el.name in saved.fields)) continue;
+      if (el.type === 'radio') el.checked = el.value === saved.fields[el.name]; else el.value = saved.fields[el.name];
+    }
+    for (const [sel, other] of Object.values(COMBOS)) $(other).hidden = $(sel).value !== '__other__';
+    this.manual = new Set(saved.manual);
+    this.xmlAuto = !!saved.xml_auto;
+    this._syncPower();
+    for (const key of DATASET_FIELDS) if (form[key].value.trim()) checkPathInput(form[key], $(`[data-msg-for=${key}]`));
+    this._renderYaml(res);
+    this._renderXml();
+    if (saved.readme) {
+      this.generatedReadme = saved.readme.generated;
+      $('#readme-text').value = saved.readme.text;
+      $('#readme-preview').innerHTML = renderMarkdown(saved.readme.text);
+      $('#step-readme').hidden = false;
+    }
+    const note = msgBox('info', `Continuing your upload of <b>${esc(saved.file)}</b>, as you left it ${esc(fmtEpoch(saved.saved_at))}.
+      <button type="button" class="btn small" data-start-over>Start over</button>`);
+    $('[data-start-over]', note).addEventListener('click', () => this.reset());
+    $('#file-result').prepend(note);
     this._autofill();
     this.lookup();
-    meta.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  // ------------------------------------------------- its odors in the odor table
+  async checkOdors() {
+    const stageId = this.stage?.stage_id, seq = ++this._odorSeq;
+    if (!stageId) return;
+    if (!this.odorCheck) this._renderOdorCheck();
+    let res;
+    try { res = await api(`/api/stage/${stageId}/odors`); } catch (e) {
+      if (seq === this._odorSeq) $('#odor-table-check').replaceChildren(msgBox('error', `Could not check its odors against the odor table: ${esc(e.message)}`));
+      return;
+    }
+    if (seq !== this._odorSeq || this.stage?.stage_id !== stageId) return;
+    this.odorCheck = res;
+    this._renderOdorCheck();
+  }
+
+  // the odors of the data not one odor in the odor table (as in the data)
+  _unmatchedOdors() { return [...new Set((this.odorCheck?.rows || []).filter((r) => r.odor_id == null).map((r) => r.odor))]; }
+
+  // Under the odor YAMLs: whether each of the dataset's odors is one in the odor table
+  // (matched as in Browse, through the YAMLs attached), which saving waits for; if not,
+  // their rows for the odor sheet to copy, and a button syncing the odor table from it.
+  _renderOdorCheck() {
+    const box = $('#odor-table-check'), c = this.odorCheck;
+    if (!this.stage) { box.replaceChildren(); return; }
+    if (!c) { box.innerHTML = '<p class="muted small">Checking its odors against the odor table…</p>'; return; }
+    const table = '<a href="#odors">odor table</a>';
+    const n = new Set(c.rows.map((r) => r.odor)).size, k = this._unmatchedOdors().length;
+    const note = this.syncNote ? ` <span class="muted">(${esc(this.syncNote)})</span>` : '';
+    if (!k) { box.innerHTML = `<div class="yaml-file-check ok">✓ Each of its ${n} odors is in the ${table}.${note}</div>`; return; }
+    const parts = [`<p><b>${k} of its ${n} odors ${k === 1 ? 'is' : 'are'} not in the ${table}</b>: the dataset can be saved once ${k === 1 ? 'it is' : 'they are'}.</p>`];
+    if (c.missing.length) parts.push(`<p>Not in it:</p>${missingRowsHtml(c.missing, c.sheet, 'sync it here (below)')}`);
+    const ambiguous = ambiguousOdors(c.rows);
+    if (ambiguous.length) {
+      parts.push(`<p>More than one odor in it goes by ${odorLabels(ambiguous)}: attach an odor YAML naming the dataset's (above), or give
+        them abbreviations of their own in the sheet and sync it here.</p>`);
+    }
+    const hours = this.options?.stage_ttl_hours ?? 48;
+    parts.push(`<div class="actions"><button type="button" class="btn" data-sync-sheet>Sync from the odor sheet</button><span class="status">${esc(this.syncNote)}</span></div>
+      <p class="small">Adds the odors new in the sheet to the odor table, then checks these again (changes to odors already in it are
+      left for the <a href="#odors">Odors tab</a>). You can leave this page meanwhile: this upload is kept for ${hours} hours after you
+      last worked on it, and continues where you left it when you open the Upload tab again in this browser.</p>`);
+    box.innerHTML = `<div class="msg error">${parts.join('')}</div>`;
+  }
+
+  // Syncs the odor table from the odor sheet as far as needs no one to confirm it: the
+  // odors new in the sheet (changes and deletions wait for the Odors tab).
+  async syncSheet(btn) {
+    const out = btn.nextElementSibling;
+    btn.disabled = true;
+    setStatus(out, 'Reading the odor sheet…');
+    try {
+      const p = await api('/api/odors/preview', { method: 'POST', json: {} });
+      odorsPage.loadStatus();
+      if (p.errors.length) {
+        setStatus(out, `Not synced: the sheet has ${p.errors.length} error${p.errors.length === 1 ? '' : 's'} to fix first (${p.errors.slice(0, 2).join('; ')}${p.errors.length > 2 ? '; …' : ''})`, 'error');
+        return;
+      }
+      let added = 0;
+      if (p.added.length) {
+        setStatus(out, `Adding ${p.added.length} new odor${p.added.length === 1 ? '' : 's'} to the odor table…`);
+        const r = await api('/api/odors/apply', { method: 'POST', json: { fingerprint: p.fingerprint, changes: [], deletions: [] } });
+        if (!r.ok) { setStatus(out, `Not synced: ${r.errors.join('; ')}`, 'error'); return; }
+        added = r.added;
+        browse.odorCache.clear();
+        reference.invalidate();
+        odorsPage.odors = null; // read again when the Odors tab is opened
+      }
+      const waiting = p.changed.length + p.missing.length;
+      this.syncNote = `${added ? `${added} new odor${added === 1 ? '' : 's'} added from the odor sheet` : 'nothing new in the odor sheet'}`
+        + `${waiting ? `; ${waiting} other change${waiting === 1 ? '' : 's'} to the odor table wait${waiting === 1 ? 's' : ''} for the Odors tab` : ''}`;
+      setStatus(out, 'Checking its odors again…');
+      await this.checkOdors();
+    } catch (e) { setStatus(out, `Not synced: ${e.message}`, 'error'); } finally { btn.disabled = false; }
   }
 
   // files: File objects, or {tensorPaths} for files on tensor
@@ -1242,6 +1408,8 @@ class UploadFlow {
     if (res.errors?.length) box.appendChild(msgBox('error', `Not added:${listHtml(res.errors)}`));
     if (this.nas) this._renderLookup();
     this._renderYamlStatus();
+    this.checkOdors(); // matched through the YAMLs
+    this._saveSoon();
     const c = res.check;
     if (!c) return;
     if (c.ok) {
@@ -1269,6 +1437,7 @@ class UploadFlow {
     if (!res.ok) { this._renderXml(); $('#xml-info').replaceChildren(msgBox('error', `Not added:${listHtml(res.errors)}`)); return; }
     this.stage = res.stage;
     this.xmlAuto = auto;
+    this._saveSoon();
     this._renderXml();
     if (this.nas) this._renderLookup();
   }
@@ -1324,6 +1493,11 @@ class UploadFlow {
     if (!meta.coding_unit) errs.push('coding unit is required');
     if (meta.age_min_days != null && meta.age_max_days != null && meta.age_max_days < meta.age_min_days) errs.push('fly age range: max is smaller than min');
     if (this.yamlCheck && !this.yamlCheck.ok) errs.push('the odor YAML check has not passed');
+    const unmatched = this._unmatchedOdors();
+    if (unmatched.length) {
+      errs.push(`${unmatched.length} of its odors ${unmatched.length === 1 ? 'is' : 'are'} not in the odor table (see under the odor YAML): `
+        + `add ${unmatched.length === 1 ? 'it' : 'them'} to the odor sheet and sync it there`);
+    }
     return errs;
   }
 
@@ -1341,6 +1515,7 @@ class UploadFlow {
     $('#readme-text').value = res.readme;
     $('#readme-preview').innerHTML = renderMarkdown(res.readme);
     $('#step-readme').hidden = false;
+    this._save();
     $('#step-readme').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
@@ -1360,6 +1535,7 @@ class UploadFlow {
     btn.disabled = false; btn.textContent = 'Save to database';
     if (!res.ok) { box.appendChild(msgBox('error', `Not saved:${listHtml(res.errors)}`)); return; }
     settings.rememberName(meta.uploader_name);
+    LS.set(UPLOAD_KEY, null);
     $('#step-done').hidden = false;
     $('#done-text').innerHTML = `Dataset <b>#${res.dataset_id}</b> — ${esc(res.title)} — is in the database.`;
     $('#done-link').href = `#browse/${res.dataset_id}`;
@@ -1759,29 +1935,38 @@ function idCells(o) {
   };
 }
 
-// what a dataset's odors not in the odor table (`missing`, `sheet`: GET /api/datasets/<id>/odors)
-// would need in the odor sheet, with a button copying their rows for it
+// a dataset's odors not in the odor table (`missing`, `sheet`: GET /api/datasets/<id>/odors or
+// /api/stage/<id>/odors), with a button copying their rows for the odor sheet and how to paste
+// them; `sync`: how to sync the sheet then
+function missingRowsHtml(missing, sheet, sync) {
+  const items = missing.map((m) => `<li>${m.name ? `<b>${esc(m.name)}</b>` : '<b>no name</b> <span class="muted">(no odor YAML names it)</span>'}:
+    ${m.odors.map((o) => `<code>${esc(o)}</code>`).join(', ')}</li>`).join('');
+  const k = missing.length, rowsText = `${k} row${k === 1 ? '' : 's'}`;
+  const order = sheet.columns_from === 'sheet' ? `in the order of the odor sheet's columns (as read ${esc(fmtWhen(sheet.checked_at))})`
+    : `in the order of the template's columns (<code>${esc(Object.keys(ODOR_FIELDS).join(', '))}</code>), as ${sheet.url
+      ? `the odor sheet could not be read (${esc(sheet.error || 'not yet')})` : 'no odor sheet is set (Admin tab)'}: check that the sheet's are in this order`;
+  const unnamed = missing.filter((m) => !m.name).length;
+  const naming = !unnamed ? '' : unnamed < k ? `, give the ${unnamed} without a name one (the sheet needs it)`
+    : `, give ${k === 1 ? 'it a name' : 'each a name'} (the sheet needs one)`;
+  return `<ul class="missing-odors">${items}</ul>
+    <div class="actions"><button type="button" class="btn small" data-copy-sheet>Copy ${rowsText} for the odor sheet</button><span class="status"></span></div>
+    <p class="small">Tab-separated, ${order}. Paste them into the first column of the first empty row of
+    ${sheet.url ? extLink(sheet.url, 'the odor sheet') : 'the odor sheet'}${naming}, fill in what else you know, then ${sync}.</p>`;
+}
+
+// the odors (`dataset_odors` rows, one per label) more than one odor in the odor table goes by
+const ambiguousOdors = (rows) => [...new Map(rows.filter((r) => r.match === 'ambiguous').map((r) => [r.label, r])).values()];
+const odorLabels = (rows) => rows.map((r) => `<code>${esc(r.label)}</code>`).join(', ');
+
+// what a dataset's odors not in the odor table would need in the odor sheet (Browse)
 function missingOdorsHtml({ rows, missing, sheet }) {
   const parts = [];
   if (missing.length) {
-    const items = missing.map((m) => `<li>${m.name ? `<b>${esc(m.name)}</b>` : '<b>no name</b> <span class="muted">(no odor YAML names it)</span>'}:
-      ${m.odors.map((o) => `<code>${esc(o)}</code>`).join(', ')}</li>`).join('');
-    const k = missing.length, rowsText = `${k} row${k === 1 ? '' : 's'}`;
-    const order = sheet.columns_from === 'sheet' ? `in the order of the odor sheet's columns (as read ${esc(fmtWhen(sheet.checked_at))})`
-      : `in the order of the template's columns (<code>${esc(Object.keys(ODOR_FIELDS).join(', '))}</code>), as ${sheet.url
-        ? `the odor sheet could not be read (${esc(sheet.error || 'not yet')})` : 'no odor sheet is set (Admin tab)'}: check that the sheet's are in this order`;
-    const unnamed = missing.filter((m) => !m.name).length;
-    const naming = !unnamed ? '' : unnamed < k ? `, give the ${unnamed} without a name one (the sheet needs it)`
-      : `, give ${k === 1 ? 'it a name' : 'each a name'} (the sheet needs one)`;
-    parts.push(`<p>Not in the odor table (highlighted below):</p><ul class="missing-odors">${items}</ul>
-      <div class="actions"><button type="button" class="btn small" data-copy-sheet>Copy ${rowsText} for the odor sheet</button><span class="status"></span></div>
-      <p class="small">Tab-separated, ${order}. Paste them into the first column of the first empty row of
-      ${sheet.url ? extLink(sheet.url, 'the odor sheet') : 'the odor sheet'}${naming}, fill in what else you know, then
-      sync the sheet in the <a href="#odors">Odors tab</a>.</p>`);
+    parts.push(`<p>Not in the odor table (highlighted below):</p>${missingRowsHtml(missing, sheet, 'sync the sheet in the <a href="#odors">Odors tab</a>')}`);
   }
-  const ambiguous = [...new Map(rows.filter((r) => r.match === 'ambiguous').map((r) => [r.label, r])).values()];
+  const ambiguous = ambiguousOdors(rows);
   if (ambiguous.length) {
-    parts.push(`<p>More than one odor in the odor table goes by ${ambiguous.map((r) => `<code>${esc(r.label)}</code>`).join(', ')} (highlighted below):
+    parts.push(`<p>More than one odor in the odor table goes by ${odorLabels(ambiguous)} (highlighted below):
       an odor YAML naming the dataset's, or abbreviations of their own in the sheet, would tell which.</p>`);
   }
   return parts.length ? `<div class="msg warn">${parts.join('')}</div>` : '';

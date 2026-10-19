@@ -284,7 +284,7 @@ but `data/`, no home folders, and of `/mnt` and `/local` only tensor, read-only 
 | `OLFDB_REFERENCE_DIR` | `./reference_data` | fixed matrices + `manifest.json` |
 | `OLFDB_GLOMERULI_FILE` | `./config/glomeruli.txt` | accepted glomerulus names (falls back to the built-in list if missing) |
 | `OLFDB_MAX_UPLOAD_MB` | `1024` | reject data files larger than this |
-| `OLFDB_STAGE_TTL_HOURS` | `48` | staged-but-never-saved uploads are deleted after this |
+| `OLFDB_STAGE_TTL_HOURS` | `48` | staged-but-never-saved uploads are deleted this long after they were last worked on |
 | `OLFDB_ODOR_SHEET_URL` | (none) | Google sheet the odor table is synced from, while none is set in the Admin tab (see "Odor sheet") |
 | `OLFDB_ODOR_SHEET_CHECK_MINUTES` | `10` | how often (at most) the sheet is read to tell whether it changed |
 | `OLFDB_TENSOR_ROOT` | `/local/tensor` | the lab NAS as mounted on the server (see "Tensor"); users' folders are relative to it |

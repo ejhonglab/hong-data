@@ -241,6 +241,30 @@ def test_stage_from_tensor(main, root, tmp_path, monkeypatch):
     assert "| Raw data (tensor) | `ann/raw` |" in readme
     assert call(main.stage_commit, body={"metadata": {**md, "raw_data_path": "x"}, "readme": "#"}, path_params=stage)[0] == 422
 
+    # saved only once each of its odors is one in the odor table: here, once the sheet has them
+    from app import odormeta
+    monkeypatch.setattr(config, "DATASETS_DIR", tmp_path / "datasets")
+    monkeypatch.setattr(config, "ODOR_SHEET_URL", "")
+    r = call(main.stage_odors, path_params=stage)[1]
+    assert [m["name"] for m in r["missing"]] == ["valeric acid", "ethyl acetate"] and r["sheet"]["url"] is None
+    status, r = call(main.stage_commit, body={"metadata": md, "readme": "#"}, path_params=stage)
+    assert status == 422 and "2 of its odors are not one odor in the odor table (va @ -3, ea @ -2)" in r["errors"][0]
+    rows, _, _ = odormeta.parse_sheet("name,abbrev\nvaleric acid,va\n")
+    main.db.apply_odor_sync(added=odormeta.diff(rows, [])["added"], changed=[], deleted=[], source="test",
+                            fingerprint="0" * 64, details={}, when="2026-10-19T10:00:00")
+    assert [m["name"] for m in call(main.stage_odors, path_params=stage)[1]["missing"]] == ["ethyl acetate"]
+    rows, _, _ = odormeta.parse_sheet("name,abbrev\nvaleric acid,va\nethyl acetate,ea\n")
+    main.db.apply_odor_sync(added=odormeta.diff(rows, main.db.list_odors())["added"], changed=[], deleted=[], source="test",
+                            fingerprint="1" * 64, details={}, when="2026-10-19T10:00:00")
+    r = call(main.stage_odors, path_params=stage)[1]
+    assert r["missing"] == [] and r["sheet"] is None and {x["match"] for x in r["rows"]} == {"yaml"}
+    # an upload is continued as it was left
+    r = call(main.stage_get, path_params=stage)[1]
+    assert r["stage"]["odor_yamls"][0]["name"] == "ann_odors.yml" and r["check"]["ok"] and r["files"][0]["n_in_table"] == 2
+    (d / "x.csv").write_text("as uploaded")
+    status, r = call(main.stage_commit, body={"metadata": md, "readme": "#"}, path_params=stage)
+    assert status == 200 and r["ok"] and (config.DATASETS_DIR / str(r["dataset_id"]) / "odor_yaml" / "ann_odors.yml").exists()
+
 
 def test_check_data_path(root, tmp_path):
     assert tensor.check_data_path("tom//raw/", root) == {"input": "tom//raw/", "path": "tom/raw", "ok": True, "error": None,

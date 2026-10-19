@@ -85,7 +85,12 @@ the app is described in [README.md](README.md), hosting it in [DEPLOY.md](DEPLOY
   logged in `odor_syncs` (tied to no one, whether from the sheet or a CSV import from the
   Admin tab). The rest of the app uses the database copy, so it keeps
   working without the sheet. A dataset's odors are matched to the table through its odor
-  YAML when it has one, otherwise by abbreviation. PubChem structure images are fetched
+  YAML when it has one, otherwise by abbreviation, and a dataset is saved only once each
+  is one odor there, so that every dataset's odors are known; the upload form can sync
+  the new odors from the sheet itself (the apply above, with no changes or deletions), as
+  only a person can add one there. An upload waiting on that is kept: in the browser
+  (`localStorage`), and on the server for `OLFDB_STAGE_TTL_HOURS` after it was last used
+  (each request to it touches its folder). PubChem structure images are fetched
   once per CID and cached in `data/odor_structures/`, InChIs in the `pubchem` table (a
   hundred CIDs per request).
 - **The heatmap is a virtualised canvas**: only the visible cells are drawn, so 10k+
@@ -201,7 +206,9 @@ POST   /api/user                            {"name", "raw_dirs", "mocorr_dirs", 
                                             folder checked on tensor; saved if all are there
 POST   /api/tensor/check                    {"path"} → a dataset's data folder checked on tensor
 POST   /api/stage                           multipart 'file' → validation + matrix payload
-GET    /api/stage/{id}                      a staged upload and its matrix payload
+GET    /api/stage/{id}                      a staged upload and its matrix payload, with its odor
+                                            YAMLs' checks (to continue it)
+GET    /api/stage/{id}/odors                its odors matched to the odor table, as for a dataset
 POST   /api/stage/{id}/lookup               {"name", "raw_data_path"} → the flies searched for in the
                                             raw data path (else that user's folders), and the
                                             recordings and odor YAMLs of the staged dataset
@@ -213,6 +220,7 @@ POST   /api/stage/{id}/experiment_xml       multipart 'file', or {"tensor_path"}
 DELETE /api/stage/{id}/experiment_xml
 POST   /api/stage/{id}/readme               {"metadata": {...}} → README.md text
 POST   /api/stage/{id}/commit               {"metadata", "readme", "readme_edited"} → {"dataset_id"}
+                                            (422 unless each odor is one in the odor table)
 GET    /api/datasets                        list
 GET    /api/datasets/{id}                   metadata + README (markdown and HTML, and its path)
 PUT    /api/datasets/{id}/readme            {"readme", "base"} → the README overwritten (409 if it is

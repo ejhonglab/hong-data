@@ -73,6 +73,10 @@ def _stage_dir(stage_id: str) -> Path:
     d = config.STAGING_DIR / stage_id
     if not d.is_dir():
         raise HTTPException(404, "stage not found (it may have expired); upload the file again")
+    try:
+        os.utime(d)  # kept for STAGE_TTL_HOURS after it was last used (see cleanup_stages), not after it was made
+    except OSError:
+        pass
     return d
 
 
@@ -163,6 +167,7 @@ async def options(request: Request) -> Response:
             "default_wavelength_nm": DEFAULT_WAVELENGTH_NM,
             "glomeruli": load_glomeruli(),
             "max_upload_mb": config.MAX_UPLOAD_MB,
+            "stage_ttl_hours": config.STAGE_TTL_HOURS,
             "tensor_root": str(config.TENSOR_ROOT),
         }
     )
@@ -275,11 +280,13 @@ async def _incoming(request: Request, d: Path, *, json_key: str, fallback: str, 
 
 
 async def stage_get(request: Request) -> Response:
+    """A staged upload, to continue it: as when it was made, with its odor YAMLs' checks (as
+    `stage_add_yaml` gives them)."""
     d = _stage_dir(request.path_params["stage_id"])
     meta = _stage_meta(d)
     parsed = await run_in_threadpool(load_parsed, d / "parsed")
     payload = await run_in_threadpool(parsed.to_payload)
-    return JSONResponse({"ok": True, "stage": _public_stage(meta), "data": payload})
+    return JSONResponse({"ok": True, **await run_in_threadpool(_yaml_response, d, meta), "data": payload})
 
 
 def _run_yaml_check(d: Path, meta: dict) -> dict:
@@ -310,6 +317,21 @@ def _yaml_files(d: Path, meta: dict) -> list[dict]:
 def _yaml_response(d: Path, meta: dict, **extra) -> dict:
     return {**extra, "stage": _public_stage(meta), "files": _yaml_files(d, meta),
             "check": _run_yaml_check(d, meta) if meta["odor_yamls"] else None}
+
+
+def _stage_odors(d: Path, meta: dict) -> dict:
+    """A staged upload's odors matched to the odor table, as a dataset's are (`_odor_matches`)."""
+    yaml_odors = []
+    for y in meta["odor_yamls"]:
+        yaml_odors.extend(yamlcheck.parse_odor_yaml((d / "odor_yaml" / y["name"]).read_text(encoding="utf-8"))[0])
+    return _odor_matches(load_parsed(d / "parsed").trials, yaml_odors)
+
+
+async def stage_odors(request: Request) -> Response:
+    """A staged upload's odors matched to the odor table, through its odor YAMLs (see
+    `_odor_matches`): it can be saved once each is one odor there."""
+    d = _stage_dir(request.path_params["stage_id"])
+    return JSONResponse(await run_in_threadpool(_stage_odors, d, _stage_meta(d)))
 
 
 async def stage_add_yaml(request: Request) -> Response:
@@ -548,6 +570,11 @@ def _commit(d: Path, meta: dict, m: Metadata, readme: str, readme_edited: bool) 
             problems.append(
                 "odor YAML check failed: " + "; ".join(f"{x['odor']} ({x['hint']})" for x in check["missing"][:10])
             )
+    unmatched = _unmatched(_stage_odors(d, meta)["rows"])
+    if unmatched:
+        problems.append(f"{len(unmatched)} of its odors are not one odor in the odor table ({', '.join(unmatched[:10])}"
+                        f"{', …' if len(unmatched) > 10 else ''}): add them to the odor sheet and sync it (the upload form "
+                        "shows how), or attach an odor YAML naming them")
     if problems:
         return {"ok": False, "errors": problems}
 
@@ -1179,31 +1206,43 @@ async def odor_template(request: Request) -> Response:
     return FileResponse(config.ODOR_TEMPLATE, filename="odor_sheet_template.csv", media_type="text/csv")
 
 
+def _odor_matches(trials: list[dict], yaml_odors: list[yamlcheck.YamlOdor]) -> dict:
+    """The odors of a dataset's `trials` (one per panel and component odor) matched to the
+    odor table through its `yaml_odors` (``rows``: see `odormeta.dataset_odors`; ``odors``:
+    those of the table they are, or could be); those not in it as rows for the odor sheet
+    (``missing``, see `odormeta.missing_rows`), and these as cells to paste into it
+    (``sheet``: ``paste``, in the order of the sheet's columns as last read, else the
+    template's: ``columns_from`` 'sheet' or 'template', with ``checked_at`` and ``error``
+    from reading it, and its ``url``, None if none is set)."""
+    index = odormeta.OdorIndex(db.list_odors())
+    rows = odormeta.dataset_odors({}, trials, index, yaml_odors)
+    ids = {r["odor_id"] for r in rows} | {i for r in rows for i in r["candidates"]}
+    odors = {i: {**index.by_id[i], "links": odormeta.links(index.by_id[i])} for i in ids if i is not None}
+    missing = odormeta.missing_rows(rows)
+    sheet = None
+    if missing:  # the sheet read only then (at most every few minutes: see SheetWatch)
+        url = _odor_sheet()["url"]
+        state = sheet_watch.check(url) if url else odormeta.SheetWatch.UNREAD
+        sheet = {"paste": odormeta.sheet_paste(missing, state["columns"]),
+                 "columns_from": "sheet" if state["columns"] else "template",
+                 "url": url, "checked_at": state["checked_at"], "error": state["error"]}
+    return {"rows": rows, "odors": odors, "missing": missing, "sheet": sheet}
+
+
+def _unmatched(rows: list[dict]) -> list[str]:
+    """The odors (as in the data) of `_odor_matches` rows not one odor in the odor table."""
+    return list(dict.fromkeys(r["odor"] for r in rows if r["odor_id"] is None))
+
+
 async def dataset_odor_table(request: Request) -> Response:
-    """A dataset's odors (per panel, as in the data) matched to the odor table; those not
-    in it as rows for the odor sheet (``missing``, see `odormeta.missing_rows`), and these
-    as cells to paste into it (``sheet``: ``paste``, in the order of the sheet's columns as
-    last read, else the template's: ``columns_from`` 'sheet' or 'template', with
-    ``checked_at`` and ``error`` from reading it, and its ``url``, None if none is set)."""
+    """A dataset's odors (per panel, as in the data) matched to the odor table (see `_odor_matches`)."""
     ds_id = int(request.path_params["ds_id"])
 
     def build() -> Optional[dict]:
         ds = db.get_dataset(ds_id)
         if ds is None:
             return None
-        index = odormeta.OdorIndex(db.list_odors())
-        rows = odormeta.dataset_odors(ds, db.get_trials(ds_id), index, odormeta.dataset_yaml_odors(ds, config.DATASETS_DIR))
-        ids = {r["odor_id"] for r in rows} | {i for r in rows for i in r["candidates"]}
-        odors = {i: {**index.by_id[i], "links": odormeta.links(index.by_id[i])} for i in ids if i is not None}
-        missing = odormeta.missing_rows(rows)
-        sheet = None
-        if missing:  # the sheet read only then (at most every few minutes: see SheetWatch)
-            url = _odor_sheet()["url"]
-            state = sheet_watch.check(url) if url else odormeta.SheetWatch.UNREAD
-            sheet = {"paste": odormeta.sheet_paste(missing, state["columns"]),
-                     "columns_from": "sheet" if state["columns"] else "template",
-                     "url": url, "checked_at": state["checked_at"], "error": state["error"]}
-        return {"rows": rows, "odors": odors, "missing": missing, "sheet": sheet}
+        return _odor_matches(db.get_trials(ds_id), odormeta.dataset_yaml_odors(ds, config.DATASETS_DIR))
 
     result = await run_in_threadpool(build)
     if result is None:
@@ -1469,6 +1508,7 @@ routes = [
     Route("/api/user", user_save, methods=["POST"]),
     Route("/api/stage", stage_create, methods=["POST"]),
     Route("/api/stage/{stage_id}", stage_get),
+    Route("/api/stage/{stage_id}/odors", stage_odors),
     Route("/api/stage/{stage_id}/odor_yaml", stage_add_yaml, methods=["POST"]),
     Route("/api/stage/{stage_id}/odor_yaml/{name}", stage_remove_yaml, methods=["DELETE"]),
     Route("/api/stage/{stage_id}/experiment_xml", stage_add_xml, methods=["POST"]),

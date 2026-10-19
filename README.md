@@ -21,8 +21,10 @@ expected, and nothing secret is entered. If a download or the page is blocked, s
    anything is saved; if problems are listed, fix them all and drop the file again. Fill
    in the experiment details (your name, indicator, Gal4 driver and coding unit are
    required). Most are filled in for you from your settings, the file and your data on
-   tensor, each colored by where it came from. Generate the README, edit it if you like,
-   and save.
+   tensor, each colored by where it came from. If some of its odors are not in the odor
+   table yet, the form lists them, with rows to paste into the odor sheet and a button
+   to sync from it; you can leave and come back to the Upload tab, which keeps your
+   upload for two days. Generate the README, edit it if you like, and save.
 3. **Browse**: datasets by panel, or by the date of their last fly, of every coding unit
    or just one. Click one for its heatmap, README, original files, odors, and where its
    raw and motion-corrected data are on tensor.
@@ -129,6 +131,13 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   (settings, tensor, the files) until you change it, and the README says which files
   came from tensor, and from where. Every value is stored on its own, whatever is
   changed in the README.
+  A dataset is saved only once each of its odors is one in the odor table (matched as in
+  Browse: through its odor YAMLs, else by abbreviation). Those that are not are listed
+  under the odor YAML, with the rows to copy into the odor sheet (as in Browse) and a
+  button syncing the odor table from it there: the odors new in the sheet are added, and
+  any other change waits for the Odors tab. An upload under way is kept (in the browser,
+  and on the server for `OLFDB_STAGE_TTL_HOURS`, 48, after it was last worked on), so the
+  Upload tab continues it where it was left when opened again.
 - **Settings**: folders are relative to the top of tensor (absolute paths are refused),
   each checked on the server as you leave its field; once all are found ("All Paths
   Accessible") they are saved on the server under your name. Below that, defaults for
