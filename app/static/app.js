@@ -1729,6 +1729,11 @@ const structureImg = (o) => (o.links?.structure
   ? `<img class="structure" src="${esc(o.links.structure)}" alt="structure of ${esc(o.name)}" loading="lazy" onerror="this.remove()">` : '');
 const fmtValue = (v) => (Array.isArray(v) ? v.join('; ') : String(v ?? ''));
 const fmtWhen = (iso) => iso.replace('T', ' ').slice(0, 16);
+// a time in seconds since 1970 as fmtWhen gives one, in the browser's time zone
+const fmtEpoch = (s) => {
+  const d = new Date(s * 1000), p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
 const usedBy = (n) => (n ? `used by ${n} dataset${n === 1 ? '' : 's'}` : 'not used by any dataset');
 const syncCounts = (s) => `${s.n_added} new, ${s.n_changed} changed, ${s.n_deleted} deleted`;
 // sort names ignoring leading stereo descriptors / locants: (+)-pulegone, 1,4-diaminobutane, p-cresol
@@ -2459,9 +2464,9 @@ function fileTreeHtml(node, label, open) {
   const dirs = [...node.dirs].sort(([a], [b]) => a.localeCompare(b)).map(([name, child]) => `<li>${fileTreeHtml(child, `${name}/`, false)}</li>`);
   const files = node.files.map((f) => {
     const did = [f.read && 'read', f.wrote && 'written'].filter(Boolean).join(', ');
-    const size = f.size === null ? 'deleted since' : f.size ? fmtBytes(f.size) : 'empty';
+    const state = f.size === null ? 'deleted since' : `${f.size ? fmtBytes(f.size) : 'empty'} · modified ${fmtEpoch(f.mtime)}`;
     const when = f.first_at ? `first read or written ${fmtWhen(f.first_at)}` : 'in the data folder when this record began';
-    return `<li class="file${f.size === null ? ' gone' : ''}" title="${esc(when)}"><code>${esc(f.name)}</code> <span class="muted">${size} · ${did}</span></li>`;
+    return `<li class="file${f.size === null ? ' gone' : ''}" title="${esc(when)}"><code>${esc(f.name)}</code> <span class="muted">${state} · ${did}</span></li>`;
   });
   return `<details${open ? ' open' : ''}><summary><code>${esc(label)}</code> <span class="muted">${counts}</span></summary><ul>${[...dirs, ...files].join('')}</ul></details>`;
 }

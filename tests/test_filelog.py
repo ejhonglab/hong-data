@@ -67,9 +67,11 @@ def test_file_log(server, tmp_path):
     sqlite3.connect(data / "other.db").close()
 
     files = by_path(filelog.listing(db, exclude=[str(server / "shared"), str(server)]))
-    assert files["data/old.txt"] == {"path": "data/old.txt", "read": True, "wrote": True, "size": 12, "first_at": None}
+    assert files["data/old.txt"] == {"path": "data/old.txt", "read": True, "wrote": True, "size": 12,
+                                     "mtime": os.path.getmtime(data / "old.txt"), "first_at": None}
     assert files["data/new.txt"]["wrote"] and not files["data/new.txt"]["read"] and files["data/new.txt"]["first_at"]
     assert files[f"data/{os.path.basename(t.name)}"]["size"] is None  # deleted since
+    assert files[f"data/{os.path.basename(t.name)}"]["mtime"] is None
     assert files["data/a"]["size"] is None and files["data/b"]["size"] == 1
     assert files["data/d2/f"] == {**files["data/d2/f"], "wrote": True, "size": 2}
     assert files["data/fd.txt"]["wrote"] and files["data/other.db"]["read"] and files["notes.txt"]["read"]

@@ -230,9 +230,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     Docker or systemd. How they are enforced:
     [DEPLOY.md](DEPLOY.md#folders-it-may-read-and-write). Below them, a tree of each
     file the server has read or written in the folder it runs from (e.g. `/opt/olfdb`,
-    as a path on the server even in Docker), with sizes, those deleted since struck
-    through: its database, uploads and the rest of `data/`, but not the repository's own
-    files, nor those in the folders above or of reference data.
+    as a path on the server even in Docker), with sizes and modification times, those
+    deleted since struck through: its database, uploads and the rest of `data/`, but not
+    the repository's own files, nor those in the folders above or of reference data.
   - *Reference data*: add a CSV, TSV or parquet file on the server (checked as you
     type its path, when the server may read it: its size, and how many of its chemicals
     match the Odors tab), with a title, description, source, labels, colors (or from its

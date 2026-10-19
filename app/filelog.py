@@ -217,8 +217,9 @@ def listing(db, exclude: Iterable[str] = ()) -> dict:
     Returns:
         dict with ``root`` (the folder they are in, as a path on the server: see
         `server_paths`), ``files`` (each with its ``path`` relative to that, ``read``,
-        ``wrote``, ``size``: None if it has been deleted since, and ``first_at``: when it
-        was first read or written, None if it was in the data folder when this record
+        ``wrote``, ``size`` and ``mtime`` (when it was last changed, in seconds since
+        1970): both None if it has been deleted since, and ``first_at``: when it was
+        first read or written, None if it was in the data folder when this record
         began), ``since`` (when that was) and ``note`` (why paths are as in the Docker
         container, if they are).
     """
@@ -242,11 +243,11 @@ def listing(db, exclude: Iterable[str] = ()) -> dict:
         if not shown(p):
             continue
         try:
-            size = os.stat(p).st_size if os.path.isfile(p) else None
+            st = os.stat(p) if os.path.isfile(p) else None
         except OSError:
-            size = None
+            st = None
         files.append({"path": os.path.relpath(to_server(p), top), "read": bool(r["read"]), "wrote": bool(r["wrote"]),
-                      "size": size, "first_at": r["first_at"]})
+                      "size": st and st.st_size, "mtime": st and st.st_mtime, "first_at": r["first_at"]})
     files.sort(key=lambda f: f["path"])
     started = db.get_setting(STARTED_SETTING)
     return {"root": top, "files": files, "since": started["value"] if started else None, "note": note}
