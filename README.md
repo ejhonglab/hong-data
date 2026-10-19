@@ -121,10 +121,12 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   checked on the server as you leave their field (as in Settings), and must be found
   there to save (unless tensor itself is not on the server, when they are taken as
   entered). Details are filled in from your settings, from the file (panel names;
-  glomerulus ROIs mean coding unit "glomeruli") and from tensor: each fly
-  (`<folder>/<date>/<fly>/`, as in hong2p) is looked for in the raw data path as entered
-  (else in your raw data folders) and your motion-corrected data folders, which give the
-  data paths, the `Experiment.xml` of the most recent recording (of the last fly; unless
+  glomerulus ROIs mean coding unit "glomeruli") and from tensor. The data paths are your
+  raw and motion-corrected data folders in Settings (of several, the one with these
+  flies, else the first), or, without any, the folder with the flies found on tensor:
+  each fly (`<folder>/<date>/<fly>/`, as in hong2p) is looked for in the raw data path as
+  entered (else in your raw data folders) and your motion-corrected data folders, which
+  give the `Experiment.xml` of the most recent recording (of the last fly; unless
   you added or chose one), and the fewest odor YAMLs in your odor YAML folders that
   together describe every odor (those named in the recordings' ThorImage notes first,
   then ones with a fly's date in their path). A field stays colored by where its value came from

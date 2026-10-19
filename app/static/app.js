@@ -863,6 +863,7 @@ class UploadFlow {
     this._odorSeq = 0;
     this._saveTimer = 0;
     this.nas = null; // what the last lookup found on tensor
+    this.user = null; // the uploader's folders on tensor, as saved in Settings (from the last lookup)
     this.manual = new Set(); // fields the user changed
     this.auto = new Set(); // fields filled in automatically
     this._lookupSeq = 0;
@@ -988,9 +989,10 @@ class UploadFlow {
   }
 
   // Fills each field the user has not changed with the most specific value there is for
-  // it: found on tensor, then read from the dataset's files, then the defaults in
-  // Settings (a guess from the files comes last). A field filled in before that has
-  // nothing now goes back to how it started.
+  // it: the uploader's data folders in Settings (for the data paths), then found on
+  // tensor, then read from the dataset's files, then the defaults in Settings (a guess from
+  // the files comes last). A field filled in before that has nothing now goes back to how
+  // it started.
   _autofill() {
     const best = new Map();
     const offer = (key, value, src, rank, detail = '') => {
@@ -1004,6 +1006,15 @@ class UploadFlow {
     if (sum?.panel_names?.length) offer('panel_names', sum.panel_names.join(', '), 'file', 3, 'the panel level of the data file');
     if (sum?.roi_kind === 'glomeruli') offer('coding_unit', 'glomeruli', 'file', 3, 'the ROIs are glomeruli');
     if (sum?.roi_kind === 'integers' && this.options?.coding_units.includes('KCs')) offer('coding_unit', 'KCs', 'file', 1, 'numbered ROIs');
+    for (const [key, kind, flies, what] of [['raw_data_path', 'raw_dirs', 'raw', 'raw data'], ['mocorr_data_path', 'mocorr_dirs', 'mocorr', 'motion-corrected data']]) {
+      const dirs = this.user?.[kind] || [];
+      if (!dirs.length) continue;
+      // of several, the one with the most of these flies (as found on tensor), else the first
+      const inside = (d) => (this.nas?.flies || []).filter((f) => f[flies].some((p) => p === d || p.startsWith(`${d}/`))).length;
+      const best = dirs.reduce((a, d) => (inside(d) > inside(a) ? d : a), dirs[0]);
+      offer(key, best, 'settings', 5, dirs.length === 1 ? `your ${what} folder`
+        : inside(best) ? `the one of your ${what} folders with these flies` : `the first of your ${what} folders`);
+    }
     if (this.nas) {
       offer('raw_data_path', this.nas.raw_data_path, 'nas', 4, 'the folder with the flies found');
       offer('mocorr_data_path', this.nas.mocorr_data_path, 'nas', 4, 'the folder with the flies found');
@@ -1021,6 +1032,11 @@ class UploadFlow {
         this.auto.delete(key);
       }
     }
+  }
+
+  // the uploader's folders were saved in Settings
+  foldersChanged() {
+    if (this.stage && $('#step-meta').uploader_name.value.trim().toLowerCase() === settings.name.toLowerCase()) this.lookup();
   }
 
   // the name or the defaults in Settings changed
@@ -1047,6 +1063,7 @@ class UploadFlow {
       box.replaceChildren(msgBox(kind, html)); this._autofill(); this._renderYamlStatus();
     };
     if (!name && !raw) {
+      this.user = null;
       done('Set your name and data folders in <a href="#settings">Settings</a>, or enter the raw data path below, to have the files of this dataset found on tensor.');
       return;
     }
@@ -1061,6 +1078,7 @@ class UploadFlow {
       return;
     }
     if (seq !== this._lookupSeq || this.stage?.stage_id !== stageId) return;
+    this.user = res.user || null;
     if (res.raw_error) { done(`Could not look in the raw data path: ${esc(res.raw_error)}`, 'error'); return; }
     if (!res.user && !raw) {
       done(`No data folders are saved for <b>${esc(name)}</b>. Add them in <a href="#settings">Settings</a>, or enter the raw data path below, to have the raw data, Experiment.xml and odor YAML of your uploads found on tensor.`);
@@ -1158,7 +1176,7 @@ class UploadFlow {
   // ------------------------------------------------------------------- staging
   reset() {
     this.stage = null; this.data = null; this.yamlCheck = null; this.generatedReadme = ''; this.fileName = '';
-    this.nas = null; this._lookupSeq++; this.looking = false; this.xmlAuto = false;
+    this.nas = null; this.user = null; this._lookupSeq++; this.looking = false; this.xmlAuto = false;
     this.odorCheck = null; this.syncNote = ''; this._odorSeq++;
     clearTimeout(this._saveTimer);
     LS.set(UPLOAD_KEY, null);
@@ -2431,6 +2449,7 @@ class SettingsPage {
       this.user = res.user;
       this.owner = res.user.name;
       LS.set('olfdb.dirs_draft', null);
+      upload.foldersChanged();
     } else LS.set('olfdb.dirs_draft', { name: this.name, dirs });
     const all = DIR_KINDS.flatMap((k) => res.dirs[k]);
     const bad = all.filter((c) => !c.ok).length;
