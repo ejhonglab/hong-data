@@ -14,6 +14,7 @@ services:
       - ./config:/srv/olfdb/config:ro
       - /local/tensor:/local/tensor:ro           # the lab NAS (see DEPLOY.md, "Tensor")
       - /etc/hostname:/etc/host_hostname:ro      # the server's name, for the Admin tab
+      - /local/tensor-archive/Betty/olfdb_backups:/local/tensor-archive/Betty/olfdb_backups
       # a folder it may write (for backups from the Admin tab), also to be added there:
       # - /local/tensor/olfdb_backups:/local/tensor/olfdb_backups
     read_only: true            # it cannot change its own image (code, Python), only what is mounted writable
