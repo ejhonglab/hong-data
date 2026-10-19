@@ -35,6 +35,9 @@ MAX_XMLS_READ = 100
 MAX_YAMLS_PARSED = 200
 MAX_FILE_BYTES = 20 * 1024 * 1024
 LISTED = 200  # entries listed of a dataset's data folder
+# folders of anatomical recordings (higher resolution, no fast sampling), not those of the
+# functional ones a dataset's Experiment.xml should be from
+ANATOMICAL = re.compile(r"(?:anat|anatomical)(?:_.*)?")
 
 NOT_ALLOWED = "outside the folders the server may read (set in the Admin tab)"
 NAMED = "named in the notes of an Experiment.xml"
@@ -287,15 +290,17 @@ def fly_dirs(folder: Path, date: str, fly_num: int) -> list[Path]:
 
 
 def recordings(fly_dir: Path) -> list[Path]:
-    """Experiment.xml of each ThorImage recording of a fly (in its folder, or one level down),
-    oldest first (by when the file was last written, then by name)."""
+    """Experiment.xml of each functional ThorImage recording of a fly (in its folder, or one
+    level down; not in `ANATOMICAL` folders), oldest first (by when the file was last
+    written, then by name)."""
     def mtime(p: Path) -> float:
         try:
             return os.path.getmtime(p)
         except OSError:
             return 0.0
 
-    return sorted((d / "Experiment.xml" for d in [fly_dir, *_subdirs(fly_dir)] if os.path.isfile(d / "Experiment.xml")), key=mtime)
+    dirs = [fly_dir, *(d for d in _subdirs(fly_dir) if not ANATOMICAL.fullmatch(d.name))]
+    return sorted((d / "Experiment.xml" for d in dirs if os.path.isfile(d / "Experiment.xml")), key=mtime)
 
 
 def _yaml_files(folder: Path) -> list[Path]:

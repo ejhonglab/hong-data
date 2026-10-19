@@ -106,6 +106,19 @@ def test_lookup(root):
     os.utime(root / "tom/raw/2023-11-19/1/t1/Experiment.xml", (2e9, 2e9))
     r = tensor.lookup(root, dirs, flies, odors)
     assert r["experiment_xmls"][:2] == ["tom/raw/2023-11-19/1/t2/Experiment.xml", "tom/raw/2023-11-19/1/t1/Experiment.xml"]
+    # not anatomical recordings ("anat", "anatomical", or either then "_"), whenever made
+    for name in ("anat", "anatomical", "anat_1024px", "anatomical_z"):
+        (root / "tom/raw/2023-11-19/1" / name).mkdir()
+        (root / "tom/raw/2023-11-19/1" / name / "Experiment.xml").write_text(XML.format(notes=""))
+    for name in ("anatomy", "Anat", "t3_anat"):
+        (root / "tom/raw/2023-11-19/1" / name).mkdir()
+        (root / "tom/raw/2023-11-19/1" / name / "Experiment.xml").write_text(XML.format(notes=""))
+        os.utime(root / "tom/raw/2023-11-19/1" / name / "Experiment.xml", (1e9, 1e9))
+    r = tensor.lookup(root, dirs, flies[:1], [])
+    assert [x.split("/")[-2] for x in r["experiment_xmls"]] == ["Anat", "anatomy", "t3_anat", "t2", "t1"]
+    for name in ("anatomy", "Anat", "t3_anat"):
+        (root / "tom/raw/2023-11-19/1" / name / "Experiment.xml").unlink()
+
     # and the folder of one of the dataset's flies, given as its raw data folder
     r = tensor.lookup(root, {"raw_dirs": ["tom/raw/2023-11-19/1"]}, flies, [])
     assert [f["raw"] for f in r["flies"]] == [["tom/raw/2023-11-19/1"], [], []] and len(r["experiment_xmls"]) == 2

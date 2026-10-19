@@ -133,7 +133,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   own) is looked for in the raw data path as entered (else in your raw data folders) and
   your motion-corrected data folders. Only the folders of the dataset's own flies (by
   date and fly number) are used, which give the `Experiment.xml` of the most recent
-  recording (of the last fly; unless
+  functional recording (of the last fly; not those in folders named `anat` or
+  `anatomical`, or starting with either then `_`, taken to be anatomical; unless
   you added or chose one), and the fewest odor YAMLs in your odor YAML folders that
   together describe every odor (those named in the recordings' ThorImage notes first,
   then ones with a fly's date in their path). A field stays colored by where its value came from
