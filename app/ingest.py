@@ -57,10 +57,14 @@ _SOLVENT_AT = re.compile(r"(pfo|water)\s*@\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+
 
 
 class ValidationError(Exception):
-    def __init__(self, errors: list[str], warnings: Optional[list[str]] = None):
+    """Why a data file was not accepted (`errors`), with `warnings`, and `details` of some
+    errors: ``rois``, when ROI names were not accepted (see `_validate_wide`)."""
+
+    def __init__(self, errors: list[str], warnings: Optional[list[str]] = None, details: Optional[dict] = None):
         super().__init__("; ".join(errors))
         self.errors = errors
         self.warnings = warnings or []
+        self.details = details or {}
 
 
 @dataclass
@@ -457,6 +461,7 @@ def _to_int_like(v) -> Optional[int]:
 def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
     errors: list[str] = []
     warnings: list[str] = []
+    details: dict = {}
 
     # ---- column levels -----------------------------------------------------
     if not isinstance(df.columns, pd.MultiIndex):
@@ -554,6 +559,10 @@ def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
             f"unrecognised: {_examples(sorted(set(bad_rois)))}. "
             "(Edit config/glomeruli.txt on the server to extend the glomerulus list.)"
         )
+        # every one, each with the accepted name it is but for case (if any), and the accepted names
+        not_accepted = sorted(set(bad_rois), key=glom.roi_sort_key)
+        details["rois"] = {"not_accepted": [{"roi": r, "same_but_case": glom.same_but_case(r)} for r in not_accepted],
+                           "accepted": list(glom.GLOMERULUS_NAMES)}
     if "" in rois:
         errors.append("some column headers have an empty 'roi'")
 
@@ -651,7 +660,7 @@ def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
         errors.append("matrix has no data cells")
 
     if errors:
-        raise ValidationError(errors, warnings)
+        raise ValidationError(errors, warnings, details)
 
     # ---- assemble ---------------------------------------------------------------
     nan_frac = float(np.isnan(values).mean()) if values.size else 0.0

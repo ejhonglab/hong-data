@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Optional
 
 DEFAULT_GLOMERULI = [
     "D",
@@ -46,11 +47,18 @@ def load_glomeruli() -> list[str]:
     return list(DEFAULT_GLOMERULI)
 
 
-GLOMERULI: frozenset[str] = frozenset(load_glomeruli())
+GLOMERULUS_NAMES: tuple[str, ...] = tuple(load_glomeruli())  # in the order of the list
+GLOMERULI: frozenset[str] = frozenset(GLOMERULUS_NAMES)
+_FOLDED = {g.casefold(): g for g in GLOMERULUS_NAMES}
 
 
 def is_glomerulus(roi: str) -> bool:
     return roi in GLOMERULI
+
+
+def same_but_case(roi: str) -> Optional[str]:
+    """The accepted glomerulus name `roi` is but for upper and lower case, if any."""
+    return _FOLDED.get(roi.casefold())
 
 
 def is_int_roi(roi: str) -> bool:

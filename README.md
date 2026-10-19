@@ -78,7 +78,10 @@ read and write (set in the Admin tab), configuration, backups and maintenance.
 
 ## Data file format
 
-The wide layout written by pandas for a frame with MultiIndex rows and columns:
+The wide layout written by pandas for a frame with MultiIndex rows and columns (an
+example of the antennal lobe format, ORN responses by glomerulus, also linked from the
+Upload tab:
+[`examples/megamat_mean_pebbled_ij_certain-roi_stats.csv`](examples/megamat_mean_pebbled_ij_certain-roi_stats.csv)):
 
 ```
 date,,,,,2023-11-19 00:00:00,2023-11-19 00:00:00,...
@@ -89,7 +92,9 @@ glomeruli_diagnostics,False,3mtp @ -5,solvent,0,-0.0377,0.13,...
 ```
 
 - **Columns** (three header rows): `date`, `fly_num`, `roi`; every column unique.
-  `roi` is a glomerulus name from `config/glomeruli.txt` or a non-negative integer.
+  `roi` is a glomerulus name from `config/glomeruli.txt` or a non-negative integer. A
+  file with other ROI names is refused with all of them listed (and the accepted name
+  each is but for upper and lower case), along with the accepted names.
 - **Rows**: at least `odor1` (or `odor`); optionally `panel`, `is_pair`, `odor2`, ...,
   `repeat`. Several `odor<n>` levels are mixture components presented together and
   are displayed joined with ` + ` (solvent components dropped), as in `hong2p.olf`.

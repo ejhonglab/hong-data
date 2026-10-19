@@ -205,7 +205,9 @@ GET    /api/user?name=                      a user's folders on tensor ("user": 
 POST   /api/user                            {"name", "raw_dirs", "mocorr_dirs", "odor_dirs"} → each
                                             folder checked on tensor; saved if all are there
 POST   /api/tensor/check                    {"path"} → a dataset's data folder checked on tensor
-POST   /api/stage                           multipart 'file' → validation + matrix payload
+POST   /api/stage                           multipart 'file' → validation + matrix payload (422 with
+                                            ``rois`` when ROI names are not accepted: each, and the
+                                            accepted glomerulus names)
 GET    /api/stage/{id}                      a staged upload and its matrix payload, with its odor
                                             YAMLs' checks (to continue it)
 GET    /api/stage/{id}/odors                its odors matched to the odor table, as for a dataset

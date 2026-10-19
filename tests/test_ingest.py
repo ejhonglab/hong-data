@@ -154,6 +154,23 @@ def test_bad_roi(tmp_path):
     assert "roi" in e and "DM2?" in e
 
 
+def test_bad_roi_names_listed(tmp_path):
+    # every name not accepted, with the accepted one it is but for case, and the names accepted
+    cols = COLS[:1] + [("2024-01-01", 1, n) for n in ("dm2", "VA1D", "DM2?", "x1", "x2", "x3", "x4", "x5", "x6")]
+    with pytest.raises(ValidationError) as ei:
+        load_file(write_csv(make_wide(ROWS, cols), tmp_path))
+    rois = ei.value.details["rois"]
+    assert [(b["roi"], b["same_but_case"]) for b in rois["not_accepted"]] == [
+        ("dm2", "DM2"), ("DM2?", None), ("VA1D", "VA1d"), ("x1", None), ("x2", None), ("x3", None), ("x4", None), ("x5", None),
+        ("x6", None)]
+    assert rois["accepted"][:3] == ["D", "DA1", "DA2"] and "VM7v" in rois["accepted"]
+
+
+def test_example_files():
+    for p in (Path(__file__).parent.parent / "examples").glob("megamat_mean_pebbled_*.csv"):
+        assert load_file(p).summary()["roi_kind"] == "glomeruli"
+
+
 def test_negative_int_roi(tmp_path):
     cols = COLS[:-1] + [("2024-01-02", 2, -1)]
     e = errors_for(make_wide(ROWS, cols), tmp_path)

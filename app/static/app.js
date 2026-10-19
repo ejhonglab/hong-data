@@ -849,6 +849,17 @@ function yamlFileCheck(f) {
 // the upload under way, kept in this browser to be continued (see UploadFlow.resume)
 const UPLOAD_KEY = 'olfdb.upload';
 
+// The ROI names of a data file not accepted (`rois` of a rejected upload: each with the
+// accepted glomerulus name it is but for case), and the glomerulus names accepted.
+function roiNamesBox({ not_accepted: bad, accepted }) {
+  const items = bad.map((b) => `<code>${esc(b.roi)}</code>${b.same_but_case ? ` <span class="muted">(write <code>${esc(b.same_but_case)}</code>)</span>` : ''}`);
+  return msgBox('info', `<b>${bad.length} ROI name${bad.length === 1 ? ' is' : 's are'} not accepted:</b> ${items.join(', ')}.
+    <p>Each ROI must be one of the ${accepted.length} glomerulus names accepted (as written: upper and lower case matter), or a
+    non-negative integer ROI id (<code>0</code>, <code>1</code>, …):</p>
+    <p class="roi-names">${accepted.map((g) => `<code>${esc(g)}</code>`).join(' ')}</p>
+    <p class="small">The list is <code>config/glomeruli.txt</code> on the server, which can be edited to add names.</p>`);
+}
+
 class UploadFlow {
   constructor() {
     this.options = null;
@@ -1208,6 +1219,7 @@ class UploadFlow {
     try { res = await api('/api/stage', { method: 'POST', form }); } catch (e) { result.replaceChildren(msgBox('error', `Upload failed: ${esc(e.message)}`)); return; }
     if (!res.ok) {
       result.replaceChildren(msgBox('error', `<b>${esc(file.name)} was not accepted.</b> Fix these and choose the file again:${listHtml(res.errors || [res.error])}`));
+      if (res.rois) result.appendChild(roiNamesBox(res.rois));
       if (res.warnings?.length) result.appendChild(msgBox('warn', `Also:${listHtml(res.warnings)}`));
       return;
     }

@@ -195,7 +195,8 @@ async def stage_create(request: Request) -> Response:
         parsed: ParsedData = await run_in_threadpool(load_file, dest, original_name=upload.filename)
     except ValidationError as e:
         shutil.rmtree(d, ignore_errors=True)
-        return JSONResponse({"ok": False, "errors": e.errors, "warnings": e.warnings, "filename": fname}, status_code=422)
+        return JSONResponse({"ok": False, "errors": e.errors, "warnings": e.warnings, **e.details, "filename": fname},
+                            status_code=422)
     except Exception as e:  # unexpected
         shutil.rmtree(d, ignore_errors=True)
         return JSONResponse({"ok": False, "errors": [f"unexpected error while reading the file: {e}"], "warnings": []}, status_code=422)

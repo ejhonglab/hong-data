@@ -251,6 +251,8 @@ dialog.confirm .actions { justify-content: flex-end; }
 .odor-table tr.group td { font-weight: 600; background: var(--surface-2); }
 .odor-table tr.hl td { background: var(--accent-soft); }
 .odor-table tr.missing td, .odor-table tr.ambiguous td { background: var(--warn-soft); }
+.example-file { margin: 8px 0 0; }
+.roi-names { line-height: 1.9; }
 ul.missing-odors { margin: 4px 0 8px; padding-left: 20px; }
 .odor-table .notes { max-width: 300px; color: var(--ink-muted); }
 .structure-cell { width: 76px; }
