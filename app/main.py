@@ -392,20 +392,32 @@ async def stage_remove_xml(request: Request) -> Response:
 
 
 async def stage_lookup(request: Request) -> Response:
-    """Look for the staged dataset's flies, recordings and odor YAMLs in a user's folders on
-    tensor ({"name": ...}); ``user`` is null when nobody of that name has folders saved."""
+    """Look for the staged dataset's flies, recordings and odor YAMLs on tensor
+    ({"name", "raw_data_path"}): its flies in the raw data folder given, else in the raw
+    data folders of the user named; the rest in that user's folders. ``user`` is null when
+    nobody of that name has folders saved, and there is nothing more then unless a raw data
+    folder was given (``raw_data_path_given``, normalized; ``raw_error`` instead when it
+    cannot be looked in)."""
     d = _stage_dir(request.path_params["stage_id"])
     body = await request.json()
-    user = await run_in_threadpool(db.get_user, _user_name(body.get("name")))
-    if user is None:
+    name = _user_name(body.get("name"))
+    user = await run_in_threadpool(db.get_user, name) if name else None
+    raw = str(body.get("raw_data_path") or "").strip()
+    dirs = dict(user or {})
+    if raw:
+        c = await run_in_threadpool(tensor.check_data_path, raw, config.TENSOR_ROOT)
+        if not c["ok"] or c["warning"]:
+            return JSONResponse({"ok": True, "user": user, "raw_error": c["error"] or c["warning"]})
+        dirs["raw_dirs"] = [c["path"]]
+    elif user is None:
         return JSONResponse({"ok": True, "user": None})
 
     def run() -> dict:
         parsed = load_parsed(d / "parsed")
-        return tensor.lookup(config.TENSOR_ROOT, user, parsed.summary()["flies"], parsed.component_odors())
+        return tensor.lookup(config.TENSOR_ROOT, dirs, parsed.summary()["flies"], parsed.component_odors())
 
     result = await run_in_threadpool(run)
-    return JSONResponse({"ok": True, "user": user, **result})
+    return JSONResponse({"ok": True, "user": user, "raw_data_path_given": c["path"] if raw else None, **result})
 
 
 _FIELD_LABELS = {

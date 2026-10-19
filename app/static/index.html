@@ -114,8 +114,9 @@
           <div class="row">
             <input type="file" id="yaml-input" accept=".yaml,.yml" multiple hidden>
             <button type="button" class="btn" id="yaml-btn">Add YAML file(s)</button>
-            <span class="muted">Every odor in the matrix must appear in the YAML with the same abbreviation and concentration.</span>
+            <span id="yaml-status" class="xml-status" aria-live="polite"></span>
           </div>
+          <p class="muted small">Every odor in the matrix must appear in the YAML with the same abbreviation and concentration.</p>
           <div id="yaml-list" class="filelist"></div>
           <div id="yaml-check"></div>
         </div>

@@ -906,7 +906,12 @@ class UploadFlow {
     form.addEventListener('change', (e) => this._changedByUser(e.target), true);
     form.uploader_name.addEventListener('change', () => { if (this.stage) this.lookup(); });
     // checked on the server when left, as folders are in the Settings tab
-    for (const key of DATASET_FIELDS) form[key].addEventListener('change', () => checkPathInput(form[key], $(`[data-msg-for=${key}]`)));
+    for (const key of DATASET_FIELDS) {
+      form[key].addEventListener('change', async () => {
+        await checkPathInput(form[key], $(`[data-msg-for=${key}]`));
+        if (key === 'raw_data_path' && this.stage) this.lookup(); // its flies are looked for there
+      });
+    }
     form.addEventListener('submit', (e) => { e.preventDefault(); this.generateReadme(); });
 
     $('#yaml-btn').addEventListener('click', () => $('#yaml-input').click());
@@ -1006,42 +1011,83 @@ class UploadFlow {
     if (this.stage && $('#step-meta').uploader_name.value !== name) this.lookup();
   }
 
-  // Looks for the dataset's flies in the uploader's folders on tensor, and attaches the
-  // Experiment.xml and odor YAMLs found there, unless some are attached already.
+  // Looks for the dataset's flies on tensor: in the raw data path as entered, else in the
+  // uploader's raw data folders (from Settings), and for odor YAMLs in their odor YAML
+  // folders. Attaches the most recent Experiment.xml found (unless one was added or chosen
+  // by hand), and the odor YAMLs describing every odor (unless some are attached already).
   async lookup() {
     const seq = ++this._lookupSeq;
-    const box = $('#nas-lookup');
-    const name = $('#step-meta').uploader_name.value.trim();
+    const box = $('#nas-lookup'), form = $('#step-meta');
+    const name = form.uploader_name.value.trim();
+    // as typed in, not as filled in from an earlier lookup
+    const raw = this.manual.has('raw_data_path') ? form.raw_data_path.value.trim() : '';
     const stageId = this.stage.stage_id;
-    const done = (html) => { this.nas = null; box.replaceChildren(msgBox('info', html)); this._autofill(); };
-    if (!name) { done('Set your name and data folders in <a href="#settings">Settings</a> to have the files of this dataset found on tensor.'); return; }
-    box.replaceChildren(msgBox('info', `Looking for these flies in the folders of ${esc(name)} on tensor…`));
+    const done = (html, kind = 'info') => {
+      this.nas = null; this.looking = false;
+      box.replaceChildren(msgBox(kind, html)); this._autofill(); this._renderYamlStatus();
+    };
+    if (!name && !raw) {
+      done('Set your name and data folders in <a href="#settings">Settings</a>, or enter the raw data path below, to have the files of this dataset found on tensor.');
+      return;
+    }
+    this.looking = true;
+    this._renderYamlStatus();
+    box.replaceChildren(msgBox('info', raw ? `Looking for these flies in <code>${esc(raw)}</code> on tensor…` : `Looking for these flies in the folders of ${esc(name)} on tensor…`));
     let res;
     try {
-      res = await api(`/api/stage/${stageId}/lookup`, { method: 'POST', json: { name } });
+      res = await api(`/api/stage/${stageId}/lookup`, { method: 'POST', json: { name, raw_data_path: raw } });
     } catch (e) {
-      if (seq === this._lookupSeq) box.replaceChildren(msgBox('error', `Could not look on tensor: ${esc(e.message)}`));
+      if (seq === this._lookupSeq) done(`Could not look on tensor: ${esc(e.message)}`, 'error');
       return;
     }
     if (seq !== this._lookupSeq || this.stage?.stage_id !== stageId) return;
-    if (!res.user) {
-      done(`No data folders are saved for <b>${esc(name)}</b>. Add them in <a href="#settings">Settings</a> to have the raw data, Experiment.xml and odor YAML of your uploads found on tensor.`);
+    if (res.raw_error) { done(`Could not look in the raw data path: ${esc(res.raw_error)}`, 'error'); return; }
+    if (!res.user && !raw) {
+      done(`No data folders are saved for <b>${esc(name)}</b>. Add them in <a href="#settings">Settings</a>, or enter the raw data path below, to have the raw data, Experiment.xml and odor YAML of your uploads found on tensor.`);
       return;
     }
     this.nas = res;
-    if (res.experiment_xmls.length && !this.stage.experiment_xml) await this.addXml({ tensorPath: res.experiment_xmls[0] });
+    const xml = res.experiment_xmls.at(-1); // the most recent recording
+    if (xml && (!this.stage.experiment_xml || (this.xmlAuto && this.stage.experiment_xml_tensor_path !== xml))) await this.addXml({ tensorPath: xml }, { auto: true });
     if (res.odor_yamls.selected.length && !this.stage?.odor_yamls.length) await this.addYaml({ tensorPaths: res.odor_yamls.selected });
     if (seq !== this._lookupSeq || this.stage?.stage_id !== stageId) return;
+    this.looking = false;
     this._renderLookup();
     this._autofill();
+    this._renderYamlStatus();
+  }
+
+  // Next to the YAML button: the YAMLs attached and whether they describe every odor, or
+  // why none is (found on tensor).
+  _renderYamlStatus() {
+    const status = $('#yaml-status'), yamls = this.stage?.odor_yamls || [], c = this.yamlCheck;
+    status.className = 'xml-status';
+    if (!this.stage) { status.textContent = ''; return; }
+    if (yamls.length) {
+      status.classList.add(c?.ok ? 'ok' : 'bad');
+      status.innerHTML = `${c?.ok ? '✓' : '✗'} ${yamls.map((y) => `<code>${esc(y.name)}</code>`).join(', ')} attached`
+        + (c ? (c.ok ? `: all ${c.n_matrix_odors} odors described` : `: ${c.missing.length} of ${c.n_matrix_odors} odors not described (below)`) : '');
+      return;
+    }
+    if (this.looking) { status.classList.add('muted'); status.textContent = 'None attached yet: looking on tensor…'; return; }
+    const n = this.nas, y = n?.odor_yamls;
+    let why;
+    if (!n?.user?.odor_dirs.length) why = 'no odor YAML folders in your <a href="#settings">Settings</a> to find one in on tensor; add one here';
+    else if (y.candidates.length) {
+      why = `the ${y.candidates.length} found on tensor do not describe ${esc(y.missing.slice(0, 4).join(', '))}${y.missing.length > 4 ? ', …' : ''}`
+        + ' (they are listed above, to attach); add one here';
+    } else why = 'none in your odor YAML folders on tensor describes these odors; add one here';
+    status.classList.add('warn');
+    status.innerHTML = `⚠ No odor YAML attached: ${why}.`;
   }
 
   _renderLookup() {
     const n = this.nas, st = this.stage, box = $('#nas-lookup');
     const flyName = (f) => `${f.date} fly ${f.fly_num}`;
     const plural = (k, word) => `${k} ${word}${k === 1 ? '' : 's'}`;
+    const dirsOf = (k) => (k === 'raw_dirs' && n.raw_data_path_given ? [n.raw_data_path_given] : n.user?.[k] || []);
     const flies = (key, folders, path) => {
-      if (!n.user[folders].length) return '<span class="muted">no such folders in your settings</span>';
+      if (!dirsOf(folders).length) return '<span class="muted">no such folders in your settings</span>';
       const missing = n.flies.filter((f) => !f[key].length);
       const found = n.flies.length - missing.length;
       let s = `${found} of ${n.flies.length} ${n.flies.length === 1 ? 'fly' : 'flies'}`;
@@ -1060,7 +1106,7 @@ class UploadFlow {
     const y = n.odor_yamls;
     const attached = new Set(st.odor_yamls.map((a) => a.tensor_path).filter(Boolean));
     let yaml;
-    if (!n.user.odor_dirs.length) yaml = '<span class="muted">no such folders in your settings</span>';
+    if (!dirsOf('odor_dirs').length) yaml = '<span class="warn">not looked for: no odor YAML folders in your settings</span>';
     else if (y.selected.length) {
       yaml = `${plural(y.selected.length, 'file')} describing all ${y.n_matrix_odors} odors`;
       yaml += y.selected.every((p) => attached.has(p)) ? ', attached' : ' <span class="muted">(not attached, as other YAML was attached already)</span>';
@@ -1073,7 +1119,8 @@ class UploadFlow {
       <td>${c.n_covered} of ${y.n_matrix_odors} odors</td><td>${attached.has(c.path) ? '<span class="muted">attached</span>'
         : `<button type="button" class="btn small" data-attach-yaml="${esc(c.path)}">attach</button>`}</td></tr>`).join('');
     box.innerHTML = `<div class="msg info lookup">
-      <div class="lookup-head"><b>Found on tensor</b><span>in the folders of ${esc(n.user.name)} <span class="muted">(<a href="#settings">settings</a>)</span></span>
+      <div class="lookup-head"><b>Found on tensor</b><span>${n.raw_data_path_given ? `in <code>${esc(n.raw_data_path_given)}</code> (the raw data path)${n.user ? `, and the folders of ${esc(n.user.name)}` : ''}`
+        : `in the folders of ${esc(n.user.name)}`} <span class="muted">(<a href="#settings">settings</a>)</span></span>
         <button type="button" class="btn small" data-again>Look again</button></div>
       <ul><li>Raw data: ${flies('raw', 'raw_dirs', n.raw_data_path)}</li>
         <li>Motion-corrected data: ${flies('mocorr', 'mocorr_dirs', n.mocorr_data_path)}</li>
@@ -1084,14 +1131,14 @@ class UploadFlow {
         ${yamlRows ? `<table class="odor-table"><thead><tr><th>Odor YAML</th><th>Found by</th><th>Describes</th><th></th></tr></thead><tbody>${yamlRows}</tbody></table>` : ''}
       </details></div>`;
     $('[data-again]', box).addEventListener('click', () => this.lookup());
-    $('[data-xml]', box)?.addEventListener('change', (e) => { if (e.target.value) this.addXml({ tensorPath: e.target.value }); });
+    $('[data-xml]', box)?.addEventListener('change', (e) => { if (e.target.value) this.addXml({ tensorPath: e.target.value }); }); // chosen
     $$('[data-attach-yaml]', box).forEach((b) => b.addEventListener('click', () => this.addYaml({ tensorPaths: [b.dataset.attachYaml] })));
   }
 
   // ------------------------------------------------------------------- staging
   reset() {
     this.stage = null; this.data = null; this.yamlCheck = null; this.generatedReadme = '';
-    this.nas = null; this._lookupSeq++;
+    this.nas = null; this._lookupSeq++; this.looking = false; this.xmlAuto = false;
     for (const key of DATASET_FIELDS) {
       this._setField(key, null);
       this._mark(key, null);
@@ -1104,7 +1151,7 @@ class UploadFlow {
     $('#step-meta').hidden = true;
     $('#step-readme').hidden = true;
     $('#step-done').hidden = true;
-    $('#yaml-list').innerHTML = ''; $('#yaml-check').innerHTML = ''; $('#xml-info').innerHTML = ''; this._renderXml();
+    $('#yaml-list').innerHTML = ''; $('#yaml-check').innerHTML = ''; $('#xml-info').innerHTML = ''; this._renderXml(); this._renderYamlStatus();
     $('#meta-errors').innerHTML = ''; $('#commit-errors').innerHTML = '';
     window.scrollTo(0, 0);
   }
@@ -1194,6 +1241,7 @@ class UploadFlow {
     if (done.length) box.appendChild(msgBox('info', done.join('<br>')));
     if (res.errors?.length) box.appendChild(msgBox('error', `Not added:${listHtml(res.errors)}`));
     if (this.nas) this._renderLookup();
+    this._renderYamlStatus();
     const c = res.check;
     if (!c) return;
     if (c.ok) {
@@ -1204,8 +1252,8 @@ class UploadFlow {
     }
   }
 
-  // file: a File, or {tensorPath} for one on tensor
-  async addXml(file) {
+  // file: a File, or {tensorPath} for one on tensor; auto: attached by a lookup, not by hand
+  async addXml(file, { auto = false } = {}) {
     const stageId = this.stage.stage_id;
     let req;
     if (!(file instanceof File)) req = { method: 'POST', json: { tensor_path: file.tensorPath } };
@@ -1220,6 +1268,7 @@ class UploadFlow {
     if (this.stage?.stage_id !== stageId) return;
     if (!res.ok) { this._renderXml(); $('#xml-info').replaceChildren(msgBox('error', `Not added:${listHtml(res.errors)}`)); return; }
     this.stage = res.stage;
+    this.xmlAuto = auto;
     this._renderXml();
     if (this.nas) this._renderLookup();
   }

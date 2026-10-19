@@ -283,8 +283,15 @@ def fly_dirs(folder: Path, date: str, fly_num: int) -> list[Path]:
 
 
 def recordings(fly_dir: Path) -> list[Path]:
-    """Experiment.xml of each ThorImage recording of a fly (in its folder, or one level down)."""
-    return [d / "Experiment.xml" for d in [fly_dir, *_subdirs(fly_dir)] if os.path.isfile(d / "Experiment.xml")]
+    """Experiment.xml of each ThorImage recording of a fly (in its folder, or one level down),
+    oldest first (by when the file was last written, then by name)."""
+    def mtime(p: Path) -> float:
+        try:
+            return os.path.getmtime(p)
+        except OSError:
+            return 0.0
+
+    return sorted((d / "Experiment.xml" for d in [fly_dir, *_subdirs(fly_dir)] if os.path.isfile(d / "Experiment.xml")), key=mtime)
 
 
 def _yaml_files(folder: Path) -> list[Path]:
@@ -380,21 +387,24 @@ def lookup(root: Path, dirs: dict[str, list[str]], flies: list[dict], matrix_odo
         dict with ``flies`` (per fly: its raw and motion-corrected folders and the
         Experiment.xml of its recordings), ``raw_data_path`` and ``mocorr_data_path``
         (the folder holding every fly found, or None), ``experiment_xmls`` (of every
-        fly) and ``odor_yamls`` (``candidates``, ``selected``: the fewest of them that
-        together describe every odor, if they do, and ``missing``: odors none of them
-        describe). All paths are relative to `root`.
+        fly, by date and number, each fly's oldest first: the last is the most recent)
+        and ``odor_yamls`` (``candidates``, ``selected``: the fewest of them that together
+        describe every odor, if they do, and ``missing``: odors none of them describe).
+        All paths are relative to `root`.
     """
     rel = lambda p: p.relative_to(root).as_posix()
     folders = {k: [root / p for p in dirs.get(k) or []] for k in USER_DIR_KINDS}
     found = []
     for f in flies:
         raw = [d for base in folders["raw_dirs"] for d in fly_dirs(base, f["date"], f["fly_num"])]
+        if not raw and len(flies) == 1:  # a folder given may be that of the one fly
+            raw = [base for base in folders["raw_dirs"] if recordings(base)]
         mocorr = [d for base in folders["mocorr_dirs"] for d in fly_dirs(base, f["date"], f["fly_num"])]
         found.append({
             "date": f["date"], "fly_num": f["fly_num"], "raw": [rel(d) for d in raw], "mocorr": [rel(d) for d in mocorr],
             "recordings": [rel(x) for d in raw for x in recordings(d)],
         })
-    xmls = [x for f in found for x in f["recordings"]]
+    xmls = [x for f in sorted(found, key=lambda f: (f["date"], f["fly_num"])) for x in f["recordings"]]
     return {
         "flies": found,
         "raw_data_path": _common([d for f in found for d in f["raw"]]),

@@ -136,6 +136,9 @@ textarea { resize: vertical; }
 .actions { display: flex; gap: 10px; margin-top: 16px; align-items: center; }
 .filelist { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
 .filelist .file { display: flex; align-items: center; gap: 8px; }
+.xml-status.ok { color: var(--ok); }
+.xml-status.bad { color: var(--danger); }
+.xml-status.warn { color: var(--warn); }
 .yaml-file { border-radius: 4px; }
 .yaml-file.fresh { animation: fresh 2.5s ease-out; }
 @keyframes fresh { from { background: var(--accent-soft); } to { background: transparent; } }

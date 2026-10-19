@@ -112,18 +112,20 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   abbreviation and concentration. Each YAML added is also checked on its own, as a
   warning only: its odors against the odor table (missing, or named, abbreviated or with
   a CID unlike there), odors without a concentration, and an abbreviation used for two
-  odors. A YAML of the same name replaces the one attached, if it can be read. Other
-  optional details: ThorImage `Experiment.xml`,
-  power, age, wavelength, rig, data paths, notes. The raw and motion-corrected data paths
-  are folders from the top of tensor, checked on the server as you leave their field
-  (as in Settings), and must be found there to save (unless tensor itself is not on the
-  server, when they are taken as entered). Details are filled in from your
-  settings, from the file (panel names; glomerulus ROIs mean coding unit "glomeruli")
-  and from tensor: each fly (`<folder>/<date>/<fly>/`, as in hong2p) is looked for in
-  your raw and motion-corrected data folders, which give the data paths, the
-  `Experiment.xml` of the first recording, and the fewest odor YAMLs that together
-  describe every odor (those named in the recordings' ThorImage notes first, then ones
-  with a fly's date in their path). A field stays colored by where its value came from
+  odors. A YAML of the same name replaces the one attached, if it can be read. Next to
+  the button, it says which YAMLs are attached, or why none was found on tensor. Other
+  optional details: ThorImage `Experiment.xml`, power, age, wavelength, rig, data paths,
+  notes. The raw and motion-corrected data paths are folders from the top of tensor,
+  checked on the server as you leave their field (as in Settings), and must be found
+  there to save (unless tensor itself is not on the server, when they are taken as
+  entered). Details are filled in from your settings, from the file (panel names;
+  glomerulus ROIs mean coding unit "glomeruli") and from tensor: each fly
+  (`<folder>/<date>/<fly>/`, as in hong2p) is looked for in the raw data path as entered
+  (else in your raw data folders) and your motion-corrected data folders, which give the
+  data paths, the `Experiment.xml` of the most recent recording (of the last fly; unless
+  you added or chose one), and the fewest odor YAMLs in your odor YAML folders that
+  together describe every odor (those named in the recordings' ThorImage notes first,
+  then ones with a fly's date in their path). A field stays colored by where its value came from
   (settings, tensor, the files) until you change it, and the README says which files
   came from tensor, and from where. Every value is stored on its own, whatever is
   changed in the README.

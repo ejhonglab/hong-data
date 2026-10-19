@@ -188,7 +188,8 @@ POST   /api/user                            {"name", "raw_dirs", "mocorr_dirs", 
 POST   /api/tensor/check                    {"path"} → a dataset's data folder checked on tensor
 POST   /api/stage                           multipart 'file' → validation + matrix payload
 GET    /api/stage/{id}                      a staged upload and its matrix payload
-POST   /api/stage/{id}/lookup               {"name"} → that user's folders searched for the flies,
+POST   /api/stage/{id}/lookup               {"name", "raw_data_path"} → the flies searched for in the
+                                            raw data path (else that user's folders), and the
                                             recordings and odor YAMLs of the staged dataset
 POST   /api/stage/{id}/odor_yaml            multipart 'file' (repeatable), or {"tensor_paths": [...]}
                                             → what was added (or replaced), each file's own check

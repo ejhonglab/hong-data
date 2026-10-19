@@ -102,6 +102,13 @@ def test_lookup(root):
     # a folder named by the date holds the flies directly
     r = tensor.lookup(root, {"raw_dirs": ["tom/raw/2023-11-19"]}, flies[:1], [])
     assert r["raw_data_path"] == "tom/raw/2023-11-19/1" and r["odor_yamls"]["candidates"] == []
+    # each fly's recordings oldest first (not by name), so the last is the most recent
+    os.utime(root / "tom/raw/2023-11-19/1/t1/Experiment.xml", (2e9, 2e9))
+    r = tensor.lookup(root, dirs, flies, odors)
+    assert r["experiment_xmls"][:2] == ["tom/raw/2023-11-19/1/t2/Experiment.xml", "tom/raw/2023-11-19/1/t1/Experiment.xml"]
+    # and the folder of a dataset's only fly, given as its raw data folder
+    r = tensor.lookup(root, {"raw_dirs": ["tom/raw/2023-11-19/1"]}, flies[:1], [])
+    assert r["flies"][0]["raw"] == ["tom/raw/2023-11-19/1"] and len(r["experiment_xmls"]) == 2
 
 
 def test_users(tmp_path):
@@ -183,6 +190,16 @@ def test_stage_from_tensor(main, root, tmp_path, monkeypatch):
     stage = {"stage_id": "stage1234"}
 
     assert call(main.stage_lookup, body={"name": "nobody"}, path_params=stage)[1] == {"ok": True, "user": None}
+    # the raw data path as entered, with or without a user
+    r = call(main.stage_lookup, body={"name": "", "raw_data_path": " ann//raw/"}, path_params=stage)[1]
+    assert r["user"] is None and r["raw_data_path_given"] == "ann/raw" and r["raw_data_path"] == "ann/raw"
+    assert r["experiment_xmls"] == ["ann/raw/2024-01-01/1/t1/Experiment.xml", "ann/raw/2024-01-02/2/t1/Experiment.xml"]
+    assert r["odor_yamls"]["candidates"] == []  # no odor YAML folders without a user
+    r = call(main.stage_lookup, body={"name": "ann", "raw_data_path": "ann/raw/2024-01-02"}, path_params=stage)[1]
+    # (the YAML is named only in the notes of the fly not in that folder)
+    assert [f["raw"] for f in r["flies"]] == [[], [], ["ann/raw/2024-01-02/2"]] and r["odor_yamls"]["candidates"] == []
+    r = call(main.stage_lookup, body={"name": "ann", "raw_data_path": "ann/nothing"}, path_params=stage)[1]
+    assert r["raw_error"] == "not found on tensor: 'ann' has no 'nothing'" and "flies" not in r
     r = call(main.stage_lookup, body={"name": "ann"}, path_params=stage)[1]
     assert [f["raw"] for f in r["flies"]] == [["ann/raw/2024-01-01/1"], [], ["ann/raw/2024-01-02/2"]]
     assert r["raw_data_path"] == "ann/raw" and r["odor_yamls"]["selected"] == ["ann/yaml/ann_odors.yml"]
