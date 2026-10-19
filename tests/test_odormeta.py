@@ -176,6 +176,7 @@ def test_missing_rows(tmp_path, monkeypatch):
     status, r = call(main.dataset_odor_table, path_params={"ds_id": 1})
     assert status == 200 and [m["abbrev"] for m in r["missing"]] == ["2h", "zzz", "ethyl acetate"]
     assert r["sheet"]["columns_from"] == "sheet" and r["sheet"]["paste"].startswith("\t\t\t2h\t") and r["sheet"]["checked_at"]
+    assert r["sheet"]["url"] == "https://docs.google.com/spreadsheets/d/abc/edit"
     monkeypatch.setattr(main.db, "get_trials", lambda ds_id: [{"panel": "a", "components": ["va @ -4"]}])
     assert call(main.dataset_odor_table, path_params={"ds_id": 1})[1]["sheet"] is None  # nothing missing
 

@@ -139,7 +139,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   are listed above it and highlighted in it; a button copies rows for the odor sheet for
   those not in it (one per chemical: name, CID, CAS and solvent from the odor YAML, the
   abbreviation as in the data), tab-separated in the order of the sheet's own columns,
-  to paste into its first empty row before syncing it. "Raw data" and "Motion corrected / traces" show where those are on
+  to paste into its first empty row (the sheet and the Odors tab linked there) before
+  syncing it. "Raw data" and "Motion corrected / traces" show where those are on
   tensor (to copy, as browsers cannot open folders on your computer) and what is in
   them. They are red, saying why, when no path was entered, or the server cannot find
   it (from the top of tensor, or from a folder set in the Admin tab) or may not read it.

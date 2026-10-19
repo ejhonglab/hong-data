@@ -1768,15 +1768,16 @@ function missingOdorsHtml({ rows, missing, sheet }) {
       ${m.odors.map((o) => `<code>${esc(o)}</code>`).join(', ')}</li>`).join('');
     const k = missing.length, rowsText = `${k} row${k === 1 ? '' : 's'}`;
     const order = sheet.columns_from === 'sheet' ? `in the order of the odor sheet's columns (as read ${esc(fmtWhen(sheet.checked_at))})`
-      : `in the order of the template's columns (<code>${esc(Object.keys(ODOR_FIELDS).join(', '))}</code>), as ${sheet.configured
+      : `in the order of the template's columns (<code>${esc(Object.keys(ODOR_FIELDS).join(', '))}</code>), as ${sheet.url
         ? `the odor sheet could not be read (${esc(sheet.error || 'not yet')})` : 'no odor sheet is set (Admin tab)'}: check that the sheet's are in this order`;
     const unnamed = missing.filter((m) => !m.name).length;
     const naming = !unnamed ? '' : unnamed < k ? `, give the ${unnamed} without a name one (the sheet needs it)`
       : `, give ${k === 1 ? 'it a name' : 'each a name'} (the sheet needs one)`;
     parts.push(`<p>Not in the odor table (highlighted below):</p><ul class="missing-odors">${items}</ul>
       <div class="actions"><button type="button" class="btn small" data-copy-sheet>Copy ${rowsText} for the odor sheet</button><span class="status"></span></div>
-      <p class="small">Tab-separated, ${order}. Paste them into the first column of the sheet's first empty row${naming},
-      fill in what else you know, then sync the sheet in the <a href="#odors">Odors tab</a>.</p>`);
+      <p class="small">Tab-separated, ${order}. Paste them into the first column of the first empty row of
+      ${sheet.url ? extLink(sheet.url, 'the odor sheet') : 'the odor sheet'}${naming}, fill in what else you know, then
+      sync the sheet in the <a href="#odors">Odors tab</a>.</p>`);
   }
   const ambiguous = [...new Map(rows.filter((r) => r.match === 'ambiguous').map((r) => [r.label, r])).values()];
   if (ambiguous.length) {

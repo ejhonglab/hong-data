@@ -1184,7 +1184,7 @@ async def dataset_odor_table(request: Request) -> Response:
     in it as rows for the odor sheet (``missing``, see `odormeta.missing_rows`), and these
     as cells to paste into it (``sheet``: ``paste``, in the order of the sheet's columns as
     last read, else the template's: ``columns_from`` 'sheet' or 'template', with
-    ``checked_at`` and ``error`` from reading it, and ``configured``)."""
+    ``checked_at`` and ``error`` from reading it, and its ``url``, None if none is set)."""
     ds_id = int(request.path_params["ds_id"])
 
     def build() -> Optional[dict]:
@@ -1202,7 +1202,7 @@ async def dataset_odor_table(request: Request) -> Response:
             state = sheet_watch.check(url) if url else odormeta.SheetWatch.UNREAD
             sheet = {"paste": odormeta.sheet_paste(missing, state["columns"]),
                      "columns_from": "sheet" if state["columns"] else "template",
-                     "configured": bool(url), "checked_at": state["checked_at"], "error": state["error"]}
+                     "url": url, "checked_at": state["checked_at"], "error": state["error"]}
         return {"rows": rows, "odors": odors, "missing": missing, "sheet": sheet}
 
     result = await run_in_threadpool(build)
