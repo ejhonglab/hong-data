@@ -24,6 +24,9 @@ services:
       OLFDB_MAX_UPLOAD_MB: "1024"
       OLFDB_STAGE_TTL_HOURS: "48"
       OLFDB_TENSOR_ROOT: "/local/tensor"
+      # this folder on the server (the one docker compose is run from), for the Admin tab
+      # to give paths in the container as paths on the server
+      OLFDB_HOST_DIR: "${PWD}"
     logging:
       driver: json-file
       options: { max-size: "20m", max-file: "5" }

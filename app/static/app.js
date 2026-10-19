@@ -2420,6 +2420,52 @@ function localServerDirProblem(path) {
   return null;
 }
 
+// The files the server has read or written in its own folders (as from /api/admin/files)
+// as a tree: {dirs: Map(name: node), files}
+function fileTree(files) {
+  const top = { dirs: new Map(), files: [] };
+  for (const f of files) {
+    const parts = f.path.split('/');
+    let node = top;
+    for (const part of parts.slice(0, -1)) {
+      if (!node.dirs.has(part)) node.dirs.set(part, { dirs: new Map(), files: [] });
+      node = node.dirs.get(part);
+    }
+    node.files.push({ ...f, name: parts.at(-1) });
+  }
+  return top;
+}
+
+function fileTreeTotals(node) {
+  const t = { n: node.files.length, gone: 0, size: 0 };
+  for (const f of node.files) { if (f.size === null) t.gone++; else t.size += f.size; }
+  for (const child of node.dirs.values()) {
+    const c = fileTreeTotals(child);
+    t.n += c.n; t.gone += c.gone; t.size += c.size;
+  }
+  return t;
+}
+
+// a folder of `fileTree` (named `label`), folders first, each closed but for this one if `open`
+function fileTreeHtml(node, label, open) {
+  while (!node.files.length && node.dirs.size === 1) { // a folder holding just a folder: on one line
+    const [[name, child]] = node.dirs;
+    label += `${name}/`;
+    node = child;
+  }
+  const t = fileTreeTotals(node);
+  const counts = [`${t.n.toLocaleString()} file${t.n === 1 ? '' : 's'}`, t.gone && `${t.gone.toLocaleString()} deleted since`,
+    t.size && fmtBytes(t.size)].filter(Boolean).join(', ');
+  const dirs = [...node.dirs].sort(([a], [b]) => a.localeCompare(b)).map(([name, child]) => `<li>${fileTreeHtml(child, `${name}/`, false)}</li>`);
+  const files = node.files.map((f) => {
+    const did = [f.read && 'read', f.wrote && 'written'].filter(Boolean).join(', ');
+    const size = f.size === null ? 'deleted since' : f.size ? fmtBytes(f.size) : 'empty';
+    const when = f.first_at ? `first read or written ${fmtWhen(f.first_at)}` : 'in the data folder when this record began';
+    return `<li class="file${f.size === null ? ' gone' : ''}" title="${esc(when)}"><code>${esc(f.name)}</code> <span class="muted">${size} · ${did}</span></li>`;
+  });
+  return `<details${open ? ' open' : ''}><summary><code>${esc(label)}</code> <span class="muted">${counts}</span></summary><ul>${[...dirs, ...files].join('')}</ul></details>`;
+}
+
 class AdminPage {
   constructor() {
     this.state = null; // as from GET /api/admin
@@ -2487,6 +2533,7 @@ class AdminPage {
 
   async load() {
     this.loadHost();
+    this.loadFiles();
     this.loadDatasets();
     this.loadRefs();
     $('#ref-result').replaceChildren();
@@ -2501,7 +2548,7 @@ class AdminPage {
   _show(s) {
     this.state = s;
     $('#admin-data-dir').textContent = s.data_dir;
-    $('#admin-data-dir-where').textContent = s.restart.by === 'Docker' ? ' in the container; on the server, the folder docker-compose.yml mounts there' : '';
+    $('#admin-data-dir-where').textContent = s.in_container ? ' in the container; on the server, the folder docker-compose.yml mounts there' : '';
     $('#admin-tensor-root').textContent = s.tensor_root;
     $('#admin-deleted-dir').textContent = s.deleted_dir;
     for (const kind of ADMIN_KINDS) {
@@ -2600,6 +2647,18 @@ class AdminPage {
       [h.source === 'mounted' ? 'IP addresses (by DNS)' : 'IP addresses', addresses],
       ['Reached here at', `<code>${esc(location.origin)}</code>`],
     ].map(([a, b]) => `<span>${a}</span><span>${b}</span>`).join('');
+  }
+
+  async loadFiles() {
+    const box = $('#admin-files');
+    box.replaceChildren(Object.assign(document.createElement('p'), { className: 'muted', textContent: 'Listing…' }));
+    let res;
+    try { res = await api('/api/admin/files'); } catch (e) { box.replaceChildren(msgBox('error', `Could not list them: ${esc(e.message)}`)); return; }
+    $('#admin-files-root').textContent = res.root;
+    $('#admin-files-since').textContent = res.since ? ` since ${fmtWhen(res.since)}` : '';
+    const tree = document.createElement('div');
+    tree.innerHTML = res.files.length ? fileTreeHtml(fileTree(res.files), `${res.root.replace(/\/$/, '')}/`, true) : '<p class="muted">None yet.</p>';
+    box.replaceChildren(...(res.note ? [msgBox('warn', `Paths as in the Docker container: ${esc(res.note)}.`)] : []), ...tree.childNodes);
   }
 
   // the folders and restart state again (after a reference dataset added a folder, say),

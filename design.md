@@ -61,6 +61,17 @@ the app is described in [README.md](README.md), hosting it in [DEPLOY.md](DEPLOY
   could widen its own limits while running would not be limited. So that it writes
   nothing outside its data folder, temporary files go to `data/tmp/`, and SQLite keeps
   its temporary tables in memory.
+- **The files the server reads and writes in its own folder are recorded as it runs**
+  (`app/filelog.py`), for the Admin tab's tree of them, rather than listed from what is
+  there: a listing would miss the files deleted since (uploads being received, expired
+  staging folders, downloads sent) and could not tell its files from others put there.
+  A Python audit hook sees each file the server's Python code opens, moves or opens as
+  a database (returning at once on other events); a file only a C library opens
+  (pyarrow reading parquet) is not seen, but each such file in its folders is one it
+  wrote first. They are kept in memory and saved to the database every 30 s and as it
+  stops. In Docker, Compose gives the container the folder it was run from
+  (`OLFDB_HOST_DIR`), checked against the data folder's mount in `/proc/self/mountinfo`,
+  so that paths in the container are shown as on the server.
 - **The laser wavelength is never read from `Experiment.xml`**: ThorImage's
   `MultiPhotonLaser` value does not follow changes made to the wavelength at the laser,
   so the wavelength is only ever entered in the form.
@@ -149,6 +160,7 @@ app/merge.py       merged downloads of a coding unit: grouping datasets, scaling
 app/odormeta.py    odor table: sheet parsing / validation, sync diff, links, dataset matching
 app/tensor.py      users' folders on tensor: path checks, finding a dataset's flies, recordings, YAMLs
 app/sandbox.py     folders the server may read and write (Admin tab): settings, path checks, Landlock
+app/filelog.py     the files the server has read and written in its own folders (Admin tab), paths on the server
 app/movies.py      a dataset's movies on tensor: finding them, reading their planes, their ImageJ ROIs
 config/odor_sheet_template.csv   odor sheet columns, with the odors from the thesis tables
 app/static/        frontend: index.html, app.js, heatmap.js, colormaps.js (+ mpl_luts.js),
@@ -166,8 +178,10 @@ tests/             pytest tests
 (one row per cell, for SQL queries), `matrices` (the same values as a float32 blob for
 fast serving), `users` (each user's folders on tensor), `odors` and `odor_syncs`,
 `pubchem` (each odor CID's InChI), `settings` (site-wide settings from the Admin tab:
-the odor sheet's link), and `reference_datasets` (reference datasets added there). Files: `data/datasets/<id>/` holds the original data
-file, `README.md`, `metadata.json`, `odor_yaml/*.yaml` and the `Experiment.xml`. Also
+the odor sheet's link), `reference_datasets` (reference datasets added there) and
+`file_log` (the files the server has read or written in its own folders). Files:
+`data/datasets/<id>/` holds the original data file, `README.md`, `metadata.json`,
+`odor_yaml/*.yaml` and the `Experiment.xml`. Also
 under `data/`: `admin.json` (the folders set in the Admin tab), `deleted/<id>/` (the
 folders of datasets deleted in the Admin tab), `references/<id>/` (reference datasets
 added there, as read), `staging/`, `exports/`,
@@ -240,6 +254,8 @@ GET    /api/admin                           the folders the server may read and 
                                             effect since it started, checked), the odor sheet's
                                             link; Landlock, restarts
 POST   /api/admin/check                     {"read_dirs", "write_dirs"} → each folder checked
+GET    /api/admin/files                     the files the server has read or written in its own
+                                            folders (not the repository's), as paths on the server
 POST   /api/admin                           {"read_dirs", "write_dirs"} → saved, in effect from
                                             the next restart
 POST   /api/admin/odor_sheet                {"url"} (empty to clear it) → saved, in use at once;

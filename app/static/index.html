@@ -412,6 +412,11 @@
         </div>
         <div id="admin-result" aria-live="polite"></div>
         <div class="actions"><button type="button" class="btn primary" id="admin-save">Save</button></div>
+        <div class="dir-section">
+          <h3>Its own files</h3>
+          <p class="muted">Each file the server has read or written in the folder it runs from (<code id="admin-files-root">…</code>)<span id="admin-files-since"></span>: its database, uploads and the rest of its data folder. Not listed: the repository's own files (its code and configuration), and those in the folders above or of reference data. Struck through: deleted since.</p>
+          <div id="admin-files" class="file-tree"></div>
+        </div>
       </div>
 
       <div class="step" id="admin-refs">

@@ -83,7 +83,10 @@ docker compose logs -f                       # Ctrl-C to stop following
 ```
 
 Go on only once the health check answers `{"ok":true,...}`: the systemd unit in section
-4 runs the same command, so whatever stops it here stops the unit too.
+4 runs the same command, so whatever stops it here stops the unit too. Run `docker
+compose` from `/opt/olfdb` itself (as the unit does): the Admin tab takes the folder it
+is run from to be where the container's files are on the server, and says so when that
+does not hold its data folder.
 
 Open `http://<server>:8080/` from any machine on the intranet. The container has
 `restart: unless-stopped`, so Docker already restarts it after a crash and after a
@@ -285,6 +288,7 @@ but `data/`, no home folders, and of `/mnt` and `/local` only tensor, read-only 
 | `OLFDB_ODOR_SHEET_URL` | (none) | Google sheet the odor table is synced from, while none is set in the Admin tab (see "Odor sheet") |
 | `OLFDB_ODOR_SHEET_CHECK_MINUTES` | `10` | how often (at most) the sheet is read to tell whether it changed |
 | `OLFDB_TENSOR_ROOT` | `/local/tensor` | the lab NAS as mounted on the server (see "Tensor"); users' folders are relative to it |
+| `OLFDB_HOST_DIR` | the folder `docker compose` is run from (in `docker-compose.yml`) | Docker only: the folder of `docker-compose.yml` on the server, for the Admin tab to give paths on the server rather than in the container |
 | `OLFDB_LANDLOCK` | `1` | `0` to stop having the kernel (Landlock) hold the server to the folders set in the Admin tab (see "Folders it may read and write") |
 
 Keep `--workers 1`: SQLite handles concurrent readers fine, and one process avoids

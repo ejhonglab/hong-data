@@ -174,6 +174,12 @@ CREATE TABLE IF NOT EXISTS users (
     odor_dirs TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS file_log (  -- files the server has read or written in its own folders (see filelog.py)
+    path TEXT PRIMARY KEY,             -- as the server sees it (in Docker, in the container)
+    read INTEGER NOT NULL DEFAULT 0,
+    wrote INTEGER NOT NULL DEFAULT 0,
+    first_at TEXT                      -- null: in the data folder when the record began
+);
 """
 # columns added since the first release: (table, column, type)
 ADDED_COLUMNS = [("datasets", "mocorr_data_path", "TEXT")]
@@ -558,3 +564,17 @@ class Database:
             )
             r = con.execute("SELECT * FROM users WHERE name_key = ?", (name.casefold(),)).fetchone()
         return self._user(r)
+
+    # ---------------------------------------------------------------- file log
+    def file_log(self) -> list[dict]:
+        """The files the server has read or written in its own folders (see filelog.py)."""
+        with self.connect() as con:
+            return [dict(r) for r in con.execute("SELECT path, read, wrote, first_at FROM file_log ORDER BY path")]
+
+    def record_files(self, files: dict[str, int], when: Optional[str]) -> None:
+        """Note files read (bit 1) and written (bit 2), each first `when` unless noted before."""
+        with self.connect() as con:
+            con.executemany(
+                "INSERT INTO file_log (path, read, wrote, first_at) VALUES (?,?,?,?) ON CONFLICT (path) DO UPDATE "
+                "SET read = max(read, excluded.read), wrote = max(wrote, excluded.wrote)",
+                [(p, bits & 1, bits >> 1 & 1, when) for p, bits in files.items()])

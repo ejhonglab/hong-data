@@ -1,6 +1,7 @@
 """HTTP API + static frontend (Starlette)."""
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import datetime as dt
 import hashlib
@@ -31,7 +32,7 @@ from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, R
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import config, export, merge, movies, odormeta, reference, sandbox, tensor, thorimage, yamlcheck
+from . import config, export, filelog, merge, movies, odormeta, reference, sandbox, tensor, thorimage, yamlcheck
 from .db import Database
 from .glomeruli import load_glomeruli
 from .ingest import ParsedData, ValidationError, load_file, load_parsed, save_parsed
@@ -1234,14 +1235,16 @@ def _admin_state() -> dict:
     saved = sandbox.load()
     active = sandbox.STATUS["settings"]
     by = _supervisor()
+    to_server, note = filelog.server_paths()
     return {
         "saved": saved,
         "active": {k: active[k] for k in sandbox.KINDS} if active else None,
         "pending": active is not None and any(saved[k] != active[k] for k in sandbox.KINDS),
         "checks": sandbox.check_folders(saved)[0],
         "odor_sheet": _odor_sheet(),
-        "data_dir": str(config.DATA_DIR),
-        "deleted_dir": str(config.DELETED_DIR),
+        "data_dir": to_server(str(config.DATA_DIR)),
+        "deleted_dir": to_server(str(config.DELETED_DIR)),
+        "in_container": note is not None,  # these paths, which are on the server otherwise
         "tensor_root": str(config.TENSOR_ROOT),
         "started_at": sandbox.STATUS["started_at"],
         "kernel": sandbox.STATUS["kernel"],
@@ -1256,6 +1259,18 @@ def _folder_lists(body: Any) -> bool:
 async def admin_get(request: Request) -> Response:
     """The folders the server may read and write: as saved, as in effect since it started, and checked."""
     return JSONResponse(await run_in_threadpool(_admin_state))
+
+
+async def admin_files(request: Request) -> Response:
+    """The files the server has read or written in its own folders, but for those in the
+    folders it may read and write, and reference data (see `filelog.listing`)."""
+    def run() -> dict:
+        settings = [sandbox.load(), sandbox.STATUS["settings"] or {}]
+        listed = [d for s in settings for k in sandbox.KINDS for d in s.get(k, [])]
+        listed += [str(config.REFERENCE_DIR), *(r["path"] for r in db.list_references())]
+        return filelog.listing(db, exclude=listed)
+
+    return JSONResponse(await run_in_threadpool(run))
 
 
 async def admin_check(request: Request) -> Response:
@@ -1478,6 +1493,7 @@ routes = [
     Route("/api/admin", admin_get),
     Route("/api/admin", admin_save, methods=["POST"]),
     Route("/api/admin/check", admin_check, methods=["POST"]),
+    Route("/api/admin/files", admin_files),
     Route("/api/admin/odor_sheet", admin_odor_sheet, methods=["POST"]),
     Route("/api/admin/host", admin_host),
     Route("/api/admin/restart", admin_restart, methods=["POST"]),
@@ -1490,11 +1506,24 @@ routes = [
 
 
 
+async def _save_file_log() -> None:
+    while True:
+        await asyncio.sleep(filelog.SAVE_S)
+        try:
+            await run_in_threadpool(filelog.flush, db)
+        except Exception:
+            log.exception("could not save the files read and written (Admin tab)")
+
+
 @contextlib.asynccontextmanager
 async def lifespan(app: Starlette):
+    filelog.start(db)  # first, to see what it reads as it starts
     # before the first request, so before any worker thread starts (see sandbox.start)
     sandbox.start()
+    saving = asyncio.create_task(_save_file_log())
     yield
+    saving.cancel()
+    filelog.flush(db)
 
 
 app = Starlette(routes=routes, exception_handlers={HTTPException: http_exception}, lifespan=lifespan)
