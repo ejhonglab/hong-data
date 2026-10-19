@@ -133,7 +133,7 @@ CREATE TABLE IF NOT EXISTS odors (
 CREATE TABLE IF NOT EXISTS odor_syncs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     applied_at TEXT NOT NULL,
-    applied_by TEXT NOT NULL,
+    applied_by TEXT NOT NULL,  -- no longer recorded: '' (names of older syncs not shown)
     source TEXT NOT NULL,
     fingerprint TEXT NOT NULL,
     n_added INTEGER NOT NULL,
@@ -447,7 +447,7 @@ class Database:
         return out
 
     def apply_odor_sync(self, *, added: list[dict], changed: list[tuple[int, dict]], deleted: list[int],
-                        applied_by: str, source: str, fingerprint: str, details: dict, when: str) -> int:
+                        source: str, fingerprint: str, details: dict, when: str) -> int:
         """Insert, update and delete odors (dicts with `ODOR_COLUMNS`), and log it, in one transaction.
 
         Returns:
@@ -471,8 +471,8 @@ class Database:
             con.executemany("DELETE FROM odors WHERE id = ?", [(i,) for i in deleted])
             cur = con.execute(
                 """INSERT INTO odor_syncs (applied_at, applied_by, source, fingerprint, n_added, n_changed, n_deleted,
-                   details_json) VALUES (?,?,?,?,?,?,?,?)""",
-                (when, applied_by, source, fingerprint, len(added), len(changed), len(deleted), json.dumps(details)),
+                   details_json) VALUES (?,'',?,?,?,?,?,?)""",
+                (when, source, fingerprint, len(added), len(changed), len(deleted), json.dumps(details)),
             )
             return int(cur.lastrowid)
 
@@ -498,6 +498,7 @@ class Database:
         out = []
         for r in rows:
             d = dict(r)
+            del d["applied_by"]
             d["details"] = json.loads(d.pop("details_json"))
             out.append(d)
         return out

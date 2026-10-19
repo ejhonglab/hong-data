@@ -34,7 +34,7 @@ def env(main, tmp_path, monkeypatch):  # noqa: F811
     monkeypatch.setattr(sandbox, "STATUS", {"settings": None, "started_at": None, "kernel": None})
     monkeypatch.setattr(reference, "_memo", OrderedDict())
     rows, _, _ = odormeta.parse_sheet(SHEET)
-    main.db.apply_odor_sync(added=rows, changed=[], deleted=[], applied_by="me", source="test", fingerprint="0",
+    main.db.apply_odor_sync(added=rows, changed=[], deleted=[], source="test", fingerprint="0",
                             details={}, when="2026-10-18T00:00:00")
     main.db.save_inchis({6549: INCHI_LIN}, when="2026-10-18T00:00:00")
     return main

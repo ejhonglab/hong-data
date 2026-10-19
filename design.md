@@ -71,8 +71,8 @@ the app is described in [README.md](README.md), hosting it in [DEPLOY.md](DEPLOY
   fallback).
   A sync is two steps: a preview validates the sheet and diffs it against the database,
   then an apply adds the new odors plus only the changes and deletions a user confirmed,
-  logged in `odor_syncs` (with the name of whoever synced from the sheet; a CSV import,
-  from the Admin tab, is tied to no one). The rest of the app uses the database copy, so it keeps
+  logged in `odor_syncs` (tied to no one, whether from the sheet or a CSV import from the
+  Admin tab). The rest of the app uses the database copy, so it keeps
   working without the sheet. A dataset's odors are matched to the table through its odor
   YAML when it has one, otherwise by abbreviation. PubChem structure images are fetched
   once per CID and cached in `data/odor_structures/`, InChIs in the `pubchem` table (a
@@ -228,8 +228,7 @@ GET    /api/odors/status                    the odor sheet, when it was last rea
                                             changed since the last sync
 POST   /api/odors/preview                   the sheet (or multipart 'file', a CSV) validated and
                                             diffed against the odor table
-POST   /api/odors/apply                     {"fingerprint", "applied_by", "changes", "deletions"}
-                                            (applied_by: for the sheet; a CSV import has none)
+POST   /api/odors/apply                     {"fingerprint", "changes", "deletions"}
 GET    /api/odors/structure/{cid}           PubChem structure image (cached)
 GET    /api/odors/template.csv              config/odor_sheet_template.csv
 GET    /api/reference                       every reference matrix: whether it can be read (why

@@ -25,7 +25,7 @@ def apply_all(db, rows, *, changes=(), deletions=()):
     d = odormeta.diff(rows, db.list_odors())
     db.apply_odor_sync(
         added=d["added"], changed=[(c["id"], c["row"]) for c in d["changed"] if c["id"] in changes],
-        deleted=list(deletions), applied_by="me", source="test", fingerprint=odormeta.fingerprint(rows),
+        deleted=list(deletions), source="test", fingerprint=odormeta.fingerprint(rows),
         details={}, when="2026-10-17T00:00:00",
     )
     return d

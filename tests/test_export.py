@@ -120,7 +120,7 @@ def test_odors_csv(store, tmp_path, two):
     (ia, _), (ib, _) = two
     db = store[0]
     rows, _, _ = odormeta.parse_sheet("name,abbrev,cid\nvaleric acid,va,7991\nmethyl salicylate,ms,4133\n")
-    db.apply_odor_sync(added=rows, changed=[], deleted=[], applied_by="me", source="test", fingerprint="0",
+    db.apply_odor_sync(added=rows, changed=[], deleted=[], source="test", fingerprint="0",
                        details={}, when="2026-10-17T00:00:00")
     inchi = "InChI=1S/C5H10O2/c1-2-3-4-5(6)7/h2-4H2,1H3,(H,6,7)"
     db.save_inchis({7991: inchi}, when="2026-10-17T00:00:00")  # none fetched yet for ms

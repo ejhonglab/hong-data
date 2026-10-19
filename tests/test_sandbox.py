@@ -154,23 +154,21 @@ def test_admin_odor_sheet(main, monkeypatch):  # noqa: F811
     assert r["odor_sheet"] == {"url": SHEET, "saved": False, "updated_at": None, "env": True} and r["read"]["error"] is None
 
 
-def test_csv_import_not_tied_to_anyone(main, tmp_path, monkeypatch):  # noqa: F811
+def test_syncs_not_tied_to_anyone(main, tmp_path, monkeypatch):  # noqa: F811
     monkeypatch.setattr(config, "ODOR_PREVIEWS_DIR", tmp_path / "previews")
     config.ODOR_PREVIEWS_DIR.mkdir()
     monkeypatch.setattr(main, "sheet_watch", odormeta.SheetWatch(600))
     text = config.ODOR_TEMPLATE.read_text()
-    # a sync from the sheet needs a name
-    fp = main._preview(text, main.SHEET_SOURCE, SHEET)["fingerprint"]
-    status, r = call(main.odors_apply, body={"fingerprint": fp})
-    assert status == 422 and r["errors"] == ["your name is required"] and main.db.odor_syncs() == []
-    # a CSV import does not, and keeps none even if given one
+    # neither a CSV import nor a sync from the sheet needs a name, or keeps one given
     fp = main._preview(text, "file odors.csv")["fingerprint"]
     status, r = call(main.odors_apply, body={"fingerprint": fp, "applied_by": "Tom"})
     assert status == 200 and r["added"] > 50
-    status, r = call(main.odors_apply, body={"fingerprint": main._preview(text, main.SHEET_SOURCE, SHEET)["fingerprint"],
-                                             "applied_by": " Tom "})
+    status, r = call(main.odors_apply, body={"fingerprint": main._preview(text, main.SHEET_SOURCE, SHEET)["fingerprint"]})
     assert status == 200
-    assert [(s["source"], s["applied_by"]) for s in main.db.odor_syncs()] == [("Google sheet", "Tom"), ("file odors.csv", "")]
+    syncs = main.db.odor_syncs()
+    assert [s["source"] for s in syncs] == ["Google sheet", "file odors.csv"] and not any("applied_by" in s for s in syncs)
+    with main.db.connect() as con:
+        assert [r[0] for r in con.execute("SELECT applied_by FROM odor_syncs")] == ["", ""]
 
 
 def test_admin_host(main, monkeypatch):  # noqa: F811
