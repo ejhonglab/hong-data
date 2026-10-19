@@ -402,12 +402,12 @@
         <div class="dir-section">
           <h3>May read</h3>
           <p class="muted">Users' folders on tensor (<code id="admin-tensor-root">…</code>) can only be used where they are in one of these. A file alone may be listed too: a reference matrix added below adds its file here when it is outside these.</p>
-          <div class="dirlist" data-kind="read_dirs" data-placeholder="e.g. /mnt/tank0/tensor"></div>
+          <div class="dirlist" data-kind="read_dirs" data-placeholder="e.g. /local/tensor"></div>
         </div>
         <div class="dir-section">
           <h3>May also write</h3>
           <p class="muted">These can be read too. Nothing is written to them yet: they are meant for backups, later.</p>
-          <div class="dirlist" data-kind="write_dirs" data-placeholder="e.g. /mnt/tank0/tensor/olfdb_backups"></div>
+          <div class="dirlist" data-kind="write_dirs" data-placeholder="e.g. /local/tensor/olfdb_backups"></div>
         </div>
         <div id="admin-result" aria-live="polite"></div>
         <div class="actions"><button type="button" class="btn primary" id="admin-save">Save</button></div>
@@ -439,7 +439,7 @@
         <div id="admin-refs-list"></div>
         <h3 class="subhead">Add one</h3>
         <div class="grid">
-          <label class="field span2"><span>File on the server *</span><input id="ref-path" spellcheck="false" autocomplete="off" placeholder="e.g. /mnt/tank0/tensor/tom/reference/fruit_volatiles.csv"><span class="path-msg" id="ref-path-msg" aria-live="polite"></span></label>
+          <label class="field span2"><span>File on the server *</span><input id="ref-path" spellcheck="false" autocomplete="off" placeholder="e.g. /local/tensor/tom/reference/fruit_volatiles.csv"><span class="path-msg" id="ref-path-msg" aria-live="polite"></span></label>
           <label class="field"><span>Title *</span><input id="ref-title" placeholder="e.g. Volatile concentrations across fruits"></label>
           <label class="field"><span>Source</span><input id="ref-source" placeholder="citation or URL"></label>
           <label class="field span2"><span>Description</span><input id="ref-description" placeholder="one or two sentences shown under the title"></label>

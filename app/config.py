@@ -31,7 +31,7 @@ ODOR_SHEET_CHECK_MINUTES = float(os.environ.get("OLFDB_ODOR_SHEET_CHECK_MINUTES"
 ODOR_TEMPLATE = ROOT / "config" / "odor_sheet_template.csv"
 
 # the lab NAS as mounted on the server; users' data folders are given relative to it
-TENSOR_ROOT = Path(os.environ.get("OLFDB_TENSOR_ROOT", "/mnt/tank0/tensor"))
+TENSOR_ROOT = Path(os.environ.get("OLFDB_TENSOR_ROOT", "/local/tensor"))
 
 # the server's /etc/hostname, as docker-compose.yml mounts it into the container (whose own name is random)
 HOST_HOSTNAME_FILE = Path("/etc/host_hostname")

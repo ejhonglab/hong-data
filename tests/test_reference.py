@@ -190,5 +190,8 @@ def test_access_steps(monkeypatch, tmp_path):
     assert "<code>- /data/refs:/data/refs:ro</code>" in sandbox.access_steps("/data/refs/x.csv", "Docker")[0]
     assert "ProtectHome=read-only" in sandbox.access_steps("/home/me/x.csv", "systemd")[0]
     assert "BindReadOnlyPaths=-/mnt/other" in sandbox.access_steps("/mnt/other/x.csv", "systemd")[0]
+    monkeypatch.setattr(config, "TENSOR_ROOT", config.Path("/local/tensor"))
+    assert "BindReadOnlyPaths=-/local/other" in sandbox.access_steps("/local/other/x.csv", "systemd")[0]
+    assert sandbox.access_steps("/local/tensor/nothing/x.csv", "systemd")[0] == "It is not on the server now: put it there first."
     assert sandbox.access_steps("/srv/nothing/x.csv", "systemd") == ["It is not on the server now: put it there first.",
                                                                       "Restart the server (below)."]

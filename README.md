@@ -261,7 +261,7 @@ pip install -r requirements-dev.txt
 uvicorn app.main:app --reload --port 8080      # data goes to ./data
 ```
 
-Settings and upload lookups need tensor mounted (at `/mnt/tank0/tensor`, or wherever
+Settings and upload lookups need tensor mounted (at `/local/tensor`, or wherever
 `OLFDB_TENSOR_ROOT` points), and syncing the odor table from a sheet needs its link (in
 the Admin tab); the rest of the configuration is in
 [DEPLOY.md](DEPLOY.md#configuration-reference).

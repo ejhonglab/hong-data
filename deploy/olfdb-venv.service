@@ -15,8 +15,8 @@ User=olfdb
 Group=olfdb
 WorkingDirectory=/opt/olfdb
 Environment=OLFDB_DATA_DIR=/opt/olfdb/data
-# where the lab NAS (tensor) is mounted, if not at /mnt/tank0/tensor (it must be readable by olfdb):
-#Environment=OLFDB_TENSOR_ROOT=/mnt/tank0/tensor
+# where the lab NAS (tensor) is mounted, if not at /local/tensor (it must be readable by olfdb):
+#Environment=OLFDB_TENSOR_ROOT=/local/tensor
 ExecStart=/opt/olfdb/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8080 --workers 1
 Restart=always
 RestartSec=5s
@@ -27,10 +27,11 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/opt/olfdb/data
-# of /mnt, only tensor, read-only (if it is elsewhere, change this with OLFDB_TENSOR_ROOT); a
-# folder it may write (e.g. for backups, later) also needs ReadWritePaths= (BindPaths= under /mnt)
-TemporaryFileSystem=/mnt:ro
-BindReadOnlyPaths=-/mnt/tank0/tensor
+# of /mnt and /local, only tensor, read-only (if it is elsewhere, change this with
+# OLFDB_TENSOR_ROOT); a folder it may write (e.g. for backups, later) also needs
+# ReadWritePaths= (BindPaths= under /mnt or /local)
+TemporaryFileSystem=/mnt:ro /local:ro
+BindReadOnlyPaths=-/local/tensor
 
 [Install]
 WantedBy=multi-user.target

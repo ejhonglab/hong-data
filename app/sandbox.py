@@ -215,8 +215,8 @@ def access_steps(path: str, supervisor: Optional[str]) -> list[str]:
         if path.startswith(("/home/", "/root/", "/run/user/")):
             return [f"The service cannot see home folders (<code>ProtectHome=true</code> in {unit}): move the file "
                     f"elsewhere (e.g. under /srv) and add it again, or set <code>ProtectHome=read-only</code> there, {then}."]
-        if path.startswith("/mnt/") and not path.startswith(tensor):
-            return [f"Of /mnt, the service sees only tensor: add <code>BindReadOnlyPaths=-{folder}</code> to {unit}, {then}."]
+        if path.startswith(("/mnt/", "/local/")) and not path.startswith(tensor):
+            return [f"Of /mnt and /local, the service sees only tensor: add <code>BindReadOnlyPaths=-{folder}</code> to {unit}, {then}."]
         if path.startswith(("/tmp/", "/var/tmp/")):
             return ["The service has a /tmp of its own (<code>PrivateTmp=true</code>): move the file elsewhere and add it again."]
     return ([] if on_server else ["It is not on the server now: put it there first."]) + [restart]

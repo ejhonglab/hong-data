@@ -67,7 +67,7 @@ Before the first start, have a look at:
   examples, or add matrices in the Admin tab instead. A file added there from outside
   the folders the server may read also has to be within its reach: in Docker, a
   read-only volume in `docker-compose.yml` (`- /srv/refs:/srv/refs:ro`, then
-  `docker compose up -d`); with systemd, outside home folders, `/tmp` and `/mnt` (or
+  `docker compose up -d`); with systemd, outside home folders, `/tmp`, `/mnt` and `/local` (or
   with a `BindReadOnlyPaths=` for it). The Admin tab says which, when it is added.
 
 ## 3. Build and start it
@@ -110,7 +110,7 @@ Users give their data folders (Settings tab) relative to the top of the lab NAS,
 tensor, which the server needs to be able to read: it checks that the folders exist,
 and looks in them for the flies of each upload (raw data folder, ThorImage
 `Experiment.xml`, odor YAMLs). Mount tensor on the server (by default the app expects it
-at `/mnt/tank0/tensor`; `OLFDB_TENSOR_ROOT` sets another place). `docker-compose.yml`
+at `/local/tensor`; `OLFDB_TENSOR_ROOT` sets another place). `docker-compose.yml`
 bind-mounts that path into the container read-only, at the same path; change both
 sides of that line, and `OLFDB_TENSOR_ROOT`, if it is elsewhere. The container runs as
 uid 10001, so the files need to be readable by it (world-readable is enough); the
@@ -251,9 +251,9 @@ sudo systemctl daemon-reload && sudo systemctl enable --now olfdb
 
 Same behaviour (boot start, restart on crash or from the Admin tab). Instead of a
 container, the unit's sandboxing limits what the server can reach: every file read-only
-but `data/`, no home folders, and of `/mnt` only tensor, read-only (see "Folders it may
+but `data/`, no home folders, and of `/mnt` and `/local` only tensor, read-only (see "Folders it may
 read and write"). A folder it may write needs `ReadWritePaths=` there too (and
-`BindPaths=` if it is under `/mnt`).
+`BindPaths=` if it is under `/mnt` or `/local`).
 
 ## Configuration reference
 
@@ -266,7 +266,7 @@ read and write"). A folder it may write needs `ReadWritePaths=` there too (and
 | `OLFDB_STAGE_TTL_HOURS` | `48` | staged-but-never-saved uploads are deleted after this |
 | `OLFDB_ODOR_SHEET_URL` | (none) | Google sheet the odor table is synced from, while none is set in the Admin tab (see "Odor sheet") |
 | `OLFDB_ODOR_SHEET_CHECK_MINUTES` | `10` | how often (at most) the sheet is read to tell whether it changed |
-| `OLFDB_TENSOR_ROOT` | `/mnt/tank0/tensor` | the lab NAS as mounted on the server (see "Tensor"); users' folders are relative to it |
+| `OLFDB_TENSOR_ROOT` | `/local/tensor` | the lab NAS as mounted on the server (see "Tensor"); users' folders are relative to it |
 | `OLFDB_LANDLOCK` | `1` | `0` to stop having the kernel (Landlock) hold the server to the folders set in the Admin tab (see "Folders it may read and write") |
 
 Keep `--workers 1`: SQLite handles concurrent readers fine, and one process avoids
