@@ -2888,7 +2888,13 @@ class AdminPage {
       return;
     }
     this._show(res);
-    out.replaceChildren(msgBox('ok', res.pending ? 'Saved. These folders take effect when the server restarts (below).' : 'Saved: these are the folders in effect now.'));
+    if (!res.pending) { out.replaceChildren(msgBox('ok', 'Saved: these are the folders in effect now.')); return; }
+    // restarting from here, rather than from Restart below
+    const box = msgBox('ok', `Saved. These folders take effect when the server restarts${res.restart.possible
+      ? ': <button type="button" class="btn small primary" data-restart>Restart now</button> <span class="dl-status" aria-live="polite"></span>'
+      : '. It is not run by Docker or systemd, which would start it again: restart it by hand on the server (DEPLOY.md).'}`);
+    $('[data-restart]', box)?.addEventListener('click', (e) => this.restart(e.target, e.target.nextElementSibling, { here: true }));
+    out.replaceChildren(box);
   }
 
   _showSheet() {
@@ -3184,16 +3190,19 @@ class AdminPage {
   }
 
   // Asks the server to restart, then waits until it answers again, started anew.
-  async restart() {
-    const btn = $('#admin-restart'), status = $('#admin-restart-status');
-    btn.disabled = true;
+  // `btn`, `status`: the button clicked and where to say how it goes (that of Restart, or
+  // one by the folders just saved: `here`)
+  async restart(btn = $('#admin-restart'), status = $('#admin-restart-status'), { here = false } = {}) {
+    const buttons = [...new Set([$('#admin-restart'), btn])];
+    const enable = () => buttons.forEach((b) => { b.disabled = false; });
+    buttons.forEach((b) => { b.disabled = true; });
     setStatus(status, 'Asking the server to restart…');
     let res;
     try {
       res = await api('/api/admin/restart', { method: 'POST', json: {} });
     } catch (e) {
       setStatus(status, `Could not restart: ${e.message}`, 'error');
-      btn.disabled = false;
+      enable();
       return;
     }
     const t0 = Date.now();
@@ -3204,7 +3213,7 @@ class AdminPage {
       const secs = Math.round((Date.now() - t0) / 1000);
       if (secs > 90) {
         setStatus(status, `The server has not come back after ${secs} s: see its logs (DEPLOY.md, section 7).`, 'error');
-        btn.disabled = false;
+        enable();
         return;
       }
       setStatus(status, `Restarting… ${secs} s`);
@@ -3212,6 +3221,11 @@ class AdminPage {
     setStatus(status, 'Restarted.');
     $('#topbar-status').textContent = '';
     await this.load();
+    if (here && this.state) {
+      $('#admin-result').replaceChildren(this.state.pending
+        ? msgBox('warn', 'Restarted, but the folders saved are still not those in effect: see Restart, below.')
+        : msgBox('ok', 'Restarted: the folders saved are in effect now.'));
+    }
   }
 }
 
