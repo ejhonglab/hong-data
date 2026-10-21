@@ -250,9 +250,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     glomeruli ORNs (a pebbled driver), PNs (GH146) or glomeruli;
     by their full names (as in its CSV) when two would share one. To its right, the
     p-value of each correlation against 0: two-sided, by bootstrap (5000 resamplings by
-    default, with replacement, of the pairs of odors or of the odors), Holm–Bonferroni
-    adjusted for every two spaces shown, each cell saying the adjusted and raw p (the
-    options panel says why, with links). Like every matrix of the tab, they can be
+    default, with replacement, of the pairs of odors or of the odors) or by permuting
+    one space's odors (a Mantel test, the only one of the three that is exact),
+    Holm–Bonferroni adjusted for every two spaces shown, each cell saying the adjusted
+    and raw p (the options panel says why, with links). Like every matrix of the tab, they can be
     exported as a figure (SVG, PDF, PNG, with the numbers in the cells when they are large
     enough) or a table (CSV: for these, each two spaces once with r, odors, pairs and both
     p-values).

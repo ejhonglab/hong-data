@@ -3374,6 +3374,9 @@ function neuralSpaceName(d) {
 // the Holm–Bonferroni method, by which the p-values of correlations between similarities are adjusted
 const HOLM_URL = 'https://en.wikipedia.org/wiki/Holm%E2%80%93Bonferroni_method';
 
+// how those p-values can be had (pvalue-worker.js), as their CSV says
+const P_BY = { pairs: 'bootstrap of the pairs of odors', odors: 'bootstrap of the odors', permute: 'permutation of the odors (Mantel test)' };
+
 // a p-value in a few characters
 const fmtP = (p) => (p < 0.001 ? p.toExponential(1) : p < 0.01 ? p.toFixed(4) : p.toFixed(3));
 
@@ -3397,7 +3400,7 @@ class ComparePage {
     this.o = {
       group: 'panel', unit: '', picked: [], metric: 'pearson', place: 'below', spaces: [], ecfpD: 6, conc: 'max',
       rsa: false, rsaMethod: 'spearman', bootN: 5000, bootUnit: 'pairs', ...LS.get(COMPARE_KEY, {}),
-    };
+    }; // bootN, bootUnit: the resamplings (or permutations) for p-values, and how (a key of P_BY)
     delete this.o.sim; // a checkbox once, besides `place`
     this.datasets = null;
     this.refs = []; // reference datasets with chemicals, as listed
@@ -3673,9 +3676,13 @@ class ComparePage {
       row.append(
         block('rsa', 'Between similarities', `${method} correlation of each two spaces' odor–odor similarities (${esc(metric)} within datasets and reference data), over the pairs of odors both have`,
           ...this._rsa(all, method), { cells: [84, 40], table }),
-        block('rsa-p', 'Their p-values', `Two-sided bootstrap p of each correlation against 0 (${job.resamplings.toLocaleString()} resamplings of the
-          ${job.unit === 'odors' ? 'odors' : 'pairs of odors'}, with replacement), <a href="${HOLM_URL}" target="_blank" rel="noopener">Holm–Bonferroni</a>
-          adjusted for the ${job.pairs.length} pair${job.pairs.length === 1 ? '' : 's'} of spaces (more on the right); * below 0.05. <span class="cmp-status"></span>`,
+        block('rsa-p', 'Their p-values', `Two-sided ${job.unit === 'permute'
+          ? `permutation p of each correlation against 0 (${job.resamplings.toLocaleString()} permutations of one space's odors:
+            a <a href="https://en.wikipedia.org/wiki/Mantel_test" target="_blank" rel="noopener">Mantel test</a>)`
+          : `bootstrap p of each correlation against 0 (${job.resamplings.toLocaleString()} resamplings of the
+            ${job.unit === 'odors' ? 'odors, with replacement)' : 'pairs of odors, with replacement: these can be far too small, see on the right)'}`},
+          <a href="${HOLM_URL}" target="_blank" rel="noopener">Holm–Bonferroni</a> adjusted for the ${job.pairs.length} pair${job.pairs.length === 1 ? '' : 's'}
+          of spaces (more on the right); * below 0.05. <span class="cmp-status"></span>`,
         job.payload, 'similarities_correlated_p', { cells: [84, 40], table }));
       parts.splice(-2, 2, row);
       job.status = $('.cmp-status', row);
@@ -3748,8 +3755,9 @@ class ComparePage {
       () => all.map((a, i) => all.map((b, j) => (i === j ? null : correlateSimilarities(this.o.rsaMethod, a.space, b.space)))));
   }
 
-  // bootstrap p-values of the correlations of _rsaCells, each two spaces once (row by row,
-  // above the diagonal), resampled in a worker (bootstrap-worker.js): a job with its matrix
+  // p-values of the correlations of _rsaCells (by bootstrap or permutation, as `bootUnit`),
+  // each two spaces once (row by row, above the diagonal), from a worker
+  // (pvalue-worker.js): a job with its matrix
   // (`payload`: −log10 of the adjusted p, filled in and shown again once done), `ps`,
   // `adjusted` (by Holm's method) and `valid` then, and its `progress` until
   _rsaP(all) {
@@ -3763,7 +3771,7 @@ class ComparePage {
     const values = new Float32Array(n * n).fill(NaN), labels = all.map((s) => ({ label: s.title }));
     job.payload = {
       meta: { kind: 'sequential', row_label: 'space', col_label: 'space', value_label: '−log10 of the Holm-adjusted p',
-        value_range: [0, -Math.log10(2 / (o.bootN + 1))] }, // to the smallest p there can be
+        value_range: [0, -Math.log10((o.bootUnit === 'permute' ? 1 : 2) / (o.bootN + 1))] }, // to the smallest p there can be
       rows: labels, cols: labels, values,
       cellText: (i, j) => {
         if (i === j) return '';
@@ -3775,9 +3783,9 @@ class ComparePage {
     // each test seeded by its spaces, so its p-value is the same whatever else is shown
     const tests = pairs.map(([i, j]) => {
       const t = sharedSimilarities(all[i].space, all[j].space), seed = hashString(`${all[i].key}|${all[j].key}`);
-      return o.bootUnit === 'odors' ? { seed, n: t.n, subA: t.subA, subB: t.subB } : { seed, xs: t.xs, ys: t.ys };
+      return o.bootUnit === 'pairs' ? { seed, xs: t.xs, ys: t.ys } : { seed, n: t.n, subA: t.subA, subB: t.subB };
     });
-    const worker = new Worker(new URL('./bootstrap-worker.js', import.meta.url), { type: 'module' });
+    const worker = new Worker(new URL('./pvalue-worker.js', import.meta.url), { type: 'module' });
     job.stop = () => worker.terminate();
     worker.onmessage = ({ data }) => {
       if (!data.ps) { job.progress = data.progress; this._pStatus(job); return; }
@@ -3794,7 +3802,7 @@ class ComparePage {
     return job;
   }
 
-  // the bootstrap running stopped (as another is wanted, or none), and forgotten
+  // the p-values being computed stopped (as others are wanted, or none), and forgotten
   _stopP() {
     const job = this.job;
     this.job = null;
@@ -3810,21 +3818,22 @@ class ComparePage {
 
   _pStatus(job) {
     if (!job.status?.isConnected) return;
-    job.status.textContent = job.error ? `The bootstrap failed: ${job.error}` : job.ps ? '' : `Resampling… ${Math.floor(job.progress * 100)}%`;
+    job.status.textContent = job.error ? `Could not compute them: ${job.error}` : job.ps ? ''
+      : `${job.unit === 'permute' ? 'Permuting' : 'Resampling'}… ${Math.floor(job.progress * 100)}%`;
     job.status.classList.toggle('err', !!job.error);
   }
 
   // each two spaces once, with the correlation of their similarities and its p-values
-  // (once bootstrapped), as a CSV table
+  // (once computed), as a CSV table
   _rsaCsv(all, method, job) {
     const cells = this._rsaCells(all), num = (v) => (v != null && v === v ? String(v) : '');
-    const lines = [['space_a', 'space_b', 'correlation', 'similarity_within', 'r', 'n_odors', 'n_pairs', 'p_bootstrap', 'p_holm', 'resampled', 'resamplings']];
+    const lines = [['space_a', 'space_b', 'correlation', 'similarity_within', 'r', 'n_odors', 'n_pairs', 'p', 'p_holm', 'p_by', 'resamplings']];
     let k = 0;
     all.forEach((a, i) => all.forEach((b, j) => {
       if (j <= i) return;
       const c = cells[i][j], t = k++;
       lines.push([a.fullTitle || a.title, b.fullTitle || b.title, method, SIMILARITIES[this.o.metric].label, num(c.r), c.nOdors, c.nPairs,
-        num(job.ps?.[t]), num(job.adjusted?.[t]), job.unit === 'odors' ? 'odors' : 'pairs of odors', job.valid ? job.valid[t] : '']);
+        num(job.ps?.[t]), num(job.adjusted?.[t]), P_BY[job.unit], job.valid ? job.valid[t] : '']);
     }));
     return { name: 'similarities_correlated.csv', text: `${lines.map((l) => l.map(csvCell).join(',')).join('\n')}\n` };
   }
