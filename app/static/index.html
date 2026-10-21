@@ -345,8 +345,8 @@
       <label class="check"><input type="checkbox" id="cmp-rsa"> Correlate the similarities of each two</label>
       <label class="opt">By <select id="cmp-rsa-method"><option value="spearman">Spearman correlation</option><option value="pearson">Pearson correlation</option></select></label>
       <p class="muted small">Of the datasets shown and the spaces compared to: over the pairs of odors both have, from one side of each similarity matrix (not its diagonal).</p>
-      <label class="opt">p-values by <select id="cmp-boot-unit"><option value="pairs">bootstrap of odor pairs</option>
-        <option value="odors">bootstrap of odors</option><option value="permute">permutation (Mantel)</option></select></label>
+      <label class="opt">p-values by <select id="cmp-p-by"><option value="permute">permutation (Mantel)</option>
+        <option value="pairs">bootstrap of odor pairs</option><option value="odors">bootstrap of odors</option></select></label>
       <label class="opt">From <input type="number" id="cmp-boot-n" min="100" max="100000" step="100"> resamplings (or permutations)</label>
       <p class="muted small">Each correlation's p-value (to the right of it) is two-sided, against no correlation. By bootstrap: twice the share of
         correlations, of what is resampled with replacement, on the other side of 0 (at least 2 / (resamplings + 1)). By permutation: the share of

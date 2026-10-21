@@ -103,8 +103,8 @@ the app is described in [README.md](README.md), hosting it in [DEPLOY.md](DEPLOY
   in a worker (`pvalue-worker.js`), each test seeded by its two spaces so it gives the
   same p whatever else is shown, and Holm–Bonferroni adjusted, as the tests share spaces
   and odors (Holm's method assumes nothing of how tests depend on each other). Three
-  tests are offered: bootstraps of the pairs of odors (the default, as first asked for)
-  or of the odors, and a permutation (Mantel) test of one space's odors. In simulations
+  tests are offered: a permutation (Mantel) test of one space's odors (the default), and
+  bootstraps of the pairs of odors (as first asked for) or of the odors. In simulations
   of unrelated spaces (Spearman, 15–30 odors, 500 each), p < 0.05 for: pairs 4–6% when
   odors are alike, but 32–49% when they differ in how strongly they respond (pairs sharing
   a strong odor then move together); odors 0–6%; permutation 3–6%, as it is exact.

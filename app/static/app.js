@@ -3399,9 +3399,10 @@ class ComparePage {
     // place: where each dataset's odor-odor similarity is shown ('below' its data, 'instead' of it, or 'none')
     this.o = {
       group: 'panel', unit: '', picked: [], metric: 'pearson', place: 'below', spaces: [], ecfpD: 6, conc: 'max',
-      rsa: false, rsaMethod: 'spearman', bootN: 5000, bootUnit: 'pairs', ...LS.get(COMPARE_KEY, {}),
-    }; // bootN, bootUnit: the resamplings (or permutations) for p-values, and how (a key of P_BY)
+      rsa: false, rsaMethod: 'spearman', bootN: 5000, pBy: 'permute', ...LS.get(COMPARE_KEY, {}),
+    }; // bootN, pBy: the resamplings (or permutations) for p-values, and how (a key of P_BY)
     delete this.o.sim; // a checkbox once, besides `place`
+    delete this.o.bootUnit; // pBy once, when bootstrapping pairs of odors was the default
     this.datasets = null;
     this.refs = []; // reference datasets with chemicals, as listed
     this.data = new Map(); // dataset id -> as from /api/compare/datasets/<id>, with its values
@@ -3425,7 +3426,7 @@ class ComparePage {
     $('#compare-clear').addEventListener('click', () => { this.o.picked = []; this._changed(); });
     $('#cmp-metric').innerHTML = Object.entries(SIMILARITIES).map(([k, m]) => `<option value="${k}">${m.label}</option>`).join('');
     for (const [id, key, read] of [['#cmp-metric', 'metric'], ['#cmp-place', 'place'], ['#cmp-conc', 'conc'],
-      ['#cmp-rsa', 'rsa', (el) => el.checked], ['#cmp-rsa-method', 'rsaMethod'], ['#cmp-boot-unit', 'bootUnit'],
+      ['#cmp-rsa', 'rsa', (el) => el.checked], ['#cmp-rsa-method', 'rsaMethod'], ['#cmp-p-by', 'pBy'],
       ['#cmp-boot-n', 'bootN', (el) => { const n = Math.round(+el.value); return el.value && n > 0 ? Math.min(100000, Math.max(100, n)) : this.o.bootN; }]]) {
       $(id).addEventListener('change', (e) => { this.o[key] = read ? read(e.target) : e.target.value; this._changed(); });
     }
@@ -3587,7 +3588,7 @@ class ComparePage {
   _renderOptions(shown) {
     $('#cmp-rsa').checked = !!this.o.rsa;
     for (const [id, key] of [['#cmp-metric', 'metric'], ['#cmp-place', 'place'], ['#cmp-conc', 'conc'], ['#cmp-rsa-method', 'rsaMethod'],
-      ['#cmp-boot-n', 'bootN'], ['#cmp-boot-unit', 'bootUnit']]) $(id).value = this.o[key];
+      ['#cmp-boot-n', 'bootN'], ['#cmp-p-by', 'pBy']]) $(id).value = this.o[key];
     $('#cmp-shown').textContent = shown.size
       ? `The datasets shown have ${shown.size} odor${shown.size === 1 ? '' : 's'} of the odor table (by themselves, not mixed).`
       : 'No odors of the odor table shown yet.';
@@ -3755,23 +3756,23 @@ class ComparePage {
       () => all.map((a, i) => all.map((b, j) => (i === j ? null : correlateSimilarities(this.o.rsaMethod, a.space, b.space)))));
   }
 
-  // p-values of the correlations of _rsaCells (by bootstrap or permutation, as `bootUnit`),
+  // p-values of the correlations of _rsaCells (by bootstrap or permutation, as `pBy`),
   // each two spaces once (row by row, above the diagonal), from a worker
   // (pvalue-worker.js): a job with its matrix
   // (`payload`: −log10 of the adjusted p, filled in and shown again once done), `ps`,
   // `adjusted` (by Holm's method) and `valid` then, and its `progress` until
   _rsaP(all) {
-    const o = this.o, key = `rsap:${o.bootN}:${o.bootUnit}:${this._rsaKey(all)}`;
+    const o = this.o, key = `rsap:${o.bootN}:${o.pBy}:${this._rsaKey(all)}`;
     if (this.memo.has(key)) return this.memo.get(key);
     this._stopP();
     const n = all.length, pairs = [];
     for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) pairs.push([i, j]);
     const at = new Map(pairs.map(([i, j], k) => [i * n + j, k]));
-    const job = { key, pairs, resamplings: o.bootN, unit: o.bootUnit, progress: 0, ps: null, adjusted: null, valid: null, error: null, status: null };
+    const job = { key, pairs, resamplings: o.bootN, unit: o.pBy, progress: 0, ps: null, adjusted: null, valid: null, error: null, status: null };
     const values = new Float32Array(n * n).fill(NaN), labels = all.map((s) => ({ label: s.title }));
     job.payload = {
       meta: { kind: 'sequential', row_label: 'space', col_label: 'space', value_label: '−log10 of the Holm-adjusted p',
-        value_range: [0, -Math.log10((o.bootUnit === 'permute' ? 1 : 2) / (o.bootN + 1))] }, // to the smallest p there can be
+        value_range: [0, -Math.log10((o.pBy === 'permute' ? 1 : 2) / (o.bootN + 1))] }, // to the smallest p there can be
       rows: labels, cols: labels, values,
       cellText: (i, j) => {
         if (i === j) return '';
@@ -3783,7 +3784,7 @@ class ComparePage {
     // each test seeded by its spaces, so its p-value is the same whatever else is shown
     const tests = pairs.map(([i, j]) => {
       const t = sharedSimilarities(all[i].space, all[j].space), seed = hashString(`${all[i].key}|${all[j].key}`);
-      return o.bootUnit === 'pairs' ? { seed, xs: t.xs, ys: t.ys } : { seed, n: t.n, subA: t.subA, subB: t.subB };
+      return o.pBy === 'pairs' ? { seed, xs: t.xs, ys: t.ys } : { seed, n: t.n, subA: t.subA, subB: t.subB };
     });
     const worker = new Worker(new URL('./pvalue-worker.js', import.meta.url), { type: 'module' });
     job.stop = () => worker.terminate();
@@ -3795,7 +3796,7 @@ class ComparePage {
       this._pDone(job);
     };
     worker.onerror = (e) => { e.preventDefault(); job.error = e.message || 'the worker failed'; worker.terminate(); this._pDone(job); };
-    worker.postMessage({ tests, method: o.rsaMethod, resamplings: o.bootN, unit: o.bootUnit },
+    worker.postMessage({ tests, method: o.rsaMethod, resamplings: o.bootN, unit: o.pBy },
       tests.flatMap((t) => (t.xs ? [t.xs.buffer, t.ys.buffer] : [t.subA.buffer, t.subB.buffer])));
     this.memo.set(key, job);
     this.job = job;
