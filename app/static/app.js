@@ -3358,11 +3358,14 @@ class AdminPage {
 // their structures, reference datasets); and how alike those likenesses are between any two.
 const COMPARE_KEY = 'olfdb.compare';
 
+// coding units spelled as they are shown (by unitKey)
+const UNIT_NAMES = { kc: 'KCs', kcs: 'KCs', orn: 'ORNs', orns: 'ORNs', pn: 'PNs', pns: 'PNs' };
+
 // a dataset's name as a space: what was recorded (its coding unit; for glomeruli, ORNs if
 // its Gal4 driver is pebbled, PNs if GH146)
 function neuralSpaceName(d) {
   const unit = (d.coding_unit || '').trim().replace(/\s+/g, ' ');
-  if (unitKey(unit) !== 'glomeruli') return unit || `#${d.id}`;
+  if (unitKey(unit) !== 'glomeruli') return UNIT_NAMES[unitKey(unit)] || unit || `#${d.id}`;
   const driver = (d.driver || '').toLowerCase();
   return driver.includes('pebbled') ? 'ORNs' : driver.includes('gh146') ? 'PNs' : 'glomeruli';
 }

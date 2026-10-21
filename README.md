@@ -246,7 +246,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     of the datasets and spaces compared to: of their similarities for each pair of the
     odors both have (one side of each matrix, without its diagonal), each cell saying r
     and of how many odors. Datasets are named there by what was recorded: their coding
-    unit (e.g. KCs), or for glomeruli ORNs (a pebbled driver), PNs (GH146) or glomeruli;
+    unit (kc or kcs as KCs, orn or orns as ORNs, pn or pns as PNs, in any case), or for
+    glomeruli ORNs (a pebbled driver), PNs (GH146) or glomeruli;
     by their full names (as in its CSV) when two would share one. Like every matrix of
     the tab, it can be exported as a figure (SVG, PDF, PNG, with the numbers in the cells
     when they are large enough) or a table (CSV: for it, each two spaces once with r,
