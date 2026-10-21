@@ -1884,7 +1884,7 @@ class Browse {
     menu.classList.toggle('warn', only.length > 0);
     const recordings = (n) => `${n} recording${n === 1 ? '' : 's'}`;
     const why = r ? (only.length ? `${recordings(only.length)} ${onlyWhy}` : DATA_WHY[r.status]) : 'checking…';
-    $('summary', menu).innerHTML = `${label}${why ? ` <span class="why">${why}</span>` : ''}`;
+    $('summary', menu).innerHTML = `<span class="data-label"><span>${label}</span>${why ? `<span class="why">${why}</span>` : ''}</span>`;
     $('summary', menu).title = r && r.status !== 'ok' ? `${label}: ${r.error}` : only.length ? `${label}: ${recordings(only.length)} ${onlyWhy}` : '';
     // those recordings, by fly
     const byFly = new Map();

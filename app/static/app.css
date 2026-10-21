@@ -338,6 +338,9 @@ table.diff .new { color: var(--ok); }
 .ds-actions > div { display: flex; align-items: center; gap: 8px; }
 /* links to a dataset's data on tensor: red, with the reason, when there is none to follow */
 .data-link > summary .why { font-size: 12px; color: var(--ink-muted); }
+/* the reason under the button's name, not beside it */
+.data-link > summary .data-label { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.2; }
+.data-link > summary .data-label > span { white-space: nowrap; }
 .data-link.missing > summary { color: var(--danger); border-color: #efc7c3; background: var(--danger-soft); }
 .data-link.missing > summary .why { color: inherit; opacity: .85; }
 /* orange: recordings in it with none in the other data folder */
