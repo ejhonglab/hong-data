@@ -1,8 +1,9 @@
 # Design
 
-How the app is put together, and why: the decisions that shape the code, where each part
-lives, how data is stored, and the HTTP API between the frontend and the server. Using
-the app is described in [README.md](README.md), hosting it in [DEPLOY.md](DEPLOY.md).
+How the app is put together, and why: the decisions that shape the code, how the Compare
+tab's statistics are tested, where each part lives, how data is stored, and the HTTP API
+between the frontend and the server. Using the app is described in
+[README.md](README.md), hosting it in [DEPLOY.md](DEPLOY.md).
 
 ## Main decisions
 
@@ -99,15 +100,8 @@ the app is described in [README.md](README.md), hosting it in [DEPLOY.md](DEPLOY
   keyed by the odor table's ids, so they line up whatever each calls its odors; a
   dataset's odor counts only alone (not in a mixture) and once, at the concentration
   chosen. Similarities of similarities are correlated over one side of the matrices
-  (without the diagonal), pairs missing in either left out. Their p-values are computed
-  in a worker (`pvalue-worker.js`), each test seeded by its two spaces so it gives the
-  same p whatever else is shown, and Holm–Bonferroni adjusted, as the tests share spaces
-  and odors (Holm's method assumes nothing of how tests depend on each other). Three
-  tests are offered: a permutation (Mantel) test of one space's odors (the default), and
-  bootstraps of the pairs of odors (as first asked for) or of the odors. In simulations
-  of unrelated spaces (Spearman, 15–30 odors, 500 each), p < 0.05 for: pairs 4–6% when
-  odors are alike, but 32–49% when they differ in how strongly they respond (pairs sharing
-  a strong odor then move together); odors 0–6%; permutation 3–6%, as it is exact.
+  (without the diagonal), pairs missing in either left out; their p-values, how they are
+  tested and why, are under [Statistical testing](#statistical-testing).
 - **The laser wavelength is never read from `Experiment.xml`**: ThorImage's
   `MultiPhotonLaser` value does not follow changes made to the wavelength at the laser,
   so the wavelength is only ever entered in the form.
@@ -182,6 +176,175 @@ the app is described in [README.md](README.md), hosting it in [DEPLOY.md](DEPLOY
   the Odors tab: by CID, else InChI, else CAS, MetaCyc or LOTUS ID, name or
   abbreviation, never against a CID or InChI given (a name alone can name another
   isomer).
+
+## Statistical testing
+
+The Compare tab gives each correlation between two spaces' odor–odor similarities (the r
+of "Between similarities") a p-value against no correlation, adjusted for testing every
+two spaces shown at once. All of it is computed in the browser: the tests in
+`app/static/pvalue-worker.js` (a worker, so the page stays responsive), the pairs two
+spaces share and the adjustment in `similarity.js` (`sharedSimilarities`, `holm`).
+
+### What each test does
+
+Two spaces A and B (datasets, reference datasets, chemical structure) share n odors. For
+each pair of them, i < j, x is A's similarity of i and j and y is B's; pairs either lacks
+are left out. r is the Pearson or Spearman correlation of the xs and ys, over the
+n(n − 1)/2 pairs (or fewer). Its p-value is two-sided, from 5000 resamplings or
+permutations by default (set in the options). Each test's random numbers are seeded by
+its two spaces (an FNV-1a hash of their keys, for mulberry32), so it gives the same p
+whatever else is shown. A resample whose r cannot be computed (under 3 pairs, or a side
+constant) is left out of the counts, and the CSV's `resamplings` says how many were used.
+
+- **Permutation of the odors (a Mantel test; the default).** B's odor labels are
+  shuffled (its rows and columns together, by a Fisher–Yates shuffle), so that
+  x = A(i, j) is paired with y = B(π(i), π(j)), and r is recomputed. p = (the number of
+  shuffles with |r_π| ≥ |r|, + 1) / (the number of shuffles + 1): the share of shuffles
+  that look at least as related as the data do, at least 1 / (permutations + 1). The + 1
+  counts the data's own arrangement, which keeps the test valid when the shuffles are
+  random rather than all of them ([Phipson & Smyth 2010](https://doi.org/10.2202/1544-6115.1585)).
+  This is [Mantel's test](https://en.wikipedia.org/wiki/Mantel_test), and the
+  stimulus-label randomization test of
+  [Nili et al. 2014](https://doi.org/10.1371/journal.pcbi.1003553).
+- **Bootstrap of the pairs of odors.** The (x, y) pairs are resampled with replacement,
+  as many as there are, and r recomputed (r*). p = 2 × (the fewer of r* ≤ 0 and r* ≥ 0,
+  + 1) / (resamplings + 1), at most 1: the smallest α at which the (1 − α) percentile
+  bootstrap interval of r leaves out 0, at least 2 / (resamplings + 1). It treats the
+  pairs as independent of each other.
+- **Bootstrap of the odors.** n odors are drawn with replacement and the pairs of those
+  drawn taken (an odor drawn twice is not paired with itself, which would be the
+  matrices' diagonal, but its pairs with others come twice), with r* and p as above. It
+  resamples what was sampled, the odors (as Nili et al. 2014 resample stimuli), so pairs
+  sharing an odor stay together.
+
+### How each holds up
+
+Each test was run on pairs of unrelated spaces, so every p < α is a false positive: a
+valid test gives p < 0.05 for 5% of them and p < 0.2 for 20%. Each space had n odors (15
+or 30), each a vector of 30 values (as across 30 glomeruli), standard normal values from
+`Math.random` (Box–Muller); its similarities were the Pearson correlations of those; r
+was the Spearman correlation of two spaces' similarities; each test had 1000
+resamplings or permutations; each row is 500 pairs of spaces, so a share is within about
+1% of the truth at 5%, 1.8% at 20% (one standard error). The odors of a space were:
+
+- *alike*: every value independent;
+- *saturated*: g·u + e, u a pattern of the space's (30 values), g each odor's gain,
+  2 × standard normal, and e noise: most similarities near ±1;
+- *broad responders*: as saturated, but g = exp(0.7 × standard normal), positive: some
+  odors respond much more strongly than others to the same glomeruli, as broadly
+  activating odors (or higher concentrations) do.
+
+Unrelated spaces with p < 0.05, for 15 / 30 odors (5% is right):
+
+| Odors            | bootstrap of odor pairs | bootstrap of odors | permutation (Mantel) |
+|------------------|-------------------------|--------------------|----------------------|
+| alike            | 4.6% / 4.8%             | 0% / 0.4%          | 5.0% / 5.0%          |
+| saturated        | 4.0% / 5.8%             | 0% / 0%            | 4.6% / 5.6%          |
+| broad responders | **32% / 49%**           | 4.0% / 5.6%        | 3.4% / 4.2%          |
+
+and with p < 0.2 (20% is right):
+
+| Odors            | bootstrap of odor pairs | bootstrap of odors | permutation (Mantel) |
+|------------------|-------------------------|--------------------|----------------------|
+| alike            | 22.6% / 21.0%           | 4.2% / 3.6%        | 23.4% / 20.0%        |
+| saturated        | 8.8% / 9.0%             | 1.2% / 1.4%        | 19.4% / 19.0%        |
+| broad responders | 49.8% / 63.4%           | 16.0% / 21.4%      | 15.4% / 17.4%        |
+
+- **Permutation** is right in every case to within sampling error (at most about 2.5
+  standard errors), and its furthest miss is low, on the safe side (broad responders at
+  0.2: 15–17%), as an exact test's should be.
+- **The bootstrap of odor pairs** is right for alike odors, where two pairs sharing an
+  odor are about uncorrelated (for independent random vectors, a's similarity to b and
+  its similarity to c are). For broad responders it is badly wrong: p < 0.05 for a third
+  to half of unrelated spaces. There, each odor's gain raises or lowers all its
+  similarities together (a row effect), in each space. Two unrelated spaces' row effects
+  agree or disagree by chance about as much as a correlation of n values does, but that
+  agreement is spread over all n(n − 1)/2 pairs. Resampling the pairs as if they were
+  independent sees only the much smaller spread of a correlation of n(n − 1)/2 values,
+  so its p-values come out too small, more so with more odors (the pairs grow as n²,
+  the odors carrying the effect only as n). For saturated odors it is about right at
+  0.05 but not at 0.2 (9%): its p-values are not uniform when nothing is related.
+- **The bootstrap of the odors** keeps the row effects, so broad responders do not fool
+  it (4.0–5.6%). Otherwise it is far too conservative (0–0.4% at 0.05 for alike odors):
+  its resamples spread wider than r really varies, as an odor drawn twice brings all its
+  pairs twice and about a third of the odors are left out of each draw. It would rarely
+  find a relation that is there.
+
+### Why permutation is the default
+
+- It answers the question asked, whether two spaces' similarities are related at all,
+  with an exact test. If they are unrelated, shuffling B's odor labels changes nothing
+  about how r is distributed, so the data's r is just one of the equally likely
+  shuffled ones, however the pairs depend on each other. It needs no model of that
+  dependence, which is exactly what both bootstraps get wrong.
+- The bootstrap of odor pairs fails in the case most like real data: odors differ
+  widely in how strongly they drive ORNs and PNs (some activate many glomeruli strongly,
+  and concentration scales responses). It is still offered, as it was asked for first,
+  with a warning in the p-values' heading.
+- The bootstrap of the odors is safe but has little power to test against 0. It suits
+  other questions, such as a confidence interval for r or whether one space matches B
+  better than another does, which is how Nili et al. 2014 use it.
+- It costs no more than the bootstrap of the odors (every pair, each draw).
+
+Its limits:
+
+- With few odors there are few distinct shuffles (n!: 24 for 4 odors), so p cannot go
+  much below 1 / n! however many permutations are run. No test can show much from a
+  handful of odors.
+- A small p says the spaces are related, not how strongly (r says that). A large p from
+  few odors is not evidence that they are unrelated.
+- No relation is taken to mean all shared odors are interchangeable. Shuffling ignores
+  any structure among them, such as one chemical at several concentrations (each counts
+  once here, at the concentration chosen).
+- The simulations cover only Spearman correlations, Pearson similarities within
+  spaces, normal data of 30 dimensions and three kinds of odors. They do not include
+  missing values or the ties of binary reference data.
+
+### Correcting for testing every two spaces
+
+k spaces shown give m = k(k − 1)/2 tests: each two spaces once, as the matrix is
+symmetric. Their p-values are adjusted by Holm's method
+([Holm 1979](https://www.jstor.org/stable/4615733);
+[Wikipedia](https://en.wikipedia.org/wiki/Holm%E2%80%93Bonferroni_method)). Sorted
+ascending, p(1) ≤ … ≤ p(m), the i-th becomes min(1, (m − i + 1) × p(i)), raised to at
+least the one before it so the order is kept. This keeps the family-wise error rate, the
+chance of any false positive among the m tests, at α whatever the dependence between
+them. These tests do depend on each other: A–B and A–C share A, and all share odors.
+Holm's method rejects everything Bonferroni's correction does, and possibly more.
+
+The alternatives were not chosen:
+
+- Hochberg's and Hommel's methods, and Benjamini–Hochberg's false discovery rate, have
+  more power but need the tests to depend on each other in a particular positive way
+  (PRDS), which is not known here.
+- Benjamini–Yekutieli allows any dependence, but controls only the false discovery
+  rate, a looser guarantee, at a similar cost in power for few tests.
+
+With a handful of spaces (a few to tens of tests), each relation claimed should hold on
+its own, which is what a family-wise error rate gives. The correction cannot rescue a
+test whose own p-values are too small, as the pair bootstrap's can be: it adjusts for
+many tests, not for an invalid one.
+
+### A first simulation, discarded
+
+The first run of these simulations drew its normal values from a hand-written linear
+congruential generator, seed = (seed × 1103515245 + 12345) mod 2³¹, in JavaScript
+numbers. The product exceeds 2⁵³, so its low bits were lost and it fell into a cycle of
+10,466 values (after 4,871 draws from seed 11). Each run needed over half a million
+values (2 per normal one), so every space was cut from the same 10,466, overlapping and
+shifted, and spaces meant to be unrelated often shared odors' values. For alike odors,
+from 300 pairs of spaces each, it gave these rates of p < 0.05:
+
+| Test                    | 15 odors | 30 odors |
+|-------------------------|----------|----------|
+| bootstrap of odor pairs | 4.3%     | 8.0%     |
+| bootstrap of odors      | 0%       | 0%       |
+
+Permutation, run later with the same generator (after other draws, but into the same
+cycle), gave exactly the same rates as the bootstrap of odor pairs. An exact test should
+not reach 8.0% on unrelated spaces, and that gave the flaw away. These figures were
+reported, and briefly committed (in `0a65d85`: "somewhat liberal", 4–8%), before the
+generator was replaced with `Math.random`, which gave the tables above.
 
 ## Code layout
 

@@ -363,7 +363,8 @@ the Admin tab); the rest of the configuration is in
 [DEPLOY.md](DEPLOY.md#configuration-reference).
 
 [design.md](design.md) describes how the app is put together and why: the main design
-decisions, the code layout, storage and the HTTP API.
+decisions, the Compare tab's statistical testing (and the simulations behind it), the
+code layout, storage and the HTTP API.
 
 Tests:
 
