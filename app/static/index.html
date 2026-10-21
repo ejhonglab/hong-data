@@ -345,6 +345,18 @@
       <label class="check"><input type="checkbox" id="cmp-rsa"> Correlate the similarities of each two</label>
       <label class="opt">By <select id="cmp-rsa-method"><option value="spearman">Spearman correlation</option><option value="pearson">Pearson correlation</option></select></label>
       <p class="muted small">Of the datasets shown and the spaces compared to: over the pairs of odors both have, from one side of each similarity matrix (not its diagonal).</p>
+      <label class="opt">p-values from <input type="number" id="cmp-boot-n" min="100" max="100000" step="100"> resamplings</label>
+      <label class="opt">Of the <select id="cmp-boot-unit"><option value="pairs">pairs of odors</option><option value="odors">odors</option></select></label>
+      <p class="muted small">Each correlation's p-value (to the right of it) is two-sided, against no correlation: twice the share of correlations, of what is
+        resampled with replacement, on the other side of 0 (at least 2 / (resamplings + 1)). As every two spaces shown are tested at once, these are
+        adjusted by the <a href="https://en.wikipedia.org/wiki/Holm%E2%80%93Bonferroni_method" target="_blank" rel="noopener">Holm–Bonferroni method</a>
+        (<a href="https://www.jstor.org/stable/4615733" target="_blank" rel="noopener">Holm 1979</a>): the chance of any false positive among them
+        stays under 5% at p &lt; 0.05 however the tests depend on each other, as these do, sharing spaces and odors; and it never finds fewer than
+        Bonferroni's correction.</p>
+      <p class="muted small">Pairs of odors are not independent (each odor is in many of them), so resampling them can make p-values too small,
+        more so the more odors there are. Resampling odors instead (and the pairs of those drawn), as for comparing similarity matrices in
+        <a href="https://doi.org/10.1371/journal.pcbi.1003553" target="_blank" rel="noopener">Nili et al. 2014</a>, keeps that dependence, but
+        its p-values tend to be too large instead.</p>
     </aside>
   </section>
 

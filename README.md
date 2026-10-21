@@ -248,10 +248,14 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     and of how many odors. Datasets are named there by what was recorded: their coding
     unit (kc or kcs as KCs, orn or orns as ORNs, pn or pns as PNs, in any case), or for
     glomeruli ORNs (a pebbled driver), PNs (GH146) or glomeruli;
-    by their full names (as in its CSV) when two would share one. Like every matrix of
-    the tab, it can be exported as a figure (SVG, PDF, PNG, with the numbers in the cells
-    when they are large enough) or a table (CSV: for it, each two spaces once with r,
-    odors and pairs).
+    by their full names (as in its CSV) when two would share one. To its right, the
+    p-value of each correlation against 0: two-sided, by bootstrap (5000 resamplings by
+    default, with replacement, of the pairs of odors or of the odors), Holm–Bonferroni
+    adjusted for every two spaces shown, each cell saying the adjusted and raw p (the
+    options panel says why, with links). Like every matrix of the tab, they can be
+    exported as a figure (SVG, PDF, PNG, with the numbers in the cells when they are large
+    enough) or a table (CSV: for these, each two spaces once with r, odors, pairs and both
+    p-values).
 - **Odors**: the app's own table of odor metadata, one row per chemical, with links and
   PubChem structure images. It is synced one way from a Google sheet (its link set in
   the Admin tab) or a CSV imported in the Admin tab, with the columns of

@@ -4,7 +4,7 @@ import { COLORMAPS, colormapsOfKind, makeNorm, drawColorbar, fmtNum } from './co
 import { MAX_CLUSTER_ITEMS, ClusterPool, layoutDendrogram } from './cluster.js';
 import { exportFigure } from './figure.js';
 import { MoviePlayer } from './player.js';
-import { SIMILARITIES, similarityMatrix, tanimoto, correlateSimilarities } from './similarity.js';
+import { SIMILARITIES, similarityMatrix, tanimoto, correlateSimilarities, sharedSimilarities, holm } from './similarity.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -686,7 +686,8 @@ class MatrixViewer {
     const o = this.opts;
     const neural = this.kind === 'neural';
     const cm = COLORMAPS[o.colormap] || COLORMAPS['oklab-div'];
-    const { vmin, vmax } = dataRange(model.values, o.clip);
+    const fixed = !neural && this.data.meta.value_range; // [vmin, vmax] whatever the values
+    const { vmin, vmax } = fixed ? { vmin: fixed[0], vmax: fixed[1] } : dataRange(model.values, o.clip);
     let norm;
     if (cm.kind === 'diverging') norm = makeNorm(o.range === 'symmetric' ? 'symmetric' : 'twoslope', vmin, vmax);
     else if (cm.kind === 'binary') norm = makeNorm('linear', 0, 1);
@@ -3370,6 +3371,19 @@ function neuralSpaceName(d) {
   return driver.includes('pebbled') ? 'ORNs' : driver.includes('gh146') ? 'PNs' : 'glomeruli';
 }
 
+// the Holm–Bonferroni method, by which the p-values of correlations between similarities are adjusted
+const HOLM_URL = 'https://en.wikipedia.org/wiki/Holm%E2%80%93Bonferroni_method';
+
+// a p-value in a few characters
+const fmtP = (p) => (p < 0.001 ? p.toExponential(1) : p < 0.01 ? p.toFixed(4) : p.toFixed(3));
+
+// a 32-bit hash of a string (FNV-1a), as a seed
+function hashString(str) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 0x01000193);
+  return h >>> 0;
+}
+
 // a viewer's height fitted to what it shows, up to most of the window's
 function fitViewer(el, v) {
   if (!v.model) return;
@@ -3382,7 +3396,7 @@ class ComparePage {
     // place: where each dataset's odor-odor similarity is shown ('below' its data, 'instead' of it, or 'none')
     this.o = {
       group: 'panel', unit: '', picked: [], metric: 'pearson', place: 'below', spaces: [], ecfpD: 6, conc: 'max',
-      rsa: false, rsaMethod: 'spearman', ...LS.get(COMPARE_KEY, {}),
+      rsa: false, rsaMethod: 'spearman', bootN: 5000, bootUnit: 'pairs', ...LS.get(COMPARE_KEY, {}),
     };
     delete this.o.sim; // a checkbox once, besides `place`
     this.datasets = null;
@@ -3392,6 +3406,7 @@ class ComparePage {
     this.ecfp = new Map(); // diameter -> fingerprints
     this.memo = new Map(); // what is computed, by what it is of
     this.blocks = new Map(); // key -> {el, viewer}, kept while shown
+    this.job = null; // the bootstrap of p-values running (_rsaP)
     this._seq = 0;
     const tab = $('#tab-compare');
     $$('.seg button', tab).forEach((b) => b.addEventListener('click', () => { this.o.group = b.dataset.group; this._save(); this.renderList(); }));
@@ -3407,7 +3422,8 @@ class ComparePage {
     $('#compare-clear').addEventListener('click', () => { this.o.picked = []; this._changed(); });
     $('#cmp-metric').innerHTML = Object.entries(SIMILARITIES).map(([k, m]) => `<option value="${k}">${m.label}</option>`).join('');
     for (const [id, key, read] of [['#cmp-metric', 'metric'], ['#cmp-place', 'place'], ['#cmp-conc', 'conc'],
-      ['#cmp-rsa', 'rsa', (el) => el.checked], ['#cmp-rsa-method', 'rsaMethod']]) {
+      ['#cmp-rsa', 'rsa', (el) => el.checked], ['#cmp-rsa-method', 'rsaMethod'], ['#cmp-boot-unit', 'bootUnit'],
+      ['#cmp-boot-n', 'bootN', (el) => { const n = Math.round(+el.value); return el.value && n > 0 ? Math.min(100000, Math.max(100, n)) : this.o.bootN; }]]) {
       $(id).addEventListener('change', (e) => { this.o[key] = read ? read(e.target) : e.target.value; this._changed(); });
     }
     $('#cmp-spaces').addEventListener('change', (e) => {
@@ -3567,7 +3583,8 @@ class ComparePage {
   // the options: the spaces to compare to, each with how many of the odors shown it has
   _renderOptions(shown) {
     $('#cmp-rsa').checked = !!this.o.rsa;
-    for (const [id, key] of [['#cmp-metric', 'metric'], ['#cmp-place', 'place'], ['#cmp-conc', 'conc'], ['#cmp-rsa-method', 'rsaMethod']]) $(id).value = this.o[key];
+    for (const [id, key] of [['#cmp-metric', 'metric'], ['#cmp-place', 'place'], ['#cmp-conc', 'conc'], ['#cmp-rsa-method', 'rsaMethod'],
+      ['#cmp-boot-n', 'bootN'], ['#cmp-boot-unit', 'bootUnit']]) $(id).value = this.o[key];
     $('#cmp-shown').textContent = shown.size
       ? `The datasets shown have ${shown.size} odor${shown.size === 1 ? '' : 's'} of the odor table (by themselves, not mixed).`
       : 'No odors of the odor table shown yet.';
@@ -3632,7 +3649,7 @@ class ComparePage {
 
     const parts = [], shows = [], used = new Set();
     const metric = SIMILARITIES[this.o.metric].label;
-    const block = (key, ...args) => { used.add(key); const b = this._block(key, ...args); parts.push(b.section); shows.push(b.show); };
+    const block = (key, ...args) => { used.add(key); const b = this._block(key, ...args); parts.push(b.section); shows.push(b.show); return b.section; };
     const info = (html) => parts.push(msgBox('info', html));
     // how alike the similarities of each two spaces are
     // datasets by what was recorded (ORNs, PNs, KCs...), by their full names those that would share one
@@ -3648,10 +3665,23 @@ class ComparePage {
     if (this.o.rsa && all.length < 2) {
       info('Show two datasets, or one and a space to compare it to (on the right), to correlate their similarities.');
     } else if (this.o.rsa) {
-      const method = this.o.rsaMethod === 'spearman' ? 'Spearman' : 'Pearson';
-      block('rsa', 'Between similarities', `${method} correlation of each two spaces' odor–odor similarities (${esc(metric)} within datasets and reference data), over the pairs of odors both have`,
-        ...this._rsa(all, method), { cells: [84, 40], table: () => this._rsaCsv(all, method) });
+      const method = this.o.rsaMethod === 'spearman' ? 'Spearman' : 'Pearson', job = this._rsaP(all);
+      const table = () => this._rsaCsv(all, method, job);
+      // the correlations, and their p-values to the right
+      const row = document.createElement('div');
+      row.className = 'cmp-row';
+      row.append(
+        block('rsa', 'Between similarities', `${method} correlation of each two spaces' odor–odor similarities (${esc(metric)} within datasets and reference data), over the pairs of odors both have`,
+          ...this._rsa(all, method), { cells: [84, 40], table }),
+        block('rsa-p', 'Their p-values', `Two-sided bootstrap p of each correlation against 0 (${job.resamplings.toLocaleString()} resamplings of the
+          ${job.unit === 'odors' ? 'odors' : 'pairs of odors'}, with replacement), <a href="${HOLM_URL}" target="_blank" rel="noopener">Holm–Bonferroni</a>
+          adjusted for the ${job.pairs.length} pair${job.pairs.length === 1 ? '' : 's'} of spaces (more on the right); * below 0.05. <span class="cmp-status"></span>`,
+        job.payload, 'similarities_correlated_p', { cells: [84, 40], table }));
+      parts.splice(-2, 2, row);
+      job.status = $('.cmp-status', row);
+      this._pStatus(job);
     }
+    if (!this.o.rsa || all.length < 2) this._stopP();
     for (const s of spaces.filter((x) => x.error)) parts.push(msgBox('error', `${esc(s.title)} could not be compared to: ${esc(s.error)}`));
     for (const d of datasets) {
       if (d.error) { parts.push(msgBox('error', `Dataset #${d.id} could not be shown: ${esc(d.error)}`)); continue; }
@@ -3694,8 +3724,7 @@ class ComparePage {
   // how alike the similarities of each two spaces are: [the matrix for its viewer (r, each
   // cell saying it and of how many odors), its file name]
   _rsa(all, method) {
-    const key = `rsa:${this.o.rsaMethod}:${this.o.metric}:${this.o.conc}:${all.map((s) => s.key).join(',')}`;
-    return [this._memo(key, () => {
+    return [this._memo(`rsa:${this._rsaKey(all)}`, () => {
       const n = all.length, cells = this._rsaCells(all);
       const values = new Float32Array(n * n);
       cells.forEach((row, i) => row.forEach((c, j) => { values[i * n + j] = c ? c.r : 1; }));
@@ -3708,19 +3737,94 @@ class ComparePage {
     }), 'similarities_correlated'];
   }
 
+  // what the correlations between the similarities of spaces `all` are of
+  _rsaKey(all) {
+    const o = this.o;
+    return `${o.rsaMethod}:${o.metric}:${o.conc}:${o.ecfpD}:${all.map((s) => s.key).join(',')}`;
+  }
+
   _rsaCells(all) {
-    return this._memo(`rsacells:${this.o.rsaMethod}:${this.o.metric}:${this.o.conc}:${all.map((s) => s.key).join(',')}`,
+    return this._memo(`rsacells:${this._rsaKey(all)}`,
       () => all.map((a, i) => all.map((b, j) => (i === j ? null : correlateSimilarities(this.o.rsaMethod, a.space, b.space)))));
   }
 
-  // each two spaces once, with the correlation of their similarities, as a CSV table
-  _rsaCsv(all, method) {
-    const cells = this._rsaCells(all), lines = [['space_a', 'space_b', 'correlation', 'similarity_within', 'r', 'n_odors', 'n_pairs']];
+  // bootstrap p-values of the correlations of _rsaCells, each two spaces once (row by row,
+  // above the diagonal), resampled in a worker (bootstrap-worker.js): a job with its matrix
+  // (`payload`: −log10 of the adjusted p, filled in and shown again once done), `ps`,
+  // `adjusted` (by Holm's method) and `valid` then, and its `progress` until
+  _rsaP(all) {
+    const o = this.o, key = `rsap:${o.bootN}:${o.bootUnit}:${this._rsaKey(all)}`;
+    if (this.memo.has(key)) return this.memo.get(key);
+    this._stopP();
+    const n = all.length, pairs = [];
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) pairs.push([i, j]);
+    const at = new Map(pairs.map(([i, j], k) => [i * n + j, k]));
+    const job = { key, pairs, resamplings: o.bootN, unit: o.bootUnit, progress: 0, ps: null, adjusted: null, valid: null, error: null, status: null };
+    const values = new Float32Array(n * n).fill(NaN), labels = all.map((s) => ({ label: s.title }));
+    job.payload = {
+      meta: { kind: 'sequential', row_label: 'space', col_label: 'space', value_label: '−log10 of the Holm-adjusted p',
+        value_range: [0, -Math.log10(2 / (o.bootN + 1))] }, // to the smallest p there can be
+      rows: labels, cols: labels, values,
+      cellText: (i, j) => {
+        if (i === j) return '';
+        if (!job.ps) return job.error ? 'failed' : '…';
+        const k = at.get(Math.min(i, j) * n + Math.max(i, j)), p = job.adjusted[k];
+        return p === p ? `p ${fmtP(p)}${p < 0.05 ? ' *' : ''}\nraw ${fmtP(job.ps[k])}` : '–';
+      },
+    };
+    // each test seeded by its spaces, so its p-value is the same whatever else is shown
+    const tests = pairs.map(([i, j]) => {
+      const t = sharedSimilarities(all[i].space, all[j].space), seed = hashString(`${all[i].key}|${all[j].key}`);
+      return o.bootUnit === 'odors' ? { seed, n: t.n, subA: t.subA, subB: t.subB } : { seed, xs: t.xs, ys: t.ys };
+    });
+    const worker = new Worker(new URL('./bootstrap-worker.js', import.meta.url), { type: 'module' });
+    job.stop = () => worker.terminate();
+    worker.onmessage = ({ data }) => {
+      if (!data.ps) { job.progress = data.progress; this._pStatus(job); return; }
+      Object.assign(job, { ps: data.ps, valid: data.valid, adjusted: holm(data.ps) });
+      pairs.forEach(([i, j], k) => { values[i * n + j] = values[j * n + i] = -Math.log10(job.adjusted[k]); });
+      worker.terminate();
+      this._pDone(job);
+    };
+    worker.onerror = (e) => { e.preventDefault(); job.error = e.message || 'the worker failed'; worker.terminate(); this._pDone(job); };
+    worker.postMessage({ tests, method: o.rsaMethod, resamplings: o.bootN, unit: o.bootUnit },
+      tests.flatMap((t) => (t.xs ? [t.xs.buffer, t.ys.buffer] : [t.subA.buffer, t.subB.buffer])));
+    this.memo.set(key, job);
+    this.job = job;
+    return job;
+  }
+
+  // the bootstrap running stopped (as another is wanted, or none), and forgotten
+  _stopP() {
+    const job = this.job;
+    this.job = null;
+    if (job && !job.ps && !job.error) { job.stop(); this.memo.delete(job.key); }
+  }
+
+  _pDone(job) {
+    if (this.job === job) this.job = null;
+    const b = this.blocks.get('rsa-p');
+    if (b?.viewer.source === job.payload) b.viewer._rebuild();
+    this._pStatus(job);
+  }
+
+  _pStatus(job) {
+    if (!job.status?.isConnected) return;
+    job.status.textContent = job.error ? `The bootstrap failed: ${job.error}` : job.ps ? '' : `Resampling… ${Math.floor(job.progress * 100)}%`;
+    job.status.classList.toggle('err', !!job.error);
+  }
+
+  // each two spaces once, with the correlation of their similarities and its p-values
+  // (once bootstrapped), as a CSV table
+  _rsaCsv(all, method, job) {
+    const cells = this._rsaCells(all), num = (v) => (v != null && v === v ? String(v) : '');
+    const lines = [['space_a', 'space_b', 'correlation', 'similarity_within', 'r', 'n_odors', 'n_pairs', 'p_bootstrap', 'p_holm', 'resampled', 'resamplings']];
+    let k = 0;
     all.forEach((a, i) => all.forEach((b, j) => {
       if (j <= i) return;
-      const c = cells[i][j];
-      lines.push([a.fullTitle || a.title, b.fullTitle || b.title, method, SIMILARITIES[this.o.metric].label, c.r === c.r ? String(c.r) : '',
-        c.nOdors, c.nPairs]);
+      const c = cells[i][j], t = k++;
+      lines.push([a.fullTitle || a.title, b.fullTitle || b.title, method, SIMILARITIES[this.o.metric].label, num(c.r), c.nOdors, c.nPairs,
+        num(job.ps?.[t]), num(job.adjusted?.[t]), job.unit === 'odors' ? 'odors' : 'pairs of odors', job.valid ? job.valid[t] : '']);
     }));
     return { name: 'similarities_correlated.csv', text: `${lines.map((l) => l.map(csvCell).join(',')).join('\n')}\n` };
   }

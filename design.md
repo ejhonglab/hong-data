@@ -99,8 +99,14 @@ the app is described in [README.md](README.md), hosting it in [DEPLOY.md](DEPLOY
   keyed by the odor table's ids, so they line up whatever each calls its odors; a
   dataset's odor counts only alone (not in a mixture) and once, at the concentration
   chosen. Similarities of similarities are correlated over one side of the matrices
-  (without the diagonal), pairs missing in either left out; no p-value is given, as
-  those pairs are not independent.
+  (without the diagonal), pairs missing in either left out. Their p-values are
+  bootstrapped in a worker (`bootstrap-worker.js`), each test seeded by its two spaces so
+  it gives the same p whatever else is shown, and Holm–Bonferroni adjusted, as the tests
+  share spaces and odors (Holm's method assumes nothing of how tests depend on each
+  other). Resampling pairs of odors, the default, ignores that pairs share odors and runs
+  somewhat liberal (p < 0.05 for 4–8% of independent spaces of 15–30 odors, in a
+  simulation); resampling odors keeps that but runs conservative. A permutation (Mantel)
+  test of odor labels would be exact, if wanted.
 - **The laser wavelength is never read from `Experiment.xml`**: ThorImage's
   `MultiPhotonLaser` value does not follow changes made to the wavelength at the laser,
   so the wavelength is only ever entered in the form.
@@ -201,7 +207,8 @@ app/movies.py      a dataset's movies on tensor: finding them, reading their pla
 config/odor_sheet_template.csv   odor sheet columns, with the odors from the thesis tables
 app/static/        frontend: index.html, app.js, heatmap.js, colormaps.js (+ mpl_luts.js),
                    app.css, cluster.js (+ cluster-worker.js), figure.js (SVG/PDF/PNG export),
-                   player.js (movie player), similarity.js (odor similarities, and between them)
+                   player.js (movie player), similarity.js (odor similarities, and between them;
+                   bootstrap-worker.js their p-values)
 manage.py          list / show / export / delete datasets from the server
 deploy/            systemd units; Dockerfile + docker-compose.yml at the top level
 tests/             pytest tests

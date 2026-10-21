@@ -514,6 +514,9 @@ dialog.player::backdrop { background: rgba(29,31,34,.55); }
 .cmp-head h3 { font-size: 14.5px; }
 .cmp-head .muted { font-size: 12.5px; }
 .cmp-viewer { min-height: 160px; }
+.cmp-row { display: flex; flex-wrap: wrap; gap: 18px; }
+.cmp-row > .cmp-block { flex: 1 1 360px; min-width: 0; }
+.cmp-status.err { color: var(--danger); }
 .compare-options { width: 300px; flex: none; border-left: 1px solid var(--rule); background: var(--panel); overflow: auto; padding: 14px 16px 24px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
 .compare-options h2 { font-size: 13.5px; margin-top: 10px; }
 .compare-options h2:first-child { margin-top: 0; }

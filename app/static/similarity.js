@@ -75,19 +75,41 @@ export function tanimoto(a, b) {
   return either ? both / either : NaN;
 }
 
-// How alike the similarities of two spaces are: the correlation (`method`: 'pearson' or
-// 'spearman') of their values for each pair of the odors both have (one side of the
-// matrices, without the diagonal), over the pairs neither lacks.
-// spaces: {ids: [odor id], sim: n × n} -> {r, nOdors, nPairs}
-export function correlateSimilarities(method, a, b) {
+// The values of each pair of odors two spaces both have (one side of their matrices,
+// without the diagonal), over the pairs neither lacks: {xs, ys}; and the spaces' whole
+// similarity matrices over those n odors (n × n, row-major), for resampling odors.
+// spaces: {ids: [odor id], sim: n × n}
+export function sharedSimilarities(a, b) {
   const at = new Map(b.ids.map((id, i) => [id, i]));
   const shared = a.ids.map((id, i) => [i, at.get(id)]).filter(([, j]) => j !== undefined);
-  const xs = [], ys = [], nA = a.ids.length, nB = b.ids.length;
-  for (let p = 0; p < shared.length; p++) {
-    for (let q = p + 1; q < shared.length; q++) {
+  const n = shared.length, nA = a.ids.length, nB = b.ids.length;
+  const subA = new Float32Array(n * n), subB = new Float32Array(n * n), xs = [], ys = [];
+  for (let p = 0; p < n; p++) {
+    for (let q = 0; q < n; q++) {
       const x = a.sim[shared[p][0] * nA + shared[q][0]], y = b.sim[shared[p][1] * nB + shared[q][1]];
-      if (x === x && y === y) { xs.push(x); ys.push(y); }
+      subA[p * n + q] = x;
+      subB[p * n + q] = y;
+      if (q > p && x === x && y === y) { xs.push(x); ys.push(y); }
     }
   }
-  return { r: xs.length >= 3 ? (method === 'spearman' ? spearman : pearson)(xs, ys) : NaN, nOdors: shared.length, nPairs: xs.length };
+  return { xs: Float64Array.from(xs), ys: Float64Array.from(ys), n, subA, subB };
+}
+
+// How alike the similarities of two spaces are: the correlation (`method`: 'pearson' or
+// 'spearman') of their values for each pair of the odors both have (sharedSimilarities').
+// -> {r, nOdors, nPairs}
+export function correlateSimilarities(method, a, b) {
+  const { xs, ys, n } = sharedSimilarities(a, b);
+  return { r: xs.length >= 3 ? (method === 'spearman' ? spearman : pearson)(xs, ys) : NaN, nOdors: n, nPairs: xs.length };
+}
+
+// Holm–Bonferroni adjustment of p-values (NaN: no test, left out of the family): the
+// smallest times the number of tests, the next times one fewer, ..., each at least the one
+// before it, at most 1 (Holm 1979, https://www.jstor.org/stable/4615733)
+export function holm(ps) {
+  const order = ps.map((_, i) => i).filter((i) => ps[i] === ps[i]).sort((a, b) => ps[a] - ps[b]);
+  const out = ps.map(() => NaN);
+  let prev = 0;
+  order.forEach((i, k) => { prev = Math.min(1, Math.max(prev, (order.length - k) * ps[i])); out[i] = prev; });
+  return out;
 }
