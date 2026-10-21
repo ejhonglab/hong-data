@@ -252,7 +252,8 @@ GET    /api/datasets/{id}/odors             its odors (per panel) matched to the
                                             for the odor sheet for those not in it (and as cells
                                             to paste, in the order of the sheet's columns)
 GET    /api/datasets/{id}/data_paths        where its raw and motion-corrected data are on the
-                                            server, and what is in them (or why they are not)
+                                            server, and what is in them (or why they are not), with
+                                            the recordings in one and not the other
 PUT    /api/datasets/{id}/data_paths        {"raw_data_path", "mocorr_data_path"} (either) → set, if
                                             found on tensor
 GET    /api/datasets/{id}/movies            its movies in its raw and motion-corrected data folders

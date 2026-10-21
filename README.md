@@ -170,7 +170,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   syncing it. "Raw data" and "Motion corrected / traces" show where those are on
   tensor (to copy, as browsers cannot open folders on your computer) and what is in
   them. They are red, saying why, when no path was entered, or the server cannot find
-  it (from the top of tensor, or from a folder set in the Admin tab) or may not read it.
+  it (from the top of tensor, or from a folder set in the Admin tab) or may not read it;
+  orange when one has recordings the other does not (by fly and recording folder name,
+  not counting anatomical ones: e.g. recordings not motion corrected yet), which its
+  menu lists, as does the movie player, apart from the rest.
   The path can be entered or corrected in their menus, checked as at upload (the README
   is left as it is). Its README can be edited there too (Edit, in the README box): saving asks
   whether to overwrite the README on the server (its path is shown) or discard the

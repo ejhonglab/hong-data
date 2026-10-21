@@ -71,6 +71,24 @@ def test_find(root):
     assert [m["label"] for m in movies.find(root / "tom/analysis/2023-11-19/2", "mocorr", FLIES)] == ["t1/mocorr.tif"]
     raw = movies.find(root / "tom/raw", "raw", FLIES)
     assert [(m["label"], m["format"], m["rois"]) for m in raw] == [("2023-11-19/1/t1/Image_001_001.raw", "raw", None)]
+    assert [m["recording"] for m in found] == ["t1", "t1", "t2"] and raw[0]["recording"] == "t1"
+
+
+def test_unmatched(root):
+    # recordings in the raw data and not motion corrected, and the other way around (not anatomical ones)
+    for name in ("t3", "anat_1"):
+        (root / "tom/raw/2023-11-19/1" / name).mkdir()
+        (root / "tom/raw/2023-11-19/1" / name / "Experiment.xml").write_text(XML)
+        (root / "tom/raw/2023-11-19/1" / name / "Image_001_001.raw").write_bytes(b"")
+    raw, mocorr = movies.find(root / "tom/raw", "raw", FLIES), movies.find(root / "tom/analysis", "mocorr", FLIES)
+    assert movies.unmatched(raw, mocorr) == {
+        "raw": [{"date": "2023-11-19", "fly_num": 1, "recording": "t3", "n_movies": 1}],
+        "mocorr": [{"date": "2023-11-19", "fly_num": 1, "recording": "t2", "n_movies": 1}]}
+    assert [(m["recording"], m["unmatched"]) for m in raw] == [("anat_1", False), ("t1", False), ("t3", True)]
+    assert [m["unmatched"] for m in mocorr] == [False, False, True]
+    # movies not found by fly are not compared
+    one = movies.find(root / "tom/analysis/2023-11-19/2", "mocorr", FLIES)
+    assert movies.unmatched(raw, one)["mocorr"] == [] and one[0]["unmatched"] is False
 
 
 def test_tiff(root):
@@ -138,6 +156,12 @@ def test_api(main, root, tmp_path, monkeypatch):  # noqa: F811
     r = json.loads(get(main.dataset_movies, path_params={"ds_id": ds_id}).body)
     assert [m["label"] for m in r["mocorr"]["movies"]] == ["1/t1/mocorr.tif", "1/t1/flipped.tif", "1/t2/mocorr.tif"]
     assert len(r["raw"]["movies"]) == 1 and r["raw"]["error"] is None
+    # t2 is motion corrected, but not in the raw data: said so with its folder, and of its movies
+    t2 = [{"date": "2023-11-19", "fly_num": 1, "recording": "t2", "n_movies": 1}]
+    assert r["mocorr"]["compared"] and r["mocorr"]["unmatched"] == t2 and r["raw"]["unmatched"] == []
+    assert [m["unmatched"] for m in r["mocorr"]["movies"]] == [False, False, True]
+    paths = json.loads(get(main.dataset_data_paths, path_params={"ds_id": ds_id}).body)
+    assert paths["mocorr"]["status"] == "ok" and paths["mocorr"]["unmatched"] == t2 and paths["raw"]["compared"]
 
     movie = r["mocorr"]["movies"][0]
     info = json.loads(get(main.movie_info, {"path": movie["path"]}).body)

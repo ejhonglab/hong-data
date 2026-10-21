@@ -455,6 +455,7 @@ def test_dataset_data_paths(main, root, tmp_path):
     status, r = call(main.dataset_data_paths, path_params={"ds_id": ds_id})
     assert status == 200 and r["raw"]["status"] == "ok" and [e["name"] for e in r["raw"]["entries"]] == ["2023-11-19", "20231120"]
     assert r["mocorr"]["status"] == "not_found" and r["mocorr"]["input"] == "tom/mocorr-typo"
+    assert not r["raw"]["compared"] and r["raw"]["unmatched"] == []  # with only one of them found, nothing to compare
     assert call(main.dataset_data_paths, path_params={"ds_id": ds_id + 1})[0] == 404
 
     # entered from the dataset's page, checked as at upload

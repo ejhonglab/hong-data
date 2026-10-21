@@ -732,17 +732,37 @@ async def dataset_matrix(request: Request) -> Response:
     return JSONResponse(m)
 
 
+def _data_and_movies(d: dict) -> tuple[dict, dict]:
+    """A dataset's raw and motion-corrected data folders (by kind: see `tensor.find_data`),
+    and their movies (by kind: ``movies`` as from `movies.find`, ``error``: why its folder
+    was not looked in, and when both folders were found, ``compared`` and ``unmatched``:
+    the recordings with movies in that one only, see `movies.unmatched`)."""
+    flies = d["summary"].get("flies") or []
+    bases = [Path(p) for p in sandbox.folders()]
+    found, out = {}, {}
+    for kind in ("raw", "mocorr"):
+        f = found[kind] = tensor.find_data(d["metadata"].get(f"{kind}_data_path"), config.TENSOR_ROOT, bases)
+        folder = Path(f["path"]) if f["status"] == "ok" and f["is_dir"] else None
+        out[kind] = {"movies": movies.find(folder, kind, flies) if folder else [], "error": f["error"], "compared": False,
+                     "unmatched": []}
+    if all(f["status"] == "ok" and f["is_dir"] for f in found.values()):
+        for kind, recordings in movies.unmatched(out["raw"]["movies"], out["mocorr"]["movies"]).items():
+            out[kind].update(compared=True, unmatched=recordings)
+    return found, out
+
+
 async def dataset_data_paths(request: Request) -> Response:
     """Where a dataset's raw and motion-corrected data are on the server, and what is in
-    them (``raw``, ``mocorr``: see `tensor.find_data`)."""
+    them (``raw``, ``mocorr``: see `tensor.find_data`), with ``compared`` and ``unmatched``:
+    the recordings with movies in that folder and not the other (see `_data_and_movies`)."""
     ds_id = int(request.path_params["ds_id"])
 
     def run() -> Optional[dict]:
         d = db.get_dataset(ds_id)
         if d is None:
             return None
-        bases = [Path(p) for p in sandbox.folders()]
-        return {k: tensor.find_data(d["metadata"].get(f"{k}_data_path"), config.TENSOR_ROOT, bases) for k in ("raw", "mocorr")}
+        found, out = _data_and_movies(d)
+        return {k: {**found[k], "compared": out[k]["compared"], "unmatched": out[k]["unmatched"]} for k in found}
 
     result = await run_in_threadpool(run)
     if result is None:
@@ -800,21 +820,12 @@ def _server_file(path: Any, suffixes: tuple[str, ...]) -> Path:
 
 async def dataset_movies(request: Request) -> Response:
     """A dataset's movies in its raw and motion-corrected data folders (``raw``, ``mocorr``:
-    ``movies`` as from `movies.find`, and ``error``: why its folder was not looked in)."""
+    see `_data_and_movies`; each movie ``unmatched`` if its recording has none in the other)."""
     ds_id = int(request.path_params["ds_id"])
 
     def run() -> Optional[dict]:
         d = db.get_dataset(ds_id)
-        if d is None:
-            return None
-        flies = d["summary"].get("flies") or []
-        bases = [Path(p) for p in sandbox.folders()]
-        out = {}
-        for kind in ("raw", "mocorr"):
-            found = tensor.find_data(d["metadata"].get(f"{kind}_data_path"), config.TENSOR_ROOT, bases)
-            folder = Path(found["path"]) if found["status"] == "ok" and found["is_dir"] else None
-            out[kind] = {"movies": movies.find(folder, kind, flies) if folder else [], "error": found["error"]}
-        return out
+        return None if d is None else _data_and_movies(d)[1]
 
     result = await run_in_threadpool(run)
     if result is None:

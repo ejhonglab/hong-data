@@ -9,6 +9,8 @@ const AHEAD = 2; // chunks fetched ahead while playing
 const ROI_COLOR = '#ffd400';
 const SELECTED_COLOR = '#00e5ff';
 const KINDS = { mocorr: 'Motion corrected / traces', raw: 'Raw data' };
+// the movies of recordings with none in the other folder, listed apart in each
+const ONLY = { raw: 'Not in the motion-corrected data', mocorr: 'Not in the raw data' };
 
 const sleep = (ms) => new Promise((r) => { setTimeout(r, ms); });
 
@@ -70,13 +72,16 @@ export class MoviePlayer {
     this.movies = [];
     const groups = [kind, kind === 'raw' ? 'mocorr' : 'raw'].map((k) => {
       const found = res[k];
-      const items = found.movies.map((m) => {
+      const item = (m) => {
         this.movies.push({ ...m, kind: k });
-        return `<button type="button" class="player-item" data-movie="${this.movies.length - 1}" title="${this.esc(m.path)}">
+        return `<button type="button" class="player-item${m.unmatched ? ' unmatched' : ''}" data-movie="${this.movies.length - 1}" title="${this.esc(m.path)}">
           <span>${this.esc(m.label)}</span><span class="muted">${this.fmtBytes(m.size)}${m.rois ? ' · ROIs' : ''}</span></button>`;
-      }).join('');
+      };
+      const items = found.movies.filter((m) => !m.unmatched).map(item).join('');
+      const only = found.movies.filter((m) => m.unmatched).map(item).join('');
       const none = found.error ? `no folder: ${found.error}` : 'none found';
-      return `<h3>${KINDS[k]}</h3>${items || `<p class="muted small">${this.esc(none)}</p>`}`;
+      return `<h3>${KINDS[k]}</h3>${items || only ? items : `<p class="muted small">${this.esc(none)}</p>`}`
+        + (only ? `<h4 class="player-unmatched">${ONLY[k]}</h4>${only}` : '');
     });
     this.$('.player-list').innerHTML = groups.join('');
     const first = this.movies.find((m) => m.kind === kind) || this.movies[0];

@@ -1834,10 +1834,21 @@ class Browse {
   // r: as from tensor.find_data, or null while it is looked up
   _dataLink(menu, r) {
     const label = DATA_LINKS[menu.dataset.kind], list = $('.menu-list', menu);
+    const only = r?.status === 'ok' ? r.unmatched || [] : [], [onlyWhy, onlyHead] = DATA_ONLY[menu.dataset.kind];
     menu.classList.toggle('missing', !!r && r.status !== 'ok');
-    const why = r ? DATA_WHY[r.status] : 'checking…';
+    menu.classList.toggle('warn', only.length > 0);
+    const recordings = (n) => `${n} recording${n === 1 ? '' : 's'}`;
+    const why = r ? (only.length ? `${recordings(only.length)} ${onlyWhy}` : DATA_WHY[r.status]) : 'checking…';
     $('summary', menu).innerHTML = `${label}${why ? ` <span class="why">${why}</span>` : ''}`;
-    $('summary', menu).title = r && r.status !== 'ok' ? `${label}: ${r.error}` : '';
+    $('summary', menu).title = r && r.status !== 'ok' ? `${label}: ${r.error}` : only.length ? `${label}: ${recordings(only.length)} ${onlyWhy}` : '';
+    // those recordings, by fly
+    const byFly = new Map();
+    for (const u of only) {
+      const fly = `${u.date} fly ${u.fly_num}`;
+      byFly.set(fly, [...(byFly.get(fly) || []), u.recording == null ? "(in the fly's folder)" : u.recording]);
+    }
+    const onlyHtml = only.length ? `<div class="msg warn data-only"><b>${onlyHead}</b> (${recordings(only.length)}, listed apart under Play movies…):
+      <ul>${[...byFly].map(([fly, recs]) => `<li>${esc(fly)}: ${recs.map((x) => `<code>${esc(x)}</code>`).join(', ')}</li>`).join('')}</ul></div>` : '';
     if (!r) { list.innerHTML = '<p class="menu-note">Looking for it on the server…</p>'; return; }
     const kind = menu.dataset.kind;
     const edit = `<div class="data-edit">
@@ -1857,7 +1868,7 @@ class Browse {
     }
     const shown = r.tensor_path ?? r.path;
     const entries = r.entries.map((x) => `<li${x.dir ? ' class="dir"' : ''}>${esc(x.name)}${x.dir ? '/' : ''}${x.size != null ? ` <span class="muted">${fmtBytes(x.size)}</span>` : ''}</li>`).join('');
-    list.innerHTML = `<div class="kv data-where">
+    list.innerHTML = `${onlyHtml}<div class="kv data-where">
         <span>${r.tensor_path != null ? 'On tensor' : 'On the server'}</span><span><code>${esc(shown)}</code> <button type="button" class="btn small" data-copy="${esc(shown)}">Copy</button></span>
         ${r.tensor_path != null ? `<span>On the server</span><span><code>${esc(r.path)}</code></span>` : ''}
       </div>
@@ -1959,6 +1970,8 @@ class Browse {
 }
 
 const DATA_LINKS = { raw: 'Raw data', mocorr: 'Motion corrected / traces' };
+// recordings with movies in one of a dataset's data folders and none in the other: said so on that one
+const DATA_ONLY = { raw: ['not motion corrected', 'Not in the motion-corrected data'], mocorr: ['not in the raw data', 'Not in the raw data'] };
 const DATA_WHY = { ok: '', none: 'not entered', not_found: 'not found', not_allowed: 'not allowed', unreadable: 'not readable', unchecked: 'not checked' };
 
 // ==================================================================== ODORS

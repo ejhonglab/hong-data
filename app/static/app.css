@@ -340,6 +340,11 @@ table.diff .new { color: var(--ok); }
 .data-link > summary .why { font-size: 12px; color: var(--ink-muted); }
 .data-link.missing > summary { color: var(--danger); border-color: #efc7c3; background: var(--danger-soft); }
 .data-link.missing > summary .why { color: inherit; opacity: .85; }
+/* orange: recordings in it with none in the other data folder */
+.data-link.warn:not(.missing) > summary { color: var(--warn); border-color: #f0dcae; background: var(--warn-soft); }
+.data-link.warn:not(.missing) > summary .why { color: inherit; opacity: .85; }
+.data-menu .data-only { margin: 0 10px 8px; font-size: 12.5px; }
+.data-menu .data-only ul { margin: 4px 0 0; padding-left: 18px; }
 .data-menu { width: min(560px, 90vw); max-height: 60vh; overflow: auto; padding: 8px 4px; }
 .data-menu .kv { margin: 0 10px 8px; }
 .data-menu code { white-space: normal; word-break: break-all; }
@@ -449,6 +454,8 @@ dialog.player::backdrop { background: rgba(29,31,34,.55); }
 .player-item .muted { font-size: 11.5px; }
 .player-item:hover { background: var(--surface-2); }
 .player-item.active { background: var(--accent-soft); border-left-color: var(--accent); }
+.player-list h4.player-unmatched { font-size: 11.5px; color: var(--warn); padding: 8px 14px 2px; }
+.player-item.unmatched:not(.active) { background: var(--warn-soft); border-left-color: #e0b85c; }
 .player-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .player-stage { flex: 1; min-height: 0; position: relative; background: #111; }
 .player-canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; touch-action: none; }

@@ -58,8 +58,10 @@ def find(folder: Path, kind: str, flies: list[dict]) -> list[dict]:
 
     Returns:
         dicts with ``path`` (on the server), ``label`` (from `folder`), ``format``
-        ('tiff' or 'raw'), ``size``, ``fly`` (its date and number, if found by them) and
-        ``rois`` (the RoiSet.zip drawn on it, if any, for a TIFF).
+        ('tiff' or 'raw'), ``size``, ``fly`` (its date and number, if found by them),
+        ``recording`` (the folder in the fly's it is in, None if it is in the fly's
+        itself or not found by fly) and ``rois`` (the RoiSet.zip drawn on it, if any, for a
+        TIFF).
     """
     tops = [(d, f) for f in flies for d in tensor.fly_dirs(folder, f["date"], f["fly_num"])] or [(folder, None)]
     out: list[dict] = []
@@ -80,15 +82,48 @@ def find(folder: Path, kind: str, flies: list[dict]) -> list[dict]:
                     size = e.stat().st_size
                 except OSError:
                     continue
+                below = Path(e.path).relative_to(top).parts
                 out.append({
                     "path": e.path, "label": Path(e.path).relative_to(folder).as_posix(),
                     "format": "raw" if kind == "raw" else "tiff", "size": size,
                     "fly": {"date": fly["date"], "fly_num": fly["fly_num"]} if fly else None,
+                    "recording": below[0] if fly and len(below) > 1 else None,
                     "rois": str(rois[d]) if kind == "mocorr" and rois.get(d) else None,
                 })
                 if len(out) >= MAX_MOVIES:
                     return out
     return out
+
+
+def unmatched(raw: list[dict], mocorr: list[dict]) -> dict[str, list[dict]]:
+    """The recordings with movies in one of a dataset's data folders and none in the other
+    (`find`'s movies of each: by fly and the name of the recording's folder, which
+    al_analysis takes from the raw data's), but for anatomical ones (`tensor.ANATOMICAL`,
+    never motion-corrected) and movies not found by fly. Each movie of one is marked
+    ``unmatched`` (and the rest not).
+
+    Returns:
+        by kind ('raw', 'mocorr'): its recordings not in the other, each with ``date``,
+        ``fly_num``, ``recording`` and ``n_movies``.
+    """
+    def recordings(found: list[dict]) -> dict[tuple, list[dict]]:
+        out: dict[tuple, list[dict]] = {}
+        for m in found:
+            m["unmatched"] = False
+            if m["fly"] and not (m["recording"] and tensor.ANATOMICAL.fullmatch(m["recording"])):
+                out.setdefault((m["fly"]["date"], m["fly"]["fly_num"], m["recording"]), []).append(m)
+        return out
+
+    by_kind = {"raw": recordings(raw), "mocorr": recordings(mocorr)}
+    result = {}
+    for kind, other in (("raw", "mocorr"), ("mocorr", "raw")):
+        result[kind] = []
+        for (date, fly_num, recording), found in by_kind[kind].items():
+            if (date, fly_num, recording) not in by_kind[other]:
+                result[kind].append({"date": date, "fly_num": fly_num, "recording": recording, "n_movies": len(found)})
+                for m in found:
+                    m["unmatched"] = True
+    return result
 
 
 # ----------------------------------------------------------------------- reading
