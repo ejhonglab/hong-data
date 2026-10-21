@@ -289,12 +289,17 @@ def date_names(date: str) -> list[str]:
     return [d.strftime(f) for f in DATE_FORMATS]
 
 
+def fly_name(fly_num: int) -> re.Pattern:
+    """The names a fly's folder may have (``1``, ``fly1``, ``fly_01``, ...)."""
+    return re.compile(rf"(?:fly)?[_-]?0*{int(fly_num)}", re.IGNORECASE)
+
+
 def fly_dirs(folder: Path, date: str, fly_num: int) -> list[Path]:
     """Folders of one fly (by its date and number) in `folder`: ``<folder>/<date>/<fly>``,
     or ``<folder>/<fly>`` if `folder` is named by the date, or `folder` itself if it is
     that fly's (``<date>/<fly>``). Never those of any other fly."""
     names = date_names(date)
-    pattern = re.compile(rf"(?:fly)?[_-]?0*{int(fly_num)}", re.IGNORECASE)
+    pattern = fly_name(fly_num)
     if folder.parent.name in names and pattern.fullmatch(folder.name):
         return [folder]
     date_dirs = [folder] if folder.name in names else [folder / n for n in names if os.path.isdir(folder / n)]

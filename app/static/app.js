@@ -1836,6 +1836,7 @@ class Browse {
     menus.forEach((m) => this._dataLink(m, res[m.dataset.kind]));
     // recordings in one of the folders and not the other: all of them side by side, on asking
     this.recordings = res.recordings;
+    this.dataFound = { raw: res.raw.found, mocorr: res.mocorr.found };
     const n = (kind) => res[kind].unmatched?.length || 0;
     const btn = $('#ds-mismatches');
     btn.hidden = !(n('raw') + n('mocorr'));
@@ -1852,16 +1853,21 @@ class Browse {
     const rows = this.recordings || [], d = this.cache.get(this.selected)?.d;
     const only = (kind) => rows.filter((r) => !r.matched && !r.anatomical && r[kind]).length;
     $('#mismatches-title').textContent = `Raw and motion-corrected data${d ? ` of ${d.title}` : ''}`;
+    // how each folder's movies were found: in its flies' folders, or by the folders in their paths
+    const how = Object.entries(this.dataFound || {}).filter(([, f]) => f && (f.path || f.none)).map(([kind, f]) => ` ${DATA_LINKS[kind]}: `
+      + `no folders of its flies (<date>/<fly>) in its folder, so its movies were matched to flies by the folders in their paths`
+      + `${f.none ? `; ${f.none} to no fly of this dataset (listed last, by folder)` : ''}.`).join('');
     $('#mismatches-note').textContent = `${rows.length} recordings: ${only('raw')} only in the raw data, ${only('mocorr')} only in the `
       + 'motion-corrected data (highlighted). In the order they were recorded, as their Experiment.xml says (else by when it was '
       + 'written: "file time"); one with no raw data after the one before it by name. Anatomical recordings are not expected to '
-      + 'be motion corrected.';
+      + `be motion corrected.${how}`;
     const cell = (r, kind) => (r[kind]
       ? `<code>${esc(r.recording ?? "(the fly's folder)")}</code> <span class="muted">${esc(r[kind].slice(0, 3).join(', '))}${r[kind].length > 3 ? `, and ${r[kind].length - 3} more` : ''}</span>`
       : `<span class="absent">${r.anatomical ? '— (anatomical)' : '— not here'}</span>`);
     let fly = null;
     $('#mismatches tbody').innerHTML = rows.map((r) => {
-      const head = `${r.date} fly ${r.fly_num}` !== fly ? `<tr class="group"><td colspan="3">${esc((fly = `${r.date} fly ${r.fly_num}`))}</td></tr>` : '';
+      const group = r.date ? `${r.date} fly ${r.fly_num}` : "Of no fly of this dataset (by the folder they are in)";
+      const head = group !== fly ? `<tr class="group"><td colspan="3">${esc((fly = group))}</td></tr>` : '';
       const cls = r.matched ? '' : r.anatomical ? ' class="anatomical"' : ' class="mismatch"';
       const when = r.recorded ? esc(r.recorded.slice(0, 16)) : r.time != null ? `${esc(fmtEpoch(r.time))} <span class="muted">(file time)</span>` : '—';
       return `${head}<tr${cls}><td class="when">${when}</td>

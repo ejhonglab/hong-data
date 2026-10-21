@@ -106,10 +106,25 @@ def test_unmatched(root):
     rows = movies.side_by_side(raw, mocorr)
     assert [(r["recording"], r["recorded"]) for r in rows] == [
         ("anat_1", "2023-11-19 09:30:00"), ("t1", "2023-11-19 10:00:00"), ("t2", None), ("t3", "2023-11-19 11:00:00")]
-    # movies not found by fly are not compared
-    one = movies.find(root / "tom/analysis/2023-11-19/2", "mocorr", FLIES)
-    assert movies.unmatched(raw, one)["mocorr"] == [] and one[0]["unmatched"] is False
-    assert [r["recording"] for r in movies.side_by_side(raw, one)] == ["anat_1", "t1", "t3"]
+    assert [m["by"] for m in mocorr] == ["fly folder"] * 3
+
+    # a folder with no fly folders of the dataset in it (a single recording's, say): its movies
+    # matched to flies by the folders in their paths
+    rec = movies.find(root / "tom/analysis/2023-11-19/1/t2", "mocorr", FLIES)
+    assert [(m["label"], m["fly"], m["by"], m["recording"]) for m in rec] == [("mocorr.tif", FLIES[0], "path", "t2")]
+    assert movies.unmatched(raw, rec)["mocorr"] == [{"date": "2023-11-19", "fly_num": 1, "recording": "t2", "n_movies": 1}]
+    rec = movies.find(root / "tom/analysis/2023-11-19/1/t1", "mocorr", FLIES)
+    assert movies.unmatched(raw, rec)["mocorr"] == [] and [r["recording"] for r in movies.side_by_side(raw, rec)
+                                                         if r["matched"]] == ["t1"]
+    # and those of no fly of the dataset, listed all the same: only in that folder, last, by the folder they are in
+    other = movies.find(root / "tom/analysis/2023-11-19/2", "mocorr", FLIES)
+    assert other[0]["fly"] is None and other[0]["by"] is None
+    assert movies.unmatched(raw, other)["mocorr"] == [{"date": None, "fly_num": None, "recording": "t1", "n_movies": 1}]
+    assert other[0]["unmatched"]
+    rows = movies.side_by_side(raw, other)
+    assert [(r["date"], r["recording"], r["matched"]) for r in rows] == [
+        ("2023-11-19", "anat_1", False), ("2023-11-19", "t1", False), ("2023-11-19", "t3", False), (None, "t1", False)]
+    assert rows[-1]["mocorr"] == ["mocorr.tif"] and not rows[-1]["anatomical"]
 
 
 def test_tiff(root):
@@ -181,6 +196,7 @@ def test_api(main, root, tmp_path, monkeypatch):  # noqa: F811
     t2 = [{"date": "2023-11-19", "fly_num": 1, "recording": "t2", "n_movies": 1}]
     assert r["mocorr"]["compared"] and r["mocorr"]["unmatched"] == t2 and r["raw"]["unmatched"] == []
     assert [m["unmatched"] for m in r["mocorr"]["movies"]] == [False, False, True]
+    assert r["mocorr"]["found"] == {"fly folder": 3, "path": 0, "none": 0}
     paths = json.loads(get(main.dataset_data_paths, path_params={"ds_id": ds_id}).body)
     assert paths["mocorr"]["status"] == "ok" and paths["mocorr"]["unmatched"] == t2 and paths["raw"]["compared"]
     assert [(r["recording"], r["matched"]) for r in paths["recordings"]] == [("t1", True), ("t2", False)]
