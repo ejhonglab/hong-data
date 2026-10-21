@@ -52,13 +52,15 @@ def _walk(top: Path, depth: int):
             todo += [(Path(e.path), level + 1) for e in entries if tensor._is_dir(e)]
 
 
-def find(folder: Path, kind: str, flies: list[dict]) -> list[dict]:
+def find(folder: Path, kind: str, flies: list[dict], skipped: Optional[set] = None) -> list[dict]:
     """Movies under one of a dataset's data folders (`kind`: 'raw' or 'mocorr').
 
     Looked for in its flies' folders (``<folder>/<date>/<fly>/``, as for the upload
     lookup) and the folders below them; if none is there (the folder may be a single
     fly's or recording's), in `folder` and the folders below it, each then of the fly
-    the folders in its path say (`_fly_of`), if any.
+    the folders in its path say (`_fly_of`), if any, but for those in the folder of a fly
+    not one of `flies` below `folder` (``<date>/<fly>``): their flies' (date, fly_num)
+    are added to `skipped`.
 
     Returns:
         dicts with ``path`` (on the server), ``label`` (from `folder`), ``format``
@@ -90,6 +92,11 @@ def find(folder: Path, kind: str, flies: list[dict]) -> list[dict]:
                 if fly:
                     of, by, recording = {"date": fly["date"], "fly_num": fly["fly_num"]}, "fly folder", below[0] if len(below) > 1 else None
                 else:
+                    other, _ = _path_fly(Path(e.path).relative_to(folder))
+                    if other and not any(other == {"date": f["date"], "fly_num": f["fly_num"]} for f in flies):
+                        if skipped is not None:
+                            skipped.add((other["date"], other["fly_num"]))
+                        continue
                     of, recording = _fly_of(Path(e.path), flies)
                     by = "path" if of else None
                 out.append({

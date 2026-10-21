@@ -1837,6 +1837,7 @@ class Browse {
     // recordings in one of the folders and not the other: all of them side by side, on asking
     this.recordings = res.recordings;
     this.dataFound = { raw: res.raw.found, mocorr: res.mocorr.found };
+    this.dataSkipped = { raw: res.raw.skipped, mocorr: res.mocorr.skipped };
     const n = (kind) => res[kind].unmatched?.length || 0;
     const btn = $('#ds-mismatches');
     btn.hidden = !(n('raw') + n('mocorr'));
@@ -1857,13 +1858,15 @@ class Browse {
     const how = Object.entries(this.dataFound || {}).filter(([, f]) => f && (f.path || f.none)).map(([kind, f]) => ` ${DATA_LINKS[kind]}: `
       + `none of this dataset's flies has a folder (<date>/<fly>) in its folder, so its movies were matched to them by the `
       + `folders in their paths${f.none ? `; ${f.none} are not in a folder of one of its flies (listed after them)` : ''}.`).join('');
+    const left = Object.entries(this.dataSkipped || {}).filter(([, f]) => f?.length).map(([kind, f]) => ` ${DATA_LINKS[kind]}: `
+      + `left out, the folders of flies not in this dataset: ${f.map((x) => `${x.date} fly ${x.fly_num}`).join(', ')}.`).join('');
     // the dataset's own flies, to tell those of other flies (or numbered otherwise) from them
-    const theirs = rows.some((r) => !r.of_dataset) && d?.summary?.flies
+    const theirs = (rows.some((r) => !r.of_dataset) || left) && d?.summary?.flies
       ? ` This dataset's flies (by its data's date and fly_num): ${d.summary.flies.map((f) => `${f.date} fly ${f.fly_num}`).join(', ')}.` : '';
     $('#mismatches-note').textContent = `${rows.length} recordings: ${only('raw')} only in the raw data, ${only('mocorr')} only in the `
       + 'motion-corrected data (highlighted). In the order they were recorded, as their Experiment.xml says (else by when it was '
       + 'written: "file time"); one with no raw data after the one before it by name. Anatomical recordings are not expected to '
-      + `be motion corrected.${how}${theirs}`;
+      + `be motion corrected.${how}${left}${theirs}`;
     const cell = (r, kind) => (r[kind]
       ? `<code>${esc(r.recording ?? "(the fly's folder)")}</code> <span class="muted">${esc(r[kind].slice(0, 3).join(', '))}${r[kind].length > 3 ? `, and ${r[kind].length - 3} more` : ''}</span>`
       : `<span class="absent">${r.anatomical ? '— (anatomical)' : '— not here'}</span>`);

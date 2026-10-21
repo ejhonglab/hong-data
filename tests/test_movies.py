@@ -135,6 +135,22 @@ def test_unmatched(root):
     assert [(r["date"], r["of_dataset"], r["recording"]) for r in rows][-1] == (None, False, "a")
 
 
+def test_other_flies_left_out(root):
+    # a data folder with date / fly folders, none of the dataset's flies': theirs left out, others kept
+    loose = root / "tom/analysis/notes"
+    loose.mkdir()
+    tifffile.imwrite(loose / "overview.tif", np.zeros((2, 2), np.uint16))
+    skipped: set = set()
+    found = movies.find(root / "tom/analysis", "mocorr", [{"date": "2023-11-19", "fly_num": 3}], skipped)
+    assert [m["label"] for m in found] == ["notes/overview.tif"] and found[0]["fly"] is None
+    assert skipped == {("2023-11-19", 1), ("2023-11-19", 2)}
+    # one of them in it: just its folder, as before, nothing left out to say
+    skipped = set()
+    assert {m["fly"]["fly_num"] for m in movies.find(root / "tom/analysis", "mocorr", FLIES, skipped)} == {1} and not skipped
+    # the folder given being another fly's own: its movies are kept (they are what was given)
+    assert [m["label"] for m in movies.find(root / "tom/analysis/2023-11-19/2", "mocorr", FLIES)] == ["t1/mocorr.tif"]
+
+
 def test_tiff(root):
     tzyx = tifffile.imread(root / "tom/analysis/2023-11-19/1/t1/mocorr.tif")
     for name, data in (("t1/mocorr.tif", tzyx), ("t2/mocorr.tif", tzyx[:2])):  # in one piece, and compressed
@@ -204,7 +220,7 @@ def test_api(main, root, tmp_path, monkeypatch):  # noqa: F811
     t2 = [{"date": "2023-11-19", "fly_num": 1, "of_dataset": True, "recording": "t2", "n_movies": 1}]
     assert r["mocorr"]["compared"] and r["mocorr"]["unmatched"] == t2 and r["raw"]["unmatched"] == []
     assert [m["unmatched"] for m in r["mocorr"]["movies"]] == [False, False, True]
-    assert r["mocorr"]["found"] == {"fly folder": 3, "path": 0, "none": 0}
+    assert r["mocorr"]["found"] == {"fly folder": 3, "path": 0, "none": 0} and r["mocorr"]["skipped"] == []
     paths = json.loads(get(main.dataset_data_paths, path_params={"ds_id": ds_id}).body)
     assert paths["mocorr"]["status"] == "ok" and paths["mocorr"]["unmatched"] == t2 and paths["raw"]["compared"]
     assert [(r["recording"], r["matched"]) for r in paths["recordings"]] == [("t1", True), ("t2", False)]

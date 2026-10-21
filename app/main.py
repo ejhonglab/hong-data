@@ -736,7 +736,8 @@ def _data_and_movies(d: dict) -> tuple[dict, dict, Optional[list[dict]]]:
     """A dataset's raw and motion-corrected data folders (by kind: see `tensor.find_data`),
     their movies (by kind: ``movies`` as from `movies.find`, ``error``: why its folder was
     not looked in, ``found``: how many were found in its flies' folders, by their paths
-    and of no fly (see `movies.find`), and when both folders were found, ``compared`` and
+    and of no fly, ``skipped``: the flies, not the dataset's, whose folders in it were
+    left out (see `movies.find`), and when both folders were found, ``compared`` and
     ``unmatched``: the recordings with movies in that one only, see `movies.unmatched`),
     and then its recordings in both side by side (`movies.side_by_side`; else None)."""
     flies = d["summary"].get("flies") or []
@@ -745,8 +746,11 @@ def _data_and_movies(d: dict) -> tuple[dict, dict, Optional[list[dict]]]:
     for kind in ("raw", "mocorr"):
         f = found[kind] = tensor.find_data(d["metadata"].get(f"{kind}_data_path"), config.TENSOR_ROOT, bases)
         folder = Path(f["path"]) if f["status"] == "ok" and f["is_dir"] else None
-        found_movies = movies.find(folder, kind, flies) if folder else []
+        skipped: set = set()
+        found_movies = movies.find(folder, kind, flies, skipped) if folder else []
         out[kind] = {"movies": found_movies, "error": f["error"], "compared": False, "unmatched": [],
+                     # the flies (not the dataset's) whose folders in it were left out
+                     "skipped": [{"date": date, "fly_num": n} for date, n in sorted(skipped)],
                      # how its movies were found: in its flies' folders, by their paths, of no fly
                      "found": {b or "none": sum(1 for m in found_movies if m["by"] == b) for b in ("fly folder", "path", None)}}
     rows = None
@@ -769,7 +773,7 @@ async def dataset_data_paths(request: Request) -> Response:
         if d is None:
             return None
         found, out, rows = _data_and_movies(d)
-        return {**{k: {**found[k], **{x: out[k][x] for x in ("compared", "unmatched", "found")}} for k in found},
+        return {**{k: {**found[k], **{x: out[k][x] for x in ("compared", "unmatched", "found", "skipped")}} for k in found},
                 "recordings": rows}
 
     result = await run_in_threadpool(run)

@@ -172,10 +172,11 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   them. They are red, saying why, when no path was entered, or the server cannot find
   it (from the top of tensor, or from a folder set in the Admin tab) or may not read it;
   orange when one has recordings the other does not (by fly and recording folder name,
-  not counting anatomical ones: e.g. recordings not motion corrected yet; movies outside
-  its flies' folders by the date and fly folders in their path, else under the fly those
-  name, as one not of the dataset, or by folder), which its
-  menu lists, as does the movie player, apart from the rest. "Show data mismatches"
+  not counting anatomical ones: e.g. recordings not motion corrected yet). Only the
+  dataset's own flies' folders (`<date>/<fly>`) in them count: those of other flies are
+  left out (and named); movies in no fly's folder (a recording's folder given as the
+  path, say) are of the fly the folders in their path name, else by folder. Recordings in
+  only one are listed in its menu, and apart in the movie player. "Show data mismatches"
   (orange, to their left, then) lists every recording of both side by side, by fly in
   the order they were recorded (as their Experiment.xml says), the ones in only one
   highlighted; with every recording in both, a green "All data in both" is there instead.

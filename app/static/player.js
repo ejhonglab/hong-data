@@ -80,7 +80,10 @@ export class MoviePlayer {
       const items = found.movies.filter((m) => !m.unmatched).map(item).join('');
       const only = found.movies.filter((m) => m.unmatched).map(item).join('');
       const none = found.error ? `no folder: ${found.error}` : 'none found';
-      return `<h3>${KINDS[k]}</h3>${items || only ? items : `<p class="muted small">${this.esc(none)}</p>`}`
+      // the folders of flies not in the dataset in it, left out
+      const left = found.skipped?.length ? `<p class="muted small">Left out: the folders of flies not in this dataset (${
+        this.esc(found.skipped.map((f) => `${f.date} fly ${f.fly_num}`).join(', '))}).</p>` : '';
+      return `<h3>${KINDS[k]}</h3>${left}${items || only ? items : `<p class="muted small">${this.esc(none)}</p>`}`
         + (only ? `<h4 class="player-unmatched">${ONLY[k]}</h4>${only}` : '');
     });
     this.$('.player-list').innerHTML = groups.join('');
