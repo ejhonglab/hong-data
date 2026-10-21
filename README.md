@@ -371,3 +371,11 @@ Tests:
 ```bash
 python -m pytest tests/
 ```
+
+The simulations behind the Compare tab's p-values
+([design.md](design.md#statistical-testing)) are a script of their own, run with gjs
+(about ten minutes; `--quick` for a short check that it runs):
+
+```bash
+gjs -m tests/simulate_pvalues.mjs
+```

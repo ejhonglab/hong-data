@@ -220,9 +220,11 @@ constant) is left out of the counts, and the CSV's `resamplings` says how many w
 ### How each holds up
 
 Each test was run on pairs of unrelated spaces, so every p < α is a false positive: a
-valid test gives p < 0.05 for 5% of them and p < 0.2 for 20%. Each space had n odors (15
-or 30), each a vector of 30 values (as across 30 glomeruli), standard normal values from
-`Math.random` (Box–Muller); its similarities were the Pearson correlations of those; r
+valid test gives p < 0.05 for 5% of them and p < 0.2 for 20%. The tables below are the
+output of `tests/simulate_pvalues.mjs` (`gjs -m tests/simulate_pvalues.mjs`, about ten
+minutes; seeded, so it gives them again). Each space had n odors (15 or 30), each a
+vector of 30 values (as across 30 glomeruli), standard normal values (Box–Muller, from
+a seeded sfc32 generator); its similarities were the Pearson correlations of those; r
 was the Spearman correlation of two spaces' similarities; each test had 1000
 resamplings or permutations; each row is 500 pairs of spaces, so a share is within about
 1% of the truth at 5%, 1.8% at 20% (one standard error). The odors of a space were:
@@ -238,21 +240,21 @@ Unrelated spaces with p < 0.05, for 15 / 30 odors (5% is right):
 
 | Odors            | bootstrap of odor pairs | bootstrap of odors | permutation (Mantel) |
 |------------------|-------------------------|--------------------|----------------------|
-| alike            | 4.6% / 4.8%             | 0% / 0.4%          | 5.0% / 5.0%          |
-| saturated        | 4.0% / 5.8%             | 0% / 0%            | 4.6% / 5.6%          |
-| broad responders | **32% / 49%**           | 4.0% / 5.6%        | 3.4% / 4.2%          |
+| alike            | 5.4% / 5.4%             | 0.4% / 0.2%        | 5.4% / 5.8%          |
+| saturated        | 4.2% / 5.8%             | 0.4% / 0.4%        | 3.8% / 5.6%          |
+| broad responders | **36.2% / 50.8%**       | 5.6% / 6.8%        | 4.8% / 4.8%          |
 
 and with p < 0.2 (20% is right):
 
 | Odors            | bootstrap of odor pairs | bootstrap of odors | permutation (Mantel) |
 |------------------|-------------------------|--------------------|----------------------|
-| alike            | 22.6% / 21.0%           | 4.2% / 3.6%        | 23.4% / 20.0%        |
-| saturated        | 8.8% / 9.0%             | 1.2% / 1.4%        | 19.4% / 19.0%        |
-| broad responders | 49.8% / 63.4%           | 16.0% / 21.4%      | 15.4% / 17.4%        |
+| alike            | 19.2% / 22.2%           | 5.6% / 5.0%        | 20.4% / 21.6%        |
+| saturated        | 11.6% / 10.6%           | 2.4% / 1.4%        | 22.0% / 23.6%        |
+| broad responders | 57.0% / 67.8%           | 22.2% / 23.8%      | 19.4% / 20.6%        |
 
-- **Permutation** is right in every case to within sampling error (at most about 2.5
-  standard errors), and its furthest miss is low, on the safe side (broad responders at
-  0.2: 15–17%), as an exact test's should be.
+- **Permutation** is right in every case to within sampling error: its furthest miss,
+  23.6% at 0.2 (saturated, 30 odors), is 2 standard errors out, as one of 12 rates may
+  well be by chance.
 - **The bootstrap of odor pairs** is right for alike odors, where two pairs sharing an
   odor are about uncorrelated (for independent random vectors, a's similarity to b and
   its similarity to c are). For broad responders it is badly wrong: p < 0.05 for a third
@@ -263,9 +265,9 @@ and with p < 0.2 (20% is right):
   independent sees only the much smaller spread of a correlation of n(n − 1)/2 values,
   so its p-values come out too small, more so with more odors (the pairs grow as n²,
   the odors carrying the effect only as n). For saturated odors it is about right at
-  0.05 but not at 0.2 (9%): its p-values are not uniform when nothing is related.
-- **The bootstrap of the odors** keeps the row effects, so broad responders do not fool
-  it (4.0–5.6%). Otherwise it is far too conservative (0–0.4% at 0.05 for alike odors):
+  0.05 but not at 0.2 (11%): its p-values are not uniform when nothing is related.
+- **The bootstrap of the odors** keeps the row effects, so it is about right for broad
+  responders (5.6–6.8%). Otherwise it is far too conservative (0.2–0.4% at 0.05):
   its resamples spread wider than r really varies, as an odor drawn twice brings all its
   pairs twice and about a third of the odors are left out of each draw. It would rarely
   find a relation that is there.
@@ -281,9 +283,10 @@ and with p < 0.2 (20% is right):
   widely in how strongly they drive ORNs and PNs (some activate many glomeruli strongly,
   and concentration scales responses). It is still offered, as it was asked for first,
   with a warning in the p-values' heading.
-- The bootstrap of the odors is safe but has little power to test against 0. It suits
-  other questions, such as a confidence interval for r or whether one space matches B
-  better than another does, which is how Nili et al. 2014 use it.
+- The bootstrap of the odors has little power to test against 0, far too conservative
+  unless odors differ a lot in how strongly they respond. It suits other questions, such
+  as a confidence interval for r or whether one space matches B better than another
+  does, which is how Nili et al. 2014 use it.
 - It costs no more than the bootstrap of the odors (every pair, each draw).
 
 Its limits:
@@ -344,7 +347,9 @@ Permutation, run later with the same generator (after other draws, but into the 
 cycle), gave exactly the same rates as the bootstrap of odor pairs. An exact test should
 not reach 8.0% on unrelated spaces, and that gave the flaw away. These figures were
 reported, and briefly committed (in `0a65d85`: "somewhat liberal", 4–8%), before the
-generator was replaced with `Math.random`, which gave the tables above.
+generator was replaced: with `Math.random`, whose figures were the same within sampling
+error, then in `tests/simulate_pvalues.mjs` with a seeded sfc32, which gave the tables
+above.
 
 ## Code layout
 
