@@ -234,7 +234,7 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   right:
   - *Odor–odor similarity* within each dataset (Pearson or Spearman correlation, or
     cosine similarity, of two odors' responses across the glomeruli or ROIs both have),
-    under its data or instead of it.
+    under its data (by default), instead of it, or not shown.
   - *Compare to*: chemical structure, as the Jaccard similarity (1 − Jaccard distance)
     of the odors' ECFP fingerprints (RDKit's Morgan fingerprints from their InChI, ECFP6
     by default, of any even diameter up to 12), and every reference dataset with
@@ -242,9 +242,12 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     are matched across them by the Odors table (one chemical alone, not mixtures; an odor
     at several concentrations as its highest, lowest or the mean of them); each says how
     many of the odors shown it has, and its similarities over those are shown.
-  - *Between similarities*: a table of the Spearman (or Pearson) correlation of each two
+  - *Between similarities*: a matrix of the Spearman (or Pearson) correlation of each two
     of the datasets and spaces compared to: of their similarities for each pair of the
-    odors both have (one side of each matrix, without its diagonal), with how many odors.
+    odors both have (one side of each matrix, without its diagonal), each cell saying r
+    and of how many odors. Like every matrix of the tab, it can be exported as a figure
+    (SVG, PDF, PNG, with the numbers in the cells when they are large enough) or a
+    table (CSV: for it, each two spaces once with r, odors and pairs).
 - **Odors**: the app's own table of odor metadata, one row per chemical, with links and
   PubChem structure images. It is synced one way from a Google sheet (its link set in
   the Admin tab) or a CSV imported in the Admin tab, with the columns of

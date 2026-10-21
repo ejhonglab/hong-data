@@ -253,6 +253,26 @@ export class Heatmap {
       if (this.hasRowSubs && cellH >= 6) for (let k = this.rowLabelRunOf[firstRow] + 1; k <= this.rowLabelRunOf[lastRow]; k++) {
         ctx.fillRect(this.labelW, this.rowLabelRuns[k].start * cellH - st, this.viewW, 1);
       }
+
+      // text in the cells (model.cellText(row, col): lines, the first larger), when they fit
+      if (m.cellText && cellW >= CELL_TEXT_MIN.w && cellH >= CELL_TEXT_MIN.h) {
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        for (let r = firstRow; r <= lastRow; r++) {
+          for (let c = firstCol; c <= lastCol; c++) {
+            const lines = cellLines(m.cellText(r, c), cellH);
+            if (!lines.length) continue;
+            const t = norm.toUnit(m.values[r * nCols + c]), i = Math.max(0, Math.min(255, Math.round(t * 255))) * 3;
+            ctx.fillStyle = textOn(t === t ? [lut[i], lut[i + 1], lut[i + 2]] : nan);
+            const x = this.labelW + (c + 0.5) * cellW - sl, y = (r + 0.5) * cellH - st - ((lines.length - 1) * CELL_LINE) / 2;
+            lines.forEach((line, k) => {
+              ctx.font = `${k ? 9.5 : 11.5}px ${FONT_FAMILY}`;
+              ctx.fillText(ellipsize(ctx, line, cellW - 4), x, y + k * CELL_LINE);
+            });
+          }
+        }
+        ctx.textAlign = 'start';
+      }
     }
 
     // ---- row labels (opaque column at the left)
@@ -667,6 +687,22 @@ export class Heatmap {
 }
 
 // ---------------------------------------------------------------- helpers
+// text in cells: shown when they are at least this large; its lines' spacing
+export const CELL_TEXT_MIN = { w: 26, h: 14 };
+const CELL_LINE = 12;
+
+// the lines of a cell's text that fit in its height
+export function cellLines(text, cellH) {
+  if (text == null || text === '') return [];
+  return String(text).split('\n').slice(0, Math.max(1, Math.floor((cellH - 2) / CELL_LINE)));
+}
+
+// a colour to write on a cell of colour rgb ([r, g, b], 0-255): dark on light, white on dark
+export function textOn(rgb) {
+  const lum = (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255;
+  return lum > 0.55 ? '#1d1f22' : '#ffffff';
+}
+
 function uniqueKeys(items) {
   const seen = new Set();
   for (const it of items) seen.add(it.key);

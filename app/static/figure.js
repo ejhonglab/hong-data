@@ -8,7 +8,7 @@
 // (either way round)
 // opts: { cellW, cellH, lut, norm, nanColor, valueLabel, title }
 import { fmtNum } from './colormaps.js';
-import { parseColor } from './heatmap.js';
+import { CELL_TEXT_MIN, cellLines, parseColor, textOn } from './heatmap.js';
 
 const FONT = 'Helvetica, Arial, sans-serif';
 const INK = '#1d1f22', INK_MUTED = '#5c6066', RULE = '#cfd1cf', SURFACE = '#ffffff', LINE = '#444444';
@@ -139,6 +139,23 @@ function drawFigure(f, L, model, o) {
   if (L.hasRowGroups) for (const r of L.rowRuns.slice(1)) f.rect(gx, gy + r.start * cellH - 1, gw, 2, SURFACE);
   if (L.anySub && cellW >= 6) for (const r of L.labelRuns.slice(1)) f.rect(gx + r.start * cellW, gy, 1, gh, SURFACE);
   if (L.anyRowSub && cellH >= 6) for (const r of L.rowLabelRuns.slice(1)) f.rect(gx, gy + r.start * cellH, gw, 1, SURFACE);
+  // text in the cells, as on screen
+  if (model.cellText && cellW >= CELL_TEXT_MIN.w && cellH >= CELL_TEXT_MIN.h) {
+    const nan = parseColor(o.nanColor);
+    for (let r = 0; r < L.nR; r++) {
+      for (let c = 0; c < L.nC; c++) {
+        const lines = cellLines(model.cellText(r, c), cellH);
+        if (!lines.length) continue;
+        const t = o.norm.toUnit(model.values[r * L.nC + c]), i = Math.max(0, Math.min(255, Math.round(t * 255))) * 3;
+        const color = textOn(t === t ? [o.lut[i], o.lut[i + 1], o.lut[i + 2]] : nan);
+        const y = gy + (r + 0.5) * cellH - ((lines.length - 1) * 12) / 2;
+        lines.forEach((line, k) => {
+          const size = k ? 8.5 : 10.5;
+          f.text(ellipsize(line, cellW - 4, size), gx + (c + 0.5) * cellW, y + k * 12 + MID * size, { size, color, anchor: 'middle' });
+        });
+      }
+    }
+  }
 
   // rows: labels (and repeat numbers right of them), then groups (with a rule between
   // them) left of the labels

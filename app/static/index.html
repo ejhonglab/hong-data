@@ -328,10 +328,10 @@
     </div>
     <aside class="compare-options" aria-label="What to compare">
       <h2>Odor–odor similarity</h2>
-      <label class="check"><input type="checkbox" id="cmp-sim"> Within each dataset</label>
+      <label class="opt">Within each dataset <select id="cmp-place"><option value="below">under its data</option>
+        <option value="instead">instead of its data</option><option value="none">not shown</option></select></label>
       <label class="opt">By <select id="cmp-metric"></select></label>
-      <label class="opt">Shown <select id="cmp-place"><option value="below">under its data</option><option value="instead">instead of its data</option></select></label>
-      <p class="muted small">Of two odors, by their responses across the dataset's glomeruli or ROIs (those both have).</p>
+      <p class="muted small">Of two odors, by their responses across the dataset's glomeruli or ROIs (those both have); also how the spaces compared to and the table below are computed.</p>
 
       <h2>Compare to</h2>
       <p class="muted small" id="cmp-shown"></p>
@@ -710,7 +710,8 @@
           <button type="button" data-export="svg">SVG <span class="muted">vector</span></button>
           <button type="button" data-export="pdf">PDF <span class="muted">vector</span></button>
           <button type="button" data-export="png">PNG <span class="muted">image</span></button>
-          <p class="menu-note">The whole matrix as currently ordered and colored, at the current cell size, with a colorbar.</p>
+          <button type="button" data-export="csv" hidden>Table (CSV) <span class="muted">values</span></button>
+          <p class="menu-note">The whole matrix as currently ordered and colored, at the current cell size, with a colorbar (or its values, as a table).</p>
         </div>
       </details>
     </div>
