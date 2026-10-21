@@ -1826,6 +1826,7 @@ class Browse {
     menus.forEach((m) => this._dataLink(m, null));
     this.recordings = null;
     $('#ds-mismatches').hidden = true;
+    $('#ds-all-data').hidden = true;
     let res;
     try { res = await api(`/api/datasets/${id}/data_paths`); } catch (e) {
       if (this.selected === id) menus.forEach((m) => this._dataLink(m, { status: 'unchecked', error: `could not ask the server (${e.message})` }));
@@ -1839,6 +1840,10 @@ class Browse {
     const btn = $('#ds-mismatches');
     btn.hidden = !(n('raw') + n('mocorr'));
     btn.title = `${n('raw')} recording${n('raw') === 1 ? '' : 's'} only in the raw data, ${n('mocorr')} only in the motion-corrected data`;
+    // both looked in, and every recording in both (but anatomical ones)
+    const all = $('#ds-all-data');
+    all.hidden = !(res.raw.compared && btn.hidden);
+    all.title = 'Every recording of its flies is in both the raw and the motion-corrected data (anatomical ones need not be)';
   }
 
   // every recording of the dataset's flies in its raw and motion-corrected data folders,

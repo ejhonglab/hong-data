@@ -206,6 +206,8 @@
           </div>
           <div class="ds-actions">
             <div class="ds-data-links">
+              <button type="button" class="btn warn" id="ds-mismatches" hidden>Show data mismatches</button>
+              <span class="indicator ok data-all" id="ds-all-data" hidden>All data in both</span>
               <details class="menu menu-right data-link" id="ds-raw" data-kind="raw">
                 <summary class="btn">Raw data</summary>
                 <div class="menu-list data-menu"></div>
@@ -214,7 +216,6 @@
                 <summary class="btn">Motion corrected / traces</summary>
                 <div class="menu-list data-menu"></div>
               </details>
-              <button type="button" class="btn warn" id="ds-mismatches" hidden>Show data mismatches</button>
             </div>
             <div class="ds-buttons">
               <span class="dl-status" id="ds-download-status"></span>

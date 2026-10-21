@@ -346,6 +346,8 @@ table.diff .new { color: var(--ok); }
 .data-menu .data-only { margin: 0 10px 8px; font-size: 12.5px; }
 .btn.warn { color: var(--warn); background: var(--warn-soft); border-color: #f0dcae; }
 .btn.warn:hover { border-color: #e0b85c; }
+.indicator.data-all { font-size: 13px; font-weight: 500; padding: 5px 12px; cursor: default; user-select: none; }
+.indicator.data-all[hidden] { display: none; }
 /* every recording in the raw and motion-corrected data, side by side */
 dialog.mismatches { width: min(980px, 94vw); max-height: 88vh; padding: 0; border: 1px solid var(--rule-strong); border-radius: var(--radius); background: var(--panel); color: var(--ink); }
 dialog.mismatches[open] { display: flex; flex-direction: column; }
