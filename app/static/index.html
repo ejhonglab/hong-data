@@ -214,6 +214,7 @@
                 <summary class="btn">Motion corrected / traces</summary>
                 <div class="menu-list data-menu"></div>
               </details>
+              <button type="button" class="btn warn" id="ds-mismatches" hidden>Show data mismatches</button>
             </div>
             <div class="ds-buttons">
               <span class="dl-status" id="ds-download-status"></span>
@@ -593,6 +594,20 @@
       </div>
       <div class="player-roi-list"></div>
     </aside>
+  </div>
+</dialog>
+
+<dialog id="mismatches" class="mismatches" aria-labelledby="mismatches-title">
+  <div class="mismatches-head">
+    <h2 id="mismatches-title">Raw and motion-corrected data</h2>
+    <form method="dialog"><button type="submit" class="btn small">Close</button></form>
+  </div>
+  <p class="muted small" id="mismatches-note"></p>
+  <div class="mismatches-body">
+    <table class="odor-table mismatches-table">
+      <thead><tr><th>Recorded</th><th>Raw data</th><th>Motion corrected / traces</th></tr></thead>
+      <tbody></tbody>
+    </table>
   </div>
 </dialog>
 

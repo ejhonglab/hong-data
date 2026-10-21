@@ -173,7 +173,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   it (from the top of tensor, or from a folder set in the Admin tab) or may not read it;
   orange when one has recordings the other does not (by fly and recording folder name,
   not counting anatomical ones: e.g. recordings not motion corrected yet), which its
-  menu lists, as does the movie player, apart from the rest.
+  menu lists, as does the movie player, apart from the rest. "Show data mismatches"
+  (orange, then) lists every recording of both side by side, by fly in the order they
+  were recorded (as their Experiment.xml says), the ones in only one highlighted.
   The path can be entered or corrected in their menus, checked as at upload (the README
   is left as it is). Its README can be edited there too (Edit, in the README box): saving asks
   whether to overwrite the README on the server (its path is shown) or discard the

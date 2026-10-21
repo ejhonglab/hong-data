@@ -11,6 +11,7 @@ little-endian numbers, so it never has to parse a TIFF or read a whole movie.
 from __future__ import annotations
 
 import os
+import re
 import threading
 from collections import OrderedDict
 from pathlib import Path
@@ -124,6 +125,61 @@ def unmatched(raw: list[dict], mocorr: list[dict]) -> dict[str, list[dict]]:
                 for m in found:
                     m["unmatched"] = True
     return result
+
+
+def _natural(name: Optional[str]) -> list:
+    """`name` to sort by, numbers in it by their value (megamat_2 before megamat_10)."""
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", name or "")]
+
+
+def side_by_side(raw: list[dict], mocorr: list[dict]) -> list[dict]:
+    """Every recording of a dataset's flies in its raw and motion-corrected data folders,
+    paired as `unmatched` pairs them (`find`'s movies of each found by fly), in the order
+    they were recorded: by fly, then by when its raw recording says it was made (its
+    Experiment.xml's date; if one of the fly's does not say, when they were written); one
+    with no raw data after the one before it by name (megamat_3 after megamat_2), there
+    being no time it was recorded.
+
+    Returns:
+        rows with ``date``, ``fly_num``, ``recording`` (None: the fly's folder itself),
+        ``raw`` and ``mocorr`` (the names of its movies in each, None if it has none
+        there), ``recorded`` (when it was recorded, as its Experiment.xml says:
+        YYYY-MM-DD HH:MM:SS, the acquisition computer's time), ``time`` (when its
+        Experiment.xml was written, in seconds since 1970; both None without raw data),
+        ``matched`` and ``anatomical``.
+    """
+    rows: dict[tuple, dict] = {}
+    for kind, found in (("raw", raw), ("mocorr", mocorr)):
+        for m in found:
+            if not m["fly"]:
+                continue
+            key = (m["fly"]["date"], m["fly"]["fly_num"], m["recording"])
+            row = rows.setdefault(key, {"date": key[0], "fly_num": key[1], "recording": key[2], "raw": None, "mocorr": None,
+                                        "recorded": None, "time": None})
+            row[kind] = [*(row[kind] or []), Path(m["path"]).name]
+            if kind == "raw" and row["time"] is None:
+                xml = Path(m["path"]).parent / "Experiment.xml"
+                try:
+                    row["time"] = os.path.getmtime(xml)
+                    if os.path.getsize(xml) < tensor.MAX_FILE_BYTES:
+                        at = thorimage.recorded_at(xml.read_text(errors="replace"))
+                        row["recorded"] = at.isoformat(sep=" ") if at else None
+                except OSError:
+                    pass
+    out = []
+    for fly in sorted({(r["date"], r["fly_num"]) for r in rows.values()}):
+        mine = [r for r in rows.values() if (r["date"], r["fly_num"]) == fly]
+        # by when they say they were recorded, else (none of them saying) when their Experiment.xml was written
+        by = "recorded" if all(r["recorded"] for r in mine if r["time"] is not None) else "time"
+        order = sorted((r for r in mine if r["time"] is not None), key=lambda r: (r[by], _natural(r["recording"])))
+        for r in sorted((r for r in mine if r["time"] is None), key=lambda r: _natural(r["recording"])):
+            before = [o for o in order if _natural(o["recording"]) <= _natural(r["recording"])]
+            order.insert(order.index(max(before, key=lambda o: _natural(o["recording"]))) + 1 if before else 0, r)
+        out += order
+    for r in out:
+        r.update(matched=r["raw"] is not None and r["mocorr"] is not None,
+                 anatomical=bool(r["recording"] and tensor.ANATOMICAL.fullmatch(r["recording"])))
+    return out
 
 
 # ----------------------------------------------------------------------- reading

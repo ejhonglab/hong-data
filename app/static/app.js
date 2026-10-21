@@ -1638,6 +1638,7 @@ class Browse {
       $('#ds-odors-toggle').setAttribute('aria-expanded', String(!p.hidden));
       if (!p.hidden && this.selected != null) this.showOdors(this.selected);
     });
+    $('#ds-mismatches').addEventListener('click', () => this.showMismatches());
     $('#ds-odors').addEventListener('click', async (e) => {
       const b = e.target.closest('[data-copy-sheet]');
       if (!b) return;
@@ -1823,12 +1824,45 @@ class Browse {
   async showDataPaths(id) {
     const menus = $$('.data-link');
     menus.forEach((m) => this._dataLink(m, null));
+    this.recordings = null;
+    $('#ds-mismatches').hidden = true;
     let res;
     try { res = await api(`/api/datasets/${id}/data_paths`); } catch (e) {
       if (this.selected === id) menus.forEach((m) => this._dataLink(m, { status: 'unchecked', error: `could not ask the server (${e.message})` }));
       return;
     }
-    if (this.selected === id) menus.forEach((m) => this._dataLink(m, res[m.dataset.kind]));
+    if (this.selected !== id) return;
+    menus.forEach((m) => this._dataLink(m, res[m.dataset.kind]));
+    // recordings in one of the folders and not the other: all of them side by side, on asking
+    this.recordings = res.recordings;
+    const n = (kind) => res[kind].unmatched?.length || 0;
+    const btn = $('#ds-mismatches');
+    btn.hidden = !(n('raw') + n('mocorr'));
+    btn.title = `${n('raw')} recording${n('raw') === 1 ? '' : 's'} only in the raw data, ${n('mocorr')} only in the motion-corrected data`;
+  }
+
+  // every recording of the dataset's flies in its raw and motion-corrected data folders,
+  // side by side in the order they were recorded, those in one only highlighted
+  showMismatches() {
+    const rows = this.recordings || [], d = this.cache.get(this.selected)?.d;
+    const only = (kind) => rows.filter((r) => !r.matched && !r.anatomical && r[kind]).length;
+    $('#mismatches-title').textContent = `Raw and motion-corrected data${d ? ` of ${d.title}` : ''}`;
+    $('#mismatches-note').textContent = `${rows.length} recordings: ${only('raw')} only in the raw data, ${only('mocorr')} only in the `
+      + 'motion-corrected data (highlighted). In the order they were recorded, as their Experiment.xml says (else by when it was '
+      + 'written: "file time"); one with no raw data after the one before it by name. Anatomical recordings are not expected to '
+      + 'be motion corrected.';
+    const cell = (r, kind) => (r[kind]
+      ? `<code>${esc(r.recording ?? "(the fly's folder)")}</code> <span class="muted">${esc(r[kind].slice(0, 3).join(', '))}${r[kind].length > 3 ? `, and ${r[kind].length - 3} more` : ''}</span>`
+      : `<span class="absent">${r.anatomical ? '— (anatomical)' : '— not here'}</span>`);
+    let fly = null;
+    $('#mismatches tbody').innerHTML = rows.map((r) => {
+      const head = `${r.date} fly ${r.fly_num}` !== fly ? `<tr class="group"><td colspan="3">${esc((fly = `${r.date} fly ${r.fly_num}`))}</td></tr>` : '';
+      const cls = r.matched ? '' : r.anatomical ? ' class="anatomical"' : ' class="mismatch"';
+      const when = r.recorded ? esc(r.recorded.slice(0, 16)) : r.time != null ? `${esc(fmtEpoch(r.time))} <span class="muted">(file time)</span>` : '—';
+      return `${head}<tr${cls}><td class="when">${when}</td>
+        <td>${cell(r, 'raw')}</td><td>${cell(r, 'mocorr')}</td></tr>`;
+    }).join('');
+    $('#mismatches').showModal();
   }
 
   // r: as from tensor.find_data, or null while it is looked up

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from urllib.parse import urlencode
 
 import numpy as np
@@ -86,9 +87,29 @@ def test_unmatched(root):
         "mocorr": [{"date": "2023-11-19", "fly_num": 1, "recording": "t2", "n_movies": 1}]}
     assert [(m["recording"], m["unmatched"]) for m in raw] == [("anat_1", False), ("t1", False), ("t3", True)]
     assert [m["unmatched"] for m in mocorr] == [False, False, True]
+    # all side by side, in the order they were recorded; one with no raw data after the one before it by name
+    for name, t in (("t1", 2e9), ("t3", 1e9), ("anat_1", 3e9)):
+        os.utime(root / "tom/raw/2023-11-19/1" / name / "Experiment.xml", (t, t))
+    rows = movies.side_by_side(raw, mocorr)
+    assert [(r["recording"], r["raw"], r["mocorr"], r["time"], r["matched"], r["anatomical"]) for r in rows] == [
+        ("t3", ["Image_001_001.raw"], None, 1e9, False, False),
+        ("t1", ["Image_001_001.raw"], ["mocorr.tif", "flipped.tif"], 2e9, True, False),
+        ("t2", None, ["mocorr.tif"], None, False, False),
+        ("anat_1", ["Image_001_001.raw"], None, 3e9, False, True)]
+    assert {(r["date"], r["fly_num"]) for r in rows} == {("2023-11-19", 1)} and rows[0]["recorded"] is None
+    # by when their Experiment.xml says they were recorded, when they all do
+    for name, when in (("t1", "11/19/2023 10:00:00"), ("t3", "11/19/2023 11:00:00"), ("anat_1", "11/19/2023 9:30:00")):
+        xml = root / "tom/raw/2023-11-19/1" / name / "Experiment.xml"
+        t = os.path.getmtime(xml)
+        xml.write_text(XML.replace("<LSM", f'<Date date="{when}" uTime="0"/><LSM'))
+        os.utime(xml, (t, t))
+    rows = movies.side_by_side(raw, mocorr)
+    assert [(r["recording"], r["recorded"]) for r in rows] == [
+        ("anat_1", "2023-11-19 09:30:00"), ("t1", "2023-11-19 10:00:00"), ("t2", None), ("t3", "2023-11-19 11:00:00")]
     # movies not found by fly are not compared
     one = movies.find(root / "tom/analysis/2023-11-19/2", "mocorr", FLIES)
     assert movies.unmatched(raw, one)["mocorr"] == [] and one[0]["unmatched"] is False
+    assert [r["recording"] for r in movies.side_by_side(raw, one)] == ["anat_1", "t1", "t3"]
 
 
 def test_tiff(root):
@@ -162,6 +183,7 @@ def test_api(main, root, tmp_path, monkeypatch):  # noqa: F811
     assert [m["unmatched"] for m in r["mocorr"]["movies"]] == [False, False, True]
     paths = json.loads(get(main.dataset_data_paths, path_params={"ds_id": ds_id}).body)
     assert paths["mocorr"]["status"] == "ok" and paths["mocorr"]["unmatched"] == t2 and paths["raw"]["compared"]
+    assert [(r["recording"], r["matched"]) for r in paths["recordings"]] == [("t1", True), ("t2", False)]
 
     movie = r["mocorr"]["movies"][0]
     info = json.loads(get(main.movie_info, {"path": movie["path"]}).body)

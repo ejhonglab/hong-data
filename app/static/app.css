@@ -344,6 +344,21 @@ table.diff .new { color: var(--ok); }
 .data-link.warn:not(.missing) > summary { color: var(--warn); border-color: #f0dcae; background: var(--warn-soft); }
 .data-link.warn:not(.missing) > summary .why { color: inherit; opacity: .85; }
 .data-menu .data-only { margin: 0 10px 8px; font-size: 12.5px; }
+.btn.warn { color: var(--warn); background: var(--warn-soft); border-color: #f0dcae; }
+.btn.warn:hover { border-color: #e0b85c; }
+/* every recording in the raw and motion-corrected data, side by side */
+dialog.mismatches { width: min(980px, 94vw); max-height: 88vh; padding: 0; border: 1px solid var(--rule-strong); border-radius: var(--radius); background: var(--panel); color: var(--ink); }
+dialog.mismatches[open] { display: flex; flex-direction: column; }
+dialog.mismatches::backdrop { background: rgba(29,31,34,.45); }
+.mismatches-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 16px 4px; }
+.mismatches-head h2 { font-size: 15px; }
+#mismatches-note { padding: 0 16px 8px; margin: 0; }
+.mismatches-body { overflow: auto; padding: 0 16px 16px; }
+.mismatches-table td { vertical-align: top; }
+.mismatches-table td.when { white-space: nowrap; color: var(--ink-muted); }
+.mismatches-table tr.mismatch td { background: var(--warn-soft); }
+.mismatches-table tr.mismatch .absent { color: var(--warn); font-weight: 600; }
+.mismatches-table .absent { color: var(--ink-muted); }
 .data-menu .data-only ul { margin: 4px 0 0; padding-left: 18px; }
 .data-menu { width: min(560px, 90vw); max-height: 60vh; overflow: auto; padding: 8px 4px; }
 .data-menu .kv { margin: 0 10px 8px; }

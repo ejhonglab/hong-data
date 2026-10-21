@@ -7,6 +7,7 @@ read: it does not follow changes made to the wavelength at the laser.
 """
 from __future__ import annotations
 
+import datetime as dt
 import re
 import xml.etree.ElementTree as ET
 from typing import Any, Optional
@@ -116,6 +117,21 @@ def raw_layout(text: str) -> dict[str, Any]:
     if fps and _attr(lsm, "averageMode") not in (None, "0"):
         fps /= _num(_attr(lsm, "averageNum")) or 1
     return {"x": int(x), "y": int(y), "z": z, "flyback": flyback, "c": c, "fps": fps}
+
+
+def recorded_at(text: str) -> Optional[dt.datetime]:
+    """When a recording was made, by its Experiment.xml (``<Date date="11/19/2023 14:23:10">``,
+    the acquisition computer's time); None if it does not say, or cannot be read."""
+    try:
+        date = _attr(ET.fromstring(text).find("Date"), "date")
+    except ET.ParseError:
+        return None
+    for fmt in ("%m/%d/%Y %H:%M:%S", "%m/%d/%Y %I:%M:%S %p", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return dt.datetime.strptime((date or "").strip(), fmt)
+        except ValueError:
+            continue
+    return None
 
 
 def notes_yaml_names(text: str) -> list[str]:
