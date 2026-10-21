@@ -101,7 +101,12 @@ between the frontend and the server. Using the app is described in
   dataset's odor counts only alone (not in a mixture) and once, at the concentration
   chosen. Similarities of similarities are correlated over one side of the matrices
   (without the diagonal), pairs missing in either left out; their p-values, how they are
-  tested and why, are under [Statistical testing](#statistical-testing).
+  tested and why, are under [Statistical testing](#statistical-testing). Two spaces side
+  by side are two viewers of the same odors in the same order, linked (`linked` in
+  `MatrixViewer`) rather than one matrix of both, so each keeps its own colors and units:
+  an edit of either's rows is copied to the other (rows keyed by their place in that
+  shared order), as are cell sizes, transposing, chemical labels and scrolling, and their
+  headers and toolbars are made as high as each other's so the rows stay level.
 - **The laser wavelength is never read from `Experiment.xml`**: ThorImage's
   `MultiPhotonLaser` value does not follow changes made to the wavelength at the laser,
   so the wavelength is only ever entered in the form.

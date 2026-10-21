@@ -232,29 +232,37 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   in the viewer of reference data (colors, cell size, transpose, moving and removing
   rows and columns, figure export), without trials, ROI ordering or clustering. On the
   right:
-  - *Odor–odor similarity* within each dataset (Pearson or Spearman correlation, or
-    cosine similarity, of two odors' responses across the glomeruli or ROIs both have),
-    under its data (by default), instead of it, or not shown.
+  - *Show* each space as its data and its odor–odor similarity (by default), its
+    similarity only, or its data only: one menu for the datasets, the reference data
+    and the two side by side (chemical structure only ever as similarity).
+  - *Odor–odor similarity* within datasets (Pearson or Spearman correlation, or cosine
+    similarity, of two odors' responses across the glomeruli or ROIs both have), and
+    within reference data (Pearson correlation or cosine similarity, of their values
+    along its other axis).
   - *Compare to*: chemical structure, as the Jaccard similarity (1 − Jaccard distance)
     of the odors' ECFP fingerprints (RDKit's Morgan fingerprints from their InChI, ECFP6
     by default, of any even diameter up to 12), and every reference dataset with
-    chemicals, by their values along its other axis (same similarity as above). Odors
-    are matched across them by the Odors table (one chemical alone, not mixtures; an odor
-    at several concentrations as its highest, lowest or the mean of them); each says how
-    many of the odors shown it has, and its similarities over those are shown.
+    chemicals. Odors are matched across them by the Odors table (one chemical alone, not
+    mixtures; an odor at several concentrations as its highest, lowest or the mean of
+    them); each says how many of the odors shown it has, and its data and similarities
+    over those are shown.
+  - *Side by side*: two of the spaces shown (chosen there, or by clicking a cell of the
+    correlations between similarities), over the odors both have, in one order (the
+    dataset's, if one is), next to each other with each row level with its other: moving
+    or removing a row, cell sizes, transposing, chemical labels and scrolling stay the
+    same in both, and hovering an odor in one marks it in the other.
   - *Between similarities*: a matrix of the Spearman (or Pearson) correlation of each two
     of the datasets and spaces compared to: of their similarities for each pair of the
     odors both have (one side of each matrix, without its diagonal), each cell saying r
     and of how many odors. Datasets are named there by what was recorded: their coding
     unit (kc or kcs as KCs, orn or orns as ORNs, pn or pns as PNs, in any case), or for
-    glomeruli ORNs (a pebbled driver), PNs (GH146) or glomeruli;
-    by their full names (as in its CSV) when two would share one. To its right, the
-    p-value of each correlation against 0: two-sided, by permuting one space's odors (a
-    Mantel test, the default and the only one of the three that is exact; 5000
-    permutations by default) or by bootstrap (with replacement, of the pairs of odors or
-    of the odors),
-    Holm–Bonferroni adjusted for every two spaces shown, each cell saying the adjusted
-    and raw p (the options panel says why, with links). Like every matrix of the tab, they can be
+    glomeruli ORNs (a pebbled driver), PNs (GH146) or glomeruli; by their full names (as
+    in its CSV) when two would share one. To its right, the p-value of each correlation
+    against 0: two-sided, by permuting one space's odors (a Mantel test, the default and
+    the only one of the three that is exact; 5000 permutations by default) or by
+    bootstrap (with replacement, of the pairs of odors or of the odors), Holm–Bonferroni
+    adjusted for every two spaces shown, each cell saying the adjusted and raw p (the
+    options panel says why, with links). Like every matrix of the tab, they can be
     exported as a figure (SVG, PDF, PNG, with the numbers in the cells when they are large
     enough) or a table (CSV: for these, each two spaces once with r, odors, pairs and both
     p-values).

@@ -10,7 +10,9 @@
 // options = { cellW, cellH, lut, norm, nanColor, onHover(cellInfo|null),
 //             reorder: {rows, cols} (labels of these may be dragged), onReorder(axis, keys),
 //             onLabelMenu({axis, level, items, keys, x, y}) (right-click on a label),
-//             onLabelRemove({axis, level, items, keys}) (ctrl-click on a label) }
+//             onLabelRemove({axis, level, items, keys}) (ctrl-click on a label),
+//             onCellClick({row, col, rowIndex, colIndex}) (a click on a cell),
+//             minHeaderH (px: the header at least this high, to line up with another's) }
 // A label dragged moves its items within their group, and a group label its group;
 // onReorder then gets the axis's keys in their new order.
 import { fmtNum } from './colormaps.js';
@@ -32,6 +34,7 @@ export class Heatmap {
     this.model = null;
     this._raf = 0;
     this._hover = null;
+    this.mark = null; // {rows, cols}: indices of a row and a column shaded (see setMark)
     this._build();
   }
 
@@ -68,6 +71,7 @@ export class Heatmap {
     this._onLeave = () => { if (!this._drag?.active) this._setHover(null); };
     this.view.addEventListener('mousemove', this._onMove);
     this.view.addEventListener('mouseleave', this._onLeave);
+    this.view.addEventListener('click', (e) => this._click(e));
     this.head.addEventListener('mousemove', (e) => this._mouseHead(e));
     this.head.addEventListener('mouseleave', this._onLeave);
     for (const el of [this.view, this.head]) {
@@ -100,8 +104,15 @@ export class Heatmap {
   setOptions(options) {
     const sizeChanged = (options.cellW && options.cellW !== this.options.cellW) || (options.cellH && options.cellH !== this.options.cellH);
     Object.assign(this.options, options);
-    if (sizeChanged) this._measure();
+    if (sizeChanged || 'minHeaderH' in options) this._measure();
     this._layout();
+  }
+
+  // a row and a column (indices, either null) shaded, as those hovered in another heatmap
+  // of the same items
+  setMark(mark) {
+    this.mark = mark;
+    if (this.model) this._drawOverlay();
   }
 
   // --------------------------------------------------------------- layout
@@ -150,6 +161,9 @@ export class Heatmap {
     this.colGroupBand = this.hasColGroups ? 18 : 0;
     this.colSubBand = this.hasColSubs && cellW >= 10 ? 13 : 0;
     this.colDendroH = m.colDendro ? 44 : 0;
+    this.naturalHeaderH = this.colDendroH + this.colGroupBand + this.colLabelBand + this.colSubBand;
+    // any height more than its own above the column labels, which stay next to the cells
+    this.colLabelBand += Math.max(0, (this.options.minHeaderH || 0) - this.naturalHeaderH);
     this.headerH = this.colDendroH + this.colGroupBand + this.colLabelBand + this.colSubBand;
   }
 
@@ -429,9 +443,19 @@ export class Heatmap {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, this.viewW, this.viewH);
     if (this._drag?.active) { this._drawDrag(ctx, hc); return; }
+    const { cellW, cellH } = this.options;
+    const mk = this.mark;
+    if (mk) {
+      ctx.fillStyle = hc.fillStyle = 'rgba(0,0,0,0.1)';
+      if (mk.rows != null) ctx.fillRect(0, mk.rows * cellH - this.scroll.scrollTop, this.viewW, cellH);
+      const x = this.labelW + mk.cols * cellW - this.scroll.scrollLeft;
+      if (mk.cols != null && x > this.labelW - cellW) {
+        ctx.fillRect(x, 0, cellW, this.viewH);
+        hc.fillRect(x, 0, cellW, this.headerH);
+      }
+    }
     const h = this._hover;
     if (!h) return;
-    const { cellW, cellH } = this.options;
     const x = this.labelW + h.col * cellW - this.scroll.scrollLeft;
     const y = h.row * cellH - this.scroll.scrollTop;
     if (x < this.labelW - cellW) return;
@@ -509,7 +533,24 @@ export class Heatmap {
 
   _grabCursor(el, x, y) {
     const hit = this._labelAt(el, x, y);
-    el.style.cursor = hit && this.options.reorder?.[hit.axis] ? 'grab' : '';
+    el.style.cursor = hit && this.options.reorder?.[hit.axis] ? 'grab' : this.options.onCellClick && this._cellAt(el, x, y) ? 'pointer' : '';
+  }
+
+  // the cell at (x, y) in the view: {rowIndex, colIndex}, or null (labels, outside the matrix)
+  _cellAt(el, x, y) {
+    const m = this.model;
+    if (el !== this.view || !m || x < this.labelW) return null;
+    const colIndex = Math.floor((x - this.labelW + this.scroll.scrollLeft) / this.options.cellW);
+    const rowIndex = Math.floor((y + this.scroll.scrollTop) / this.options.cellH);
+    return colIndex >= 0 && colIndex < m.cols.length && rowIndex >= 0 && rowIndex < m.rows.length ? { rowIndex, colIndex } : null;
+  }
+
+  // a click on a cell, but for the one ending a drag (or removing a label, with ctrl)
+  _click(e) {
+    if (!this.options.onCellClick || e.ctrlKey || performance.now() - (this._dragEndedAt || 0) < 300) return;
+    const rect = this.view.getBoundingClientRect();
+    const at = this._cellAt(this.view, e.clientX - rect.left, e.clientY - rect.top);
+    if (at) this.options.onCellClick({ ...at, row: this.model.rows[at.rowIndex], col: this.model.cols[at.colIndex] });
   }
 
   _setHover(h, e) {
@@ -674,6 +715,7 @@ export class Heatmap {
     if (d.el.hasPointerCapture(d.pointerId)) d.el.releasePointerCapture(d.pointerId);
     d.el.style.cursor = '';
     if (!d.active) return;
+    this._dragEndedAt = performance.now();
     this.tooltip.hidden = true;
     this._drawOverlay();
     const { start, end } = d.run;

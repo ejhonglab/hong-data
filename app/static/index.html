@@ -327,11 +327,16 @@
       <div id="compare-view"></div>
     </div>
     <aside class="compare-options" aria-label="What to compare">
+      <h2>Show</h2>
+      <label class="opt">Each space as <select id="cmp-show"><option value="both">its data and its odor–odor similarity</option>
+        <option value="sim">its odor–odor similarity</option><option value="data">its data</option></select></label>
+      <p class="muted small">Datasets, reference data (over the odors shown that it has) and the two side by side alike; chemical structure only ever as similarity.</p>
+
       <h2>Odor–odor similarity</h2>
-      <label class="opt">Within each dataset <select id="cmp-place"><option value="below">under its data</option>
-        <option value="instead">instead of its data</option><option value="none">not shown</option></select></label>
-      <label class="opt">By <select id="cmp-metric"></select></label>
-      <p class="muted small">Of two odors, by their responses across the dataset's glomeruli or ROIs (those both have); also how the spaces compared to and the table below are computed.</p>
+      <label class="opt">Within datasets, by <select id="cmp-metric"></select></label>
+      <label class="opt">Within reference data, by <select id="cmp-ref-metric"><option value="pearson">Pearson correlation</option>
+        <option value="cosine">cosine similarity</option></select></label>
+      <p class="muted small">Of two odors: by their responses across a dataset's glomeruli or ROIs (those both have), or by their values across a reference dataset's other axis. The correlations between similarities below are of these.</p>
 
       <h2>Compare to</h2>
       <p class="muted small" id="cmp-shown"></p>
@@ -340,6 +345,10 @@
         <option value="max">its highest</option><option value="min">its lowest</option><option value="mean">the mean of them</option>
       </select></label>
       <p class="muted small">Odors are matched by the odor table, mixtures left out. Each space's similarities are shown over the odors shown that it has.</p>
+
+      <h2>Side by side</h2>
+      <div id="cmp-pair"></div>
+      <p class="muted small">Two of the spaces shown next to each other, over the odors both have, in one order, each row level with its other; or click a cell of the correlations between similarities.</p>
 
       <h2>Between similarities</h2>
       <label class="check"><input type="checkbox" id="cmp-rsa"> Correlate the similarities of each two</label>

@@ -440,7 +440,9 @@ class MatrixViewer {
       onReorder: (axis, keys) => this._reorder(axis, keys),
       onLabelMenu: (info) => this._labelMenu(info),
       onLabelRemove: ({ axis, keys }) => this._remove(axis, keys),
+      onHover: (info) => this._linkHover(info),
     });
+    this.heatmap.scroll.addEventListener('scroll', () => this._linkScroll(), { passive: true });
     this.colorbar = $('.colorbar', container);
     const saved = LS.get('olfdb.viewer', {});
     this.opts = Object.assign(
@@ -464,6 +466,10 @@ class MatrixViewer {
     this.clusterCache = new Map();
     this._seq = 0;
     this.onShow = null; // called once the matrix is drawn (as shown, or with cells of another size)
+    // {other, cols}: a viewer of the same rows in the same order (and with cols, the same
+    // columns), shown beside this one: rows moved, removed or reset, cell sizes, transposing,
+    // chemical labels and scrolling are kept the same in both, and what is hovered is marked
+    this.linked = null;
     this._wire();
   }
 
@@ -477,6 +483,7 @@ class MatrixViewer {
       if (s.dataset.opt === 'odorOrder') this.edits.cols.order = null;
       this._save();
       this._rebuild();
+      if (s.dataset.opt === 'chemLabels') this.linked?.other._setLinkedOpts({ chemLabels: s.value });
     }));
     for (const k of ['cellW', 'cellH']) {
       const range = $(`input[data-opt=${k}]`, tb);
@@ -486,6 +493,7 @@ class MatrixViewer {
         this._save();
         this.heatmap.setOptions({ cellW: this.opts.cellW, cellH: this.opts.cellH });
         this.onShow?.();
+        this.linked?.other._setLinkedOpts({ [k]: this.opts[k] });
       });
     }
     $$('input[type=checkbox][data-opt]', tb).forEach((cb) => cb.addEventListener('change', () => {
@@ -493,8 +501,9 @@ class MatrixViewer {
       this._save();
       this._syncEnabled();
       this._rebuild();
+      if (cb.dataset.opt === 'transpose') this.linked?.other._setLinkedOpts({ transpose: cb.checked });
     }));
-    $('[data-role=reset]', tb).addEventListener('click', () => { Object.assign(this.edits, newEdits()); this._rebuild(); });
+    $('[data-role=reset]', tb).addEventListener('click', () => { Object.assign(this.edits, newEdits()); this._rebuild(); this._linkEdits(); });
     wireMenu($('[data-role=export]', tb), ({ export: format }) => this.exportFigure(format));
   }
 
@@ -742,6 +751,7 @@ class MatrixViewer {
   _reorder(axis, keys) {
     this.edits[this._editAxis(axis)].order = keys;
     this._rebuild();
+    this._linkEdits();
   }
 
   // how many items of the heatmap's axis are shown (the trials of an odor being one)
@@ -753,6 +763,47 @@ class MatrixViewer {
     const { removed } = this.edits[this._editAxis(axis)];
     keys.forEach((k) => removed.add(k));
     this._rebuild();
+    this._linkEdits();
+  }
+
+  // ------------------------------------------------------- linked viewers
+  // this viewer's edits of its rows (and columns, if they are the same too) made the other's
+  _linkEdits() {
+    const l = this.linked;
+    if (!l) return;
+    for (const ax of l.cols ? ['rows', 'cols'] : ['rows']) {
+      const e = this.edits[ax];
+      l.other.edits[ax] = { removed: new Set(e.removed), order: e.order && [...e.order] };
+    }
+    l.other._rebuild();
+  }
+
+  // options as the linked viewer's were just set: cell size, transposing, chemical labels
+  _setLinkedOpts(patch) {
+    Object.assign(this.opts, patch);
+    this._syncToolbar();
+    if ('transpose' in patch || 'chemLabels' in patch) this._rebuild();
+    else { this.heatmap.setOptions({ cellW: this.opts.cellW, cellH: this.opts.cellH }); this.onShow?.(); }
+  }
+
+  // scrolled along the shared axis (both, when rows and columns are shared), so is the other
+  _linkScroll() {
+    const l = this.linked;
+    if (!l) return;
+    const from = this.heatmap.scroll, to = l.other.heatmap.scroll;
+    if (l.cols || !this.opts.transpose) to.scrollTop = from.scrollTop;
+    if (l.cols || this.opts.transpose) to.scrollLeft = from.scrollLeft;
+  }
+
+  // what is hovered here marked there: the row (and with shared columns, the column)
+  _linkHover(info) {
+    const l = this.linked;
+    if (!l) return;
+    const at = (i) => (i >= 0 ? i : null);
+    let mark = null;
+    if (info && l.cols) mark = { rows: at(info.rowIndex), cols: at(info.colIndex) };
+    else if (info) mark = this.opts.transpose ? { rows: null, cols: at(info.colIndex) } : { rows: at(info.rowIndex), cols: null };
+    l.other.heatmap.setMark(mark);
   }
 
   // right-click on a label: remove what it labels (a glomerulus also from every fly)
@@ -3387,6 +3438,41 @@ function hashString(str) {
   return h >>> 0;
 }
 
+// so the viewer offers chemicals' names or abbreviations as row labels
+const CHEM_ROWS = { matched: true, axis: 'rows' };
+
+// a space (as in ComparePage's `all`) over some of its odors, in their order, as a viewer
+// shows a matrix: its data (by its glomeruli, ROIs or other axis) or its similarities.
+// chemRow: an odor's row (label, chemical)
+function spaceData(s, ids, chemRow) {
+  const at = new Map(s.space.ids.map((id, i) => [id, i])), { vectors, cols, meta } = s.space.data, nC = cols.length;
+  const values = new Float32Array(ids.length * nC);
+  ids.forEach((id, r) => values.set(vectors[at.get(id)], r * nC));
+  return { meta: { ...meta, row_label: 'odor' }, rows: ids.map(chemRow), cols, values, chemicals: CHEM_ROWS };
+}
+
+function spaceSims(s, ids, chemRow) {
+  const at = new Map(s.space.ids.map((id, i) => [id, i])), n = s.space.ids.length, m = ids.length;
+  const values = new Float32Array(m * m);
+  ids.forEach((a, i) => ids.forEach((b, j) => { values[i * m + j] = s.space.sim[at.get(a) * n + at.get(b)]; }));
+  const rows = ids.map(chemRow);
+  return { meta: { kind: 'diverging', row_label: 'odor', col_label: 'odor', value_label: s.simLabel }, rows, cols: rows, values, chemicals: CHEM_ROWS };
+}
+
+// two linked viewers ({el, viewer}) side by side made level, the same height above their
+// cells (header and toolbar), then each fitted to what it shows
+function levelViewers(x, y) {
+  const vs = [x.viewer, y.viewer];
+  if (vs.some((v) => !v.model)) return;
+  const h = Math.max(...vs.map((v) => v.heatmap.naturalHeaderH));
+  for (const v of vs) if (v.heatmap.options.minHeaderH !== h) v.heatmap.setOptions({ minHeaderH: h });
+  for (const v of vs) v.toolbar.style.minHeight = '';
+  const t = Math.ceil(Math.max(...vs.map((v) => v.toolbar.getBoundingClientRect().height)));
+  for (const v of vs) v.toolbar.style.minHeight = `${t}px`;
+  fitViewer(x.el, x.viewer);
+  fitViewer(y.el, y.viewer);
+}
+
 // a viewer's height fitted to what it shows, up to most of the window's
 function fitViewer(el, v) {
   if (!v.model) return;
@@ -3396,11 +3482,17 @@ function fitViewer(el, v) {
 
 class ComparePage {
   constructor() {
-    // place: where each dataset's odor-odor similarity is shown ('below' its data, 'instead' of it, or 'none')
+    // metric, refMetric: odor–odor similarity within datasets, and within reference data;
+    // show: each space as its 'data', its odor–odor similarities ('sim') or 'both';
+    // bootN, pBy: the resamplings (or permutations) for p-values, and how (a key of P_BY);
+    // pair: the keys of two spaces shown side by side (null: not chosen)
     this.o = {
-      group: 'panel', unit: '', picked: [], metric: 'pearson', place: 'below', spaces: [], ecfpD: 6, conc: 'max',
-      rsa: false, rsaMethod: 'spearman', bootN: 5000, pBy: 'permute', ...LS.get(COMPARE_KEY, {}),
-    }; // bootN, pBy: the resamplings (or permutations) for p-values, and how (a key of P_BY)
+      group: 'panel', unit: '', picked: [], metric: 'pearson', refMetric: 'pearson', show: 'both', spaces: [], ecfpD: 6, conc: 'max',
+      rsa: false, rsaMethod: 'spearman', bootN: 5000, pBy: 'permute', pair: [null, null], ...LS.get(COMPARE_KEY, {}),
+    };
+    // `place` once, for datasets alone: under their data ('below'), instead of it, or 'none'
+    if (this.o.place) this.o.show = { below: 'both', instead: 'sim', none: 'data' }[this.o.place] || 'both';
+    delete this.o.place;
     delete this.o.sim; // a checkbox once, besides `place`
     delete this.o.bootUnit; // pBy once, when bootstrapping pairs of odors was the default
     this.datasets = null;
@@ -3411,6 +3503,15 @@ class ComparePage {
     this.memo = new Map(); // what is computed, by what it is of
     this.blocks = new Map(); // key -> {el, viewer}, kept while shown
     this.job = null; // the bootstrap of p-values running (_rsaP)
+    this.all = []; // the spaces shown, as last rendered
+    this.pairs = []; // linked viewers side by side, as last rendered: [[{el, viewer}, {el, viewer}]]
+    this.pairWidth = 0;
+    this.pairRO = new ResizeObserver(([e]) => {
+      // their toolbars wrap anew
+      if (Math.round(e.contentRect.width) === this.pairWidth) return;
+      this.pairWidth = Math.round(e.contentRect.width);
+      this.pairs.forEach(([x, y]) => levelViewers(x, y));
+    });
     this._seq = 0;
     const tab = $('#tab-compare');
     $$('.seg button', tab).forEach((b) => b.addEventListener('click', () => { this.o.group = b.dataset.group; this._save(); this.renderList(); }));
@@ -3425,11 +3526,17 @@ class ComparePage {
     });
     $('#compare-clear').addEventListener('click', () => { this.o.picked = []; this._changed(); });
     $('#cmp-metric').innerHTML = Object.entries(SIMILARITIES).map(([k, m]) => `<option value="${k}">${m.label}</option>`).join('');
-    for (const [id, key, read] of [['#cmp-metric', 'metric'], ['#cmp-place', 'place'], ['#cmp-conc', 'conc'],
+    for (const [id, key, read] of [['#cmp-metric', 'metric'], ['#cmp-ref-metric', 'refMetric'], ['#cmp-show', 'show'], ['#cmp-conc', 'conc'],
       ['#cmp-rsa', 'rsa', (el) => el.checked], ['#cmp-rsa-method', 'rsaMethod'], ['#cmp-p-by', 'pBy'],
       ['#cmp-boot-n', 'bootN', (el) => { const n = Math.round(+el.value); return el.value && n > 0 ? Math.min(100000, Math.max(100, n)) : this.o.bootN; }]]) {
       $(id).addEventListener('change', (e) => { this.o[key] = read ? read(e.target) : e.target.value; this._changed(); });
     }
+    $('#cmp-pair').addEventListener('change', (e) => {
+      if (!e.target.dataset.side) return;
+      this.o.pair = [...this.o.pair];
+      this.o.pair[+e.target.dataset.side] = e.target.value || null;
+      this._changed();
+    });
     $('#cmp-spaces').addEventListener('change', (e) => {
       if (e.target.matches('[data-space]')) {
         const key = e.target.dataset.space;
@@ -3513,8 +3620,10 @@ class ComparePage {
     };
   }
 
-  // a dataset as a space of chemicals: their similarities, by their responses (the mean
-  // of their rows, if more than one): {ids, sim}
+  // A space of chemicals: {ids (of the odor table), sim (their similarities, ids × ids),
+  // data: {vectors (each chemical's values), cols ({label} of each value), meta (as a
+  // reference dataset's: kind, value_label, col_label)}, or null for none worth showing}.
+  // A dataset's, by their responses (the mean of their rows, if more than one)
   _datasetSpace(d) {
     return this._memo(`ds:${d.id}:${this.o.metric}:${this.o.conc}`, () => {
       const { ids, rows } = this._chemicals(d), nC = d.cols.length;
@@ -3523,14 +3632,17 @@ class ComparePage {
         for (const i of rs) { const v = d.values[i * nC + c]; if (v === v) { sum += v; n++; } }
         return n ? sum / n : NaN;
       }));
-      return { ids, sim: similarityMatrix(vectors, this.o.metric) };
+      return {
+        ids, sim: similarityMatrix(vectors, this.o.metric),
+        data: { vectors, cols: d.cols.map((c) => ({ label: c.label })), meta: { kind: 'diverging', col_label: d.kind === 'glomeruli' ? 'glomerulus' : 'ROI' } },
+      };
     });
   }
 
-  // a reference dataset as a space of chemicals: their similarities by their values along its
-  // other axis (each chemical once, the first of its rows or columns)
+  // a reference dataset's, by their values along its other axis (each chemical once, the
+  // first of its rows or columns)
   _refSpace(ref) {
-    return this._memo(`ref:${ref.meta.id}:${this.o.metric}`, () => {
+    return this._memo(`ref:${ref.meta.id}:${this.o.refMetric}`, () => {
       const values = decodeValues(ref.values_b64), nR = ref.rows.length, nC = ref.cols.length, onRows = ref.chemicals.axis === 'rows';
       const ids = [], vectors = [];
       (onRows ? ref.rows : ref.cols).forEach((it, k) => {
@@ -3539,15 +3651,35 @@ class ComparePage {
         ids.push(id);
         vectors.push(onRows ? values.subarray(k * nC, (k + 1) * nC) : Float32Array.from({ length: nR }, (_, r) => values[r * nC + k]));
       });
-      return { ids, sim: similarityMatrix(vectors, this.o.metric) };
+      const m = ref.meta;
+      return {
+        ids, sim: similarityMatrix(vectors, this.o.refMetric),
+        data: { vectors, cols: (onRows ? ref.cols : ref.rows).map((it) => ({ label: it.label })),
+          meta: { kind: m.kind, value_label: m.value_label, col_label: (onRows ? m.col_label : m.row_label) || (onRows ? 'column' : 'row') } },
+      };
     });
   }
 
+  // chemical structure's: their fingerprints' bits, not worth showing as data
   _ecfpSpace(fp) {
     return this._memo(`ecfp:${fp.diameter}:${Object.keys(fp.fingerprints).length}`, () => {
       const ids = Object.keys(fp.fingerprints).map(Number);
-      return { ids, sim: similarityMatrix(ids.map((id) => fp.fingerprints[id]), null, tanimoto) };
+      return { ids, sim: similarityMatrix(ids.map((id) => fp.fingerprints[id]), null, tanimoto), data: null };
     });
+  }
+
+  // an odor of the odor table as a row of a matrix, labelled by its name (the viewer can
+  // show its abbreviation instead), from the datasets and reference datasets loaded
+  _chemRows(datasets) {
+    const chems = new Map();
+    for (const d of datasets) for (const r of d.rows || []) if (r.odor_id != null && r.chem) chems.set(r.odor_id, r.chem);
+    for (const ref of this.refData.values()) {
+      for (const it of [...ref.rows, ...ref.cols]) if (it.chem?.name && !chems.has(it.chem.odor_id)) chems.set(it.chem.odor_id, it.chem);
+    }
+    return (id) => {
+      const c = chems.get(id);
+      return c?.name ? { label: c.name, chem: { name: c.name, abbrev: c.abbrev, cid: c.cid } } : { label: `odor ${id}` };
+    };
   }
 
   _spaceTitle(key) {
@@ -3562,13 +3694,15 @@ class ComparePage {
       try {
         if (key === 'ecfp') {
           const fp = await this._fingerprints();
-          out.push({ key, title: this._spaceTitle(key), space: this._ecfpSpace(fp), note: 'their Jaccard similarity (1 − Jaccard distance)' });
+          out.push({ key, title: this._spaceTitle(key), space: this._ecfpSpace(fp), note: 'their Jaccard similarity (1 − Jaccard distance)',
+            simLabel: 'Jaccard similarity' });
         } else {
           const id = key.slice(4);
           if (!this.refData.has(id)) this.refData.set(id, await api(`/api/reference/${encodeURIComponent(id)}`));
           const ref = this.refData.get(id);
           const along = ref.chemicals.axis === 'rows' ? ref.meta.col_label || 'columns' : ref.meta.row_label || 'rows';
-          out.push({ key, title: ref.meta.title, space: this._refSpace(ref), note: `by their values across its ${along}, ${SIMILARITIES[this.o.metric].label}` });
+          const simLabel = SIMILARITIES[this.o.refMetric].label;
+          out.push({ key, title: ref.meta.title, space: this._refSpace(ref), note: `by their values across its ${along}, ${simLabel}`, simLabel });
         }
       } catch (e) {
         out.push({ key, title: this._spaceTitle(key), error: e.message });
@@ -3587,7 +3721,7 @@ class ComparePage {
   // the options: the spaces to compare to, each with how many of the odors shown it has
   _renderOptions(shown) {
     $('#cmp-rsa').checked = !!this.o.rsa;
-    for (const [id, key] of [['#cmp-metric', 'metric'], ['#cmp-place', 'place'], ['#cmp-conc', 'conc'], ['#cmp-rsa-method', 'rsaMethod'],
+    for (const [id, key] of [['#cmp-metric', 'metric'], ['#cmp-ref-metric', 'refMetric'], ['#cmp-show', 'show'], ['#cmp-conc', 'conc'], ['#cmp-rsa-method', 'rsaMethod'],
       ['#cmp-boot-n', 'bootN'], ['#cmp-p-by', 'pBy']]) $(id).value = this.o[key];
     $('#cmp-shown').textContent = shown.size
       ? `The datasets shown have ${shown.size} odor${shown.size === 1 ? '' : 's'} of the odor table (by themselves, not mixed).`
@@ -3613,25 +3747,45 @@ class ComparePage {
     if (active) $('#cmp-ecfp-d').focus();
   }
 
-  // a block of the page, its viewer kept while it is shown again; cells: its own cell size
-  // to start with, table: the CSV its export menu offers (else the matrix as shown)
-  _block(key, title, sub, payload, fileStem, { cells = null, table = null } = {}) {
+  // the menus of the two spaces side by side, of those shown
+  _renderPairOptions(all) {
+    const menu = (k) => `<select data-side="${k}" aria-label="${k ? 'Second' : 'First'} space"><option value="">—</option>${all.map((s) =>
+      `<option value="${esc(s.key)}"${this.o.pair[k] === s.key ? ' selected' : ''}>${esc(s.title)}</option>`).join('')}</select>`;
+    $('#cmp-pair').innerHTML = `<label class="opt">${menu(0)}</label><label class="opt">and ${menu(1)}</label>`;
+  }
+
+  // a viewer of the page, kept while it is shown again (by key): on its own (fitted to what
+  // it shows) until linked again. cells: its own cell size to start with, table: the CSV its
+  // export menu offers (else the matrix as shown), onCellClick: as the heatmap's
+  _viewer(key, payload, title, fileStem, { cells = null, table = null, onCellClick = null } = {}) {
     let b = this.blocks.get(key);
     if (!b) {
       const el = document.createElement('div');
       el.className = 'cmp-viewer';
       $('#compare-view').appendChild(el); // attached, to be measured
       b = { el, viewer: new MatrixViewer(el, { kind: 'compare', cells }) };
-      b.viewer.onShow = () => fitViewer(el, b.viewer);
       $('[data-export=csv]', b.viewer.toolbar).hidden = false;
       this.blocks.set(key, b);
     }
-    b.viewer.tableExport = table;
+    const v = b.viewer;
+    v.tableExport = table;
+    v.heatmap.options.onCellClick = onCellClick;
+    v.linked = null;
+    v.heatmap.mark = null;
+    v.heatmap.options.minHeaderH = 0;
+    v.toolbar.style.minHeight = '';
+    v.onShow = () => fitViewer(b.el, v);
+    return { el: b.el, viewer: v, show: () => v.setGenericData(payload, { title, fileStem, kind: 'compare' }) };
+  }
+
+  // a block of the page: a viewer under its title
+  _block(key, title, sub, payload, fileStem, opts = {}) {
+    const b = this._viewer(key, payload, title, fileStem, opts);
     const section = document.createElement('section');
     section.className = 'cmp-block';
     section.innerHTML = `<div class="cmp-head"><h3>${esc(title)}</h3>${sub ? `<span class="muted">${sub}</span>` : ''}</div>`;
     section.appendChild(b.el);
-    return { section, show: () => b.viewer.setGenericData(payload, { title, fileStem, kind: 'compare' }) };
+    return { section, show: b.show };
   }
 
   async render() {
@@ -3648,35 +3802,40 @@ class ComparePage {
     if (seq !== this._seq) return;
     const datasets = this.o.picked.map((id) => this.data.get(id));
     const shown = new Set(datasets.flatMap((d) => (d.rows || []).filter((r) => r.odor_id != null).map((r) => r.odor_id)));
-    const names = new Map(datasets.flatMap((d) => (d.rows || []).filter((r) => r.chem).map((r) => [r.odor_id, r.chem.name])));
     this._renderOptions(shown);
-
-    const parts = [], shows = [], used = new Set();
-    const metric = SIMILARITIES[this.o.metric].label;
-    const block = (key, ...args) => { used.add(key); const b = this._block(key, ...args); parts.push(b.section); shows.push(b.show); return b.section; };
-    const info = (html) => parts.push(msgBox('info', html));
-    // how alike the similarities of each two spaces are
-    // datasets by what was recorded (ORNs, PNs, KCs...), by their full names those that would share one
+    // every space shown: the datasets by what was recorded (ORNs, PNs, KCs...), by their
+    // full names those that would share one, then the spaces compared to
+    const metric = SIMILARITIES[this.o.metric].label, show = this.o.show;
     const loaded = datasets.filter((d) => !d.error);
     const short = loaded.map(neuralSpaceName);
     const all = [
       ...loaded.map((d, i) => {
         const full = `#${d.id} ${d.title}`;
-        return { key: `ds:${d.id}`, title: short.filter((n) => n === short[i]).length > 1 ? full : short[i], fullTitle: full, space: this._datasetSpace(d) };
+        return { key: `ds:${d.id}`, title: short.filter((n) => n === short[i]).length > 1 ? full : short[i], fullTitle: full,
+          space: this._datasetSpace(d), simLabel: metric };
       }),
       ...spaces.filter((s) => !s.error),
     ];
+    this.all = all;
+    this._renderPairOptions(all);
+    const chemRow = this._chemRows(datasets), state = this._stateKey();
+
+    const parts = [], shows = [], used = new Set();
+    const block = (key, ...args) => { used.add(key); const b = this._block(key, ...args); parts.push(b.section); shows.push(b.show); return b.section; };
+    const info = (html) => parts.push(msgBox('info', html));
+    // how alike the similarities of each two spaces are
     if (this.o.rsa && all.length < 2) {
       info('Show two datasets, or one and a space to compare it to (on the right), to correlate their similarities.');
     } else if (this.o.rsa) {
       const method = this.o.rsaMethod === 'spearman' ? 'Spearman' : 'Pearson', job = this._rsaP(all);
-      const table = () => this._rsaCsv(all, method, job);
+      const table = () => this._rsaCsv(all, method, job), onCellClick = (cell) => this._openPair(cell);
       // the correlations, and their p-values to the right
       const row = document.createElement('div');
       row.className = 'cmp-row';
       row.append(
-        block('rsa', 'Between similarities', `${method} correlation of each two spaces' odor–odor similarities (${esc(metric)} within datasets and reference data), over the pairs of odors both have`,
-          ...this._rsa(all, method), { cells: [84, 40], table }),
+        block('rsa', 'Between similarities', `${method} correlation of each two spaces' odor–odor similarities (${esc(metric)} within datasets,
+          ${esc(SIMILARITIES[this.o.refMetric].label)} within reference data), over the pairs of odors both have. Click a cell to see its two
+          spaces side by side.`, ...this._rsa(all, method), { cells: [84, 40], table, onCellClick }),
         block('rsa-p', 'Their p-values', `Two-sided ${job.unit === 'permute'
           ? `permutation p of each correlation against 0 (${job.resamplings.toLocaleString()} permutations of one space's odors:
             a <a href="https://en.wikipedia.org/wiki/Mantel_test" target="_blank" rel="noopener">Mantel test</a>)`
@@ -3684,24 +3843,29 @@ class ComparePage {
             ${job.unit === 'odors' ? 'odors, with replacement)' : 'pairs of odors, with replacement: these can be far too small, see on the right)'}`},
           <a href="${HOLM_URL}" target="_blank" rel="noopener">Holm–Bonferroni</a> adjusted for the ${job.pairs.length} pair${job.pairs.length === 1 ? '' : 's'}
           of spaces (more on the right); * below 0.05. <span class="cmp-status"></span>`,
-        job.payload, 'similarities_correlated_p', { cells: [84, 40], table }));
+        job.payload, 'similarities_correlated_p', { cells: [84, 40], table, onCellClick }));
       parts.splice(-2, 2, row);
       job.status = $('.cmp-status', row);
       this._pStatus(job);
     }
     if (!this.o.rsa || all.length < 2) this._stopP();
+    // two of them side by side
+    this.pairs = [];
+    this.pairRO.disconnect();
+    const pair = this._pairSection(all, chemRow, used, shows);
+    if (pair) parts.push(pair);
     for (const s of spaces.filter((x) => x.error)) parts.push(msgBox('error', `${esc(s.title)} could not be compared to: ${esc(s.error)}`));
     for (const d of datasets) {
       if (d.error) { parts.push(msgBox('error', `Dataset #${d.id} could not be shown: ${esc(d.error)}`)); continue; }
       const what = d.kind === 'glomeruli' ? `${d.cols.length} glomeruli, each the mean of the flies with it` : `${d.cols.length.toLocaleString()} ROIs`;
       const sub = `${esc(d.coding_unit || '')}: ${d.rows.length} odors × ${what}; every trial averaged`;
-      if (this.o.place !== 'instead') {
+      if (show !== 'sim') {
         block(`ds:${d.id}`, `#${d.id} ${d.title}`, sub, this._memo(`data:${d.id}`, () => ({
           meta: { kind: 'diverging', row_label: 'odor', col_label: d.kind === 'glomeruli' ? 'glomerulus' : 'ROI' },
           rows: d.rows.map((r) => ({ label: r.odor, group: r.panel })), cols: d.cols.map((c) => ({ label: c.label })), values: d.values,
         })), `dataset_${d.id}_mean`);
       }
-      if (this.o.place !== 'none') {
+      if (show !== 'data') {
         block(`sim:${d.id}`, `#${d.id} ${d.title}: odor–odor similarity`, `${metric} of their responses across its ${d.kind === 'glomeruli' ? 'glomeruli' : 'ROIs'}`,
           this._memo(`simdata:${d.id}:${this.o.metric}`, () => {
             const nC = d.cols.length, rows = d.rows.map((_, i) => d.values.subarray(i * nC, (i + 1) * nC));
@@ -3711,22 +3875,103 @@ class ComparePage {
           }), `dataset_${d.id}_similarity`);
       }
     }
-    // each space compared to, over the odors shown it has
+    // each space compared to, over the odors shown it has: its data (if it has any worth
+    // showing), its similarities
     for (const s of spaces.filter((x) => !x.error)) {
-      const at = new Map(s.space.ids.map((id, i) => [id, i]));
-      const ids = [...shown].filter((id) => at.has(id)), n = s.space.ids.length;
-      const sub = `${s.note}; the ${ids.length} of the odors shown it has`;
+      const has = new Set(s.space.ids), ids = [...shown].filter((id) => has.has(id)), stem = s.key.replace(/\W+/g, '_');
       if (ids.length < 2) { parts.push(msgBox('info', `${esc(s.title)}: ${ids.length ? 'only one' : 'none'} of the odors shown.`)); continue; }
-      block(`space:${s.key}`, s.title, esc(sub), this._memo(`spacedata:${s.key}:${this.o.metric}:${ids.join(',')}`, () => {
-        const labels = ids.map((id) => ({ label: names.get(id) || `odor ${id}` }));
-        const values = new Float32Array(ids.length * ids.length);
-        ids.forEach((a, i) => ids.forEach((b, j) => { values[i * ids.length + j] = s.space.sim[at.get(a) * n + at.get(b)]; }));
-        return { meta: { kind: 'diverging', row_label: 'odor', col_label: 'odor' }, rows: labels, cols: labels, values };
-      }), `${s.key.replace(/\W+/g, '_')}_similarity`);
+      const data = s.space.data;
+      if (show !== 'sim' && data) {
+        const sub = `the ${ids.length} of the odors shown it has, by its ${data.meta.col_label}${data.meta.value_label ? ` (${data.meta.value_label})` : ''}`;
+        block(`spacedata:${s.key}`, s.title, esc(sub), this._memo(`spacevals:${s.key}:${state}:${ids.join(',')}`, () => spaceData(s, ids, chemRow)), `${stem}_data`);
+      }
+      if (show !== 'data' || !data) {
+        block(`space:${s.key}`, `${s.title}: odor–odor similarity`, esc(`${s.note}; the ${ids.length} of the odors shown it has`),
+          this._memo(`spacesims:${s.key}:${state}:${ids.join(',')}`, () => spaceSims(s, ids, chemRow)), `${stem}_similarity`);
+      }
     }
     for (const key of [...this.blocks.keys()]) if (!used.has(key)) this.blocks.delete(key);
     view.replaceChildren(...parts);
     shows.forEach((show) => show());
+  }
+
+  // what every space's similarities (and so the correlations between them) depend on, but which spaces
+  _stateKey() {
+    const o = this.o;
+    return `${o.metric}:${o.refMetric}:${o.conc}:${o.ecfpD}`;
+  }
+
+  // Two spaces side by side (o.pair): the odors both have, in one order (that of the first
+  // dataset of the two, else of the first), each as its data and/or its similarities
+  // (o.show), each two viewers next to each other linked, so their rows stay level. A
+  // section, or null if none is chosen; its viewers' keys added to `used`, their shows to `shows`
+  _pairSection(all, chemRow, used, shows) {
+    const [ka, kb] = this.o.pair;
+    if (!ka && !kb) return null;
+    const section = document.createElement('section');
+    section.className = 'cmp-block cmp-pair';
+    section.id = 'cmp-pair-view';
+    section.innerHTML = `<div class="cmp-head"><h3>Side by side</h3><span class="muted"></span>
+      <button type="button" class="btn small" data-role="close">Close</button></div>`;
+    $('[data-role=close]', section).addEventListener('click', () => { this.o.pair = [null, null]; this._changed(); });
+    const sub = $('.cmp-head .muted', section);
+    const a = all.find((s) => s.key === ka), b = all.find((s) => s.key === kb);
+    if (!a || !b || a === b) {
+      sub.textContent = 'Choose two of the spaces shown (on the right), or click a cell of the correlations between similarities.';
+      return section;
+    }
+    const first = [a, b].find((s) => s.key.startsWith('ds:')) || a, has = new Set((first === a ? b : a).space.ids);
+    const ids = first.space.ids.filter((id) => has.has(id));
+    if (ids.length < 2) {
+      sub.textContent = `${a.title} and ${b.title} have ${ids.length ? 'only one odor' : 'no odors'} in common.`;
+      return section;
+    }
+    sub.textContent = `${a.title} and ${b.title}: the ${ids.length} odors both have, in the order of ${first.title}. Rows moved or removed,
+      cell sizes, transposing and scrolling stay the same in both.`;
+    const state = this._stateKey();
+    for (const kind of this.o.show === 'both' ? ['data', 'sim'] : [this.o.show]) {
+      const row = document.createElement('div');
+      row.className = 'cmp-pair-row';
+      const sides = [a, b].map((s, k) => {
+        const side = document.createElement('div');
+        side.className = 'cmp-pair-side';
+        row.appendChild(side);
+        const asData = kind === 'data' && !!s.space.data;
+        if (kind === 'data' && !asData && this.o.show === 'both') {
+          side.innerHTML = `<div class="cmp-pair-cap">${esc(s.title)}</div><div class="cmp-pair-none muted">No data of its own worth showing, only its similarities (below).</div>`;
+          return null;
+        }
+        const what = asData ? 'data' : 'similarity', key = `pair:${kind}:${k}`;
+        used.add(key);
+        const payload = this._memo(`pair:${what}:${s.key}:${state}:${ids.join(',')}`, () => (asData ? spaceData(s, ids, chemRow) : spaceSims(s, ids, chemRow)));
+        const v = this._viewer(key, payload, `${s.fullTitle || s.title}: ${what}`, `side_by_side_${(s.fullTitle || s.title).replace(/\W+/g, '_')}_${what}`);
+        const cap = asData ? `its data${payload.meta.value_label ? ` (${payload.meta.value_label})` : ''}` : `odor–odor ${s.simLabel}`;
+        side.innerHTML = `<div class="cmp-pair-cap" title="${esc(`${s.fullTitle || s.title}: ${cap}`)}">${esc(s.title)}: <span class="muted">${esc(cap)}</span></div>`;
+        side.appendChild(v.el);
+        shows.push(v.show);
+        return { ...v, what };
+      });
+      if (sides[0] && sides[1]) {
+        const [x, y] = sides, cols = x.what === 'similarity' && y.what === 'similarity';
+        x.viewer.linked = { other: y.viewer, cols };
+        y.viewer.linked = { other: x.viewer, cols };
+        x.viewer.onShow = y.viewer.onShow = () => levelViewers(x, y);
+        this.pairs.push([x, y]);
+      }
+      section.appendChild(row);
+    }
+    this.pairWidth = 0;
+    this.pairRO.observe(section);
+    return section;
+  }
+
+  // a cell of the correlations between similarities (or their p-values) clicked: its two spaces side by side
+  _openPair({ row, col }) {
+    const a = this.all[row.key], b = this.all[col.key];
+    if (!a || !b || a === b) return;
+    this.o.pair = [a.key, b.key];
+    this._save();
+    this.render().then(() => $('#cmp-pair-view')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
   }
 
   // how alike the similarities of each two spaces are: [the matrix for its viewer (r, each
@@ -3747,8 +3992,7 @@ class ComparePage {
 
   // what the correlations between the similarities of spaces `all` are of
   _rsaKey(all) {
-    const o = this.o;
-    return `${o.rsaMethod}:${o.metric}:${o.conc}:${o.ecfpD}:${all.map((s) => s.key).join(',')}`;
+    return `${this.o.rsaMethod}:${this._stateKey()}:${all.map((s) => s.key).join(',')}`;
   }
 
   _rsaCells(all) {
@@ -3828,12 +4072,12 @@ class ComparePage {
   // (once computed), as a CSV table
   _rsaCsv(all, method, job) {
     const cells = this._rsaCells(all), num = (v) => (v != null && v === v ? String(v) : '');
-    const lines = [['space_a', 'space_b', 'correlation', 'similarity_within', 'r', 'n_odors', 'n_pairs', 'p', 'p_holm', 'p_by', 'resamplings']];
+    const lines = [['space_a', 'space_b', 'correlation', 'similarity_a', 'similarity_b', 'r', 'n_odors', 'n_pairs', 'p', 'p_holm', 'p_by', 'resamplings']];
     let k = 0;
     all.forEach((a, i) => all.forEach((b, j) => {
       if (j <= i) return;
       const c = cells[i][j], t = k++;
-      lines.push([a.fullTitle || a.title, b.fullTitle || b.title, method, SIMILARITIES[this.o.metric].label, num(c.r), c.nOdors, c.nPairs,
+      lines.push([a.fullTitle || a.title, b.fullTitle || b.title, method, a.simLabel, b.simLabel, num(c.r), c.nOdors, c.nPairs,
         num(job.ps?.[t]), num(job.adjusted?.[t]), P_BY[job.unit], job.valid ? job.valid[t] : '']);
     }));
     return { name: 'similarities_correlated.csv', text: `${lines.map((l) => l.map(csvCell).join(',')).join('\n')}\n` };
