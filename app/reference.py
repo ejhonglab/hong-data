@@ -389,7 +389,9 @@ def listing(db, index: odormeta.OdorIndex) -> list[dict]:
         if rec:
             chem = chemicals(rec, index)
             item.update(kind=rec["kind"], shape=rec["shape"], notes=rec["notes"], imported_at=rec.get("imported_at"),
-                        chemicals={k: chem[k] for k in ("axis", "n", "matched", "identified")}, warning=warning(chem))
+                        chemicals={**{k: chem[k] for k in ("axis", "n", "matched", "identified")},
+                                   "odor_ids": [i["odor_id"] for i in chem["items"] if i["odor_id"] is not None]},
+                        warning=warning(chem))
         out.append(item)
     return out
 
@@ -413,7 +415,7 @@ def load(db, ref_id: str, index: odormeta.OdorIndex) -> Optional[dict[str, Any]]
     cols = [dict(c) for c in record["cols"]]
     if chem["axis"]:
         for it, c in zip(rows if chem["axis"] == "rows" else cols, chem["items"]):
-            it["chem"] = {k: c[k] for k in ("name", "abbrev", "cid", "how")}
+            it["chem"] = {k: c[k] for k in ("odor_id", "name", "abbrev", "cid", "how")}
     finite = np.isfinite(values)
     return {
         "meta": meta, "state": "ok", "rows": rows, "cols": cols, "shape": list(values.shape), "dtype": "float32",

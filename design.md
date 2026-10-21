@@ -90,6 +90,17 @@ the app is described in [README.md](README.md), hosting it in [DEPLOY.md](DEPLOY
   its `backup.json`: the size and time of each file, and a fingerprint of the database's
   rows (but `file_log`, which changes as the server merely reads; the tables written only
   with a dataset by their row counts, as its row in `datasets` tells of any change).
+- **The Compare tab computes similarities in the browser**, as the viewer does the rest:
+  the server only averages each dataset (`app/compare.py`: trials, then flies per
+  glomerulus) and gives the ECFP fingerprints of the odor table's chemicals, which need
+  RDKit (Morgan fingerprints with ECFP's atom invariants, radius = diameter / 2, 2048
+  bits, from the InChI PubChem gives for their CID), kept per diameter while the odors
+  stay the same. Every space (a dataset, a reference dataset, chemical structure) is
+  keyed by the odor table's ids, so they line up whatever each calls its odors; a
+  dataset's odor counts only alone (not in a mixture) and once, at the concentration
+  chosen. Similarities of similarities are correlated over one side of the matrices
+  (without the diagonal), pairs missing in either left out; no p-value is given, as
+  those pairs are not independent.
 - **The laser wavelength is never read from `Experiment.xml`**: ThorImage's
   `MultiPhotonLaser` value does not follow changes made to the wavelength at the laser,
   so the wavelength is only ever entered in the form.
@@ -180,6 +191,7 @@ app/db.py          SQLite schema and queries
 app/reference.py   reference datasets: built-in and added ones, reading them, matching their chemicals
 app/export.py      downloads: zips of dataset files, concatenated wide/long matrices
 app/merge.py       merged downloads of a coding unit: grouping datasets, scaling groups to each other
+app/compare.py     datasets averaged for the Compare tab (odors × glomeruli or ROIs); ECFP fingerprints (RDKit)
 app/odormeta.py    odor table: sheet parsing / validation, sync diff, links, dataset matching
 app/tensor.py      users' folders on tensor: path checks, finding a dataset's flies, recordings, YAMLs
 app/sandbox.py     folders the server may read and write (Admin tab): settings, path checks, Landlock
@@ -189,7 +201,7 @@ app/movies.py      a dataset's movies on tensor: finding them, reading their pla
 config/odor_sheet_template.csv   odor sheet columns, with the odors from the thesis tables
 app/static/        frontend: index.html, app.js, heatmap.js, colormaps.js (+ mpl_luts.js),
                    app.css, cluster.js (+ cluster-worker.js), figure.js (SVG/PDF/PNG export),
-                   player.js (movie player)
+                   player.js (movie player), similarity.js (odor similarities, and between them)
 manage.py          list / show / export / delete datasets from the server
 deploy/            systemd units; Dockerfile + docker-compose.yml at the top level
 tests/             pytest tests
@@ -248,6 +260,9 @@ PUT    /api/datasets/{id}/readme            {"readme", "base"} → the README ov
                                             no longer "base", the one the edit started from)
 GET    /api/datasets/{id}/matrix            units, trials, base64 float32 values
 GET    /api/datasets/{id}/files/{path}      original files
+GET    /api/compare/datasets/{id}           its odors × glomeruli (or ROIs), every trial (and fly) averaged,
+                                            each odor's odor table id if it is one chemical alone
+GET    /api/compare/ecfp?diameter=6         ECFP fingerprints of the odor table's chemicals (bits set)
 GET    /api/datasets/{id}/odors             its odors (per panel) matched to the odor table; rows
                                             for the odor sheet for those not in it (and as cells
                                             to paste, in the order of the sheet's columns)

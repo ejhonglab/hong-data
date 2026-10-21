@@ -14,6 +14,7 @@
     <a href="#upload" data-tab="upload">Upload</a>
     <a href="#browse" data-tab="browse">Browse</a>
     <a href="#merge" data-tab="merge">Merge</a>
+    <a href="#compare" data-tab="compare">Compare</a>
     <span class="tabs-sep" aria-hidden="true"></span>
     <a href="#reference" data-tab="reference">Reference data</a>
     <a href="#odors" data-tab="odors">Odors<span class="tab-badge" id="odors-badge" hidden title="The odor sheet changed since it was last synced"></span></a>
@@ -305,6 +306,48 @@
   </section>
 
   <!-- ========================================================= ODORS -->
+  <section id="tab-compare" class="tab" hidden>
+    <aside class="sidebar">
+      <div class="sidebar-head">
+        <h1>Compare</h1>
+        <div class="seg" role="group" aria-label="Group datasets by">
+          <button type="button" data-group="panel" class="active">By panel</button>
+          <button type="button" data-group="date">By last fly date</button>
+        </div>
+        <label class="unit-filter"><span>Coding unit</span><select id="compare-unit"></select></label>
+      </div>
+      <div id="compare-list" class="list"></div>
+      <div class="sidebar-foot">
+        <span id="compare-count" class="grow muted"></span>
+        <button type="button" class="btn small" id="compare-clear" hidden>Clear</button>
+      </div>
+    </aside>
+    <div class="content compare-content" id="compare-content">
+      <div class="empty" id="compare-empty">Tick datasets on the left to compare them: each is shown with its odors as rows, every trial of an odor averaged (and for glomeruli, every fly).</div>
+      <div id="compare-view"></div>
+    </div>
+    <aside class="compare-options" aria-label="What to compare">
+      <h2>Odor–odor similarity</h2>
+      <label class="check"><input type="checkbox" id="cmp-sim"> Within each dataset</label>
+      <label class="opt">By <select id="cmp-metric"></select></label>
+      <label class="opt">Shown <select id="cmp-place"><option value="below">under its data</option><option value="instead">instead of its data</option></select></label>
+      <p class="muted small">Of two odors, by their responses across the dataset's glomeruli or ROIs (those both have).</p>
+
+      <h2>Compare to</h2>
+      <p class="muted small" id="cmp-shown"></p>
+      <div id="cmp-spaces"></div>
+      <label class="opt">An odor at several concentrations: <select id="cmp-conc">
+        <option value="max">its highest</option><option value="min">its lowest</option><option value="mean">the mean of them</option>
+      </select></label>
+      <p class="muted small">Odors are matched by the odor table, mixtures left out. Each space's similarities are shown over the odors shown that it has.</p>
+
+      <h2>Between similarities</h2>
+      <label class="check"><input type="checkbox" id="cmp-rsa"> Correlate the similarities of each two</label>
+      <label class="opt">By <select id="cmp-rsa-method"><option value="spearman">Spearman correlation</option><option value="pearson">Pearson correlation</option></select></label>
+      <p class="muted small">Of the datasets shown and the spaces compared to: over the pairs of odors both have, from one side of each similarity matrix (not its diagonal).</p>
+    </aside>
+  </section>
+
   <section id="tab-odors" class="tab" hidden>
     <div class="odors-page">
       <div class="page-head">

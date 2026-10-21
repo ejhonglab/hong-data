@@ -4,6 +4,7 @@ import { COLORMAPS, colormapsOfKind, makeNorm, drawColorbar, fmtNum } from './co
 import { MAX_CLUSTER_ITEMS, ClusterPool, layoutDendrogram } from './cluster.js';
 import { exportFigure } from './figure.js';
 import { MoviePlayer } from './player.js';
+import { SIMILARITIES, similarityMatrix, tanimoto, correlateSimilarities } from './similarity.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -457,6 +458,7 @@ class MatrixViewer {
     this.clusterPool = new ClusterPool();
     this.clusterCache = new Map();
     this._seq = 0;
+    this.onShow = null; // called once the matrix is drawn (as shown, or with cells of another size)
     this._wire();
   }
 
@@ -473,7 +475,13 @@ class MatrixViewer {
     }));
     for (const k of ['cellW', 'cellH']) {
       const range = $(`input[data-opt=${k}]`, tb);
-      range.addEventListener('input', () => { this.opts[k] = +range.value; $(`[data-out=${k}]`, tb).textContent = range.value; this._save(); this.heatmap.setOptions({ cellW: this.opts.cellW, cellH: this.opts.cellH }); });
+      range.addEventListener('input', () => {
+        this.opts[k] = +range.value;
+        $(`[data-out=${k}]`, tb).textContent = range.value;
+        this._save();
+        this.heatmap.setOptions({ cellW: this.opts.cellW, cellH: this.opts.cellH });
+        this.onShow?.();
+      });
     }
     $$('input[type=checkbox][data-opt]', tb).forEach((cb) => cb.addEventListener('change', () => {
       this.opts[cb.dataset.opt] = cb.checked;
@@ -551,14 +559,16 @@ class MatrixViewer {
     this._rebuild();
   }
 
-  setGenericData(ref, { title = '', fileStem = 'heatmap' } = {}) {
-    this._setKind('generic');
+  // ref: a reference dataset (as from /api/reference/<id>), or a matrix like one with its
+  // `values` (Float32Array) given; kind: of the viewer, for its transposing kept apart
+  setGenericData(ref, { title = '', fileStem = 'heatmap', kind: viewerKind = 'generic' } = {}) {
+    this._setKind(viewerKind);
     this.title = title;
     this.fileStem = fileStem;
     if (ref !== this.source) {
       this.source = ref;
       this._editsFor(ref);
-      const values = decodeValues(ref.values_b64);
+      const values = ref.values || decodeValues(ref.values_b64);
       const hasGroups = ref.rows.some((r) => r.group != null);
       let rows = ref.rows.map((r, i) => ({ label: r.label, group: hasGroups ? (r.group ?? '') : null, chem: r.chem, i }));
       let vals = values;
@@ -698,6 +708,7 @@ class MatrixViewer {
       drag.rows || drag.cols ? `Drag ${which} to move it${grouped ? ' within its group (drag a group’s name to move the group)' : ''}` : '',
       'Ctrl-click a label to remove it, or right-click it for a menu.',
     ].filter(Boolean).join('; ');
+    this.onShow?.();
   }
 
   _setNote(note) {
@@ -1410,6 +1421,7 @@ class UploadFlow {
         if (!r.ok) { setStatus(out, `Not synced: ${r.errors.join('; ')}`, 'error'); return; }
         added = r.added;
         browse.odorCache.clear();
+        comparePage.invalidate(); // its odors' matches to the table
         reference.invalidate();
         odorsPage.odors = null; // read again when the Odors tab is opened
       }
@@ -1605,6 +1617,45 @@ class UploadFlow {
 // a coding unit matched as the Merge tab matches it: in any case, spaces collapsed
 const unitKey = (u) => (u || '').trim().replace(/\s+/g, ' ').toLowerCase();
 
+// The coding unit menu `sel` (each unit spelled as first uploaded, the most common first,
+// as in the Merge tab), with `unit` (a unitKey, '' for all) chosen; returns the datasets to
+// list: all of them if that unit is no longer uploaded.
+function filterByUnit(datasets, sel, unit) {
+  const units = new Map();
+  for (const d of datasets.slice().sort((a, b) => a.id - b.id)) {
+    const k = unitKey(d.coding_unit);
+    if (!units.has(k)) units.set(k, { label: d.coding_unit.trim().replace(/\s+/g, ' '), n: 0 });
+    units.get(k).n++;
+  }
+  const keys = [...units.keys()].sort((a, b) => units.get(b).n - units.get(a).n || a.localeCompare(b));
+  const html = `<option value="">All (${datasets.length})</option>`
+    + keys.map((k) => `<option value="${esc(k)}">${esc(units.get(k).label)} (${units.get(k).n})</option>`).join('');
+  if (sel.innerHTML !== html) sel.innerHTML = html;
+  const chosen = units.has(unit) ? unit : '';
+  sel.value = chosen;
+  return chosen ? datasets.filter((d) => unitKey(d.coding_unit) === chosen) : datasets;
+}
+
+// Datasets in the groups of a list (`group`: 'panel', by the panels the form gave, else
+// the file's; or 'date', by the month of their last fly), each newest first: [{label, datasets}]
+function datasetGroups(datasets, group) {
+  const newest = (ds) => ds.slice().sort((a, b) => (b.last_fly_date || '').localeCompare(a.last_fly_date || '') || b.id - a.id);
+  if (group !== 'panel') {
+    const ds = newest(datasets);
+    return runsOf(ds, (d) => (d.last_fly_date || '').slice(0, 7) || 'unknown date').map((m) => ({ label: m.key, datasets: ds.slice(m.start, m.end) }));
+  }
+  const groups = new Map();
+  for (const d of datasets) {
+    const panels = (d.panels.some((p) => p.source === 'form') ? d.panels.filter((p) => p.source === 'form') : d.panels).map((p) => p.panel);
+    for (const p of panels.length ? panels : ['(no panel name)']) {
+      if (!groups.has(p)) groups.set(p, []);
+      groups.get(p).push(d);
+    }
+  }
+  return [...groups.keys()].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+    .map((k) => ({ label: k, datasets: newest(groups.get(k)) }));
+}
+
 class Browse {
   constructor() {
     this.datasets = null;
@@ -1740,49 +1791,14 @@ class Browse {
       </div>`;
     const groupHead = (label, ds) => `<div class="list-group"><label><input type="checkbox" class="pick-group" data-ids="${ds.map((d) => d.id).join(',')}"
         aria-label="Select all of ${esc(label)} for download"> ${esc(label)} <span class="muted">(${ds.length})</span></label></div>`;
-    let html = '';
-    if (this.group === 'panel') {
-      const groups = new Map();
-      for (const d of datasets) {
-        const panels = (d.panels.some((p) => p.source === 'form') ? d.panels.filter((p) => p.source === 'form') : d.panels).map((p) => p.panel);
-        for (const p of panels.length ? panels : ['(no panel name)']) {
-          if (!groups.has(p)) groups.set(p, []);
-          groups.get(p).push(d);
-        }
-      }
-      const keys = Array.from(groups.keys()).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
-      for (const k of keys) {
-        const ds = groups.get(k).slice().sort((a, b) => (b.last_fly_date || '').localeCompare(a.last_fly_date || '') || b.id - a.id);
-        html += groupHead(k, ds) + ds.map(item).join('');
-      }
-    } else {
-      const ds = datasets.slice().sort((a, b) => (b.last_fly_date || '').localeCompare(a.last_fly_date || '') || b.id - a.id);
-      const months = runsOf(ds, (d) => (d.last_fly_date || '').slice(0, 7) || 'unknown date');
-      for (const m of months) html += groupHead(m.key, ds.slice(m.start, m.end)) + ds.slice(m.start, m.end).map(item).join('');
-    }
-    list.innerHTML = html;
+    list.innerHTML = datasetGroups(datasets, this.group).map((g) => groupHead(g.label, g.datasets) + g.datasets.map(item).join('')).join('');
     $$('.list-item', list).forEach((b) => b.addEventListener('click', () => { location.hash = `#browse/${b.dataset.id}`; }));
     this._syncPicks();
   }
 
   // The coding unit menu, each unit spelled as first uploaded, the most common first (as in
   // the Merge tab); returns the datasets to list. A unit no longer uploaded lists them all.
-  _unitFilter() {
-    const units = new Map();
-    for (const d of this.datasets.slice().sort((a, b) => a.id - b.id)) {
-      const k = unitKey(d.coding_unit);
-      if (!units.has(k)) units.set(k, { label: d.coding_unit.trim().replace(/\s+/g, ' '), n: 0 });
-      units.get(k).n++;
-    }
-    const keys = [...units.keys()].sort((a, b) => units.get(b).n - units.get(a).n || a.localeCompare(b));
-    const sel = $('#browse-unit');
-    const html = `<option value="">All (${this.datasets.length})</option>`
-      + keys.map((k) => `<option value="${esc(k)}">${esc(units.get(k).label)} (${units.get(k).n})</option>`).join('');
-    if (sel.innerHTML !== html) sel.innerHTML = html;
-    const unit = units.has(this.unit) ? this.unit : '';
-    sel.value = unit;
-    return unit ? this.datasets.filter((d) => unitKey(d.coding_unit) === unit) : this.datasets;
-  }
+  _unitFilter() { return filterByUnit(this.datasets, $('#browse-unit'), this.unit); }
 
   async show(id) {
     this.selected = id;
@@ -2247,6 +2263,7 @@ class OdorsPage {
     this.preview = null;
     box.replaceChildren(msgBox('ok', `Synced: ${res.added} new, ${res.changed} changed, ${res.deleted} deleted.`));
     browse.odorCache.clear();
+    comparePage.invalidate(); // its odors' matches to the table
     reference.invalidate(); // their chemicals' names
     await this.load({ force: true });
   }
@@ -3309,12 +3326,352 @@ class AdminPage {
   }
 }
 
+// =================================================================== COMPARE
+// Datasets side by side, each its odors (rows) by its glomeruli or ROIs, every trial of an
+// odor averaged (and every fly, for glomeruli: /api/compare/datasets/<id>); how alike
+// their odors are within each, and in other spaces of chemicals (the ECFP fingerprints of
+// their structures, reference datasets); and how alike those likenesses are between any two.
+const COMPARE_KEY = 'olfdb.compare';
+
+// a viewer's height fitted to what it shows, up to most of the window's
+function fitViewer(el, v) {
+  if (!v.model) return;
+  const want = v.toolbar.offsetHeight + v.heatmap.headerH + v.model.rows.length * v.opts.cellH + v.hint.offsetHeight + 22;
+  el.style.height = `${Math.max(160, Math.min(want, Math.round(window.innerHeight * 0.8)))}px`;
+}
+
+class ComparePage {
+  constructor() {
+    this.o = {
+      group: 'panel', unit: '', picked: [], sim: false, metric: 'pearson', place: 'below', spaces: [], ecfpD: 6, conc: 'max',
+      rsa: false, rsaMethod: 'spearman', ...LS.get(COMPARE_KEY, {}),
+    };
+    this.datasets = null;
+    this.refs = []; // reference datasets with chemicals, as listed
+    this.data = new Map(); // dataset id -> as from /api/compare/datasets/<id>, with its values
+    this.refData = new Map(); // reference id -> as from /api/reference/<id>
+    this.ecfp = new Map(); // diameter -> fingerprints
+    this.memo = new Map(); // what is computed, by what it is of
+    this.blocks = new Map(); // key -> {el, viewer}, kept while shown
+    this._seq = 0;
+    const tab = $('#tab-compare');
+    $$('.seg button', tab).forEach((b) => b.addEventListener('click', () => { this.o.group = b.dataset.group; this._save(); this.renderList(); }));
+    $('#compare-unit').addEventListener('change', (e) => { this.o.unit = e.target.value; this._save(); this.renderList(); });
+    $('#compare-list').addEventListener('change', (e) => {
+      const ids = e.target.matches('.pick') ? [+e.target.dataset.id] : e.target.matches('.pick-group') ? e.target.dataset.ids.split(',').map(Number) : null;
+      if (!ids) return;
+      const picked = new Set(this.o.picked);
+      for (const id of ids) { if (e.target.checked) picked.add(id); else picked.delete(id); }
+      this.o.picked = this.datasets.map((d) => d.id).filter((id) => picked.has(id)).reverse(); // oldest first
+      this._changed();
+    });
+    $('#compare-clear').addEventListener('click', () => { this.o.picked = []; this._changed(); });
+    $('#cmp-metric').innerHTML = Object.entries(SIMILARITIES).map(([k, m]) => `<option value="${k}">${m.label}</option>`).join('');
+    for (const [id, key, read] of [['#cmp-sim', 'sim', (el) => el.checked], ['#cmp-metric', 'metric'], ['#cmp-place', 'place'], ['#cmp-conc', 'conc'],
+      ['#cmp-rsa', 'rsa', (el) => el.checked], ['#cmp-rsa-method', 'rsaMethod']]) {
+      $(id).addEventListener('change', (e) => { this.o[key] = read ? read(e.target) : e.target.value; this._changed(); });
+    }
+    $('#cmp-spaces').addEventListener('change', (e) => {
+      if (e.target.matches('[data-space]')) {
+        const key = e.target.dataset.space;
+        this.o.spaces = e.target.checked ? [...new Set([...this.o.spaces, key])] : this.o.spaces.filter((k) => k !== key);
+      } else if (e.target.matches('#cmp-ecfp-d')) {
+        const d = Math.round(+e.target.value / 2) * 2;
+        this.o.ecfpD = Math.min(12, Math.max(0, Number.isFinite(d) ? d : 6));
+      } else return;
+      this._changed();
+    });
+  }
+
+  _save() { LS.set(COMPARE_KEY, this.o); }
+
+  _changed() { this._save(); this.renderList(); this.render(); }
+
+  // each time the tab is opened: datasets and reference datasets may have come or gone
+  async load() {
+    let ds, refs;
+    try { [ds, refs] = await Promise.all([api('/api/datasets'), api('/api/reference')]); } catch (e) {
+      $('#compare-view').replaceChildren(msgBox('error', `Could not load the datasets: ${esc(e.message)}`));
+      return;
+    }
+    this.datasets = ds.datasets;
+    this.refs = refs.datasets.filter((r) => r.state === 'ok' && r.chemicals?.axis && r.chemicals.matched);
+    const ids = new Set(this.datasets.map((d) => d.id));
+    this.o.picked = this.o.picked.filter((id) => ids.has(id));
+    this.o.spaces = this.o.spaces.filter((k) => k === 'ecfp' || this.refs.some((r) => `ref:${r.id}` === k));
+    this.renderList();
+    await this.render();
+  }
+
+  invalidate() { this.data.clear(); this.memo.clear(); }
+
+  renderList() {
+    $$('#tab-compare .seg button').forEach((b) => b.classList.toggle('active', b.dataset.group === this.o.group));
+    const list = $('#compare-list');
+    if (!this.datasets) return;
+    if (!this.datasets.length) { list.innerHTML = '<div class="empty">Nothing uploaded yet. Use the Upload tab.</div>'; return; }
+    const picked = new Set(this.o.picked);
+    const item = (d) => `<label class="ds-item${picked.has(d.id) ? ' active' : ''}">
+        <input type="checkbox" class="pick" data-id="${d.id}"${picked.has(d.id) ? ' checked' : ''}>
+        <span class="list-item">
+          <span class="t">${esc(d.driver)} &gt; ${esc(d.indicator)} <span class="muted">(${esc(d.coding_unit)})</span></span>
+          <span class="s">${d.n_flies} ${d.n_flies === 1 ? 'fly' : 'flies'}, ${d.n_units.toLocaleString()} ROIs, ${d.n_odors} odors; last fly ${esc(d.last_fly_date)}</span>
+          <span class="s">#${d.id}, ${esc(d.uploader_name)}</span>
+        </span></label>`;
+    const head = (g) => {
+      const all = g.datasets.every((d) => picked.has(d.id));
+      return `<div class="list-group"><label><input type="checkbox" class="pick-group" data-ids="${g.datasets.map((d) => d.id).join(',')}"${all ? ' checked' : ''}>
+        ${esc(g.label)} <span class="muted">(${g.datasets.length})</span></label></div>`;
+    };
+    list.innerHTML = datasetGroups(filterByUnit(this.datasets, $('#compare-unit'), this.o.unit), this.o.group)
+      .map((g) => head(g) + g.datasets.map(item).join('')).join('');
+    const n = this.o.picked.length;
+    $('#compare-count').textContent = n ? `${n} dataset${n === 1 ? '' : 's'} shown` : '';
+    $('#compare-clear').hidden = !n;
+  }
+
+  // ------------------------------------------------------------------- spaces
+  _memo(key, make) {
+    if (!this.memo.has(key)) this.memo.set(key, make());
+    return this.memo.get(key);
+  }
+
+  // the chemicals (of the odor table) among a dataset's odors, each as the row (or rows)
+  // of the concentration chosen: {ids, rows: [[row index]]}
+  _chemicals(d) {
+    const byId = new Map();
+    d.rows.forEach((r, i) => { if (r.odor_id != null) byId.set(r.odor_id, [...(byId.get(r.odor_id) || []), i]); });
+    const ids = [...byId.keys()];
+    return {
+      ids,
+      rows: ids.map((id) => {
+        const rows = byId.get(id);
+        if (this.o.conc === 'mean') return rows;
+        const concs = rows.map((i) => d.rows[i].log10_conc ?? -Infinity);
+        const want = (this.o.conc === 'max' ? Math.max : Math.min)(...concs);
+        return rows.filter((_, k) => concs[k] === want); // in more than one panel: all of them
+      }),
+    };
+  }
+
+  // a dataset as a space of chemicals: their similarities, by their responses (the mean
+  // of their rows, if more than one): {ids, sim}
+  _datasetSpace(d) {
+    return this._memo(`ds:${d.id}:${this.o.metric}:${this.o.conc}`, () => {
+      const { ids, rows } = this._chemicals(d), nC = d.cols.length;
+      const vectors = rows.map((rs) => Float32Array.from({ length: nC }, (_, c) => {
+        let sum = 0, n = 0;
+        for (const i of rs) { const v = d.values[i * nC + c]; if (v === v) { sum += v; n++; } }
+        return n ? sum / n : NaN;
+      }));
+      return { ids, sim: similarityMatrix(vectors, this.o.metric) };
+    });
+  }
+
+  // a reference dataset as a space of chemicals: their similarities by their values along its
+  // other axis (each chemical once, the first of its rows or columns)
+  _refSpace(ref) {
+    return this._memo(`ref:${ref.meta.id}:${this.o.metric}`, () => {
+      const values = decodeValues(ref.values_b64), nR = ref.rows.length, nC = ref.cols.length, onRows = ref.chemicals.axis === 'rows';
+      const ids = [], vectors = [];
+      (onRows ? ref.rows : ref.cols).forEach((it, k) => {
+        const id = it.chem?.odor_id;
+        if (id == null || ids.includes(id)) return;
+        ids.push(id);
+        vectors.push(onRows ? values.subarray(k * nC, (k + 1) * nC) : Float32Array.from({ length: nR }, (_, r) => values[r * nC + k]));
+      });
+      return { ids, sim: similarityMatrix(vectors, this.o.metric) };
+    });
+  }
+
+  _ecfpSpace(fp) {
+    return this._memo(`ecfp:${fp.diameter}:${Object.keys(fp.fingerprints).length}`, () => {
+      const ids = Object.keys(fp.fingerprints).map(Number);
+      return { ids, sim: similarityMatrix(ids.map((id) => fp.fingerprints[id]), null, tanimoto) };
+    });
+  }
+
+  _spaceTitle(key) {
+    if (key === 'ecfp') return `ECFP${this.o.ecfpD} fingerprints`;
+    return this.refs.find((r) => `ref:${r.id}` === key)?.title || key;
+  }
+
+  // the spaces compared to, loaded: [{key, title, space, note}]
+  async _spaces() {
+    const out = [];
+    for (const key of this.o.spaces) {
+      try {
+        if (key === 'ecfp') {
+          const fp = await this._fingerprints();
+          out.push({ key, title: this._spaceTitle(key), space: this._ecfpSpace(fp), note: 'their Jaccard similarity (1 − Jaccard distance)' });
+        } else {
+          const id = key.slice(4);
+          if (!this.refData.has(id)) this.refData.set(id, await api(`/api/reference/${encodeURIComponent(id)}`));
+          const ref = this.refData.get(id);
+          const along = ref.chemicals.axis === 'rows' ? ref.meta.col_label || 'columns' : ref.meta.row_label || 'rows';
+          out.push({ key, title: ref.meta.title, space: this._refSpace(ref), note: `by their values across its ${along}, ${SIMILARITIES[this.o.metric].label}` });
+        }
+      } catch (e) {
+        out.push({ key, title: this._spaceTitle(key), error: e.message });
+      }
+    }
+    return out;
+  }
+
+  async _fingerprints() {
+    const d = this.o.ecfpD;
+    if (!this.ecfp.has(d)) this.ecfp.set(d, await api(`/api/compare/ecfp?diameter=${d}`));
+    return this.ecfp.get(d);
+  }
+
+  // ------------------------------------------------------------------- render
+  // the options: the spaces to compare to, each with how many of the odors shown it has
+  _renderOptions(shown) {
+    for (const [id, key] of [['#cmp-sim', 'sim'], ['#cmp-rsa', 'rsa']]) $(id).checked = !!this.o[key];
+    for (const [id, key] of [['#cmp-metric', 'metric'], ['#cmp-place', 'place'], ['#cmp-conc', 'conc'], ['#cmp-rsa-method', 'rsaMethod']]) $(id).value = this.o[key];
+    $('#cmp-place').disabled = !this.o.sim;
+    $('#cmp-shown').textContent = shown.size
+      ? `The datasets shown have ${shown.size} odor${shown.size === 1 ? '' : 's'} of the odor table (by themselves, not mixed).`
+      : 'No odors of the odor table shown yet.';
+    const overlap = (ids) => {
+      if (!shown.size) return `<span class="overlap">it has ${ids.length} odors</span>`;
+      const n = ids.filter((id) => shown.has(id)).length;
+      return `<span class="overlap${n < 3 && this.o.picked.length ? ' few' : ''}">${n} of the ${shown.size} odors shown${ids.length ? ` (it has ${ids.length})` : ''}</span>`;
+    };
+    const fp = this.ecfp.get(this.o.ecfpD);
+    const checked = (key) => (this.o.spaces.includes(key) ? ' checked' : '');
+    const html = [`<div class="space"><label class="check"><input type="checkbox" data-space="ecfp"${checked('ecfp')}> Chemical structure:
+        ECFP fingerprints, by their Jaccard similarity (1 − Jaccard distance)</label>
+        <label class="opt">Diameter <input type="number" id="cmp-ecfp-d" min="0" max="12" step="2" value="${this.o.ecfpD}"> (ECFP${this.o.ecfpD})</label>
+        ${fp ? overlap(Object.keys(fp.fingerprints).map(Number)) : '<span class="overlap">…</span>'}</div>`];
+    for (const r of this.refs) {
+      html.push(`<div class="space"><label class="check"><input type="checkbox" data-space="ref:${esc(r.id)}"${checked(`ref:${r.id}`)}> ${esc(r.title)}</label>
+        ${overlap(r.chemicals.odor_ids || [])}</div>`);
+    }
+    if (!this.refs.length) html.push('<p class="muted small">No reference datasets with chemicals (Reference data tab).</p>');
+    const active = document.activeElement?.id === 'cmp-ecfp-d';
+    $('#cmp-spaces').innerHTML = html.join('');
+    if (active) $('#cmp-ecfp-d').focus();
+  }
+
+  // a block of the page, its viewer kept while it is shown again
+  _block(key, title, sub, payload, fileStem) {
+    let b = this.blocks.get(key);
+    if (!b) {
+      const el = document.createElement('div');
+      el.className = 'cmp-viewer';
+      $('#compare-view').appendChild(el); // attached, to be measured
+      b = { el, viewer: new MatrixViewer(el, { kind: 'compare' }) };
+      b.viewer.onShow = () => fitViewer(el, b.viewer);
+      this.blocks.set(key, b);
+    }
+    const section = document.createElement('section');
+    section.className = 'cmp-block';
+    section.innerHTML = `<div class="cmp-head"><h3>${esc(title)}</h3>${sub ? `<span class="muted">${sub}</span>` : ''}</div>`;
+    section.appendChild(b.el);
+    return { section, show: () => b.viewer.setGenericData(payload, { title, fileStem, kind: 'compare' }) };
+  }
+
+  async render() {
+    const seq = ++this._seq, view = $('#compare-view');
+    $('#compare-empty').hidden = !!this.o.picked.length;
+    await Promise.all(this.o.picked.filter((id) => !this.data.has(id)).map(async (id) => {
+      try {
+        const d = await api(`/api/compare/datasets/${id}`);
+        this.data.set(id, { ...d, values: decodeValues(d.values_b64) });
+      } catch (e) { this.data.set(id, { id, error: e.message }); }
+    }));
+    try { await this._fingerprints(); } catch { /* said so when compared to */ }
+    const spaces = await this._spaces();
+    if (seq !== this._seq) return;
+    const datasets = this.o.picked.map((id) => this.data.get(id));
+    const shown = new Set(datasets.flatMap((d) => (d.rows || []).filter((r) => r.odor_id != null).map((r) => r.odor_id)));
+    const names = new Map(datasets.flatMap((d) => (d.rows || []).filter((r) => r.chem).map((r) => [r.odor_id, r.chem.name])));
+    this._renderOptions(shown);
+
+    const parts = [], shows = [], used = new Set();
+    const metric = SIMILARITIES[this.o.metric].label;
+    const block = (key, ...args) => { used.add(key); const b = this._block(key, ...args); parts.push(b.section); shows.push(b.show); };
+    // how alike the similarities of each two spaces are
+    const all = [
+      ...datasets.filter((d) => !d.error).map((d) => ({ key: `ds:${d.id}`, title: `#${d.id} ${d.title}`, space: this._datasetSpace(d) })),
+      ...spaces.filter((s) => !s.error),
+    ];
+    if (this.o.rsa) parts.push(this._rsaTable(all));
+    for (const s of spaces.filter((x) => x.error)) parts.push(msgBox('error', `${esc(s.title)} could not be compared to: ${esc(s.error)}`));
+    for (const d of datasets) {
+      if (d.error) { parts.push(msgBox('error', `Dataset #${d.id} could not be shown: ${esc(d.error)}`)); continue; }
+      const what = d.kind === 'glomeruli' ? `${d.cols.length} glomeruli, each the mean of the flies with it` : `${d.cols.length.toLocaleString()} ROIs`;
+      const sub = `${esc(d.coding_unit || '')}: ${d.rows.length} odors × ${what}; every trial averaged`;
+      if (!(this.o.sim && this.o.place === 'instead')) {
+        block(`ds:${d.id}`, `#${d.id} ${d.title}`, sub, this._memo(`data:${d.id}`, () => ({
+          meta: { kind: 'diverging', row_label: 'odor', col_label: d.kind === 'glomeruli' ? 'glomerulus' : 'ROI' },
+          rows: d.rows.map((r) => ({ label: r.odor, group: r.panel })), cols: d.cols.map((c) => ({ label: c.label })), values: d.values,
+        })), `dataset_${d.id}_mean`);
+      }
+      if (this.o.sim) {
+        block(`sim:${d.id}`, `#${d.id} ${d.title}: odor–odor similarity`, `${metric} of their responses across its ${d.kind === 'glomeruli' ? 'glomeruli' : 'ROIs'}`,
+          this._memo(`simdata:${d.id}:${this.o.metric}`, () => {
+            const nC = d.cols.length, rows = d.rows.map((_, i) => d.values.subarray(i * nC, (i + 1) * nC));
+            const labels = d.rows.map((r) => ({ label: r.odor, group: r.panel }));
+            return { meta: { kind: 'diverging', row_label: 'odor', col_label: 'odor' }, rows: labels, cols: labels.map((l) => ({ label: l.label })),
+              values: similarityMatrix(rows, this.o.metric) };
+          }), `dataset_${d.id}_similarity`);
+      }
+    }
+    // each space compared to, over the odors shown it has
+    for (const s of spaces.filter((x) => !x.error)) {
+      const at = new Map(s.space.ids.map((id, i) => [id, i]));
+      const ids = [...shown].filter((id) => at.has(id)), n = s.space.ids.length;
+      const sub = `${s.note}; the ${ids.length} of the odors shown it has`;
+      if (ids.length < 2) { parts.push(msgBox('info', `${esc(s.title)}: ${ids.length ? 'only one' : 'none'} of the odors shown.`)); continue; }
+      block(`space:${s.key}`, s.title, esc(sub), this._memo(`spacedata:${s.key}:${this.o.metric}:${ids.join(',')}`, () => {
+        const labels = ids.map((id) => ({ label: names.get(id) || `odor ${id}` }));
+        const values = new Float32Array(ids.length * ids.length);
+        ids.forEach((a, i) => ids.forEach((b, j) => { values[i * ids.length + j] = s.space.sim[at.get(a) * n + at.get(b)]; }));
+        return { meta: { kind: 'diverging', row_label: 'odor', col_label: 'odor' }, rows: labels, cols: labels, values };
+      }), `${s.key.replace(/\W+/g, '_')}_similarity`);
+    }
+    for (const key of [...this.blocks.keys()]) if (!used.has(key)) this.blocks.delete(key);
+    view.replaceChildren(...parts);
+    shows.forEach((show) => show());
+  }
+
+  // a table of how alike the similarities of each two spaces are
+  _rsaTable(all) {
+    const box = document.createElement('section');
+    box.className = 'cmp-block cmp-rsa';
+    const method = this.o.rsaMethod === 'spearman' ? 'Spearman' : 'Pearson';
+    if (all.length < 2) {
+      box.innerHTML = `<div class="cmp-head"><h3>Between similarities</h3></div><p class="muted">Show two datasets, or one and a space to compare it to (on the right), to correlate their similarities.</p>`;
+      return box;
+    }
+    const cells = all.map((a, i) => all.map((b, j) => (i === j ? null : correlateSimilarities(this.o.rsaMethod, a.space, b.space))));
+    const color = (r) => {
+      if (!(r === r)) return '';
+      const t = Math.min(1, Math.abs(r));
+      return `background: rgba(${r > 0 ? '200, 70, 50' : '50, 100, 200'}, ${(0.12 + 0.55 * t).toFixed(2)})`;
+    };
+    const cell = (c) => {
+      if (!c) return '<td class="self">—</td>';
+      const tip = c.nOdors < 3 ? `${c.nOdors} odors in common: too few` : `${method} r over the ${c.nPairs} pairs of the ${c.nOdors} odors in common`;
+      return `<td style="${color(c.r)}" title="${esc(tip)}">${c.r === c.r ? c.r.toFixed(2) : '–'}<span class="muted small">${c.nOdors} odors</span></td>`;
+    };
+    box.innerHTML = `<div class="cmp-head"><h3>Between similarities</h3><span class="muted">${method} correlation of each two spaces' odor–odor
+      similarities (${SIMILARITIES[this.o.metric].label} within datasets and reference data), over the odors both have</span></div>
+      <div class="cmp-rsa-scroll"><table class="cmp-rsa-table"><thead><tr><th></th>${all.map((s) => `<th>${esc(s.title)}</th>`).join('')}</tr></thead>
+      <tbody>${all.map((s, i) => `<tr><th>${esc(s.title)}</th>${cells[i].map(cell).join('')}</tr>`).join('')}</tbody></table></div>`;
+    return box;
+  }
+}
+
 // ==================================================================== router
 const upload = new UploadFlow();
 const browse = new Browse();
 const odorsPage = new OdorsPage();
 const reference = new Reference();
 const mergePage = new MergePage();
+const comparePage = new ComparePage();
 const settings = new SettingsPage();
 const admin = new AdminPage();
 const player = new MoviePlayer($('#player'), { api, esc, fmtBytes });
@@ -3324,7 +3681,7 @@ let lastPlace = 'browse'; // the hash of the last place shown other than the Adm
 
 function route() {
   const [tab, id] = location.hash.replace(/^#/, '').split('/');
-  const name = ['upload', 'browse', 'merge', 'odors', 'reference', 'settings', 'admin'].includes(tab) ? tab : 'browse';
+  const name = ['upload', 'browse', 'merge', 'compare', 'odors', 'reference', 'settings', 'admin'].includes(tab) ? tab : 'browse';
   $$('.tab').forEach((s) => { s.hidden = s.id !== `tab-${name}`; });
   $$('.tabs a').forEach((a) => a.classList.toggle('active', a.dataset.tab === name));
   if (name === 'admin' && currentTab !== 'admin') admin.enter(lastPlace);
@@ -3335,6 +3692,7 @@ function route() {
   if (name === 'reference') { reference.load().then(() => { if (id) reference.show(id); }); }
   if (name === 'settings') settings.load();
   if (name === 'merge') mergePage.load();
+  if (name === 'compare') comparePage.load();
   if (name === 'browse' && !id) { $('#browse-empty').hidden = false; $('#dataset-view').hidden = true; browse.selected = null; }
   if (name === 'reference' && !id) { $('#reference-empty').hidden = false; $('#reference-view').hidden = true; reference.selected = null; }
 }

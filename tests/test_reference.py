@@ -109,11 +109,12 @@ def test_builtin_and_chemicals(env):
     fruits, gone = r["datasets"]
     assert fruits["state"] == "ok" and fruits["origin"] == "builtin" and fruits["shape"] == [2, 2]
     # no identifiers: chemicals found by their labels (ethyl acetate has a CID; hexanal, in the table, has none)
-    assert fruits["chemicals"] == {"axis": "rows", "n": 2, "matched": 2, "identified": 1}
+    assert fruits["chemicals"] == {"axis": "rows", "n": 2, "matched": 2, "identified": 1, "odor_ids": [1, 3]}
     assert fruits["warning"] == "1 of 2 chemicals could not be identified: no CID or InChI, in the file or the Odors table"
     assert gone["state"] == "error" and gone["error"] == "file missing from reference_data/"
     status, r = call(env.reference_get, path_params={"ref_id": "fruits"})
-    assert status == 200 and r["rows"][0]["chem"] == {"name": "ethyl acetate", "abbrev": "ea", "cid": 8857, "how": "name"}
+    assert status == 200 and r["rows"][0]["chem"] == {"odor_id": 1, "name": "ethyl acetate", "abbrev": "ea", "cid": 8857,
+                                                      "how": "name"}
     assert r["rows"][1]["chem"]["cid"] is None and r["meta"]["kind"] == "sequential"
     values = np.frombuffer(base64.b64decode(r["values_b64"]), "<f4").reshape(r["shape"])
     assert values[0].tolist() == [1, 2] and np.isnan(values[1, 1])

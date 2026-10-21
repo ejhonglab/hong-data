@@ -32,7 +32,7 @@ from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, R
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import backup, config, export, filelog, merge, movies, odormeta, reference, sandbox, tensor, thorimage, yamlcheck
+from . import backup, compare, config, export, filelog, merge, movies, odormeta, reference, sandbox, tensor, thorimage, yamlcheck
 from .db import Database
 from .glomeruli import load_glomeruli
 from .ingest import ParsedData, ValidationError, load_file, load_parsed, save_parsed
@@ -1258,6 +1258,27 @@ def _unmatched(rows: list[dict]) -> list[str]:
     return list(dict.fromkeys(r["odor"] for r in rows if r["odor_id"] is None))
 
 
+async def compare_dataset(request: Request) -> Response:
+    """A dataset as the Compare tab shows it: its odors by its ROIs (or glomeruli), each
+    the mean of its trials (and flies), see `compare.dataset`."""
+    result = await run_in_threadpool(compare.dataset, db, int(request.path_params["ds_id"]), config.DATASETS_DIR)
+    if result is None:
+        return json_error(404, "dataset not found")
+    return JSONResponse(result)
+
+
+async def compare_ecfp(request: Request) -> Response:
+    """ECFP fingerprints of the odor table's chemicals (``?diameter=``: even, from 0 to 12;
+    6, ECFP6, if not given), see `compare.fingerprints`."""
+    try:
+        diameter = int(request.query_params.get("diameter", 6))
+    except ValueError:
+        diameter = -1
+    if not 0 <= diameter <= 12 or diameter % 2:
+        return json_error(400, "the diameter must be an even number from 0 to 12")
+    return JSONResponse(await run_in_threadpool(lambda: compare.fingerprints(db.list_odors(), diameter)))
+
+
 async def dataset_odor_table(request: Request) -> Response:
     """A dataset's odors (per panel, as in the data) matched to the odor table (see `_odor_matches`)."""
     ds_id = int(request.path_params["ds_id"])
@@ -1562,6 +1583,8 @@ routes = [
     Route("/api/datasets/{ds_id:int}/readme", dataset_readme_save, methods=["PUT"]),
     Route("/api/datasets/{ds_id:int}/files/{path:path}", dataset_file),
     Route("/api/datasets/{ds_id:int}/odors", dataset_odor_table),
+    Route("/api/compare/datasets/{ds_id:int}", compare_dataset),
+    Route("/api/compare/ecfp", compare_ecfp),
     Route("/api/datasets/{ds_id:int}/data_paths", dataset_data_paths),
     Route("/api/datasets/{ds_id:int}/data_paths", dataset_data_paths_save, methods=["PUT"]),
     Route("/api/tensor/check", tensor_check, methods=["POST"]),

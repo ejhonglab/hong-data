@@ -9,3 +9,4 @@ PyYAML>=6
 Markdown>=3.5
 tifffile>=2024.1
 roifile>=2024.1
+rdkit>=2024.3  # ECFP fingerprints of odors (Compare tab)

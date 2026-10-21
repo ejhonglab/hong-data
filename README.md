@@ -32,6 +32,8 @@ expected, and nothing secret is entered. If a download or the page is blocked, s
    (a zip), or the response matrices as CSV.
 5. **Merge**: every dataset of a coding unit (e.g. glomeruli) in one download, optionally
    with groups of datasets (by experimenter, rig or power) scaled to each other first.
+6. **Compare**: tick datasets to see them side by side, averaged, with how alike their
+   odors are, and how that compares with chemical structure or reference data.
 
 ### Browser warnings
 
@@ -224,6 +226,25 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   over them, then the factor each dataset is multiplied by, which can be downloaded on
   its own (as `scaling.csv`, by `dataset_id` as in the matrices). Odors keep their own
   concentrations in the matrices.
+- **Compare**: datasets ticked on the left (listed as in Browse) side by side, each its
+  odors (rows, by panel) by its glomeruli or ROIs, every trial of an odor averaged, and
+  for glomeruli every fly too (a column per glomerulus, the mean of the flies with it);
+  in the viewer of reference data (colors, cell size, transpose, moving and removing
+  rows and columns, figure export), without trials, ROI ordering or clustering. On the
+  right:
+  - *Odor–odor similarity* within each dataset (Pearson or Spearman correlation, or
+    cosine similarity, of two odors' responses across the glomeruli or ROIs both have),
+    under its data or instead of it.
+  - *Compare to*: chemical structure, as the Jaccard similarity (1 − Jaccard distance)
+    of the odors' ECFP fingerprints (RDKit's Morgan fingerprints from their InChI, ECFP6
+    by default, of any even diameter up to 12), and every reference dataset with
+    chemicals, by their values along its other axis (same similarity as above). Odors
+    are matched across them by the Odors table (one chemical alone, not mixtures; an odor
+    at several concentrations as its highest, lowest or the mean of them); each says how
+    many of the odors shown it has, and its similarities over those are shown.
+  - *Between similarities*: a table of the Spearman (or Pearson) correlation of each two
+    of the datasets and spaces compared to: of their similarities for each pair of the
+    odors both have (one side of each matrix, without its diagonal), with how many odors.
 - **Odors**: the app's own table of odor metadata, one row per chemical, with links and
   PubChem structure images. It is synced one way from a Google sheet (its link set in
   the Admin tab) or a CSV imported in the Admin tab, with the columns of
