@@ -38,7 +38,7 @@ def test_dataset(tmp_path):
     ds_id, v = insert(db, tmp_path, values=v)
     d = compare.dataset(db, ds_id, tmp_path)
     # odors as rows, each the mean of its trials; for glomeruli, of the flies with one, in the list's order
-    assert d["kind"] == "glomeruli" and d["shape"] == [3, 3]
+    assert d["kind"] == "glomeruli" and d["shape"] == [3, 3] and d["driver"] == "GH146" and d["coding_unit"] == "glomeruli"
     assert [(c["label"], c["n_flies"]) for c in d["cols"]] == [("DL5", 1), ("DM2", 2), ("VA2", 1)]
     va, ea = [o["id"] for o in sorted(db.list_odors(), key=lambda o: o["name"], reverse=True)]
     assert [(r["odor"], r["odor_id"], r["log10_conc"], (r["chem"] or {}).get("name")) for r in d["rows"]] == [

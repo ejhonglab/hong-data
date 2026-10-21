@@ -245,9 +245,12 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   - *Between similarities*: a matrix of the Spearman (or Pearson) correlation of each two
     of the datasets and spaces compared to: of their similarities for each pair of the
     odors both have (one side of each matrix, without its diagonal), each cell saying r
-    and of how many odors. Like every matrix of the tab, it can be exported as a figure
-    (SVG, PDF, PNG, with the numbers in the cells when they are large enough) or a
-    table (CSV: for it, each two spaces once with r, odors and pairs).
+    and of how many odors. Datasets are named there by what was recorded: their coding
+    unit (e.g. KCs), or for glomeruli ORNs (a pebbled driver), PNs (GH146) or glomeruli;
+    by their full names (as in its CSV) when two would share one. Like every matrix of
+    the tab, it can be exported as a figure (SVG, PDF, PNG, with the numbers in the cells
+    when they are large enough) or a table (CSV: for it, each two spaces once with r,
+    odors and pairs).
 - **Odors**: the app's own table of odor metadata, one row per chemical, with links and
   PubChem structure images. It is synced one way from a Google sheet (its link set in
   the Admin tab) or a CSV imported in the Admin tab, with the columns of

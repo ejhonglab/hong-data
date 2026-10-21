@@ -3358,6 +3358,15 @@ class AdminPage {
 // their structures, reference datasets); and how alike those likenesses are between any two.
 const COMPARE_KEY = 'olfdb.compare';
 
+// a dataset's name as a space: what was recorded (its coding unit; for glomeruli, ORNs if
+// its Gal4 driver is pebbled, PNs if GH146)
+function neuralSpaceName(d) {
+  const unit = (d.coding_unit || '').trim().replace(/\s+/g, ' ');
+  if (unitKey(unit) !== 'glomeruli') return unit || `#${d.id}`;
+  const driver = (d.driver || '').toLowerCase();
+  return driver.includes('pebbled') ? 'ORNs' : driver.includes('gh146') ? 'PNs' : 'glomeruli';
+}
+
 // a viewer's height fitted to what it shows, up to most of the window's
 function fitViewer(el, v) {
   if (!v.model) return;
@@ -3623,8 +3632,14 @@ class ComparePage {
     const block = (key, ...args) => { used.add(key); const b = this._block(key, ...args); parts.push(b.section); shows.push(b.show); };
     const info = (html) => parts.push(msgBox('info', html));
     // how alike the similarities of each two spaces are
+    // datasets by what was recorded (ORNs, PNs, KCs...), by their full names those that would share one
+    const loaded = datasets.filter((d) => !d.error);
+    const short = loaded.map(neuralSpaceName);
     const all = [
-      ...datasets.filter((d) => !d.error).map((d) => ({ key: `ds:${d.id}`, title: `#${d.id} ${d.title}`, space: this._datasetSpace(d) })),
+      ...loaded.map((d, i) => {
+        const full = `#${d.id} ${d.title}`;
+        return { key: `ds:${d.id}`, title: short.filter((n) => n === short[i]).length > 1 ? full : short[i], fullTitle: full, space: this._datasetSpace(d) };
+      }),
       ...spaces.filter((s) => !s.error),
     ];
     if (this.o.rsa && all.length < 2) {
@@ -3701,7 +3716,8 @@ class ComparePage {
     all.forEach((a, i) => all.forEach((b, j) => {
       if (j <= i) return;
       const c = cells[i][j];
-      lines.push([a.title, b.title, method, SIMILARITIES[this.o.metric].label, c.r === c.r ? String(c.r) : '', c.nOdors, c.nPairs]);
+      lines.push([a.fullTitle || a.title, b.fullTitle || b.title, method, SIMILARITIES[this.o.metric].label, c.r === c.r ? String(c.r) : '',
+        c.nOdors, c.nPairs]);
     }));
     return { name: 'similarities_correlated.csv', text: `${lines.map((l) => l.map(csvCell).join(',')).join('\n')}\n` };
   }
