@@ -25,6 +25,7 @@ from . import tensor, thorimage
 
 TIFF_SUFFIXES = (".tif", ".tiff")
 PREFERRED = ("mocorr.tif", "flipped.tif", "raw.tif")  # al_analysis' names, most processed first
+NOT_MOVIES = {"roimask.raw"}  # ThorImage's other .raw files, beside a recording's movie (lower case)
 ROISET = "RoiSet.zip"
 DEPTH = 3  # folders scanned below a fly's folder (or the data folder, if no fly folder is found)
 MAX_MOVIES = 200
@@ -82,7 +83,8 @@ def find(folder: Path, kind: str, flies: list[dict], skipped: Optional[set] = No
                 movies = [e for e in files if e.name.lower().endswith(TIFF_SUFFIXES)]
                 movies.sort(key=lambda e: (PREFERRED.index(e.name) if e.name in PREFERRED else len(PREFERRED), e.name))
             else:
-                movies = [e for e in files if e.name.lower().endswith(".raw") and "Experiment.xml" in names]
+                movies = [e for e in files if e.name.lower().endswith(".raw") and e.name.lower() not in NOT_MOVIES
+                          and "Experiment.xml" in names]
             for e in movies:
                 try:
                     size = e.stat().st_size

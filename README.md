@@ -186,12 +186,13 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   edits, and refuses if someone else changed it meanwhile. Unsaved edits are kept while
   you look at other datasets.
 - **Movies** ("Play movies…" in the Raw data or Motion corrected menu of a dataset whose
-  folder is found): a player for the movies of the dataset's flies in its data folders.
+  folder is found): a player for the movies of the dataset's flies in that menu's data
+  folder (raw, or motion corrected).
   Motion-corrected ones are TIFFs (as al_analysis writes them: `mocorr.tif`, else
   `flipped.tif` or `raw.tif`, though any TIFF is listed), drawn with the ImageJ ROIs of
   the `RoiSet.zip` next to them, or in a folder above (each on the Z plane it was drawn
-  on; ROIs of other planes dashed). Raw ones are ThorImage `.raw` files, laid out by the
-  `Experiment.xml` next to them (flyback frames left out). Play / pause, time and Z
+  on; ROIs of other planes dashed). Raw ones are ThorImage `.raw` files (not its
+  `RoiMask.raw`), laid out by the `Experiment.xml` next to them (flyback frames left out). Play / pause, time and Z
   sliders, max projection over Z, channel, speed, contrast, zoom (wheel) and move
   (drag), with the value of the pixel under the pointer; keys as in ImageJ where they
   exist (space or `\` to play, `<` / `>` and the arrows to step). Only the planes shown

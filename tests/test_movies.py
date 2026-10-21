@@ -70,6 +70,7 @@ def test_find(root):
     assert found[2]["rois"] == str(root / "tom/analysis/2023-11-19/1/RoiSet.zip")
     # a folder of one fly (no date / fly folders below it): everything in it
     assert [m["label"] for m in movies.find(root / "tom/analysis/2023-11-19/2", "mocorr", FLIES)] == ["t1/mocorr.tif"]
+    (root / "tom/raw/2023-11-19/1/t1/RoiMask.raw").write_bytes(b"\0" * 96)  # ThorImage's, not a movie
     raw = movies.find(root / "tom/raw", "raw", FLIES)
     assert [(m["label"], m["format"], m["rois"]) for m in raw] == [("2023-11-19/1/t1/Image_001_001.raw", "raw", None)]
     assert [m["recording"] for m in found] == ["t1", "t1", "t2"] and raw[0]["recording"] == "t1"

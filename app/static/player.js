@@ -8,7 +8,6 @@ const CHUNK_BYTES = 4 * 1024 * 1024; // planes asked for at once
 const AHEAD = 2; // chunks fetched ahead while playing
 const ROI_COLOR = '#ffd400';
 const SELECTED_COLOR = '#00e5ff';
-const KINDS = { mocorr: 'Motion corrected / traces', raw: 'Raw data' };
 // the movies of recordings with none in the other folder, listed apart in each
 const ONLY = { raw: 'Not in the motion-corrected data', mocorr: 'Not in the raw data' };
 
@@ -58,9 +57,9 @@ export class MoviePlayer {
     new ResizeObserver(() => { this._sizeCanvas(); this._paint(); }).observe(this.$('.player-stage'));
   }
 
-  // Opens the player on a dataset's movies, showing the first of `kind` ('raw' or 'mocorr').
+  // Opens the player on a dataset's movies of one `kind` ('raw' or 'mocorr'), showing the first.
   async open(datasetId, title, kind) {
-    this.$('.player-title').textContent = `Movies of ${title}`;
+    this.$('.player-title').textContent = `${kind === 'raw' ? 'Raw' : 'Motion-corrected'} movies of ${title}`;
     this.$('.player-list').innerHTML = '<p class="muted">Looking for movies…</p>';
     this._clearMovie('Choose a movie on the left.');
     if (!this.el.open) this.el.showModal();
@@ -70,7 +69,7 @@ export class MoviePlayer {
       return;
     }
     this.movies = [];
-    const groups = [kind, kind === 'raw' ? 'mocorr' : 'raw'].map((k) => {
+    const groups = [kind].map((k) => {
       const found = res[k];
       const item = (m) => {
         this.movies.push({ ...m, kind: k });
@@ -83,13 +82,13 @@ export class MoviePlayer {
       // the folders of flies not in the dataset in it, left out
       const left = found.skipped?.length ? `<p class="muted small">Left out: the folders of flies not in this dataset (${
         this.esc(found.skipped.map((f) => `${f.date} fly ${f.fly_num}`).join(', '))}).</p>` : '';
-      return `<h3>${KINDS[k]}</h3>${left}${items || only ? items : `<p class="muted small">${this.esc(none)}</p>`}`
+      return `${left}${items || only ? items : `<p class="muted small">${this.esc(none)}</p>`}`
         + (only ? `<h4 class="player-unmatched">${ONLY[k]}</h4>${only}` : '');
     });
     this.$('.player-list').innerHTML = groups.join('');
-    const first = this.movies.find((m) => m.kind === kind) || this.movies[0];
+    const first = this.movies[0];
     if (first) this.load(first);
-    else this._clearMovie('No movies were found in this dataset\'s data folders.');
+    else this._clearMovie(`No ${kind === 'raw' ? 'raw' : 'motion-corrected'} movies were found for this dataset.`);
   }
 
   async load(movie) {
