@@ -10,6 +10,7 @@ little-endian numbers, so it never has to parse a TIFF or read a whole movie.
 """
 from __future__ import annotations
 
+import datetime as dt
 import os
 import posixpath
 import re
@@ -113,12 +114,31 @@ def _fly_of(path: Path, flies: list[dict]) -> tuple[Optional[dict], Optional[str
     return None, None
 
 
+def _path_fly(path: Path) -> tuple[Optional[dict], Optional[str]]:
+    """The fly the folders in a movie's path name, whatever fly it is (``.../<date>/<fly>/
+    [<recording>/...]``, the nearest), and the folder in the fly's it is in; (None, None) if none."""
+    parts = path.parts[:-1]
+    for i in range(len(parts) - 1, 0, -1):
+        fly = re.fullmatch(r"(?:fly)?[_-]?0*(\d+)", parts[i], re.IGNORECASE)
+        for fmt in tensor.DATE_FORMATS if fly else ():
+            try:
+                date = dt.datetime.strptime(parts[i - 1], fmt).date().isoformat()
+            except ValueError:
+                continue
+            return {"date": date, "fly_num": int(fly[1])}, parts[i + 1] if i + 1 < len(parts) else None
+    return None, None
+
+
 def _recording_key(m: dict) -> tuple:
-    """A movie's recording, to pair those of the raw and motion-corrected data: its fly and
-    the folder in the fly's it is in; for one of no fly known, the folder it is in."""
+    """A movie's recording, to pair those of the raw and motion-corrected data: its fly (of
+    the dataset's, else the one its path names, else None) and the folder in the fly's it
+    is in; for one in no fly's folder, the folder it is in."""
     if m["fly"]:
-        return m["fly"]["date"], m["fly"]["fly_num"], m["recording"]
-    return None, None, posixpath.dirname(m["label"]) or None
+        return True, m["fly"]["date"], m["fly"]["fly_num"], m["recording"]
+    fly, recording = _path_fly(Path(m["path"]))
+    if fly:
+        return False, fly["date"], fly["fly_num"], recording
+    return False, None, None, posixpath.dirname(m["label"]) or None
 
 
 def unmatched(raw: list[dict], mocorr: list[dict]) -> dict[str, list[dict]]:
@@ -130,23 +150,27 @@ def unmatched(raw: list[dict], mocorr: list[dict]) -> dict[str, list[dict]]:
 
     Returns:
         by kind ('raw', 'mocorr'): its recordings not in the other, each with ``date``,
-        ``fly_num`` (None if its fly is not known), ``recording`` and ``n_movies``.
+        ``fly_num`` (None if in no fly's folder), ``of_dataset`` (whether the fly is one of
+        the dataset's), ``recording`` and ``n_movies``.
     """
     def recordings(found: list[dict]) -> dict[tuple, list[dict]]:
         out: dict[tuple, list[dict]] = {}
         for m in found:
             m["unmatched"] = False
-            if not (m["fly"] and m["recording"] and tensor.ANATOMICAL.fullmatch(m["recording"])):
-                out.setdefault(_recording_key(m), []).append(m)
+            key = _recording_key(m)
+            if not (key[1] and key[3] and tensor.ANATOMICAL.fullmatch(key[3])):
+                out.setdefault(key, []).append(m)
         return out
 
     by_kind = {"raw": recordings(raw), "mocorr": recordings(mocorr)}
     result = {}
     for kind, other in (("raw", "mocorr"), ("mocorr", "raw")):
         result[kind] = []
-        for (date, fly_num, recording), found in by_kind[kind].items():
-            if (date, fly_num, recording) not in by_kind[other]:
-                result[kind].append({"date": date, "fly_num": fly_num, "recording": recording, "n_movies": len(found)})
+        for key, found in by_kind[kind].items():
+            if key not in by_kind[other]:
+                of_dataset, date, fly_num, recording = key
+                result[kind].append({"date": date, "fly_num": fly_num, "of_dataset": of_dataset, "recording": recording,
+                                     "n_movies": len(found)})
                 for m in found:
                     m["unmatched"] = True
     return result
@@ -159,16 +183,18 @@ def _natural(name: Optional[str]) -> list:
 
 def side_by_side(raw: list[dict], mocorr: list[dict]) -> list[dict]:
     """Every recording in a dataset's raw and motion-corrected data folders, paired as
-    `unmatched` pairs them (`find`'s movies of each; those of no fly known last, by
-    folder), in the order they were recorded: by fly, then by when its raw recording says it was made (its
+    `unmatched` pairs them (`find`'s movies of each; those of flies not the dataset's
+    after its own, then those in no fly's folder, by folder), in the order they were
+    recorded: by fly, then by when its raw recording says it was made (its
     Experiment.xml's date; if one of the fly's does not say, when they were written); one
     with no raw data after the one before it by name (megamat_3 after megamat_2), there
     being no time it was recorded.
 
     Returns:
-        rows with ``date``, ``fly_num`` (both None if its fly is not known),
-        ``recording`` (None: the fly's folder itself; for one of no fly known, the folder
-        it is in, from the data folder's),
+        rows with ``date``, ``fly_num`` (both None if in no fly's folder), ``of_dataset``
+        (whether the fly is one of the dataset's; those that are not after them),
+        ``recording`` (None: the fly's folder itself; for one in no fly's folder, the
+        folder it is in, from the data folder's),
         ``raw`` and ``mocorr`` (the names of its movies in each, None if it has none
         there), ``recorded`` (when it was recorded, as its Experiment.xml says:
         YYYY-MM-DD HH:MM:SS, the acquisition computer's time), ``time`` (when its
@@ -179,8 +205,8 @@ def side_by_side(raw: list[dict], mocorr: list[dict]) -> list[dict]:
     for kind, found in (("raw", raw), ("mocorr", mocorr)):
         for m in found:
             key = _recording_key(m)
-            row = rows.setdefault(key, {"date": key[0], "fly_num": key[1], "recording": key[2], "raw": None, "mocorr": None,
-                                        "recorded": None, "time": None})
+            row = rows.setdefault(key, {"date": key[1], "fly_num": key[2], "of_dataset": key[0], "recording": key[3],
+                                        "raw": None, "mocorr": None, "recorded": None, "time": None})
             row[kind] = [*(row[kind] or []), Path(m["path"]).name]
             if kind == "raw" and row["time"] is None:
                 xml = Path(m["path"]).parent / "Experiment.xml"
@@ -192,8 +218,9 @@ def side_by_side(raw: list[dict], mocorr: list[dict]) -> list[dict]:
                 except OSError:
                     pass
     out = []
-    for fly in sorted({(r["date"], r["fly_num"]) for r in rows.values()}, key=lambda f: (f[0] is None, f)):
-        mine = [r for r in rows.values() if (r["date"], r["fly_num"]) == fly]
+    flies = {(r["of_dataset"], r["date"], r["fly_num"]) for r in rows.values()}
+    for fly in sorted(flies, key=lambda f: (not f[0], f[1] is None, f[1:] if f[1] else ())):
+        mine = [r for r in rows.values() if (r["of_dataset"], r["date"], r["fly_num"]) == fly]
         # by when they say they were recorded, else (none of them saying) when their Experiment.xml was written
         by = "recorded" if all(r["recorded"] for r in mine if r["time"] is not None) else "time"
         order = sorted((r for r in mine if r["time"] is not None), key=lambda r: (r[by], _natural(r["recording"])))

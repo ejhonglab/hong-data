@@ -83,8 +83,8 @@ def test_unmatched(root):
         (root / "tom/raw/2023-11-19/1" / name / "Image_001_001.raw").write_bytes(b"")
     raw, mocorr = movies.find(root / "tom/raw", "raw", FLIES), movies.find(root / "tom/analysis", "mocorr", FLIES)
     assert movies.unmatched(raw, mocorr) == {
-        "raw": [{"date": "2023-11-19", "fly_num": 1, "recording": "t3", "n_movies": 1}],
-        "mocorr": [{"date": "2023-11-19", "fly_num": 1, "recording": "t2", "n_movies": 1}]}
+        "raw": [{"date": "2023-11-19", "fly_num": 1, "of_dataset": True, "recording": "t3", "n_movies": 1}],
+        "mocorr": [{"date": "2023-11-19", "fly_num": 1, "of_dataset": True, "recording": "t2", "n_movies": 1}]}
     assert [(m["recording"], m["unmatched"]) for m in raw] == [("anat_1", False), ("t1", False), ("t3", True)]
     assert [m["unmatched"] for m in mocorr] == [False, False, True]
     # all side by side, in the order they were recorded; one with no raw data after the one before it by name
@@ -112,19 +112,27 @@ def test_unmatched(root):
     # matched to flies by the folders in their paths
     rec = movies.find(root / "tom/analysis/2023-11-19/1/t2", "mocorr", FLIES)
     assert [(m["label"], m["fly"], m["by"], m["recording"]) for m in rec] == [("mocorr.tif", FLIES[0], "path", "t2")]
-    assert movies.unmatched(raw, rec)["mocorr"] == [{"date": "2023-11-19", "fly_num": 1, "recording": "t2", "n_movies": 1}]
+    assert movies.unmatched(raw, rec)["mocorr"] == [{"date": "2023-11-19", "fly_num": 1, "of_dataset": True, "recording": "t2", "n_movies": 1}]
     rec = movies.find(root / "tom/analysis/2023-11-19/1/t1", "mocorr", FLIES)
     assert movies.unmatched(raw, rec)["mocorr"] == [] and [r["recording"] for r in movies.side_by_side(raw, rec)
                                                          if r["matched"]] == ["t1"]
-    # and those of no fly of the dataset, listed all the same: only in that folder, last, by the folder they are in
+    # and those of a fly not the dataset's, listed all the same: by the fly their folders name, after the dataset's
     other = movies.find(root / "tom/analysis/2023-11-19/2", "mocorr", FLIES)
     assert other[0]["fly"] is None and other[0]["by"] is None
-    assert movies.unmatched(raw, other)["mocorr"] == [{"date": None, "fly_num": None, "recording": "t1", "n_movies": 1}]
+    assert movies.unmatched(raw, other)["mocorr"] == [
+        {"date": "2023-11-19", "fly_num": 2, "of_dataset": False, "recording": "t1", "n_movies": 1}]
     assert other[0]["unmatched"]
     rows = movies.side_by_side(raw, other)
-    assert [(r["date"], r["recording"], r["matched"]) for r in rows] == [
-        ("2023-11-19", "anat_1", False), ("2023-11-19", "t1", False), ("2023-11-19", "t3", False), (None, "t1", False)]
+    assert [(r["date"], r["fly_num"], r["of_dataset"], r["recording"], r["matched"]) for r in rows] == [
+        ("2023-11-19", 1, True, "anat_1", False), ("2023-11-19", 1, True, "t1", False), ("2023-11-19", 1, True, "t3", False),
+        ("2023-11-19", 2, False, "t1", False)]
     assert rows[-1]["mocorr"] == ["mocorr.tif"] and not rows[-1]["anatomical"]
+    # and those in no fly's folder at all, by the folder they are in, last
+    loose = root / "tom/loose/a"
+    loose.mkdir(parents=True)
+    tifffile.imwrite(loose / "x.tif", np.zeros((2, 2), np.uint16))
+    rows = movies.side_by_side(raw, movies.find(root / "tom/loose", "mocorr", FLIES))
+    assert [(r["date"], r["of_dataset"], r["recording"]) for r in rows][-1] == (None, False, "a")
 
 
 def test_tiff(root):
@@ -193,7 +201,7 @@ def test_api(main, root, tmp_path, monkeypatch):  # noqa: F811
     assert [m["label"] for m in r["mocorr"]["movies"]] == ["1/t1/mocorr.tif", "1/t1/flipped.tif", "1/t2/mocorr.tif"]
     assert len(r["raw"]["movies"]) == 1 and r["raw"]["error"] is None
     # t2 is motion corrected, but not in the raw data: said so with its folder, and of its movies
-    t2 = [{"date": "2023-11-19", "fly_num": 1, "recording": "t2", "n_movies": 1}]
+    t2 = [{"date": "2023-11-19", "fly_num": 1, "of_dataset": True, "recording": "t2", "n_movies": 1}]
     assert r["mocorr"]["compared"] and r["mocorr"]["unmatched"] == t2 and r["raw"]["unmatched"] == []
     assert [m["unmatched"] for m in r["mocorr"]["movies"]] == [False, False, True]
     assert r["mocorr"]["found"] == {"fly folder": 3, "path": 0, "none": 0}

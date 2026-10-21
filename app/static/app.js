@@ -1855,18 +1855,22 @@ class Browse {
     $('#mismatches-title').textContent = `Raw and motion-corrected data${d ? ` of ${d.title}` : ''}`;
     // how each folder's movies were found: in its flies' folders, or by the folders in their paths
     const how = Object.entries(this.dataFound || {}).filter(([, f]) => f && (f.path || f.none)).map(([kind, f]) => ` ${DATA_LINKS[kind]}: `
-      + `no folders of its flies (<date>/<fly>) in its folder, so its movies were matched to flies by the folders in their paths`
-      + `${f.none ? `; ${f.none} to no fly of this dataset (listed last, by folder)` : ''}.`).join('');
+      + `none of this dataset's flies has a folder (<date>/<fly>) in its folder, so its movies were matched to them by the `
+      + `folders in their paths${f.none ? `; ${f.none} are not in a folder of one of its flies (listed after them)` : ''}.`).join('');
+    // the dataset's own flies, to tell those of other flies (or numbered otherwise) from them
+    const theirs = rows.some((r) => !r.of_dataset) && d?.summary?.flies
+      ? ` This dataset's flies (by its data's date and fly_num): ${d.summary.flies.map((f) => `${f.date} fly ${f.fly_num}`).join(', ')}.` : '';
     $('#mismatches-note').textContent = `${rows.length} recordings: ${only('raw')} only in the raw data, ${only('mocorr')} only in the `
       + 'motion-corrected data (highlighted). In the order they were recorded, as their Experiment.xml says (else by when it was '
       + 'written: "file time"); one with no raw data after the one before it by name. Anatomical recordings are not expected to '
-      + `be motion corrected.${how}`;
+      + `be motion corrected.${how}${theirs}`;
     const cell = (r, kind) => (r[kind]
       ? `<code>${esc(r.recording ?? "(the fly's folder)")}</code> <span class="muted">${esc(r[kind].slice(0, 3).join(', '))}${r[kind].length > 3 ? `, and ${r[kind].length - 3} more` : ''}</span>`
       : `<span class="absent">${r.anatomical ? '— (anatomical)' : '— not here'}</span>`);
     let fly = null;
     $('#mismatches tbody').innerHTML = rows.map((r) => {
-      const group = r.date ? `${r.date} fly ${r.fly_num}` : "Of no fly of this dataset (by the folder they are in)";
+      const group = !r.date ? 'In no fly\'s folder (by the folder they are in)'
+        : `${r.date} fly ${r.fly_num}${r.of_dataset ? '' : ' (by its folders: not one of this dataset\'s flies)'}`;
       const head = group !== fly ? `<tr class="group"><td colspan="3">${esc((fly = group))}</td></tr>` : '';
       const cls = r.matched ? '' : r.anatomical ? ' class="anatomical"' : ' class="mismatch"';
       const when = r.recorded ? esc(r.recorded.slice(0, 16)) : r.time != null ? `${esc(fmtEpoch(r.time))} <span class="muted">(file time)</span>` : '—';

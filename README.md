@@ -173,7 +173,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   it (from the top of tensor, or from a folder set in the Admin tab) or may not read it;
   orange when one has recordings the other does not (by fly and recording folder name,
   not counting anatomical ones: e.g. recordings not motion corrected yet; movies outside
-  its flies' folders by the date and fly folders in their path, else as of no fly), which its
+  its flies' folders by the date and fly folders in their path, else under the fly those
+  name, as one not of the dataset, or by folder), which its
   menu lists, as does the movie player, apart from the rest. "Show data mismatches"
   (orange, to their left, then) lists every recording of both side by side, by fly in
   the order they were recorded (as their Experiment.xml says), the ones in only one
