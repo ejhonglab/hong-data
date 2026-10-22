@@ -1,16 +1,19 @@
 """Download tests (concatenating stored datasets). Run with: python -m pytest tests/"""
 from __future__ import annotations
 
+import asyncio
+import io
 import zipfile
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
+from starlette.requests import Request
 
 from app import config, odormeta
 from app.db import Database
-from app.export import ExportError, dataset_stem, trial_keys, write_download
+from app.export import ExportError, dataset_odors_download, dataset_stem, odors_frame, odors_tex, trial_keys, write_download
 from app.ingest import ParsedData, load_file
 from tests.test_ingest import COLS, ROWS, make_wide, write_csv
 from tests.test_tensor import call, main, root  # noqa: F401 (fixtures)
@@ -132,6 +135,75 @@ def test_odors_csv(store, tmp_path, two):
     assert by_odor[(ia, "va @ -3")].inchi == inchi and by_odor[(ib, "va @ -3")].inchi == inchi
     assert by_odor[(ib, "ms @ -3")].cid == 4133 and pd.isna(by_odor[(ib, "ms @ -3")].inchi)
     assert pd.isna(by_odor[(ia, "ea @ -2")].inchi)  # not in the odor table
+
+
+def test_dataset_odors_download(main, store, tmp_path, two):  # noqa: F811
+    (ia, _), _ = two
+    db, datasets_dir = store
+    rows, errors, _ = odormeta.parse_sheet("name,abbrev,cid,supplier,catalog_no,metacyc\n"
+                                           "valeric acid,va,7991,Sigma-Aldrich,240370,CPD_1%#\n")
+    assert not errors
+    db.apply_odor_sync(added=rows, changed=[], deleted=[], source="test", fingerprint="0", details={}, when="2026-10-17T00:00:00")
+
+    text, name, media_type = dataset_odors_download(db, ia, datasets_dir, "csv")
+    assert (name, media_type) == ("p1_me_glomeruli_2024-01-02_odors.csv", "text/csv")
+    df = pd.read_csv(io.StringIO(text))
+    # the columns of every export's odors.csv, but which dataset
+    assert list(df.columns) == [c for c in odors_frame(db, [db.get_dataset(ia)], datasets_dir).columns if c != "dataset_id"]
+    assert list(df["odor"]) == ["va @ -3", "ea @ -2"] and df["cid"].iloc[0] == 7991 and pd.isna(df["name"].iloc[1])
+    assert df.columns[:5].tolist() == ["panel", "odor", "abbrev", "log10_conc", "name"]
+
+    text, name, media_type = dataset_odors_download(db, ia, datasets_dir, "tex")
+    assert name == "p1_me_glomeruli_2024-01-02_odors.tex" and media_type == "text/x-tex"
+    lines = text.splitlines()
+    # only the columns an odor has a value in: CID, supplier, catalog number, MetaCyc
+    assert r"\begin{longtable}{lllrlll}" in lines
+    assert r"Name & Abbrev. & $\log_{10}$ conc. & CID & Supplier & Catalog no. & MetaCyc ID \\" in lines
+    assert r"\multicolumn{7}{l}{\textit{p1}} \\" in lines
+    # linked as on the site (Sigma-Aldrich's catalog numbers to its search), &, # and % escaped in links and text
+    assert (r"valeric acid & va & $-3$ & \href{https://pubchem.ncbi.nlm.nih.gov/compound/7991}{7991} & Sigma-Aldrich & "
+            r"\href{https://www.sigmaaldrich.com/US/en/search/240370?focus=products\&term=240370\&type=product_number}{240370} & "
+            r"\href{https://biocyc.org/compound?orgid=META\&id=CPD_1\%25\%23}{CPD\_1\%\#} \\") in lines
+    assert r"\textit{not in the odor table} & ea & $-2$ &  &  &  &  \\" in lines
+    assert text.count(r"\midrule") == 3  # under each header, and above the continued note: one panel
+
+    with pytest.raises(ExportError, match="unknown format"):
+        dataset_odors_download(db, ia, datasets_dir, "xlsx")
+    with pytest.raises(ExportError, match="not found"):
+        dataset_odors_download(db, 99, datasets_dir, "csv")
+
+
+def test_odors_tex():
+    row = dict.fromkeys(["cid", "solvent", "glomerulus", "supplier", "catalog_no", "metacyc", "lotus", "cas", "pubchem_url",
+                         "catalog_url", "metacyc_url", "lotus_url", "cas_url"])
+    rows = [{**row, "panel": "diag_1", "name": "(-)-α-pinene & β", "abbrev": "a_p", "log10_conc": "-1.5", "solvent": "pfo"},
+            {**row, "panel": "diag_1", "name": "100% {x}", "abbrev": "x", "log10_conc": None},
+            {**row, "panel": "megamat", "name": "b", "abbrev": "b", "log10_conc": "-3", "cas": "1-2-3", "cas_url": "https://c/?a=1&b=2"}]
+    lines = odors_tex(rows, "Odors of #3: 50% done", "tab:x").splitlines()
+    assert r"\caption{Odors of \#3: 50\% done}\label{tab:x} \\" in lines
+    assert r"(-)-$\alpha$-pinene \& $\beta$ & a\_p & $-1.5$ & pfo &  \\" in lines
+    assert r"100\% \{x\} & x &  &  &  \\" in lines
+    assert r"b & b & $-3$ &  & \href{https://c/?a=1\&b=2}{1-2-3} \\" in lines
+    # a rule between the panels, each titled
+    i = lines.index(r"\multicolumn{5}{l}{\textit{megamat}} \\")
+    assert lines[i - 1] == r"\midrule" and lines[lines.index(r"\multicolumn{5}{l}{\textit{diag\_1}} \\") - 1] == r"\endlastfoot"
+
+
+def test_dataset_odors_api(main, store, tmp_path, two, monkeypatch):  # noqa: F811
+    (ia, _), _ = two
+    monkeypatch.setattr(main, "db", store[0])
+    monkeypatch.setattr(config, "DATASETS_DIR", store[1])
+
+    def get(fmt, ds_id=ia):
+        scope = {"type": "http", "method": "GET", "path": "/", "headers": [], "query_string": b"",
+                 "path_params": {"ds_id": ds_id, "fmt": fmt}}
+        return asyncio.run(main.dataset_odors_file(Request(scope)))
+
+    r = get("tex")
+    assert r.status_code == 200 and r.headers["content-disposition"] == 'attachment; filename="p1_me_glomeruli_2024-01-02_odors.tex"'
+    assert r.body.decode().count(r"\begin{longtable}") == 1
+    assert get("csv").headers["content-type"].startswith("text/csv")
+    assert get("xlsx").status_code == 404 and get("csv", 99).status_code == 404
 
 
 def test_unknown_and_empty(store, tmp_path, two):

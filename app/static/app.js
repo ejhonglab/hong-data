@@ -2110,7 +2110,9 @@ class Browse {
       panel.innerHTML = '<p class="muted">Loading…</p>';
       try { this.odorCache.set(id, await api(`/api/datasets/${id}/odors`)); } catch (e) { panel.replaceChildren(msgBox('error', esc(e.message))); return; }
     }
-    if (this.selected === id) panel.innerHTML = datasetOdorTable(this.odorCache.get(id));
+    if (this.selected !== id) return;
+    panel.innerHTML = datasetOdorTable(this.odorCache.get(id));
+    wireMenu($('#ds-odors-download', panel), ({ odorFormat }) => download(`/api/datasets/${id}/odors.${odorFormat}`, $('#ds-odors-status', panel)));
   }
 }
 
@@ -2209,7 +2211,16 @@ function datasetOdorTable(data) {
     }).join('');
   }).join('');
   const n = rows.filter((r) => r.odor_id != null).length;
-  return `<p class="muted">${n === rows.length ? `All ${n}` : `${n} of ${rows.length}`} odors are in the <a href="#odors">odor table</a> (matched through the dataset's odor YAML where it has one, otherwise by abbreviation).</p>
+  return `<div class="odors-head"><p class="muted">${n === rows.length ? `All ${n}` : `${n} of ${rows.length}`} odors are in the <a href="#odors">odor table</a> (matched through the dataset's odor YAML where it has one, otherwise by abbreviation).</p>
+    <span class="dl-status" id="ds-odors-status"></span>
+    <details class="menu menu-right" id="ds-odors-download">
+      <summary class="btn small">Download table</summary>
+      <div class="menu-list">
+        <button type="button" data-odor-format="csv">CSV</button>
+        <button type="button" data-odor-format="tex">LaTeX (.tex)</button>
+        <p class="menu-note">CSV: every odor with what the odor table has on it (IDs, InChI, supplier, links), as in downloads of several datasets.<br><br>LaTeX: a booktabs longtable to <code>\\input</code>, by panel, linked as here; InChI and structures left out.</p>
+      </div>
+    </details></div>
     ${missingOdorsHtml(data)}<table class="odor-table"><thead><tr><th>Odor</th><th>Name</th><th>log<sub>10</sub> conc.</th><th>CID</th><th>InChI</th><th>Solvent</th>
     ${hasGlom ? '<th>Target glomerulus</th>' : ''}<th>Catalog no.</th><th>MetaCyc</th><th>LOTUS</th><th>Structure</th><th>CAS</th></tr></thead><tbody>${body}</tbody></table>`;
 }

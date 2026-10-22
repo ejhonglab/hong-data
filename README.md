@@ -169,7 +169,11 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   those not in it (one per chemical: name, CID, CAS and solvent from the odor YAML, the
   abbreviation as in the data), tab-separated in the order of the sheet's own columns,
   to paste into its first empty row (the sheet and the Odors tab linked there) before
-  syncing it. "Raw data" and "Motion corrected / traces" show where those are on
+  syncing it. "Download table" saves it as a CSV (every odor with the odor table's
+  details and links, as in downloads of several datasets) or as LaTeX (a booktabs
+  longtable by panel, linked, without InChI or structures, to `\input`: it needs the
+  booktabs, longtable and hyperref packages), named as the dataset's other downloads
+  with `_odors`. "Raw data" and "Motion corrected / traces" show where those are on
   tensor (to copy, as browsers cannot open folders on your computer) and what is in
   them. They are red, saying why, when no path was entered, or the server cannot find
   it (from the top of tensor, or from a folder set in the Admin tab) or may not read it;

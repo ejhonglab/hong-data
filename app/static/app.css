@@ -281,6 +281,8 @@ table.diff .new { color: var(--ok); }
 .tab-badge { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #d08a00; margin-left: 5px; vertical-align: super; }
 .tab-badge.error { background: var(--danger); }
 #ds-odors .odor-table th { top: -12px; }
+.odors-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-bottom: 8px; }
+.odors-head > p { flex: 1 1 320px; margin: 0; }
 
 /* ------------------------------------------------------------- browse */
 #tab-browse, #tab-reference, #tab-compare { display: flex; }

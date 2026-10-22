@@ -1295,6 +1295,16 @@ async def dataset_odor_table(request: Request) -> Response:
     return JSONResponse(result)
 
 
+async def dataset_odors_file(request: Request) -> Response:
+    """A dataset's odors as a file to save: a CSV or a LaTeX table (`export.dataset_odors_download`)."""
+    ds_id, fmt = int(request.path_params["ds_id"]), request.path_params["fmt"]
+    try:
+        text, name, media_type = await run_in_threadpool(export.dataset_odors_download, db, ds_id, config.DATASETS_DIR, fmt)
+    except export.ExportError as e:
+        return json_error(404, str(e))
+    return Response(text, media_type=media_type, headers={"content-disposition": f'attachment; filename="{name}"'})
+
+
 def _odor_index() -> odormeta.OdorIndex:
     return odormeta.OdorIndex(db.list_odors())
 
@@ -1583,6 +1593,7 @@ routes = [
     Route("/api/datasets/{ds_id:int}/readme", dataset_readme_save, methods=["PUT"]),
     Route("/api/datasets/{ds_id:int}/files/{path:path}", dataset_file),
     Route("/api/datasets/{ds_id:int}/odors", dataset_odor_table),
+    Route("/api/datasets/{ds_id:int}/odors.{fmt}", dataset_odors_file),
     Route("/api/compare/datasets/{ds_id:int}", compare_dataset),
     Route("/api/compare/ecfp", compare_ecfp),
     Route("/api/datasets/{ds_id:int}/data_paths", dataset_data_paths),

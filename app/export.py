@@ -18,6 +18,9 @@ laid out as it was uploaded (less row levels dropped on upload), with no ``datas
 and a name made from the dataset's details (`dataset_stem`). A merged download (every
 dataset of a coding unit, see merge.py) is always a zip, with each dataset's values
 multiplied by its scale factor, and ``scaling.csv``.
+
+One dataset's odors can also be downloaded on their own (`dataset_odors_download`), as
+that ``odors.csv`` or as a LaTeX table (`odors_tex`).
 """
 from __future__ import annotations
 
@@ -240,6 +243,112 @@ def odors_frame(db: Database, datasets: list[dict], datasets_dir: Path) -> pd.Da
     if "cid" in df:
         df["cid"] = df["cid"].astype("Int64")
     return df
+
+
+def dataset_odors_download(db: Database, ds_id: int, datasets_dir: Path, fmt: str) -> tuple[str, str, str]:
+    """One dataset's odors (per panel, as in the data, as the Browse tab's table of them) to download.
+
+    Args:
+        fmt: 'csv' (the columns of `odormeta.table_rows`, as every export's ``odors.csv``) or
+            'tex' (a LaTeX table: see `odors_tex`).
+
+    Returns:
+        (its text, its file name: the dataset's (`dataset_stem`) with ``_odors``, its media type).
+
+    Raises:
+        ExportError: no such dataset, or another format.
+    """
+    if fmt not in ("csv", "tex"):
+        raise ExportError(f"unknown format {fmt!r}")
+    d = db.get_dataset(ds_id)
+    if d is None:
+        raise ExportError(f"dataset not found: {ds_id}")
+    index = odormeta.OdorIndex(db.list_odors())
+    trials = db.get_trials(ds_id)
+    rows = odormeta.table_rows(odormeta.dataset_odors(d, trials, index, odormeta.dataset_yaml_odors(d, datasets_dir)), index)
+    stem = f"{dataset_stem(d, trials)}_odors"
+    if fmt == "csv":
+        df = pd.DataFrame(rows, columns=list(rows[0]) if rows else None)
+        if "cid" in df:
+            df["cid"] = df["cid"].astype("Int64")
+        return df.to_csv(index=False), f"{stem}.csv", "text/csv"
+    return odors_tex(rows, f"Odors of {d['title']}", f"tab:odors-dataset-{ds_id}"), f"{stem}.tex", "text/x-tex"
+
+
+# LaTeX's special characters, as text
+_TEX_ESCAPES = {"\\": r"\textbackslash{}", "&": r"\&", "%": r"\%", "$": r"\$", "#": r"\#", "_": r"\_", "{": r"\{",
+                "}": r"\}", "~": r"\textasciitilde{}", "^": r"\textasciicircum{}", "<": r"\textless{}", ">": r"\textgreater{}",
+                "|": r"\textbar{}"}
+# Greek letters in chemical names, as LaTeX's math letters (T1 text fonts have none)
+_GREEK = dict(zip("αβγδεζηθικλμνξπρστυφχψω", ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta", "iota",
+                                               "kappa", "lambda", "mu", "nu", "xi", "pi", "rho", "sigma", "tau", "upsilon",
+                                               "phi", "chi", "psi", "omega"]))
+# odors_tex's columns besides name, abbreviation and concentration: (heading, alignment,
+# the `odormeta.table_rows` value and its URL)
+_TEX_COLUMNS = [
+    ("CID", "r", "cid", "pubchem_url"), ("Solvent", "l", "solvent", None), ("Target glomerulus", "l", "glomerulus", None),
+    ("Supplier", "l", "supplier", None), ("Catalog no.", "l", "catalog_no", "catalog_url"),
+    ("MetaCyc ID", "l", "metacyc", "metacyc_url"), ("LOTUS ID", "l", "lotus", "lotus_url"), ("CAS", "l", "cas", "cas_url"),
+]
+
+
+def _tex(value) -> str:
+    """Text for LaTeX: its special characters escaped, Greek letters as math."""
+    out = "".join(_TEX_ESCAPES.get(c, c) for c in str(value))
+    return re.sub("[" + "".join(_GREEK) + "]", lambda m: f"$\\{_GREEK[m[0]]}$", out)
+
+
+def _tex_link(url: Optional[str], text: str) -> str:
+    """`text` linked to `url` (hyperref's \\href), if there is one."""
+    if not url:
+        return text
+    escaped = re.sub(r"([%#&])", r"\\\1", url)  # a comment, a parameter, a column otherwise
+    return f"\\href{{{escaped}}}{{{text}}}"
+
+
+def odors_tex(rows: list[dict], caption: str, label: str) -> str:
+    """Odors as a LaTeX table to ``\\input``, like the thesis's: a booktabs longtable (over
+    as many pages as it needs), footnote-sized, a row per odor, grouped by panel: its name
+    (from the odor table, else from its odor YAML), abbreviation and concentration as in the
+    data, then CID, solvent, target glomerulus, supplier, catalog number, MetaCyc and LOTUS
+    IDs and CAS number (linked as on the site), each only if an odor has one. InChI and
+    structures are left out (too long to typeset; the CSV has InChI).
+
+    Args:
+        rows: as from `odormeta.table_rows`, in order (each panel's together).
+        caption: of the table; label: its ``\\label``.
+    """
+    cols = [c for c in _TEX_COLUMNS if any(r.get(c[2]) not in (None, "") for r in rows)]
+    n = 3 + len(cols)
+    head = " & ".join(["Name", "Abbrev.", r"$\log_{10}$ conc.", *(c[0] for c in cols)]) + r" \\"
+    out = [
+        f"% {caption}: from the odor response database, {dt.date.today():%Y-%m-%d}.",
+        r"% Needs \usepackage{booktabs}, \usepackage{longtable} and \usepackage{hyperref}; in a landscape",
+        r"% environment (\usepackage{pdflscape}) if too wide. Columns no odor has a value in are left out.",
+        r"\begingroup",
+        r"\footnotesize",
+        f"\\begin{{longtable}}{{lll{''.join(c[1] for c in cols)}}}",
+        f"\\caption{{{_tex(caption)}}}\\label{{{label}}} \\\\",
+        r"\toprule", head, r"\midrule", r"\endfirsthead",
+        f"\\caption[]{{{_tex(caption)} (continued)}} \\\\",
+        r"\toprule", head, r"\midrule", r"\endhead",
+        r"\midrule", f"\\multicolumn{{{n}}}{{r}}{{\\emph{{continued on the next page}}}} \\\\", r"\endfoot",
+        r"\bottomrule", r"\endlastfoot",
+    ]
+    panel = object()  # none yet
+    for r in rows:
+        if r["panel"] != panel:
+            if out[-1] != r"\endlastfoot":  # a panel before it
+                out.append(r"\midrule")
+            panel = r["panel"]
+            if panel is not None:
+                out.append(f"\\multicolumn{{{n}}}{{l}}{{\\textit{{{_tex(panel)}}}}} \\\\")
+        cells = [_tex(r["name"]) if r["name"] else r"\textit{not in the odor table}", _tex(r["abbrev"] or ""),
+                 f"${r['log10_conc']}$" if r["log10_conc"] not in (None, "") else ""]
+        cells += [_tex_link(r.get(url), _tex(r[key])) if r.get(key) not in (None, "") else "" for _, _, key, url in cols]
+        out.append(" & ".join(cells) + r" \\")
+    out += [r"\end{longtable}", r"\endgroup", ""]
+    return "\n".join(out)
 
 
 # ------------------------------------------------------------------------- zip

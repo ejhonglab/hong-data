@@ -447,6 +447,8 @@ GET    /api/compare/ecfp?diameter=6         ECFP fingerprints of the odor table'
 GET    /api/datasets/{id}/odors             its odors (per panel) matched to the odor table; rows
                                             for the odor sheet for those not in it (and as cells
                                             to paste, in the order of the sheet's columns)
+GET    /api/datasets/{id}/odors.csv         those odors as a file: odors.csv's columns, or a LaTeX
+GET    /api/datasets/{id}/odors.tex         longtable (named as its other downloads, with _odors)
 GET    /api/datasets/{id}/data_paths        where its raw and motion-corrected data are on the
                                             server, and what is in them (or why they are not), with
                                             the recordings in one and not the other, and all of
