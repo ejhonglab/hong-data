@@ -232,9 +232,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   in the viewer of reference data (colors, cell size, transpose, moving and removing
   rows and columns, figure export), without trials, ROI ordering or clustering. On the
   right:
-  - *Show* each space as its data and its odor–odor similarity (by default), its
-    similarity only, or its data only: one menu for the datasets, the reference data
-    and the two side by side (chemical structure only ever as similarity).
+  - *Show* each space as its data (by default) or its odor–odor similarity: one menu
+    for the datasets, the reference data and the two side by side (chemical structure
+    only ever as similarity).
   - *Odor–odor similarity* within datasets (Pearson or Spearman correlation, or cosine
     similarity, of two odors' responses across the glomeruli or ROIs both have), and
     within reference data (Pearson correlation or cosine similarity, of their values
@@ -244,7 +244,7 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     by default, of any even diameter up to 12), and every reference dataset with
     chemicals. Odors are matched across them by the Odors table (one chemical alone, not
     mixtures; an odor at several concentrations as its highest, lowest or the mean of
-    them); each says how many of the odors shown it has, and its data and similarities
+    them); each says how many of the odors shown it has, and its data or similarities
     over those are shown.
   - *Side by side*: two of the spaces shown (chosen there, or by clicking a cell of the
     correlations between similarities), over the odors both have, in one order (the

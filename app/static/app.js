@@ -3483,16 +3483,17 @@ function fitViewer(el, v) {
 class ComparePage {
   constructor() {
     // metric, refMetric: odor–odor similarity within datasets, and within reference data;
-    // show: each space as its 'data', its odor–odor similarities ('sim') or 'both';
+    // show: each space as its 'data' or its odor–odor similarities ('sim');
     // bootN, pBy: the resamplings (or permutations) for p-values, and how (a key of P_BY);
     // pair: the keys of two spaces shown side by side (null: not chosen)
     this.o = {
-      group: 'panel', unit: '', picked: [], metric: 'pearson', refMetric: 'pearson', show: 'both', spaces: [], ecfpD: 6, conc: 'max',
+      group: 'panel', unit: '', picked: [], metric: 'pearson', refMetric: 'pearson', show: 'data', spaces: [], ecfpD: 6, conc: 'max',
       rsa: false, rsaMethod: 'spearman', bootN: 5000, pBy: 'permute', pair: [null, null], ...LS.get(COMPARE_KEY, {}),
     };
     // `place` once, for datasets alone: under their data ('below'), instead of it, or 'none'
-    if (this.o.place) this.o.show = { below: 'both', instead: 'sim', none: 'data' }[this.o.place] || 'both';
+    if (this.o.place) this.o.show = this.o.place === 'instead' ? 'sim' : 'data';
     delete this.o.place;
+    if (this.o.show !== 'sim') this.o.show = 'data'; // 'both' once
     delete this.o.sim; // a checkbox once, besides `place`
     delete this.o.bootUnit; // pBy once, when bootstrapping pairs of odors was the default
     this.datasets = null;
@@ -3902,7 +3903,7 @@ class ComparePage {
   }
 
   // Two spaces side by side (o.pair): the odors both have, in one order (that of the first
-  // dataset of the two, else of the first), each as its data and/or its similarities
+  // dataset of the two, else of the first), each as its data or its similarities
   // (o.show), each two viewers next to each other linked, so their rows stay level. A
   // section, or null if none is chosen; its viewers' keys added to `used`, their shows to `shows`
   _pairSection(all, chemRow, used, shows) {
@@ -3928,38 +3929,29 @@ class ComparePage {
     }
     sub.textContent = `${a.title} and ${b.title}: the ${ids.length} odors both have, in the order of ${first.title}. Rows moved or removed,
       cell sizes, transposing and scrolling stay the same in both.`;
-    const state = this._stateKey();
-    for (const kind of this.o.show === 'both' ? ['data', 'sim'] : [this.o.show]) {
-      const row = document.createElement('div');
-      row.className = 'cmp-pair-row';
-      const sides = [a, b].map((s, k) => {
-        const side = document.createElement('div');
-        side.className = 'cmp-pair-side';
-        row.appendChild(side);
-        const asData = kind === 'data' && !!s.space.data;
-        if (kind === 'data' && !asData && this.o.show === 'both') {
-          side.innerHTML = `<div class="cmp-pair-cap">${esc(s.title)}</div><div class="cmp-pair-none muted">No data of its own worth showing, only its similarities (below).</div>`;
-          return null;
-        }
-        const what = asData ? 'data' : 'similarity', key = `pair:${kind}:${k}`;
-        used.add(key);
-        const payload = this._memo(`pair:${what}:${s.key}:${state}:${ids.join(',')}`, () => (asData ? spaceData(s, ids, chemRow) : spaceSims(s, ids, chemRow)));
-        const v = this._viewer(key, payload, `${s.fullTitle || s.title}: ${what}`, `side_by_side_${(s.fullTitle || s.title).replace(/\W+/g, '_')}_${what}`);
-        const cap = asData ? `its data${payload.meta.value_label ? ` (${payload.meta.value_label})` : ''}` : `odor–odor ${s.simLabel}`;
-        side.innerHTML = `<div class="cmp-pair-cap" title="${esc(`${s.fullTitle || s.title}: ${cap}`)}">${esc(s.title)}: <span class="muted">${esc(cap)}</span></div>`;
-        side.appendChild(v.el);
-        shows.push(v.show);
-        return { ...v, what };
-      });
-      if (sides[0] && sides[1]) {
-        const [x, y] = sides, cols = x.what === 'similarity' && y.what === 'similarity';
-        x.viewer.linked = { other: y.viewer, cols };
-        y.viewer.linked = { other: x.viewer, cols };
-        x.viewer.onShow = y.viewer.onShow = () => levelViewers(x, y);
-        this.pairs.push([x, y]);
-      }
-      section.appendChild(row);
-    }
+    // chemical structure, with no data worth showing, as its similarities either way
+    const state = this._stateKey(), row = document.createElement('div');
+    row.className = 'cmp-pair-row';
+    const [x, y] = [a, b].map((s, k) => {
+      const asData = this.o.show === 'data' && !!s.space.data, what = asData ? 'data' : 'similarity', key = `pair:${k}`;
+      used.add(key);
+      const payload = this._memo(`pair:${what}:${s.key}:${state}:${ids.join(',')}`, () => (asData ? spaceData(s, ids, chemRow) : spaceSims(s, ids, chemRow)));
+      const v = this._viewer(key, payload, `${s.fullTitle || s.title}: ${what}`, `side_by_side_${(s.fullTitle || s.title).replace(/\W+/g, '_')}_${what}`);
+      const cap = asData ? `its data${payload.meta.value_label ? ` (${payload.meta.value_label})` : ''}` : `odor–odor ${s.simLabel}`;
+      const side = document.createElement('div');
+      side.className = 'cmp-pair-side';
+      side.innerHTML = `<div class="cmp-pair-cap" title="${esc(`${s.fullTitle || s.title}: ${cap}`)}">${esc(s.title)}: <span class="muted">${esc(cap)}</span></div>`;
+      side.appendChild(v.el);
+      row.appendChild(side);
+      shows.push(v.show);
+      return { ...v, what };
+    });
+    const cols = x.what === 'similarity' && y.what === 'similarity';
+    x.viewer.linked = { other: y.viewer, cols };
+    y.viewer.linked = { other: x.viewer, cols };
+    x.viewer.onShow = y.viewer.onShow = () => levelViewers(x, y);
+    this.pairs = [[x, y]];
+    section.appendChild(row);
     this.pairWidth = 0;
     this.pairRO.observe(section);
     return section;
