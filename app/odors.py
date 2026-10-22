@@ -197,6 +197,36 @@ def format_mix_from_strs(odor_strs: Iterable[str], *, delim: str = COMPONENT_DEL
     return delim.join(parts) if parts else SOLVENT_STR
 
 
+def odor_names(odor_str: str) -> list[str]:
+    """The odors' names (abbreviations, as written) in an odor string, of each in a mixture:
+    'A @ -3 + b @ -2' -> ['A', 'b'] (solvent left out)."""
+    return [p.partition(f" {CONC_DELIM} ")[0] for p in odor_str.split(COMPONENT_DELIM) if p != SOLVENT_STR]
+
+
+def lowercase_map(names: Iterable[str]) -> dict[str, str]:
+    """Odor names (abbreviations) as shown in lowercase: each lowercased, but for those that
+    would then be the same as another (differing from it only in case), which are left as
+    they are, so that lowercasing never makes two odors one.
+
+    >>> lowercase_map(['IaA', 'va', 'AA', 'aa'])
+    {'IaA': 'iaa', 'va': 'va', 'AA': 'AA', 'aa': 'aa'}
+    """
+    groups: dict[str, list[str]] = {}
+    for n in dict.fromkeys(names):
+        groups.setdefault(n.lower(), []).append(n)
+    return {n: (low if len(same) == 1 else n) for low, same in groups.items() for n in same}
+
+
+def lowercase_odor(odor_str: str, names: dict[str, str]) -> str:
+    """An odor string (one odor, a mixture, or solvent) with each odor's name as `names`
+    has it (see `lowercase_map`), else as it is."""
+    parts = []
+    for p in odor_str.split(COMPONENT_DELIM):
+        name, at, conc = p.partition(f" {CONC_DELIM} ")
+        parts.append(names.get(name, name) + at + conc)
+    return COMPONENT_DELIM.join(parts)
+
+
 def strip_conc(odor_str: str) -> str:
     """'A @ -3 + B @ -2' -> 'A + B'."""
     comps = [c.strip() for c in odor_str.split(COMPONENT_DELIM)]

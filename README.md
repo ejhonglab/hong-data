@@ -161,7 +161,12 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
 - **Settings**: folders are relative to the top of tensor (absolute paths are refused),
   each checked on the server as you leave its field; once all are found ("All Paths
   Accessible") they are saved on the server under your name. Below that, defaults for
-  the upload form, checked as the form checks its fields and kept in this browser only.
+  the upload form, checked as the form checks its fields and kept in this browser only;
+  and whether odor names (abbreviations) are shown in lowercase (in this browser only):
+  e.g. `IaA @ -3` as `iaa @ -3`, in Browse, Compare, Reference data and the Odors tab,
+  and in every download but of the original files. Names that differ from another
+  shown (or downloaded) with them only in case stay as they are, so that no two odors
+  become one. The upload form shows a file's odors as they are in it.
 - **Browse**: each dataset has a thesis-style odor table (with each odor's CID and InChI),
   its odors matched to the Odors tab through its odor YAML when it has one, otherwise by
   abbreviation. Those not in the odor table, or that more than one odor there could be,
@@ -349,7 +354,12 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     files (as uploaded, with `metadata.json` holding every detail entered) are moved to
     `data/deleted/<id>/` on the server, from where it could be uploaded again.
   - *Odor sheet*: the Google sheet's link, used as soon as it is saved, and importing a
-    CSV instead (with the template to start from).
+    CSV instead (with the template to start from). Below them, whether new odor names
+    may only be lowercase: then uploads whose odors (as named in the data) have capital
+    letters are refused, as are odor sheet rows whose name, abbreviation or aliases do,
+    unless that name is already in the database (in the odor table, or a dataset). The
+    sheet also warns of abbreviations of different odors that differ only in case, and
+    the upload form of odors of a file that do.
   - *This server*: its name, and its IP addresses (in Docker, those the network's DNS
     gives its name).
 

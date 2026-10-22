@@ -403,7 +403,7 @@
   <section id="tab-settings" class="tab" hidden>
     <div class="page-head">
       <h1>Settings</h1>
-      <p class="lede">Who you are and where your data is on tensor, so that the upload form can fill itself in. Your folders are saved on the server under your name; the upload form defaults are kept on this computer only.</p>
+      <p class="lede">Who you are and where your data is on tensor, so that the upload form can fill itself in, and how odors are shown to you. Your folders are saved on the server under your name; the rest is kept on this computer only.</p>
     </div>
 
     <div class="step" id="settings-folders">
@@ -464,6 +464,12 @@
       <datalist id="dl-coding-units"></datalist>
       <datalist id="dl-systems"></datalist>
     </form>
+
+    <div class="step" id="settings-display">
+      <div class="step-head"><h2>Display</h2></div>
+      <label class="check"><input type="checkbox" id="settings-lower-odors"> Odor names (abbreviations) in lowercase</label>
+      <p class="muted">Kept on this computer only. Odor names as in datasets (e.g. <code>IaA @ -3</code> as <code>iaa @ -3</code>) and the odor table's abbreviations, wherever they are shown (Browse, Compare, Reference data, the Odors tab) and in every download but of the original files. Names that differ from another shown with them only in case are left as they are, so that no two odors look the same. The upload form shows a file's odors as they are in it.</p>
+    </div>
   </section>
 
   <!-- ========================================================= ADMIN -->
@@ -572,6 +578,10 @@
           <a class="btn" href="/api/odors/template.csv" download>Template CSV</a>
         </div>
         <div id="admin-odor-preview"></div>
+        <h3 class="subhead">Odor names</h3>
+        <label class="check"><input type="checkbox" id="admin-lowercase"> New odor names in lowercase only</label>
+        <p class="muted">Refuses uploads whose odors (as named in their data) have capital letters, and odor sheet rows whose name, abbreviation or aliases do, unless the name is already in the database (in the odor table, or in a dataset). Anyone can also have odor names shown in lowercase, in their Settings.</p>
+        <div id="admin-lowercase-result" aria-live="polite"></div>
       </div>
 
       <div class="step" id="admin-host">

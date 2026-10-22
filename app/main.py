@@ -46,6 +46,7 @@ from .metadata import (
     dataset_title,
     generate_readme,
 )
+from .odors import odor_names
 
 config.ensure_dirs()
 db = Database(config.DB_PATH)
@@ -321,11 +322,29 @@ def _yaml_response(d: Path, meta: dict, **extra) -> dict:
 
 
 def _stage_odors(d: Path, meta: dict) -> dict:
-    """A staged upload's odors matched to the odor table, as a dataset's are (`_odor_matches`)."""
+    """A staged upload's odors matched to the odor table, as a dataset's are (`_odor_matches`),
+    with ``case``: their names' capitals (`_case_check`)."""
     yaml_odors = []
     for y in meta["odor_yamls"]:
         yaml_odors.extend(yamlcheck.parse_odor_yaml((d / "odor_yaml" / y["name"]).read_text(encoding="utf-8"))[0])
-    return _odor_matches(load_parsed(d / "parsed").trials, yaml_odors)
+    trials = load_parsed(d / "parsed").trials
+    return {**_odor_matches(trials, yaml_odors), "case": _case_check(trials)}
+
+
+def _case_check(trials: list[dict]) -> dict:
+    """The capitals in the odor names (abbreviations) of an upload's `trials`: ``lowercase_only``
+    (whether new ones may only be lowercase: `_lowercase_only`), ``uppercase`` (then, its
+    names with capitals not already in the database, for which it is refused) and
+    ``clashes`` (its names differing from another of its only in case, each group: never
+    lowercased where odors are shown in lowercase, so as not to look the same)."""
+    names = sorted({n for t in trials for c in t["components"] for n in odor_names(c)})
+    only = _lowercase_only()
+    known = _known_odor_names() if only else set()
+    groups: dict[str, list[str]] = {}
+    for n in names:
+        groups.setdefault(n.lower(), []).append(n)
+    return {"lowercase_only": only, "uppercase": [n for n in names if only and n != n.lower() and n not in known],
+            "clashes": [g for g in groups.values() if len(g) > 1]}
 
 
 async def stage_odors(request: Request) -> Response:
@@ -571,7 +590,12 @@ def _commit(d: Path, meta: dict, m: Metadata, readme: str, readme_edited: bool) 
             problems.append(
                 "odor YAML check failed: " + "; ".join(f"{x['odor']} ({x['hint']})" for x in check["missing"][:10])
             )
-    unmatched = _unmatched(_stage_odors(d, meta)["rows"])
+    staged = _stage_odors(d, meta)
+    upper = staged["case"]["uppercase"]
+    if upper:
+        problems.append(f"{len(upper)} of its odor names have capital letters ({', '.join(upper[:10])}{', …' if len(upper) > 10 else ''}), "
+                        "and new odor names must be lowercase (set in the Admin tab): rename them in the data file and add it again")
+    unmatched = _unmatched(staged["rows"])
     if unmatched:
         problems.append(f"{len(unmatched)} of its odors are not one odor in the odor table ({', '.join(unmatched[:10])}"
                         f"{', …' if len(unmatched) > 10 else ''}): add them to the odor sheet and sync it (the upload form "
@@ -912,7 +936,8 @@ def cleanup_exports(max_age_s: float = 3600) -> None:
 
 async def download(request: Request) -> Response:
     """Download of one or more datasets: ``?ids=1,2,3&format=files|wide|long`` (see export.py);
-    a zip, or a CSV for the matrix of a single dataset."""
+    a zip, or a CSV for the matrix of a single dataset. With ``lower=1``, odor names in
+    lowercase (but in the original files)."""
     try:
         ids = [int(x) for x in request.query_params.get("ids", "").split(",") if x.strip()]
     except ValueError:
@@ -923,7 +948,8 @@ async def download(request: Request) -> Response:
     cleanup_exports()
     dest = config.EXPORTS_DIR / secrets.token_urlsafe(9)
     try:
-        name, media_type = await run_in_threadpool(export.write_download, db, ids, fmt, dest, config.DATASETS_DIR)
+        name, media_type = await run_in_threadpool(lambda: export.write_download(db, ids, fmt, dest, config.DATASETS_DIR,
+                                                                                 lower=_lower(request)))
     except export.ExportError as e:
         dest.unlink(missing_ok=True)
         return json_error(404, str(e))
@@ -934,6 +960,11 @@ async def download(request: Request) -> Response:
 
 
 # ----------------------------------------------------------------------- merge
+
+
+def _lower(request: Request) -> bool:
+    """Whether a download's odor names are to be lowercase (``lower=1``, from Settings)."""
+    return request.query_params.get("lower") in ("1", "true")
 
 
 def _merge_options(q: Any) -> dict:
@@ -969,7 +1000,8 @@ async def merge_preview(request: Request) -> Response:
 
 async def merge_download(request: Request) -> Response:
     """Every dataset of a coding unit, in one download (``?format=wide|long``, and the options of
-    `merge_preview`): a zip, with the datasets scaled as `merge.plan` says."""
+    `merge_preview`; ``lower=1`` for odor names in lowercase): a zip, with the datasets scaled as
+    `merge.plan` says."""
     fmt = request.query_params.get("format", "wide")
     if fmt not in ("wide", "long"):
         return json_error(400, "format must be wide or long")
@@ -980,8 +1012,8 @@ async def merge_download(request: Request) -> Response:
     cleanup_exports()
     dest = config.EXPORTS_DIR / secrets.token_urlsafe(9)
     try:
-        name, media_type = await run_in_threadpool(export.write_download, db, [d["id"] for d in p["datasets"]], fmt, dest,
-                                                   config.DATASETS_DIR, merged=p)
+        name, media_type = await run_in_threadpool(lambda: export.write_download(
+            db, [d["id"] for d in p["datasets"]], fmt, dest, config.DATASETS_DIR, merged=p, lower=_lower(request)))
     except BaseException:
         dest.unlink(missing_ok=True)
         raise
@@ -1044,6 +1076,7 @@ async def user_save(request: Request) -> Response:
 
 SHEET_SOURCE = "Google sheet"
 SHEET_SETTING = "odor_sheet_url"
+LOWERCASE_SETTING = "odor_names_lowercase_only"  # '1' when set
 sheet_watch = odormeta.SheetWatch(config.ODOR_SHEET_CHECK_MINUTES * 60)
 
 
@@ -1053,6 +1086,25 @@ def _odor_sheet() -> dict:
     saved = db.get_setting(SHEET_SETTING)
     return {"url": saved["value"] if saved else config.ODOR_SHEET_URL or None, "saved": saved is not None,
             "updated_at": saved["updated_at"] if saved else None, "env": bool(config.ODOR_SHEET_URL)}
+
+
+def _lowercase_only() -> bool:
+    """Whether new odor names (in uploaded data, and in the odor table) may only be lowercase
+    (set in the Admin tab); those already in the database are allowed either way."""
+    saved = db.get_setting(LOWERCASE_SETTING)
+    return bool(saved and saved["value"])
+
+
+def _known_odor_names() -> set[str]:
+    """Every odor name already in the database: the odor table's names, abbreviations and
+    aliases, and the names in every dataset's odor strings."""
+    known = {n for o in db.list_odors() for n in [o["name"], o.get("abbrev"), *(o.get("aliases") or [])] if n}
+    return known | {n for s in db.odor_strings() for n in odor_names(s)}
+
+
+def _case_errors(rows: list[dict]) -> list[str]:
+    """Odor sheet rows with names in capitals not in the database, while new ones may only be lowercase."""
+    return odormeta.uppercase_errors(rows, _known_odor_names()) if _lowercase_only() else []
 
 
 def _sheet_status() -> dict:
@@ -1095,6 +1147,7 @@ def _cleanup_previews(max_age_s: float = 86400) -> None:
 
 def _preview(text: str, source: str, sheet_url: Optional[str] = None) -> dict:
     rows, errors, warnings = odormeta.parse_sheet(text)
+    errors += _case_errors(rows)
     fp = odormeta.fingerprint(rows)
     if sheet_url:
         sheet_watch.record(sheet_url, text, rows)
@@ -1174,6 +1227,9 @@ def _apply(fp: str, change_ids: set[int], delete_ids: set[int]) -> dict:
     saved = json.loads(path.read_text())
     if saved["errors"]:
         return {"ok": False, "errors": ["the sheet has errors: fix them and check it again"]}
+    case = _case_errors(saved["rows"])  # (if new odor names may only be lowercase since it was checked)
+    if case:
+        return {"ok": False, "errors": case}
     d = odormeta.diff(saved["rows"], db.list_odors())
     changes = [c for c in d["changed"] if c["id"] in change_ids]
     deletions = [o for o in d["missing"] if o["id"] in delete_ids]
@@ -1296,10 +1352,12 @@ async def dataset_odor_table(request: Request) -> Response:
 
 
 async def dataset_odors_file(request: Request) -> Response:
-    """A dataset's odors as a file to save: a CSV or a LaTeX table (`export.dataset_odors_download`)."""
+    """A dataset's odors as a file to save: a CSV or a LaTeX table (`export.dataset_odors_download`;
+    ``lower=1`` for its odor names in lowercase)."""
     ds_id, fmt = int(request.path_params["ds_id"]), request.path_params["fmt"]
     try:
-        text, name, media_type = await run_in_threadpool(export.dataset_odors_download, db, ds_id, config.DATASETS_DIR, fmt)
+        text, name, media_type = await run_in_threadpool(
+            lambda: export.dataset_odors_download(db, ds_id, config.DATASETS_DIR, fmt, lower=_lower(request)))
     except export.ExportError as e:
         return json_error(404, str(e))
     return Response(text, media_type=media_type, headers={"content-disposition": f'attachment; filename="{name}"'})
@@ -1348,6 +1406,7 @@ def _admin_state() -> dict:
         "pending": active is not None and any(saved[k] != active[k] for k in sandbox.KINDS),
         "checks": sandbox.check_folders(saved, _supervisor())[0],
         "odor_sheet": _odor_sheet(),
+        "lowercase_only": _lowercase_only(),
         "data_dir": to_server(str(config.DATA_DIR)),
         "deleted_dir": to_server(str(config.DELETED_DIR)),
         "in_container": note is not None,  # these paths, which are on the server otherwise
@@ -1434,6 +1493,20 @@ async def admin_odor_sheet(request: Request) -> Response:
         sheet = _odor_sheet()
         log.info("odor sheet set in the Admin tab: %s", url or "none")
         return {"ok": True, "odor_sheet": sheet, "read": sheet_watch.check(sheet["url"], force=True) if sheet["url"] else None}
+
+    return JSONResponse(await run_in_threadpool(run))
+
+
+async def admin_odor_case(request: Request) -> Response:
+    """Whether new odor names may only be lowercase ({"lowercase_only": bool}), at once."""
+    body = await request.json()
+    if not isinstance(body, dict) or not isinstance(body.get("lowercase_only"), bool):
+        return json_error(400, 'expected {"lowercase_only": true or false}')
+
+    def run() -> dict:
+        db.set_setting(LOWERCASE_SETTING, "1" if body["lowercase_only"] else None, when=dt.datetime.now().isoformat(timespec="seconds"))
+        log.info("new odor names lowercase only (Admin tab): %s", body["lowercase_only"])
+        return {"ok": True, "lowercase_only": _lowercase_only()}
 
     return JSONResponse(await run_in_threadpool(run))
 
@@ -1623,6 +1696,7 @@ routes = [
     Route("/api/admin/backups", admin_backups),
     Route("/api/admin/backups", admin_backup_start, methods=["POST"]),
     Route("/api/admin/odor_sheet", admin_odor_sheet, methods=["POST"]),
+    Route("/api/admin/odor_case", admin_odor_case, methods=["POST"]),
     Route("/api/admin/host", admin_host),
     Route("/api/admin/restart", admin_restart, methods=["POST"]),
     Route("/api/admin/datasets/{ds_id:int}", admin_dataset_delete, methods=["DELETE"]),

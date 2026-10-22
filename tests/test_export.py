@@ -173,6 +173,39 @@ def test_dataset_odors_download(main, store, tmp_path, two):  # noqa: F811
         dataset_odors_download(db, 99, datasets_dir, "csv")
 
 
+def test_lowercase(store, tmp_path):
+    db, datasets_dir = store
+    rows = [("p1", o, r) for o in ("IaA @ -3", "AA @ -2", "aa @ -2") for r in range(2)]
+    ia = add(store, parse(tmp_path, rows, COLS, row_names=("panel", "odor1", "repeat"), name="a.csv"))
+    ib = add(store, parse(tmp_path, [("p1", "iaa @ -3", 0)], COLS[:1], row_names=("panel", "odor1", "repeat"), name="b.csv"))
+    out = tmp_path / "out"
+    odors_of = lambda df: list(dict.fromkeys(df.index.get_level_values("odor1") if "odor1" not in df else df["odor1"]))
+    # one dataset: its names lowercased, but those differing from another only in case
+    write_download(db, [ia], "wide", out, datasets_dir, lower=True)
+    assert odors_of(pd.read_csv(out, header=[0, 1, 2], index_col=[0, 1, 2])) == ["iaa @ -3", "AA @ -2", "aa @ -2"]
+    write_download(db, [ia], "long", out, datasets_dir, lower=True)
+    assert odors_of(pd.read_csv(out)) == ["iaa @ -3", "AA @ -2", "aa @ -2"]
+    write_download(db, [ia], "wide", out, datasets_dir)
+    assert odors_of(pd.read_csv(out, header=[0, 1, 2], index_col=[0, 1, 2]))[0] == "IaA @ -3"
+    text = dataset_odors_download(db, ia, datasets_dir, "csv", lower=True)[0]
+    assert list(pd.read_csv(io.StringIO(text))["abbrev"]) == ["iaa", "AA", "aa"]
+    assert r"\textit{not in the odor table} & iaa & $-3$" in dataset_odors_download(db, ia, datasets_dir, "tex", lower=True)[0]
+    assert r"\textit{not in the odor table} & IaA & $-3$" in dataset_odors_download(db, ia, datasets_dir, "tex")[0]
+    # several: over all of them, so IaA and iaa (of two datasets) stay apart, as they were
+    zip_path = tmp_path / "out.zip"
+    name, _ = write_download(db, [ia, ib], "long", zip_path, datasets_dir, lower=True)
+    stem = name[:-4]
+    assert set(read_member(zip_path, f"{stem}/responses_long.csv")["odor1"]) == {"IaA @ -3", "iaa @ -3", "AA @ -2", "aa @ -2"}
+    with zipfile.ZipFile(zip_path) as zf:
+        assert "Odor names (abbreviations) are in lowercase" in zf.read(f"{stem}/README.md").decode()
+    ib2 = add(store, parse(tmp_path, [("p1", "HCl @ -1", 0)], COLS[:1], row_names=("panel", "odor1", "repeat"), name="c.csv"))
+    name, _ = write_download(db, [ia, ib2], "wide", zip_path, datasets_dir, lower=True)
+    assert set(read_member(zip_path, f"{name[:-4]}/odors.csv")["abbrev"]) == {"iaa", "AA", "aa", "hcl"}
+    # the original files as they are
+    name, _ = write_download(db, [ia, ib2], "files", zip_path, datasets_dir, lower=True)
+    assert set(read_member(zip_path, f"{name[:-4]}/odors.csv")["abbrev"]) == {"IaA", "AA", "aa", "HCl"}
+
+
 def test_odors_tex():
     row = dict.fromkeys(["cid", "solvent", "glomerulus", "supplier", "catalog_no", "metacyc", "lotus", "cas", "pubchem_url",
                          "catalog_url", "metacyc_url", "lotus_url", "cas_url"])

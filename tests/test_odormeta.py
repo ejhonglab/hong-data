@@ -271,3 +271,24 @@ def test_inchis_in_database(pubchem, tmp_path, monkeypatch):
     # the InChI belongs to the CID, so it stays with an odor through a sync that changes other fields
     apply_all(db, rows_of(HEADER + "valeric acid,va,pentanoic acid,7991,,water,,,,,,,\n"), changes={o["id"] for o in db.list_odors()})
     assert next(o for o in db.list_odors() if o["name"] == "valeric acid")["inchi"] == pubchem.inchis[7991]
+
+
+def test_case():
+    from app.odors import lowercase_map, lowercase_odor, odor_names
+
+    assert odor_names("IaA @ -3 + b @ -2") == ["IaA", "b"] and odor_names("solvent") == [] and odor_names("ethyl acetate @ -2") == ["ethyl acetate"]
+    names = lowercase_map(["IaA", "AA", "aa", "HCl", "va"])
+    # never two names the same: those differing only in case stay as they are
+    assert names == {"IaA": "iaa", "AA": "AA", "aa": "aa", "HCl": "hcl", "va": "va"}
+    assert lowercase_odor("IaA @ -3 + HCl @ -1", names) == "iaa @ -3 + hcl @ -1"
+    assert lowercase_odor("solvent", names) == "solvent" and lowercase_odor("Other @ -2", names) == "Other @ -2"
+
+    # abbreviations of different odors differing only in case: a warning; of the same odor, none
+    _, errors, warnings = odormeta.parse_sheet(HEADER + "ethyl acetate,EA,,,,,,,,,,,\nethanol,ea,,,,,,,,,,,\n"
+                                               "isoamyl acetate,IaA,iaa,,,,,,,,,,\n")
+    assert not errors and len(warnings) == 1 and "'EA', 'ea' of different odors (ethanol, ethyl acetate)" in warnings[0]
+    rows = rows_of(HEADER + "Ethyl Acetate,EA,Ea; x,,,,,,,,,,\nvaleric acid,va,,,,,,,,,,,\n")
+    assert odormeta.uppercase_errors(rows, set()) == [
+        "row 2 (Ethyl Acetate): 'Ethyl Acetate', 'EA', 'Ea' have capital letters, and new odor names, abbreviations and "
+        "aliases must be lowercase (set in the Admin tab)"]
+    assert odormeta.uppercase_errors(rows, {"Ethyl Acetate", "EA", "Ea"}) == []  # already in the database

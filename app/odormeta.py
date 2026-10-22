@@ -168,7 +168,29 @@ def parse_sheet(text: str) -> tuple[list[dict], list[str], list[str]]:
         if len(names) > 1:
             warnings.append(f"abbreviation/alias {lab!r} is used by {len(names)} odors ({', '.join(sorted(names))}): "
                             "datasets without an odor YAML can't tell which one they mean")
+    folded: dict[str, list[str]] = {}
+    for lab in labels:
+        folded.setdefault(lab.lower(), []).append(lab)
+    for same in folded.values():
+        names = {n for lab in same for n in labels[lab]}
+        if len(same) > 1 and len(names) > 1:
+            warnings.append(f"abbreviations/aliases {', '.join(map(repr, same))} of different odors ({', '.join(sorted(names))}) "
+                            "differ only in case: where odor abbreviations are shown in lowercase (Settings), these are "
+                            "shown as they are, so as not to look the same")
     return rows, errors, warnings
+
+
+def uppercase_errors(rows: list[dict], known: set[str]) -> list[str]:
+    """Rows of the odor sheet with names, abbreviations or aliases with capital letters,
+    but those already in the database (`known`), as errors: while new odor names may only
+    be lowercase (an Admin tab setting)."""
+    out = []
+    for r in rows:
+        bad = [n for n in dict.fromkeys([r["name"], r["abbrev"], *r["aliases"]]) if n and n != n.lower() and n not in known]
+        if bad:
+            out.append(f"row {r['row']} ({r['name']}): {', '.join(map(repr, bad))} {'has' if len(bad) == 1 else 'have'} capital "
+                       "letters, and new odor names, abbreviations and aliases must be lowercase (set in the Admin tab)")
+    return out
 
 
 def fingerprint(rows: list[dict]) -> str:

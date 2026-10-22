@@ -21,6 +21,10 @@ multiplied by its scale factor, and ``scaling.csv``.
 
 One dataset's odors can also be downloaded on their own (`dataset_odors_download`), as
 that ``odors.csv`` or as a LaTeX table (`odors_tex`).
+
+Every download but of the original files can have its odors' names (abbreviations) in
+lowercase (``lower``, as chosen in Settings): all of them, but for those differing from
+another in the download only in case (`odors.lowercase_map`), so that no two odors become one.
 """
 from __future__ import annotations
 
@@ -39,7 +43,7 @@ import pandas as pd
 from . import merge, odormeta
 from .db import Database
 from .ingest import COL_LEVELS
-from .odors import SOLVENT_STR, is_odor_level, odor_level_sort_key
+from .odors import SOLVENT_STR, is_odor_level, lowercase_map, lowercase_odor, odor_level_sort_key, odor_names
 
 FORMATS = ("files", "wide", "long")
 UNIT_LEVELS = ("dataset_id", "date", "fly_num", "roi")
@@ -232,25 +236,30 @@ def datasets_frame(datasets: list[dict]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def odors_frame(db: Database, datasets: list[dict], datasets_dir: Path) -> pd.DataFrame:
-    """Each dataset's odors (per panel, as in the data) with their odor-table metadata and links."""
+def odors_frame(db: Database, datasets: list[dict], datasets_dir: Path, names: Optional[dict[str, str]] = None) -> pd.DataFrame:
+    """Each dataset's odors (per panel, as in the data) with their odor-table metadata and
+    links; the data's names as `names` has them (`_lowercase`), if given."""
     index = odormeta.OdorIndex(db.list_odors())
     rows = []
     for d in datasets:
         odors = odormeta.dataset_odors(d, db.get_trials(d["id"]), index, odormeta.dataset_yaml_odors(d, datasets_dir))
         rows += [{"dataset_id": d["id"], **r} for r in odormeta.table_rows(odors, index)]
+    if names is not None:
+        _rename_rows(rows, names)
     df = pd.DataFrame(rows)
     if "cid" in df:
         df["cid"] = df["cid"].astype("Int64")
     return df
 
 
-def dataset_odors_download(db: Database, ds_id: int, datasets_dir: Path, fmt: str) -> tuple[str, str, str]:
+def dataset_odors_download(db: Database, ds_id: int, datasets_dir: Path, fmt: str, *,
+                           lower: bool = False) -> tuple[str, str, str]:
     """One dataset's odors (per panel, as in the data, as the Browse tab's table of them) to download.
 
     Args:
         fmt: 'csv' (the columns of `odormeta.table_rows`, as every export's ``odors.csv``) or
             'tex' (a LaTeX table: see `odors_tex`).
+        lower: the data's odor names in lowercase (see the module's docstring).
 
     Returns:
         (its text, its file name: the dataset's (`dataset_stem`) with ``_odors``, its media type).
@@ -266,6 +275,8 @@ def dataset_odors_download(db: Database, ds_id: int, datasets_dir: Path, fmt: st
     index = odormeta.OdorIndex(db.list_odors())
     trials = db.get_trials(ds_id)
     rows = odormeta.table_rows(odormeta.dataset_odors(d, trials, index, odormeta.dataset_yaml_odors(d, datasets_dir)), index)
+    if lower:
+        _rename_rows(rows, lowercase_map(n for t in trials for c in t["components"] for n in odor_names(c)))
     stem = f"{dataset_stem(d, trials)}_odors"
     if fmt == "csv":
         df = pd.DataFrame(rows, columns=list(rows[0]) if rows else None)
@@ -273,6 +284,26 @@ def dataset_odors_download(db: Database, ds_id: int, datasets_dir: Path, fmt: st
             df["cid"] = df["cid"].astype("Int64")
         return df.to_csv(index=False), f"{stem}.csv", "text/csv"
     return odors_tex(rows, f"Odors of {d['title']}", f"tab:odors-dataset-{ds_id}"), f"{stem}.tex", "text/x-tex"
+
+
+def _lowercase(trial_lists: Iterable[list[dict]]) -> dict[str, str]:
+    """The odor names of trials (all of one download) lowercased (`lowercase_map`, over them
+    all), the trials' odor strings changed to match, in place; and that map of the names."""
+    trial_lists = list(trial_lists)
+    names = lowercase_map(n for ts in trial_lists for t in ts for c in t["components"] for n in odor_names(c))
+    for ts in trial_lists:
+        for t in ts:
+            t["components"] = [lowercase_odor(c, names) for c in t["components"]]
+            if "odor" in t:
+                t["odor"] = lowercase_odor(t["odor"], names)
+    return names
+
+
+def _rename_rows(rows: list[dict], names: dict[str, str]) -> None:
+    """`odormeta.table_rows` rows' odor strings and names (abbreviations) as `names` has them."""
+    for r in rows:
+        r["odor"] = lowercase_odor(r["odor"], names)
+        r["abbrev"] = names.get(r["abbrev"], r["abbrev"])
 
 
 # LaTeX's special characters, as text
@@ -411,7 +442,7 @@ def _readme(datasets: list[dict], fmt: str, levels: list[str], shape: tuple[int,
 
 
 def write_download(db: Database, ds_ids: Iterable[int], fmt: str, dest: Path, datasets_dir: Path, *,
-                   merged: Optional[dict] = None) -> tuple[str, str]:
+                   merged: Optional[dict] = None, lower: bool = False) -> tuple[str, str]:
     """Write the download of ``ds_ids`` in format ``fmt`` (see module docstring) to ``dest``.
 
     Args:
@@ -423,6 +454,7 @@ def write_download(db: Database, ds_ids: Iterable[int], fmt: str, dest: Path, da
         merged: for a merged download, its plan (`merge.plan`), whose ``scales`` multiply
             each dataset's values: then always a zip, named after the coding unit, with
             ``scaling.csv`` and a README section on the scaling.
+        lower: odor names in lowercase (see the module's docstring), but for the original files.
 
     Returns:
         (file name to offer the download as, its media type)
@@ -441,6 +473,8 @@ def write_download(db: Database, ds_ids: Iterable[int], fmt: str, dest: Path, da
         raise ExportError(f"dataset{'s' if len(missing) > 1 else ''} not found: {', '.join(map(str, missing))}")
     if len(ids) == 1 and fmt != "files" and merged is None:
         d, m = datasets[0], db.get_matrix_arrays(ids[0])
+        if lower:
+            _lowercase([m["trials"]])
         levels, keys = dataset_trial_keys(m["trials"], d["summary"].get("row_levels") or trial_keys([m])[0])
         with open(dest, "w", encoding="utf-8", newline="") as f:
             if fmt == "wide":
@@ -456,11 +490,15 @@ def write_download(db: Database, ds_ids: Iterable[int], fmt: str, dest: Path, da
         stem = f"olfdb_{unit}_{len(ids)}-dataset{'s' if len(ids) > 1 else ''}_{fmt}"
         for i, m in matrices:
             m["values"] = (m["values"] * np.float32(merged["scales"][i])).astype(np.float32)
+    names = _lowercase(m["trials"] for _, m in matrices) if lower and matrices else None
     levels, keys = trial_keys([m for _, m in matrices]) if matrices else ([], [])
     shape = (len({k for ks in keys for k in ks}), sum(len(m["units"]) for _, m in matrices))
 
     with zipfile.ZipFile(dest, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
         readme = _readme(datasets, fmt, levels, shape)
+        if names is not None:
+            readme += ("\nOdor names (abbreviations) are in lowercase, as chosen in Settings, but for any that differ from "
+                       "another here only in case, which are as written.\n")
         if merged is not None:
             readme += "\n".join(merge.readme_lines(merged)) + "\n"
             with _zip_text(zf, f"{stem}/scaling.csv") as f:
@@ -469,7 +507,7 @@ def write_download(db: Database, ds_ids: Iterable[int], fmt: str, dest: Path, da
         with _zip_text(zf, f"{stem}/datasets.csv") as f:
             datasets_frame(datasets).to_csv(f, index=False)
         with _zip_text(zf, f"{stem}/odors.csv") as f:
-            odors_frame(db, datasets, datasets_dir).to_csv(f, index=False)
+            odors_frame(db, datasets, datasets_dir, names).to_csv(f, index=False)
         if fmt == "wide":
             with _zip_text(zf, f"{stem}/responses_wide.csv") as f:
                 wide_frame(matrices).to_csv(f)

@@ -403,6 +403,12 @@ class Database:
         ])
         return [{"panel": t["panel"], "odor": t["odor"], "components": t["components"]} for t in trials]
 
+    def odor_strings(self) -> set[str]:
+        """Every odor string (one odor, as in `get_trials`' components) of every dataset."""
+        with self.connect() as con:
+            rows = con.execute("SELECT DISTINCT components_json FROM trials").fetchall()
+        return {c for r in rows for c in json.loads(r["components_json"])}
+
     def get_matrix(self, ds_id: int) -> Optional[dict]:
         m = self.get_matrix_arrays(ds_id)
         if m is None:

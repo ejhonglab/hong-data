@@ -13,6 +13,60 @@ const LS = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* private mode etc. */ } },
 };
 
+// How odors are shown, as chosen in Settings (kept in this browser): lowerOdors, their
+// names (abbreviations) in lowercase, in downloads too but of the original files
+const DISPLAY_KEY = 'olfdb.display';
+const display = { lowerOdors: false, ...LS.get(DISPLAY_KEY, {}) };
+
+// odor names (abbreviations) as shown in lowercase: each lowercased, but for those that
+// would then be the same as another (differing from it only in case), which are left as
+// they are, so that no two odors become one (as odors.lowercase_map on the server)
+function lowercaseMap(names) {
+  const groups = new Map();
+  for (const n of new Set(names)) groups.set(n.toLowerCase(), [...(groups.get(n.toLowerCase()) || []), n]);
+  const out = new Map();
+  for (const [low, same] of groups) for (const n of same) out.set(n, same.length === 1 ? low : n);
+  return out;
+}
+
+// the names in an odor string ('A @ -3 + b @ -2': A and b), but solvent
+const odorNames = (s) => String(s).split(' + ').filter((p) => p !== 'solvent').map((p) => p.split(' @ ')[0]);
+
+// shows odor strings (one odor, or a mixture) of `odorStrs`, all shown together, as
+// Settings say: each odor's name lowercased (lowercaseMap, over them all), or as it is
+function odorShower(odorStrs) {
+  let map = null;
+  return (s) => {
+    if (!display.lowerOdors || s == null) return s;
+    map ??= lowercaseMap(odorStrs.flatMap(odorNames));
+    return String(s).split(' + ').map((p) => {
+      const at = p.indexOf(' @ '), name = at < 0 ? p : p.slice(0, at);
+      return (map.get(name) ?? name) + (at < 0 ? '' : p.slice(at));
+    }).join(' + ');
+  };
+}
+
+// shows the odor table's abbreviations of `abbrevs`, all shown together, as Settings say
+function abbrevShower(abbrevs) {
+  let map = null;
+  return (a) => {
+    if (!display.lowerOdors || !a) return a;
+    map ??= lowercaseMap(abbrevs.filter(Boolean));
+    return map.get(a) ?? a;
+  };
+}
+
+// a download's query parameter for odor names in lowercase, if Settings say so
+const lowerQuery = (sep = '&') => (display.lowerOdors ? `${sep}lower=1` : '');
+
+// what is shown already, shown again as Settings now say odors are
+function displayChanged() {
+  LS.set(DISPLAY_KEY, display);
+  browse.viewer?._rebuild();
+  if (browse.selected != null && !$('#ds-odors').hidden) browse.showOdors(browse.selected);
+  reference.viewer?._rebuild();
+}
+
 function esc(s) {
   return String(s ?? '').replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
 }
@@ -349,9 +403,9 @@ function buildNeuralModel(data, order, { mode, rowOrder }, clustering) {
     const start = cols.length;
     if (mode === 'trials') {
       const ts = c.trials.slice().sort((a, b) => trials[a].repeat - trials[b].repeat || a - b);
-      for (const j of ts) { cols.push({ label: c.odor, group, sub: trials[j].repeat, key: c.key }); colTrials.push([j]); }
+      for (const j of ts) { cols.push({ label: data.showOdor(c.odor), group, sub: trials[j].repeat, key: c.key }); colTrials.push([j]); }
     } else {
-      cols.push({ label: c.odor, group, sub: null, key: c.key });
+      cols.push({ label: data.showOdor(c.odor), group, sub: null, key: c.key });
       colTrials.push(c.trials);
     }
     condCenter.set(c, (start + cols.length) / 2);
@@ -381,11 +435,12 @@ function buildNeuralModel(data, order, { mode, rowOrder }, clustering) {
 }
 
 // A chemical of a reference dataset labelled by its name or abbreviation in the odor table
-// (as matched there), or as in the file: {label, detail (the rest, for the tooltip)}
-function chemLabel(it, by) {
-  const c = it.chem;
-  const label = (by === 'abbrev' && (c.abbrev || c.name)) || (by === 'name' && c.name) || it.file;
-  const others = [c.name, c.abbrev].filter((n) => n && n !== label);
+// (as matched there; the abbreviation as `showAbbrev` shows it), or as in the file:
+// {label, detail (the rest, for the tooltip)}
+function chemLabel(it, by, showAbbrev = (a) => a) {
+  const c = it.chem, abbrev = showAbbrev(c.abbrev);
+  const label = (by === 'abbrev' && (abbrev || c.name)) || (by === 'name' && c.name) || it.file;
+  const others = [c.name, abbrev].filter((n) => n && n !== label);
   if (it.file.toLowerCase() !== label.toLowerCase() && !others.some((n) => n.toLowerCase() === it.file.toLowerCase())) others.push(`“${it.file}” in the file`);
   if (c.cid) others.push(`CID ${c.cid}`);
   if (!c.name) others.push('not in the Odors table');
@@ -422,10 +477,12 @@ function dataRange(values, clip) {
 const newEdits = () => ({ rows: { removed: new Set(), order: null }, cols: { removed: new Set(), order: null } });
 
 class MatrixViewer {
-  // cells: [width, height] of this viewer's cells to start with, not those of every viewer
-  constructor(container, { kind = 'neural', cells = null } = {}) {
+  // cells: [width, height] of this viewer's cells to start with, not those of every viewer;
+  // asUploaded: odors as named in the data, whatever Settings say (the upload preview)
+  constructor(container, { kind = 'neural', cells = null, asUploaded = false } = {}) {
     this.container = container;
     this.kind = kind;
+    this.asUploaded = asUploaded;
     container.classList.add('viewer');
     container.innerHTML = '';
     container.appendChild($('#viewer-toolbar').content.cloneNode(true));
@@ -562,7 +619,8 @@ class MatrixViewer {
     this._setKind('neural');
     if (payload !== this.source) {
       this.source = payload;
-      this.data = { units: payload.units, trials: payload.trials, values: decodeValues(payload.values_b64) };
+      this.data = { units: payload.units, trials: payload.trials, values: decodeValues(payload.values_b64),
+        showOdor: this.asUploaded ? (s) => s : odorShower(payload.trials.map((t) => t.odor)) };
       this._editsFor(payload);
       this.clusterCache.clear();
     }
@@ -628,7 +686,8 @@ class MatrixViewer {
     const cols = arrange(b.cols.map((_, j) => j), (j) => b.cols[j].key, this.edits.cols);
     const values = new Float32Array(rows.length * cols.length);
     rows.forEach((i, r) => { cols.forEach((j, c) => { values[r * cols.length + c] = b.values[i * nC + j]; }); });
-    const label = (it) => (it.chem ? { ...it, ...chemLabel(it, this.opts.chemLabels) } : it);
+    const showAbbrev = abbrevShower([...b.rows, ...b.cols].map((it) => it.chem?.abbrev));
+    const label = (it) => (it.chem ? { ...it, ...chemLabel(it, this.opts.chemLabels, showAbbrev) } : it);
     return { ...b, rows: rows.map((i) => label(b.rows[i])), cols: cols.map((j) => label(b.cols[j])), values,
       cellText: b.cellText && ((r, c) => b.cellText(rows[r], cols[c])) };
   }
@@ -1369,7 +1428,7 @@ class UploadFlow {
 
     $('#preview').hidden = false;
     $('#preview-caption').textContent = 'This is exactly what will be shown after saving. Hover a cell for its value.';
-    if (!this.viewer) this.viewer = new MatrixViewer($('#preview-viewer'));
+    if (!this.viewer) this.viewer = new MatrixViewer($('#preview-viewer'), { asUploaded: true });
     this.viewer.setNeuralData(this.data, { title: name, fileStem: name.replace(/\.[^.]*$/, '') || 'preview' });
     $('#step-meta').hidden = false;
   }
@@ -1462,8 +1521,17 @@ class UploadFlow {
     const table = '<a href="#odors">odor table</a>';
     const n = new Set(c.rows.map((r) => r.odor)).size, k = this._unmatchedOdors().length;
     const note = this.syncNote ? ` <span class="muted">(${esc(this.syncNote)})</span>` : '';
-    if (!k) { box.innerHTML = `<div class="yaml-file-check ok">✓ Each of its ${n} odors is in the ${table}.${note}</div>`; return; }
-    const parts = [`<p><b>${k} of its ${n} odors ${k === 1 ? 'is' : 'are'} not in the ${table}</b>: the dataset can be saved once ${k === 1 ? 'it is' : 'they are'}.</p>`];
+    const upper = c.case?.uppercase || [], codes = (names) => names.map((x) => `<code>${esc(x)}</code>`).join(', ');
+    const caps = upper.length ? `<p><b>${upper.length} of its odor names ${upper.length === 1 ? 'has' : 'have'} capital letters</b> (${codes(upper)}),
+      and new odor names must be lowercase (set in the Admin tab): rename ${upper.length === 1 ? 'it' : 'them'} in the data file, and add it again.</p>` : '';
+    const clashes = (c.case?.clashes || []).length ? `<p class="small">${c.case.clashes.map((g) => codes(g)).join('; ')} differ only in case: where
+      odor names are shown in lowercase (Settings), they are shown as they are, so as not to look the same.</p>` : '';
+    if (!k) {
+      box.innerHTML = upper.length ? `<div class="msg error">${caps}${clashes}</div>`
+        : `<div class="yaml-file-check ok">✓ Each of its ${n} odors is in the ${table}.${note}</div>${clashes ? `<div class="msg info">${clashes}</div>` : ''}`;
+      return;
+    }
+    const parts = [`<p><b>${k} of its ${n} odors ${k === 1 ? 'is' : 'are'} not in the ${table}</b>: the dataset can be saved once ${k === 1 ? 'it is' : 'they are'}.</p>`, caps, clashes];
     if (c.missing.length) parts.push(`<p>Not in it:</p>${missingRowsHtml(c.missing, c.sheet, 'sync it here (below)')}`);
     const ambiguous = ambiguousOdors(c.rows);
     if (ambiguous.length) {
@@ -1639,6 +1707,8 @@ class UploadFlow {
     if (!meta.coding_unit) errs.push('coding unit is required');
     if (meta.age_min_days != null && meta.age_max_days != null && meta.age_max_days < meta.age_min_days) errs.push('fly age range: max is smaller than min');
     if (this.yamlCheck && !this.yamlCheck.ok) errs.push('the odor YAML check has not passed');
+    const upper = this.odorCheck?.case?.uppercase || [];
+    if (upper.length) errs.push(`${upper.length} of its odor names ${upper.length === 1 ? 'has' : 'have'} capital letters, and new ones must be lowercase (see under the odor YAML)`);
     const unmatched = this._unmatchedOdors();
     if (unmatched.length) {
       errs.push(`${unmatched.length} of its odors ${unmatched.length === 1 ? 'is' : 'are'} not in the odor table (see under the odor YAML): `
@@ -1776,7 +1846,7 @@ class Browse {
         setStatus(out, '✓ Copied');
       } catch (err) { setStatus(out, `Could not copy: ${err.message}`, 'error'); }
     });
-    const downloadUrl = (ids, format) => `/api/download?ids=${ids.join(',')}&format=${format}`;
+    const downloadUrl = (ids, format) => `/api/download?ids=${ids.join(',')}&format=${format}${format === 'files' ? '' : lowerQuery()}`;
     wireMenu($('#ds-download'), ({ format }) => { if (this.selected != null) download(downloadUrl([this.selected], format), $('#ds-download-status')); });
     wireMenu($('#pick-download'), ({ format }) => download(downloadUrl([...this.picked].sort((a, b) => a - b), format), $('#pick-status')));
     $$('.data-link').forEach((menu) => {
@@ -2112,7 +2182,8 @@ class Browse {
     }
     if (this.selected !== id) return;
     panel.innerHTML = datasetOdorTable(this.odorCache.get(id));
-    wireMenu($('#ds-odors-download', panel), ({ odorFormat }) => download(`/api/datasets/${id}/odors.${odorFormat}`, $('#ds-odors-status', panel)));
+    wireMenu($('#ds-odors-download', panel), ({ odorFormat }) => download(`/api/datasets/${id}/odors.${odorFormat}${lowerQuery('?')}`,
+      $('#ds-odors-status', panel)));
   }
 }
 
@@ -2192,6 +2263,7 @@ function missingOdorsHtml({ rows, missing, sheet }) {
 // a dataset's odors (GET /api/datasets/<id>/odors), per panel, like the thesis odor tables
 function datasetOdorTable(data) {
   const { rows, odors } = data;
+  const showOdor = odorShower(rows.map((r) => r.odor));
   const hasGlom = rows.some((r) => r.yaml?.glomerulus);
   const nCols = hasGlom ? 12 : 11;
   const body = runsOf(rows, (r) => r.panel).map((g) => {
@@ -2204,7 +2276,7 @@ function datasetOdorTable(data) {
       else if (r.match === 'ambiguous') name = `<span class="muted">ambiguous: ${r.candidates.map((i) => `<a href="#odors/${i}">${esc(odors[i].name)}</a>`).join(' or ')}</span>`;
       else name = `<span class="muted">${r.yaml?.name ? `${esc(r.yaml.name)}, ` : ''}not in the odor table</span>`;
       const cls = o ? '' : r.match === 'ambiguous' ? ' class="ambiguous"' : ' class="missing"';
-      return `<tr${cls}><td><code>${esc(r.odor)}</code></td><td>${name}</td><td>${r.log10_conc ?? ''}</td><td>${c.cid || ''}</td>
+      return `<tr${cls}><td><code>${esc(showOdor(r.odor))}</code></td><td>${name}</td><td>${r.log10_conc ?? ''}</td><td>${c.cid || ''}</td>
         <td class="inchi">${esc(o?.inchi || '')}</td><td>${esc(r.yaml?.solvent || o?.solvent || '')}</td>
         ${hasGlom ? `<td>${esc(r.yaml?.glomerulus || '')}</td>` : ''}<td>${c.catalog || ''}</td><td>${c.metacyc || ''}</td><td>${c.lotus || ''}</td>
         <td class="structure-cell">${o ? structureImg(o) : ''}</td><td>${c.cas || ''}</td></tr>`;
@@ -2366,13 +2438,14 @@ class OdorsPage {
       $('#odor-table').innerHTML = '<div class="empty">The odor table is empty. Sync it from the odor sheet, or import a CSV in the Admin tab (its template has the odors from the thesis).</div>';
       return;
     }
+    const showAbbrev = abbrevShower(all.map((o) => o.abbrev));
     $('#odor-table').innerHTML = `<table class="odor-table"><thead><tr><th>Structure</th><th>Name</th><th>Abbrev.</th><th>CID</th><th>CAS</th><th>Solvent</th>
       <th>Catalog no.</th><th>MetaCyc</th><th>LOTUS</th><th>Inventory</th><th>Datasets</th><th>Notes</th></tr></thead><tbody>
       ${shown.map((o) => {
         const c = idCells(o);
         return `<tr id="odor-${o.id}"><td class="structure-cell">${structureImg(o)}</td>
           <td><b>${esc(o.name)}</b>${o.aliases.length ? `<div class="muted small">${esc(o.aliases.join('; '))}</div>` : ''}</td>
-          <td>${esc(o.abbrev || '')}</td><td>${c.cid}</td><td>${c.cas}</td><td>${esc(o.solvent || '')}</td><td>${c.catalog}</td>
+          <td>${esc(showAbbrev(o.abbrev) || '')}</td><td>${c.cid}</td><td>${c.cas}</td><td>${esc(o.solvent || '')}</td><td>${c.catalog}</td>
           <td>${c.metacyc}</td><td>${c.lotus}</td><td>${esc(o.inventory || '')}</td>
           <td>${o.datasets.map((i) => `<a href="#browse/${i}">#${i}</a>`).join(' ')}</td><td class="notes">${esc(o.notes || '')}</td></tr>`;
       }).join('')}</tbody></table>`;
@@ -2546,6 +2619,9 @@ class SettingsPage {
     f.addEventListener('change', () => this.checkDefaults());
     f.addEventListener('submit', (e) => e.preventDefault());
     $('#defaults-clear').addEventListener('click', () => { this._fillDefaults({}); this.checkDefaults(); });
+    const lower = $('#settings-lower-odors');
+    lower.checked = display.lowerOdors;
+    lower.addEventListener('change', () => { display.lowerOdors = lower.checked; displayChanged(); });
   }
 
   // what the upload form is filled in from
@@ -2775,7 +2851,7 @@ class MergePage {
 
   _query(format) {
     const o = this._options();
-    return new URLSearchParams({ ...o, by: o.by.join(','), ...(format ? { format } : {}) }).toString();
+    return new URLSearchParams({ ...o, by: o.by.join(','), ...(format ? { format } : {}), ...(format && display.lowerOdors ? { lower: '1' } : {}) }).toString();
   }
 
   async preview() {
@@ -2949,6 +3025,7 @@ class AdminPage {
     this._backupTimer = 0;
     this._watchingBackup = false; // a backup started here is being made
     $('#admin-sheet-save').addEventListener('click', () => this.saveSheet());
+    $('#admin-lowercase').addEventListener('change', (e) => this.saveCase(e.target.checked));
     $('#admin-sheet-url').addEventListener('keydown', (e) => { if (e.key === 'Enter') this.saveSheet(); });
     $('#admin-restart').addEventListener('click', () => this.restart());
     $('#admin-confirm').addEventListener('close', () => this._answered());
@@ -3022,6 +3099,7 @@ class AdminPage {
       s.checks[kind].forEach((c, i) => showDirCheck(list.children[i], c));
     }
     this._showSheet();
+    $('#admin-lowercase').checked = !!s.lowercase_only;
     this._showServer();
   }
 
@@ -3086,6 +3164,18 @@ class AdminPage {
     $('#admin-sheet-source').innerHTML = o.saved ? `Set here ${esc(fmtWhen(o.updated_at))}.`
       : o.url ? 'Set on the server (<code>OLFDB_ODOR_SHEET_URL</code>); saving a link here replaces it.'
         : 'None yet: until there is one, the odor table can only be synced from CSVs imported below.';
+  }
+
+  async saveCase(only) {
+    const out = $('#admin-lowercase-result');
+    let res;
+    try { res = await api('/api/admin/odor_case', { method: 'POST', json: { lowercase_only: only } }); } catch (e) {
+      out.replaceChildren(msgBox('error', `Not saved: ${esc(e.message)}`));
+      $('#admin-lowercase').checked = !only;
+      return;
+    }
+    this.state.lowercase_only = res.lowercase_only;
+    out.replaceChildren(msgBox('ok', res.lowercase_only ? 'Saved: new odor names with capital letters are refused from now on.' : 'Saved: odor names may have capital letters.'));
   }
 
   async saveSheet() {
@@ -3871,17 +3961,18 @@ class ComparePage {
       if (d.error) { parts.push(msgBox('error', `Dataset #${d.id} could not be shown: ${esc(d.error)}`)); continue; }
       const what = d.kind === 'glomeruli' ? `${d.cols.length} glomeruli, each the mean of the flies with it` : `${d.cols.length.toLocaleString()} ROIs`;
       const sub = `${esc(d.coding_unit || '')}: ${d.rows.length} odors × ${what}; every trial averaged`;
+      const showOdor = odorShower(d.rows.map((r) => r.odor));
       if (show !== 'sim') {
-        block(`ds:${d.id}`, `#${d.id} ${d.title}`, sub, this._memo(`data:${d.id}`, () => ({
+        block(`ds:${d.id}`, `#${d.id} ${d.title}`, sub, this._memo(`data:${d.id}:${display.lowerOdors}`, () => ({
           meta: { kind: 'diverging', row_label: 'odor', col_label: d.kind === 'glomeruli' ? 'glomerulus' : 'ROI' },
-          rows: d.rows.map((r) => ({ label: r.odor, group: r.panel })), cols: d.cols.map((c) => ({ label: c.label })), values: d.values,
+          rows: d.rows.map((r) => ({ label: showOdor(r.odor), group: r.panel })), cols: d.cols.map((c) => ({ label: c.label })), values: d.values,
         })), `dataset_${d.id}_mean`);
       }
       if (show !== 'data') {
         block(`sim:${d.id}`, `#${d.id} ${d.title}: odor–odor similarity`, `${metric} of their responses across its ${d.kind === 'glomeruli' ? 'glomeruli' : 'ROIs'}`,
-          this._memo(`simdata:${d.id}:${this.o.metric}`, () => {
+          this._memo(`simdata:${d.id}:${this.o.metric}:${display.lowerOdors}`, () => {
             const nC = d.cols.length, rows = d.rows.map((_, i) => d.values.subarray(i * nC, (i + 1) * nC));
-            const labels = d.rows.map((r) => ({ label: r.odor, group: r.panel }));
+            const labels = d.rows.map((r) => ({ label: showOdor(r.odor), group: r.panel }));
             return { meta: { kind: 'diverging', row_label: 'odor', col_label: 'odor' }, rows: labels, cols: labels.map((l) => ({ label: l.label })),
               values: similarityMatrix(rows, this.o.metric) };
           }), `dataset_${d.id}_similarity`);

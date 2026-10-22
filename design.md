@@ -107,6 +107,17 @@ between the frontend and the server. Using the app is described in
   an edit of either's rows is copied to the other (rows keyed by their place in that
   shared order), as are cell sizes, transposing, chemical labels and scrolling, and their
   headers and toolbars are made as high as each other's so the rows stay level.
+- **Odor names are lowercased only where shown or downloaded, never where stored.**
+  Lowercase odor names are a choice of each viewer (Settings, kept in the browser,
+  sent to the server as `lower=1` with downloads), so datasets, the odor table and the
+  original files keep their names as written, and odors are matched as before. Each
+  name is lowercased unless another name shown or downloaded with it (in one dataset,
+  the odor table, or every dataset of a download) differs from it only in case: those
+  stay as written (`odors.lowercase_map`, and `lowercaseMap` in the browser), so that
+  lowercasing never makes two odors one, nor puts the trials of two odors on one row of
+  a download. The Admin tab can refuse new names with capitals (in uploads and in the
+  odor sheet) while allowing any already in the database, so that the names in use
+  can stay as they are while new ones are kept lowercase.
 - **The laser wavelength is never read from `Experiment.xml`**: ThorImage's
   `MultiPhotonLaser` value does not follow changes made to the wavelength at the laser,
   so the wavelength is only ever entered in the form.
@@ -448,7 +459,8 @@ GET    /api/datasets/{id}/odors             its odors (per panel) matched to the
                                             for the odor sheet for those not in it (and as cells
                                             to paste, in the order of the sheet's columns)
 GET    /api/datasets/{id}/odors.csv         those odors as a file: odors.csv's columns, or a LaTeX
-GET    /api/datasets/{id}/odors.tex         longtable (named as its other downloads, with _odors)
+GET    /api/datasets/{id}/odors.tex         longtable (named as its other downloads, with _odors);
+                                            ?lower=1 for odor names in lowercase, as downloads take
 GET    /api/datasets/{id}/data_paths        where its raw and motion-corrected data are on the
                                             server, and what is in them (or why they are not), with
                                             the recordings in one and not the other, and all of
@@ -461,13 +473,15 @@ GET    /api/movie/planes?path=&t=&n=&z=&c=  n planes from time t (z: a plane, or
                                             their type in X-Dtype, their shape (n, y, x) in X-Shape
 GET    /api/movie/rois?path=                the ImageJ ROIs of a RoiSet.zip (or .roi), with their planes
 GET    /api/download?ids=1,2&format=files|wide|long
-                                            a zip, or a CSV for the matrix of a single dataset
+                                            a zip, or a CSV for the matrix of a single dataset;
+                                            &lower=1 for odor names in lowercase (but in files)
 GET    /api/merge                           the coding units recorded from, with their datasets
 POST   /api/merge/preview                   {"coding_unit", "mode": "none"|"groups", "by": [...],
                                             "target", "tolerance", "power_tolerance"} → the groups,
                                             their factors and each dataset's
 GET    /api/merge/download?coding_unit=&format=wide|long&mode=&by=a,b&target=&tolerance=&power_tolerance=
                                             every dataset of the coding unit, scaled, as a zip
+                                            (&lower=1 too)
 GET    /api/merge/scales?(the same, without format)
                                             each dataset's group and scale factor (scaling.csv)
 GET    /api/odors                           the odor table (with each odor's `inchi`)
@@ -495,6 +509,8 @@ POST   /api/admin                           {"read_dirs", "write_dirs"} → save
                                             the next restart
 POST   /api/admin/odor_sheet                {"url"} (empty to clear it) → saved, in use at once;
                                             the sheet read to check it
+POST   /api/admin/odor_case                 {"lowercase_only": bool} → whether new odor names may
+                                            only be lowercase, at once
 GET    /api/admin/host                      the server's name and IP addresses
 POST   /api/admin/restart                   the server stops, for Docker or systemd to start it
                                             again (409 if neither would)

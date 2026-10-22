@@ -410,6 +410,43 @@ def test_stage_from_tensor(main, root, tmp_path, monkeypatch):
     assert status == 200 and r["ok"] and (config.DATASETS_DIR / str(r["dataset_id"]) / "odor_yaml" / "ann_odors.yml").exists()
 
 
+def test_lowercase_only(main, tmp_path, monkeypatch):
+    from app import config, odormeta
+
+    monkeypatch.setattr(config, "STAGING_DIR", tmp_path / "staging")
+    monkeypatch.setattr(config, "DATASETS_DIR", tmp_path / "datasets")
+    monkeypatch.setattr(config, "ODOR_SHEET_URL", "")
+    rows = [("p1", False, o, "solvent", r) for o in ("IaA @ -3", "va @ -3", "Va @ -2") for r in range(2)]
+    d = config.STAGING_DIR / "stage5678"
+    d.mkdir(parents=True)
+    save_parsed(load_file(write_csv(make_wide(rows, COLS), tmp_path)), d / "parsed")
+    (d / "stage.json").write_text(json.dumps({"stage_id": "stage5678", "data_file": "x.csv", "size_bytes": 1, "sha256": "0" * 64,
+                                              "source_format": "wide-csv", "odor_yamls": [], "experiment_xml": None,
+                                              "experiment_xml_info": None}))
+    (d / "x.csv").write_text("as uploaded")
+    stage = {"stage_id": "stage5678"}
+    sheet, _, _ = odormeta.parse_sheet("name,abbrev\nisoamyl acetate,IaA\nvaleric acid,va\n")
+    main.db.apply_odor_sync(added=odormeta.diff(sheet, [])["added"], changed=[], deleted=[], source="test",
+                            fingerprint="0" * 64, details={}, when="2026-10-22T10:00:00")
+    md = {"uploader_name": "Ann", "indicator": "GCaMP6f", "driver": "GH146", "coding_unit": "glomeruli"}
+    # names differing only in case are said to be, either way
+    assert call(main.stage_odors, path_params=stage)[1]["case"] == {"lowercase_only": False, "uppercase": [], "clashes": [["Va", "va"]]}
+
+    status, r = call(main.admin_odor_case, body={"lowercase_only": True})
+    assert status == 200 and r["lowercase_only"] and call(main.admin_get)[1]["lowercase_only"]
+    assert call(main.admin_odor_case, body={"lowercase_only": "yes"})[0] == 400
+    # IaA is in the odor table already, Va nowhere
+    assert call(main.stage_odors, path_params=stage)[1]["case"]["uppercase"] == ["Va"]
+    status, r = call(main.stage_commit, body={"metadata": md, "readme": "#"}, path_params=stage)
+    assert status == 422 and r["errors"][0].startswith("1 of its odor names have capital letters (Va), and new odor names must be lowercase")
+    call(main.admin_odor_case, body={"lowercase_only": False})
+    status, r = call(main.stage_commit, body={"metadata": md, "readme": "#"}, path_params=stage)
+    assert status == 200 and r["ok"]
+    # once in a dataset, it is in the database too
+    call(main.admin_odor_case, body={"lowercase_only": True})
+    assert "Va" in main._known_odor_names() and main._case_check([{"components": ["Va @ -1", "New @ -1"]}])["uppercase"] == ["New"]
+
+
 def test_check_data_path(root, tmp_path):
     assert tensor.check_data_path("tom//raw/", root) == {"input": "tom//raw/", "path": "tom/raw", "ok": True, "error": None,
                                                           "warning": None}

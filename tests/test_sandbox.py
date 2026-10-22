@@ -194,6 +194,28 @@ def test_syncs_not_tied_to_anyone(main, tmp_path, monkeypatch):  # noqa: F811
         assert [r[0] for r in con.execute("SELECT applied_by FROM odor_syncs")] == ["", ""]
 
 
+def test_lowercase_only_sync(main, tmp_path, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(config, "ODOR_PREVIEWS_DIR", tmp_path / "previews")
+    config.ODOR_PREVIEWS_DIR.mkdir()
+    text = config.ODOR_TEMPLATE.read_text()  # with names and abbreviations in capitals (IaA, HCl...)
+    fp = main._preview(text, "file odors.csv")["fingerprint"]
+    call(main.admin_odor_case, body={"lowercase_only": True})
+    # new names with capitals are refused: at apply, if set since the preview; and at preview
+    status, r = call(main.odors_apply, body={"fingerprint": fp})
+    assert status == 422 and any("(hydrochloric acid): 'HCl'" in e for e in r["errors"])
+    p = main._preview(text, "file odors.csv")
+    assert not p["ok"] and any(e.endswith("(isoamyl acetate): 'IaA', 'IAA' have capital letters, and new odor names, abbreviations "
+                                       "and aliases must be lowercase (set in the Admin tab)") for e in p["errors"])
+    call(main.admin_odor_case, body={"lowercase_only": False})
+    fp = main._preview(text, "file odors.csv")["fingerprint"]
+    assert call(main.odors_apply, body={"fingerprint": fp})[0] == 200
+    # then they are in the database, and allowed; only new ones are refused
+    call(main.admin_odor_case, body={"lowercase_only": True})
+    assert main._preview(text, "file odors.csv")["ok"]
+    p = main._preview(text + "New Odor,new,,,,,,,,,,,\nnewer odor,nw,,,,,,,,,,,\n", "file odors.csv")
+    assert [e.split(":")[0] for e in p["errors"]] == [f"row {len(text.splitlines()) + 1} (New Odor)"]
+
+
 def test_admin_host(main, monkeypatch):  # noqa: F811
     r = call(main.admin_host)[1]
     assert r["name"] == socket.gethostname() and r["source"] == "server"
