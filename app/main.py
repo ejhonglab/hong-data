@@ -37,7 +37,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from . import backup, chemprops, compare, config, export, filelog, headspace, merge, movies, odormeta, reference, sandbox, tensor, thorimage, yamlcheck
-from .db import PROPERTY_COLUMNS, Database
+from .db import PANEL_RENAMES, PROPERTY_COLUMNS, Database, rename_panel
 from .glomeruli import load_glomeruli
 from .ingest import (ParsedData, ValidationError, extra_text, fly_key, kc_id_problems, load_file, load_parsed, save_parsed,
                      unit_key)
@@ -240,12 +240,13 @@ def _flies_text(flies: set[tuple]) -> str:
     return ", ".join(named[:MAX_FLIES_NAMED]) + (f" and {len(named) - MAX_FLIES_NAMED} more" if len(named) > MAX_FLIES_NAMED else "")
 
 
-def _same_data(parsed: ParsedData, m: dict) -> bool:
-    """Whether an upload's data is a stored dataset's (`Database.get_matrix_arrays`): the same
-    ROIs and trials, whatever their order, with the same values (as float32 keeps them)."""
+def _same_data(parsed: ParsedData, m: dict, renames: Optional[dict[str, str]] = None) -> bool:
+    """Whether an upload's data is a stored dataset's (`Database.get_matrix_arrays`, its panels
+    as shown): the same ROIs and trials (the upload's panels as shown too, by `renames`),
+    whatever their order, with the same values (as float32 keeps them)."""
     def index(units, trials):
         return ({unit_key(u): i for i, u in enumerate(units)},
-                {(t["panel"], t["odor"], t["repeat"]): j for j, t in enumerate(trials)})
+                {(rename_panel(t["panel"], renames or {}), t["odor"], t["repeat"]): j for j, t in enumerate(trials)})
     (ua, ta), (ub, tb) = index(parsed.units, parsed.trials), index(m["units"], m["trials"])
     if set(ua) != set(ub) or set(ta) != set(tb):
         return False
@@ -286,7 +287,7 @@ def _duplicates(parsed: ParsedData, sha256: str, uploader: Optional[str] = None,
         mine = uploader is not None and _same_name(d["uploader_name"], uploader) and _same_unit(d["coding_unit"], coding_unit)
         if d["data_sha256"] == sha256:
             errors.append(f"this file was uploaded already: it is {which}. {delete}")
-        elif same_flies and (m := db.get_matrix_arrays(d["id"])) is not None and _same_data(parsed, m):
+        elif same_flies and (m := db.get_matrix_arrays(d["id"])) is not None and _same_data(parsed, m, db.panel_renames()):
             errors.append(f"this is the data of {which}, already (the same ROIs, trials and values, in another file). {delete}")
         elif mine and same_flies:
             errors.append(f"its flies ({_flies_text(flies)}) are exactly those of {which}, also of {d['coding_unit']}: "
@@ -2045,6 +2046,78 @@ def _host() -> dict:
     return {"name": name, "source": source, "addresses": [a for a in dict.fromkeys(addresses) if on_network(a)]}
 
 
+def _panels_state() -> dict:
+    """The Admin tab's panel names: ``renames`` (as saved: [{"from", "to"}]) and ``panels``
+    (each panel of the datasets as named in their data: ``name``, ``datasets`` with it, and
+    ``shown``: its name as shown)."""
+    renames = db.panel_renames()
+    used = db.data_panels()
+    return {"renames": [{"from": k, "to": v} for k, v in renames.items()],
+            "panels": [{"name": n, "datasets": len(used[n]), "shown": rename_panel(n, renames)}
+                       for n in sorted(used, key=str.casefold)]}
+
+
+def _panel_rename_errors(renames: dict[str, str]) -> list[str]:
+    """Why panel renames can't be saved: a panel renamed to one that is itself renamed, or two
+    panels of one dataset renamed to one name (they would become one panel)."""
+    errors = [f"'{k}' is renamed to '{v}', itself renamed (to '{renames[v]}'): rename both to the same name directly"
+              for k, v in renames.items() if v in renames]
+    by_dataset: dict[int, list[str]] = {}
+    for name, ids in db.data_panels().items():
+        for i in ids:
+            by_dataset.setdefault(i, []).append(name)
+    titles = {d["id"]: d["title"] for d in db.list_datasets()}
+    for i, names in sorted(by_dataset.items()):
+        shown: dict[str, list[str]] = {}
+        for n in sorted(names):
+            shown.setdefault(rename_panel(n, renames), []).append(n)
+        for to, froms in shown.items():
+            if len(froms) > 1:
+                errors.append(f"dataset #{i} ({titles.get(i)}) has panels {', '.join(repr(f) for f in froms)}, which would all be "
+                              f"'{to}': one panel of it, two trials of an odor and repeat then the same")
+    return errors
+
+
+async def admin_panels(request: Request) -> Response:
+    """The panels of the datasets, and those shown under other names (`_panels_state`)."""
+    return JSONResponse(await run_in_threadpool(_panels_state))
+
+
+async def admin_panels_save(request: Request) -> Response:
+    """Save the panels to show under other names ({"renames": [{"from", "to"}, ...]}), at once,
+    for every dataset, in every display and download; refused (with ``errors``) if any is not
+    a name, is given twice, or `_panel_rename_errors`."""
+    body = await request.json()
+    rows = body.get("renames") if isinstance(body, dict) else None
+    if not isinstance(rows, list) or not all(isinstance(r, dict) and isinstance(r.get("from"), str) and isinstance(r.get("to"), str)
+                                             for r in rows):
+        return json_error(400, 'expected {"renames": [{"from": a panel\'s name, "to": the name to show}, ...]}')
+    renames: dict[str, str] = {}
+    errors = []
+    for r in rows:
+        a, b = " ".join(r["from"].split()), " ".join(r["to"].split())
+        if not a and not b:
+            continue
+        if not a or not b:
+            errors.append(f"a rename needs both names (not '{a or b}' alone)")
+        elif a == b:
+            errors.append(f"'{a}' is renamed to itself")
+        elif a in renames:
+            errors.append(f"'{a}' is renamed twice")
+        else:
+            renames[a] = b
+
+    def run() -> dict:
+        problems = errors or _panel_rename_errors(renames)
+        if problems:
+            return {"ok": False, "errors": problems, **_panels_state()}
+        db.set_setting(PANEL_RENAMES, json.dumps(renames) if renames else None, when=dt.datetime.now().isoformat(timespec="seconds"))
+        log.info("panels renamed (Admin tab): %s", ", ".join(f"{k} -> {v}" for k, v in renames.items()) or "none")
+        return {"ok": True, **_panels_state()}
+
+    return JSONResponse(await run_in_threadpool(run))
+
+
 async def admin_chemutils(request: Request) -> Response:
     """The chemutils installed, what was looked up through it, and the last re-lookup (`_chemutils_state`)."""
     return JSONResponse(await run_in_threadpool(_chemutils_state))
@@ -2222,6 +2295,8 @@ routes = [
     Route("/api/admin/odor_case", admin_odor_case, methods=["POST"]),
     Route("/api/admin/host", admin_host),
     Route("/api/admin/chemutils", admin_chemutils),
+    Route("/api/admin/panels", admin_panels),
+    Route("/api/admin/panels", admin_panels_save, methods=["POST"]),
     Route("/api/admin/chemutils/relookup", admin_chemutils_relookup, methods=["POST"]),
     Route("/api/admin/restart", admin_restart, methods=["POST"]),
     Route("/api/admin/datasets/{ds_id:int}", admin_dataset_delete, methods=["DELETE"]),

@@ -2062,24 +2062,39 @@ function filterByUnit(datasets, sel, unit) {
   return chosen ? datasets.filter((d) => unitKey(d.coding_unit) === chosen) : datasets;
 }
 
+// when a dataset was uploaded, said in lists grouped by who uploaded them or when
+const uploadedText = (d, group) => (['uploader', 'uploaded'].includes(group) && d.created_at ? `, uploaded ${esc(d.created_at.slice(0, 10))}` : '');
+// a diagnostics panel (e.g. glomeruli_diagnostics), listed last
+const isDiagnostics = (panel) => /diag/i.test(panel);
+
 // Datasets in the groups of a list (`group`: 'panel', by the panels the form gave, else
-// the file's; or 'date', by the month of their last fly), each newest first: [{label, datasets}]
+// the file's, diagnostics last (and `diag`); 'date', by the month of their last fly;
+// 'uploader', by who uploaded them; or 'uploaded', by the month they were uploaded), each
+// newest first (by their last fly, or when uploaded for those two): [{label, datasets, diag}]
 function datasetGroups(datasets, group) {
-  const newest = (ds) => ds.slice().sort((a, b) => (b.last_fly_date || '').localeCompare(a.last_fly_date || '') || b.id - a.id);
-  if (group !== 'panel') {
-    const ds = newest(datasets);
-    return runsOf(ds, (d) => (d.last_fly_date || '').slice(0, 7) || 'unknown date').map((m) => ({ label: m.key, datasets: ds.slice(m.start, m.end) }));
+  const newest = (ds, key = 'last_fly_date') => ds.slice().sort((a, b) => (b[key] || '').localeCompare(a[key] || '') || b.id - a.id);
+  if (group === 'date' || group === 'uploaded') {
+    const key = group === 'date' ? 'last_fly_date' : 'created_at';
+    const ds = newest(datasets, key);
+    return runsOf(ds, (d) => (d[key] || '').slice(0, 7) || 'unknown date').map((m) => ({ label: m.key, datasets: ds.slice(m.start, m.end) }));
   }
-  const groups = new Map();
+  const groups = new Map(); // (label as first written, by its key)
+  const add = (key, label, d) => {
+    if (!groups.has(key)) groups.set(key, { label, datasets: [] });
+    groups.get(key).datasets.push(d);
+  };
+  if (group === 'uploader') {
+    for (const d of datasets) add((d.uploader_name || '').trim().toLowerCase(), d.uploader_name || '(no uploader)', d);
+    return [...groups.values()].sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }))
+      .map((g) => ({ ...g, datasets: newest(g.datasets, 'created_at') }));
+  }
   for (const d of datasets) {
     const panels = (d.panels.some((p) => p.source === 'form') ? d.panels.filter((p) => p.source === 'form') : d.panels).map((p) => p.panel);
-    for (const p of panels.length ? panels : ['(no panel name)']) {
-      if (!groups.has(p)) groups.set(p, []);
-      groups.get(p).push(d);
-    }
+    for (const p of panels.length ? panels : ['(no panel name)']) add(p, p, d);
   }
-  return [...groups.keys()].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
-    .map((k) => ({ label: k, datasets: newest(groups.get(k)) }));
+  return [...groups.values()]
+    .map((g) => ({ ...g, datasets: newest(g.datasets), diag: isDiagnostics(g.label) }))
+    .sort((a, b) => a.diag - b.diag || a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
 }
 
 class Browse {
@@ -2212,12 +2227,13 @@ class Browse {
         <button type="button" class="list-item" data-id="${d.id}">
           <span class="t">${esc(d.driver)} &gt; ${esc(d.indicator)} <span class="muted">(${esc(d.coding_unit)})</span></span>
           <span class="s">${fliesText(d)}, ${d.n_units.toLocaleString()} ROIs, ${d.n_odors} odors${lastFlyText(d)}</span>
-          <span class="s">#${d.id}, ${esc(d.uploader_name)}${d.recording_system ? ', ' + esc(d.recording_system) : ''}</span>
+          <span class="s">#${d.id}, ${esc(d.uploader_name)}${d.recording_system ? ', ' + esc(d.recording_system) : ''}${uploadedText(d, this.group)}</span>
         </button>
       </div>`;
     const groupHead = (label, ds) => `<div class="list-group"><label><input type="checkbox" class="pick-group" data-ids="${ds.map((d) => d.id).join(',')}"
         aria-label="Select all of ${esc(label)} for download"> ${esc(label)} <span class="muted">(${ds.length})</span></label></div>`;
-    list.innerHTML = datasetGroups(datasets, this.group).map((g) => groupHead(g.label, g.datasets) + g.datasets.map(item).join('')).join('');
+    list.innerHTML = datasetGroups(datasets, this.group).map((g) => `<div class="list-section${g.diag ? ' diag' : ''}">`
+      + groupHead(g.label, g.datasets) + g.datasets.map(item).join('') + '</div>').join('');
     $$('.list-item', list).forEach((b) => b.addEventListener('click', () => { location.hash = `#browse/${b.dataset.id}`; }));
     this._syncPicks();
   }
@@ -3381,6 +3397,9 @@ class AdminPage {
     $('#admin-sheet-url').addEventListener('keydown', (e) => { if (e.key === 'Enter') this.saveSheet(); });
     $('#admin-restart').addEventListener('click', () => this.restart());
     $('#admin-chemutils-btn').addEventListener('click', () => this.relookup());
+    $('#admin-panel-add').addEventListener('click', () => { this._renameRow('', ''); $('#admin-panel-renames .rename-row:last-child .from').focus(); });
+    $('#admin-panel-save').addEventListener('click', () => this.savePanels());
+    $('#admin-panel-renames').addEventListener('click', (e) => { if (e.target.closest('[data-remove]')) e.target.closest('.rename-row').remove(); });
     $('#admin-chemutils-table').addEventListener('change', () => this._syncRelookup());
     this._chemutilsTimer = 0;
     $('#admin-confirm').addEventListener('close', () => this._answered());
@@ -3433,6 +3452,7 @@ class AdminPage {
     this.loadFiles();
     this.loadBackups();
     this.loadChemutils(true);
+    this.loadPanels();
     this.loadDatasets();
     this.loadRefs();
     $('#ref-result').replaceChildren();
@@ -3656,6 +3676,58 @@ class AdminPage {
     }
     this._watchingBackup = true;
     this._showBackups(s);
+  }
+
+  async loadPanels() {
+    $('#admin-panel-result').replaceChildren();
+    setStatus($('#admin-panel-msg'), '');
+    try { this._showPanels(await api('/api/admin/panels')); } catch (e) {
+      $('#admin-panel-renames').replaceChildren(msgBox('error', `Could not read the panels: ${esc(e.message)}`));
+    }
+  }
+
+  // a row of a rename: the panel's name in the data, the name to show
+  _renameRow(from, to) {
+    const row = document.createElement('div');
+    row.className = 'rename-row';
+    row.innerHTML = `<input class="from" list="dl-data-panels" spellcheck="false" autocomplete="off" placeholder="as in the data, e.g. glomeruli_diagnostics"
+        aria-label="Panel, as named in the data" value="${esc(from)}"><span class="arrow" aria-hidden="true">→</span>
+      <input class="to" spellcheck="false" autocomplete="off" placeholder="shown as, e.g. diagnostics" aria-label="Shown as" value="${esc(to)}">
+      <button type="button" class="btn small" data-remove>Remove</button>`;
+    $('#admin-panel-renames').appendChild(row);
+  }
+
+  // the renames saved (as from /api/admin/panels), a row each (one empty row if none), and
+  // the panels of the datasets, with how many datasets have each and how each is shown
+  _showPanels(s) {
+    $('#admin-panel-renames').replaceChildren();
+    for (const r of s.renames) this._renameRow(r.from, r.to);
+    if (!s.renames.length) this._renameRow('', '');
+    $('#dl-data-panels').innerHTML = s.panels.map((p) => `<option value="${esc(p.name)}">`).join('');
+    $('#admin-panel-list').innerHTML = s.panels.length ? `<table class="odor-table"><thead><tr><th>Panel, as in the data</th><th>Datasets</th><th>Shown as</th></tr></thead>
+      <tbody>${s.panels.map((p) => `<tr><td><code>${esc(p.name)}</code></td><td class="num">${p.datasets}</td>
+        <td>${p.shown !== p.name ? `<code>${esc(p.shown)}</code>` : '<span class="muted">as it is</span>'}</td></tr>`).join('')}</tbody></table>`
+      : '<p class="muted">No datasets yet.</p>';
+  }
+
+  async savePanels() {
+    const renames = $$('#admin-panel-renames .rename-row').map((r) => ({ from: $('.from', r).value, to: $('.to', r).value }));
+    const out = $('#admin-panel-msg'), result = $('#admin-panel-result');
+    result.replaceChildren();
+    let s;
+    try { s = await api('/api/admin/panels', { method: 'POST', json: { renames } }); } catch (e) { setStatus(out, `Not saved: ${e.message}`, 'error'); return; }
+    if (!s.ok) {
+      setStatus(out, '');
+      result.replaceChildren(msgBox('error', `Not saved:${listHtml(s.errors)}`));
+      return;
+    }
+    this._showPanels(s);
+    setStatus(out, `✓ Saved: ${s.renames.length ? `${s.renames.length} panel${s.renames.length === 1 ? '' : 's'} shown renamed` : 'no panel renamed'}`);
+    // (everything shown with panels, read again)
+    browse.invalidate();
+    browse.odorCache.clear();
+    comparePage.invalidate();
+    headspacePage.invalidate();
   }
 
   async loadChemutils(fresh = false) {
@@ -4212,7 +4284,7 @@ class ComparePage {
         <span class="list-item">
           <span class="t">${esc(d.driver)} &gt; ${esc(d.indicator)} <span class="muted">(${esc(d.coding_unit)})</span></span>
           <span class="s">${fliesText(d)}, ${d.n_units.toLocaleString()} ROIs, ${d.n_odors} odors${lastFlyText(d)}</span>
-          <span class="s">#${d.id}, ${esc(d.uploader_name)}</span>
+          <span class="s">#${d.id}, ${esc(d.uploader_name)}${uploadedText(d, this.o.group)}</span>
         </span></label>`;
     const head = (g) => {
       const all = g.datasets.every((d) => picked.has(d.id));
@@ -4220,7 +4292,7 @@ class ComparePage {
         ${esc(g.label)} <span class="muted">(${g.datasets.length})</span></label></div>`;
     };
     list.innerHTML = datasetGroups(filterByUnit(this.datasets, $('#compare-unit'), this.o.unit), this.o.group)
-      .map((g) => head(g) + g.datasets.map(item).join('')).join('');
+      .map((g) => `<div class="list-section${g.diag ? ' diag' : ''}">${head(g)}${g.datasets.map(item).join('')}</div>`).join('');
     const n = this.o.picked.length;
     $('#compare-count').textContent = n ? `${n} dataset${n === 1 ? '' : 's'} shown` : '';
     $('#compare-clear').hidden = !n;

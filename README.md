@@ -25,8 +25,8 @@ expected, and nothing secret is entered. If a download or the page is blocked, s
    table yet, the form lists them, with rows to paste into the odor sheet and a button
    to sync from it; you can leave and come back to the Upload tab, which keeps your
    upload for two days. Generate the README, edit it if you like, and save.
-3. **Browse**: datasets by panel, or by the date of their last fly, of every coding unit
-   or just one. Click one for its heatmap, README, original files, odors, and where its
+3. **Browse**: datasets by panel (diagnostics panels last, in gray), by the date of
+   their last fly, by uploader or by upload date, of every coding unit or just one. Click one for its heatmap, README, original files, odors, and where its
    raw and motion-corrected data are on tensor.
 4. **Download**: from a dataset's page, or tick several in the list: the original files
    (a zip), or the response matrices as CSV.
@@ -219,8 +219,11 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   and in every download but of the original files. Names that differ from another
   shown (or downloaded) with them only in case stay as they are, so that no two odors
   become one. The upload form shows a file's odors as they are in it.
-- **Browse**: each dataset has a thesis-style odor table (with each odor's CID, InChI,
-  vapor pressure and molar mass),
+- **Browse** (and the Compare tab's list): datasets grouped by panel (the panels the
+  upload form gave, else the file's; those named with "diag" last, in light gray), by
+  the month of their last fly, by uploader (each one's newest upload first) or by the
+  month they were uploaded (the last two saying when each was). Each dataset has a
+  thesis-style odor table (with each odor's CID, InChI, vapor pressure and molar mass),
   its odors matched to the Odors tab through its odor YAML when it has one, otherwise by
   abbreviation. Those not in the odor table, or that more than one odor there could be,
   are listed above it and highlighted in it; a button copies rows for the odor sheet for
@@ -493,6 +496,14 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     unless that name is already in the database (in the odor table, or a dataset). The
     sheet also warns of abbreviations of different odors that differ only in case, and
     the upload form of odors of a file that do.
+  - *Panel names*: panels to show under another name (e.g. `glomeruli_diagnostics` as
+    `diagnostics`), for every dataset, uploaded already or later, wherever panels are
+    shown or downloaded (lists, viewers, Compare, Merge, the Headspace calculator,
+    matrices, odor tables, titles), at once. Datasets keep them as uploaded (so do their
+    original files and READMEs), so a rename can be undone; the upload form shows a
+    file's panels as they are in it (its odor YAMLs and recordings are found by them).
+    Refused: a panel renamed to one itself renamed, and two panels of one dataset renamed
+    to one name. Below, every panel of the datasets, how many have it and how it is shown.
   - *Odor properties from chemutils*: the chemutils installed, and for each property
     looked up through it (vapor pressure, molar mass, and what the Headspace calculator
     needs), how many odors have it, and how many were looked up with a chemutils older

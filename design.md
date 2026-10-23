@@ -141,6 +141,14 @@ between the frontend and the server. Using the app is described in
   places (coding units). A fly here is its ROIs' other column levels too
   (`ingest.fly_key`): each side of a fly's brain uploaded apart is not the other's
   duplicate.
+- **Panels are renamed when read, not stored so.** The Admin tab's renames (the setting
+  `panel_renames`) are applied wherever a stored dataset's panels are read (`Database`:
+  its trials, panels, title, metadata and summary), so every display and download has
+  them, and removing one undoes it. Uploads are stored as their files say: their odor
+  YAMLs and recordings on tensor are found by the panels in the file, and the upload
+  form shows those; an upload is compared with stored data (for duplicates) with the
+  renames applied to both. Two panels of one dataset may not become one name (their
+  trials of an odor and repeat would then be the same).
 - **Other column levels are part of a ROI's identity.** Besides date, fly_num and roi
   (and bad), a file's column levels (e.g. `hemibrain`) are kept with each unit
   (`units.extra_json`, as `extra` in the arrays served), and a unit is its fly, those
@@ -570,7 +578,7 @@ fast serving), `users` (each user's folders on tensor), `odors` and `odor_syncs`
 estimated vapor pressure, molar mass, density and Henry's law constants in water and paraffin oil, each
 with where it is from, when it was looked up, the chemutils commit that did, whether measured, and for
 constants in oil what they were estimated with), `settings` (site-wide settings from the Admin tab:
-the odor sheet's link), `reference_datasets` (reference datasets added there) and
+the odor sheet's link, panels shown renamed), `reference_datasets` (reference datasets added there) and
 `file_log` (the files the server has read or written in its own folders). Files:
 `data/datasets/<id>/` holds the original data file, `README.md`, `metadata.json`,
 `odor_yaml/*.yaml` and the `Experiment.xml`. Also
@@ -690,6 +698,8 @@ POST   /api/admin/odor_sheet                {"url"} (empty to clear it) → save
 POST   /api/admin/odor_case                 {"lowercase_only": bool} → whether new odor names may
                                             only be lowercase, at once
 GET    /api/admin/host                      the server's name and IP addresses
+GET    /api/admin/panels                    the panels shown renamed, and every panel of the datasets
+POST   /api/admin/panels                    {"renames": [{"from", "to"}, ...]}: saved, if allowed
 GET    /api/admin/chemutils                 the chemutils installed, what was looked up through
                                             it (how much with an older one than changed how), and
                                             the last re-lookup

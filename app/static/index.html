@@ -184,9 +184,11 @@
     <aside class="sidebar">
       <div class="sidebar-head">
         <h1>Datasets</h1>
-        <div class="seg" role="group" aria-label="Group datasets by">
+        <div class="seg seg-grid" role="group" aria-label="Group datasets by">
           <button type="button" data-group="panel" class="active">By panel</button>
           <button type="button" data-group="date">By last fly date</button>
+          <button type="button" data-group="uploader">By uploader</button>
+          <button type="button" data-group="uploaded">By upload date</button>
         </div>
         <label class="unit-filter"><span>Coding unit</span><select id="browse-unit"></select></label>
       </div>
@@ -319,9 +321,11 @@
     <aside class="sidebar">
       <div class="sidebar-head">
         <h1>Compare</h1>
-        <div class="seg" role="group" aria-label="Group datasets by">
+        <div class="seg seg-grid" role="group" aria-label="Group datasets by">
           <button type="button" data-group="panel" class="active">By panel</button>
           <button type="button" data-group="date">By last fly date</button>
+          <button type="button" data-group="uploader">By uploader</button>
+          <button type="button" data-group="uploaded">By upload date</button>
         </div>
         <label class="unit-filter"><span>Coding unit</span><select id="compare-unit"></select></label>
       </div>
@@ -656,6 +660,20 @@
         <label class="check"><input type="checkbox" id="admin-lowercase"> New odor names in lowercase only</label>
         <p class="muted">Refuses uploads whose odors (as named in their data) have capital letters, and odor sheet rows whose name, abbreviation or aliases do, unless the name is already in the database (in the odor table, or in a dataset). Anyone can also have odor names shown in lowercase, in their Settings.</p>
         <div id="admin-lowercase-result" aria-live="polite"></div>
+      </div>
+
+      <div class="step" id="admin-panels">
+        <div class="step-head"><h2>Panel names</h2></div>
+        <p class="muted">Panels shown under another name, e.g. <code>glomeruli_diagnostics</code> as <code>diagnostics</code>: in every dataset, uploaded already or later, wherever panels are shown or downloaded (Browse, Compare, Merge, the Headspace calculator, matrices, odor tables, dataset titles), as soon as it is saved. Datasets keep their panels as uploaded (as do their original files and READMEs), so a rename can be undone. The upload form shows a file's panels as they are in it.</p>
+        <div id="admin-panel-renames" class="panel-renames"></div>
+        <div class="actions">
+          <button type="button" class="btn" id="admin-panel-add">Add a rename</button>
+          <button type="button" class="btn primary" id="admin-panel-save">Save</button>
+          <span class="status" id="admin-panel-msg" aria-live="polite"></span>
+        </div>
+        <div id="admin-panel-result" aria-live="polite"></div>
+        <details class="panel-list"><summary>Panels of the datasets</summary><div id="admin-panel-list"></div></details>
+        <datalist id="dl-data-panels"></datalist>
       </div>
 
       <div class="step" id="admin-chemutils">

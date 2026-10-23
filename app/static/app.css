@@ -449,6 +449,20 @@ dialog.mismatches::backdrop { background: rgba(29,31,34,.45); }
 .seg button { border: 0; background: #fff; padding: 5px 10px; cursor: pointer; color: var(--ink-muted); }
 .seg button + button { border-left: 1px solid var(--rule-strong); }
 .seg button.active { background: var(--ink); color: #fff; }
+/* four choices, two by two */
+.seg-grid { display: grid; grid-template-columns: 1fr 1fr; }
+.seg-grid button + button { border-left: 0; }
+.seg-grid button:nth-child(even) { border-left: 1px solid var(--rule-strong); }
+.seg-grid button:nth-child(n+3) { border-top: 1px solid var(--rule-strong); }
+/* diagnostics panels, listed last, set apart in light gray */
+.list-section.diag, .list-section.diag .list-group, .list-section.diag .list-item, .list-section.diag .list-item * { color: #a3a6a3; }
+.list-section.diag .list-group { border-top: 1px solid var(--rule); margin-top: 6px; }
+.panel-renames { display: flex; flex-direction: column; gap: 6px; max-width: 720px; }
+.rename-row { display: flex; align-items: center; gap: 8px; }
+.rename-row input { flex: 1 1 0; min-width: 0; }
+.rename-row .arrow { color: var(--ink-muted); }
+.panel-list { margin-top: 12px; }
+.panel-list summary { cursor: pointer; color: var(--ink-muted); }
 
 /* -------------------------------------------------------------- viewer */
 .viewer { display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--panel); overflow: hidden; }

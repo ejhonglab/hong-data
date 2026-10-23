@@ -23,6 +23,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -225,6 +226,23 @@ REFERENCE_COLUMNS = ("id", "created_at", "path", "title", "description", "kind",
 DATASET_TABLES = ("dataset_panels", "units", "trials", "responses", "matrices")
 
 
+PANEL_RENAMES = "panel_renames"  # the setting of panels shown under other names: JSON {name in the data: name shown}
+
+
+def rename_panel(name: Optional[str], renames: dict[str, str]) -> Optional[str]:
+    """A panel's name as shown (`PANEL_RENAMES`): as renamed, if it is."""
+    return renames.get(name, name) if name is not None else None
+
+
+def rename_in_text(text: Optional[str], renames: dict[str, str]) -> Optional[str]:
+    """Text naming panels (as a dataset's title, 'glomeruli_diagnostics, megamat: ...') with
+    each renamed panel's name (a whole word of it) as shown."""
+    if not text or not renames:
+        return text
+    pattern = "|".join(re.escape(k) for k in sorted(renames, key=len, reverse=True))
+    return re.sub(rf"(?<![\w-])(?:{pattern})(?![\w-])", lambda m: renames[m[0]], text)
+
+
 def content_fingerprint(con: sqlite3.Connection) -> str:
     """A fingerprint of what a database holds (to tell whether a backup is current): every
     row of its tables but the record of files read and written (`file_log`) and the
@@ -386,14 +404,49 @@ class Database:
                    FROM datasets ORDER BY last_fly_date DESC, id DESC"""
             ).fetchall()
             panels = con.execute("SELECT dataset_id, panel, source FROM dataset_panels ORDER BY rowid").fetchall()
+        renames = self.panel_renames()
         by_ds: dict[int, list[dict]] = {}
         for p in panels:
             by_ds.setdefault(p["dataset_id"], []).append({"panel": p["panel"], "source": p["source"]})
-        out = []
+        return [self._renamed({**dict(r), "panels": by_ds.get(r["id"], [])}, renames) for r in rows]
+
+    def panel_renames(self) -> dict[str, str]:
+        """Panels shown under other names (the setting `PANEL_RENAMES`): {name in the data: name shown}."""
+        s = self.get_setting(PANEL_RENAMES)
+        return json.loads(s["value"]) if s else {}
+
+    @staticmethod
+    def _renamed(d: dict, renames: dict[str, str]) -> dict:
+        """A dataset (as `list_datasets` or `get_dataset` give it) with its panels as shown
+        (`rename_panel`): in its panels (one of each name), title, panel names and, if there,
+        metadata and summary."""
+        if not renames:
+            return d
+        seen = set()
+        panels = []
+        for p in d.get("panels") or []:
+            name = rename_panel(p["panel"], renames)
+            if (name, p["source"]) not in seen:
+                seen.add((name, p["source"]))
+                panels.append({**p, "panel": name})
+        d = {**d, "panels": panels, "title": rename_in_text(d.get("title"), renames),
+             "panel_names": rename_in_text(d.get("panel_names"), renames)}
+        if "metadata" in d:
+            d["metadata"] = {**d["metadata"], "panel_names": list(dict.fromkeys(
+                rename_panel(n, renames) for n in d["metadata"].get("panel_names") or []))}
+        if "summary" in d:
+            sm = d["summary"]
+            d["summary"] = {**sm, "panel_names": list(dict.fromkeys(rename_panel(n, renames) for n in sm.get("panel_names") or [])),
+                            "panels": [{**p, "panel": rename_panel(p.get("panel"), renames)} for p in sm.get("panels") or []]}
+        return d
+
+    def data_panels(self) -> dict[str, set[int]]:
+        """Every panel of the datasets' trials, by its name in the data (not renamed): the datasets with it."""
+        with self.connect() as con:
+            rows = con.execute("SELECT DISTINCT panel, dataset_id FROM trials WHERE panel IS NOT NULL").fetchall()
+        out: dict[str, set[int]] = {}
         for r in rows:
-            d = dict(r)
-            d["panels"] = by_ds.get(r["id"], [])
-            out.append(d)
+            out.setdefault(r["panel"], set()).add(r["dataset_id"])
         return out
 
     def dataset_flies(self) -> dict[int, set[tuple]]:
@@ -420,14 +473,16 @@ class Database:
         d["odor_yaml_files"] = json.loads(d.get("odor_yaml_files") or "[]")
         d["experiment_xml_info"] = json.loads(d["experiment_xml_info"]) if d.get("experiment_xml_info") else None
         d["panels"] = [dict(p) for p in panels]
-        return d
+        return self._renamed(d, self.panel_renames())
 
     def get_matrix_arrays(self, ds_id: int) -> Optional[dict]:
         """Units, trials and the float32 response matrix (n_units, n_trials) of a dataset.
 
         Trials are without row levels that say nothing (`ingest.uninformative_levels`),
-        also for datasets stored before those were dropped on upload.
+        also for datasets stored before those were dropped on upload, and their panels as
+        shown (`panel_renames`).
         """
+        renames = self.panel_renames()
         with self.connect() as con:
             m = con.execute("SELECT * FROM matrices WHERE dataset_id = ?", (ds_id,)).fetchone()
             if m is None:
@@ -445,7 +500,7 @@ class Database:
                        "extra": json.loads(u["extra_json"] or "{}")} for u in units],
             "trials": drop_uninformative([
                 {
-                    "panel": t["panel"],
+                    "panel": rename_panel(t["panel"], renames),
                     "odor": t["odor"],
                     "components": json.loads(t["components_json"]),
                     "repeat": t["repeat"],
@@ -458,6 +513,7 @@ class Database:
 
     def get_trials(self, ds_id: int) -> list[dict]:
         """A dataset's trials (panel, odor, components), in order, as in `get_matrix_arrays`."""
+        renames = self.panel_renames()
         with self.connect() as con:
             rows = con.execute(
                 "SELECT panel, odor, components_json, extra_json FROM trials WHERE dataset_id = ? ORDER BY idx", (ds_id,)
@@ -467,7 +523,7 @@ class Database:
              "extra": json.loads(r["extra_json"])}
             for r in rows
         ])
-        return [{"panel": t["panel"], "odor": t["odor"], "components": t["components"]} for t in trials]
+        return [{"panel": rename_panel(t["panel"], renames), "odor": t["odor"], "components": t["components"]} for t in trials]
 
     def odor_strings(self) -> set[str]:
         """Every odor string (one odor, as in `get_trials`' components) of every dataset."""
