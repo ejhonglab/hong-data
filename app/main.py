@@ -1081,12 +1081,27 @@ LOWERCASE_SETTING = "odor_names_lowercase_only"  # '1' when set
 sheet_watch = odormeta.SheetWatch(config.ODOR_SHEET_CHECK_MINUTES * 60)
 
 
+def _aware(when: Optional[str]) -> Optional[str]:
+    """A time the server wrote as its local time (ISO, with no zone), with its UTC offset
+    then (as the server's time zone has it, summer time and all), for browsers to show in
+    theirs: in Docker, whose time zone is UTC, it is otherwise shown as UTC."""
+    if not when:
+        return when
+    t = dt.datetime.fromisoformat(when)
+    return (t.astimezone() if t.tzinfo is None else t).isoformat(timespec="seconds")
+
+
+def _syncs(syncs: list[dict]) -> list[dict]:
+    """Odor syncs (`Database.odor_syncs`) with their times `_aware`."""
+    return [{**s, "applied_at": _aware(s["applied_at"])} for s in syncs]
+
+
 def _odor_sheet() -> dict:
     """The odor sheet's link (``url``, or None): as set in the Admin tab (``saved``, with
     ``updated_at``), else from OLFDB_ODOR_SHEET_URL (``env``)."""
     saved = db.get_setting(SHEET_SETTING)
     return {"url": saved["value"] if saved else config.ODOR_SHEET_URL or None, "saved": saved is not None,
-            "updated_at": saved["updated_at"] if saved else None, "env": bool(config.ODOR_SHEET_URL)}
+            "updated_at": _aware(saved["updated_at"]) if saved else None, "env": bool(config.ODOR_SHEET_URL)}
 
 
 def _lowercase_only() -> bool:
@@ -1111,11 +1126,12 @@ def _case_errors(rows: list[dict]) -> list[str]:
 def _sheet_status() -> dict:
     url = _odor_sheet()["url"]
     state = sheet_watch.check(url)
-    last = next(iter(db.odor_syncs(limit=1, source=SHEET_SOURCE)), None)
+    last = next(iter(_syncs(db.odor_syncs(limit=1, source=SHEET_SOURCE))), None)
     return {
         "configured": bool(url),
         "url": url,
         **state,
+        "checked_at": _aware(state["checked_at"]),
         "last_sync": last,
         "changed": bool(state["fingerprint"]) and (last is None or last["fingerprint"] != state["fingerprint"]),
     }
@@ -1131,7 +1147,7 @@ async def odors_list(request: Request) -> Response:
         odors = db.list_odors()
         used = odormeta.usage(db, config.DATASETS_DIR, odors)
         rows = [{**o, "links": odormeta.links(o), "datasets": sorted(used.get(o["id"], ()))} for o in odors]
-        return {"odors": rows, "syncs": db.odor_syncs(limit=20)}
+        return {"odors": rows, "syncs": _syncs(db.odor_syncs(limit=20))}
 
     return JSONResponse(await run_in_threadpool(build))
 
@@ -1314,7 +1330,7 @@ def _odor_matches(trials: list[dict], yaml_odors: list[yamlcheck.YamlOdor]) -> d
         state = sheet_watch.check(url) if url else odormeta.SheetWatch.UNREAD
         sheet = {"paste": odormeta.sheet_paste(missing, state["columns"]),
                  "columns_from": "sheet" if state["columns"] else "template",
-                 "url": url, "checked_at": state["checked_at"], "error": state["error"]}
+                 "url": url, "checked_at": _aware(state["checked_at"]), "error": state["error"]}
     return {"rows": rows, "odors": odors, "missing": missing, "sheet": sheet}
 
 

@@ -2225,12 +2225,20 @@ const extLink = (url, text) => (url ? `<a href="${esc(url)}" target="_blank" rel
 const structureImg = (o) => (o.links?.structure
   ? `<img class="structure" src="${esc(o.links.structure)}" alt="structure of ${esc(o.name)}" loading="lazy" onerror="this.remove()">` : '');
 const fmtValue = (v) => (Array.isArray(v) ? v.join('; ') : String(v ?? ''));
-const fmtWhen = (iso) => iso.replace('T', ' ').slice(0, 16);
-// a time in seconds since 1970 as fmtWhen gives one, in the browser's time zone
-const fmtEpoch = (s) => {
-  const d = new Date(s * 1000), p = (n) => String(n).padStart(2, '0');
+// a time as 'YYYY-MM-DD HH:MM' in the browser's time zone
+const fmtDate = (d) => {
+  const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 };
+// a time from the server (ISO) so: in the browser's time zone if it says its own (…Z,
+// …-07:00), else as it is (the server's)
+const fmtWhen = (iso) => {
+  if (!/(Z|[+-]\d\d:?\d\d)$/.test(iso)) return iso.replace('T', ' ').slice(0, 16);
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso.replace('T', ' ').slice(0, 16) : fmtDate(d);
+};
+// a time in seconds since 1970 as fmtWhen gives one, in the browser's time zone
+const fmtEpoch = (s) => fmtDate(new Date(s * 1000));
 const usedBy = (n) => (n ? `used by ${n} dataset${n === 1 ? '' : 's'}` : 'not used by any dataset');
 const syncCounts = (s) => `${s.n_added} new, ${s.n_changed} changed, ${s.n_deleted} deleted`;
 // sort names ignoring leading stereo descriptors / locants: (+)-pulegone, 1,4-diaminobutane, p-cresol

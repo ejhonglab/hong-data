@@ -278,3 +278,27 @@ def test_landlock(tmp_path):
     assert r == {"read allowed": True, "read elsewhere": False, "list elsewhere": False, "stat elsewhere": True,
                  "read a file allowed alone": True, "read the file beside it": False, "write out": True,
                  "write allowed": False, "write data": True, "temporary file": True}
+
+
+def test_sync_times_aware(main):  # noqa: F811
+    import time
+
+    # times the server wrote as its own (UTC in Docker) go out with its offset, for browsers to show in theirs
+    old_tz = os.environ.get("TZ")
+    os.environ["TZ"] = "America/Los_Angeles"
+    time.tzset()
+    try:
+        assert main._aware("2026-10-22T21:55:00") == "2026-10-22T21:55:00-07:00"
+        assert main._aware("2026-01-10T10:00:00") == "2026-01-10T10:00:00-08:00"  # (summer time or not, as then)
+        assert main._aware("2026-10-22T21:55:00+00:00") == "2026-10-22T21:55:00+00:00" and main._aware(None) is None
+        rows, _, _ = odormeta.parse_sheet("name,abbrev\nvaleric acid,va\n")
+        main.db.apply_odor_sync(added=rows, changed=[], deleted=[], source=main.SHEET_SOURCE, fingerprint="0" * 64, details={},
+                                when="2026-10-22T21:55:00")
+        assert call(main.odors_list)[1]["syncs"][0]["applied_at"] == "2026-10-22T21:55:00-07:00"
+        assert call(main.odors_status)[1]["last_sync"]["applied_at"] == "2026-10-22T21:55:00-07:00"
+    finally:
+        if old_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = old_tz
+        time.tzset()
