@@ -198,6 +198,15 @@ between the frontend and the server. Using the app is described in
   again at once, and tries again, after a few seconds, a lookup a server was too busy
   for (PubChem answers 429 to more than 5 requests a second, as the first lookup of
   every odor's molar mass made).
+  As both the database and chemutils' cache keep what was looked up, a newer chemutils
+  (pinned to a commit in `requirements.txt`) changes nothing by itself. So each value
+  keeps the commit that looked it up (`pubchem.<property>_chemutils`), and
+  `chemprops.CHANGES` lists the commits that changed what a lookup gives (95a66c6:
+  vapor pressures only from PubChem's values near 25 °C; 9196a0c: densities relative to
+  water read), which the Admin tab compares them with, to look those up again with
+  chemutils' `ignore_cache` (which also replaces what its cache keeps). Values from
+  before commits were kept count as older than every change. A chemutils commit that
+  changes a lookup needs adding there (with the commits before it, `chemprops.COMMITS`).
 - **The heatmap is a virtualised canvas**: only the visible cells are drawn, so 10k+
   rows scroll smoothly. The default colormap is built in Oklab so that lightness is
   linear in |value|, with white at 0 and blue and red poles of equal lightness: "twice
@@ -447,20 +456,19 @@ with the odor's CID, so that a calculation needing nothing new does not start ch
 - **Paraffin oil**: Raoult's law for an ideal solution, p = x·p_sat. The moles of each
   odor are from its volume, density and molar mass; those of the oil as if it were
   n-hexadecane (226.45 g/mol, 0.770 g/mL), a light paraffin oil's molecules being about
-  as large. E.g. ethyl acetate at -3 (with 1 g/mL for its density, which chemutils cannot
-  read from PubChem, and PubChem's 11.3 kPa): x = 0.0033, 37 Pa, 370 ppm.
+  as large. E.g. ethyl acetate at -3 (0.900 g/mL, 12.4 kPa): x = 0.0030, 37 Pa, 368 ppm.
 - **Water**: Henry's law, p = c / H_cp, with c from the odor's volume, density and molar
   mass, and H_cp (mol/m³/Pa) from henrys-law.org (Sander's compilation), else NIST, both
   at 25 °C. It holds for dilute solutions only, so p is at most the odor's vapor
   pressure. With no constant found, Raoult's law for an ideal solution in water, which is
   too low for most odors (esters' activity coefficients in water are from tens to thousands).
-- **Vapor pressure**: PubChem's (the mean of its experimental values, at whatever
-  temperatures they were measured: a value far from 25 °C can make it far off), else
-  estimated from the structure by SIMPOL.1 (`chemutils.inchi2est_vapor_pressure`, often
-  within 3×, but several times too low for furans, tertiary alcohols and some phenols).
-- **Density**: PubChem's (or ChemSpider's, given a key), else 1 g/mL; for most odors
-  between 0.8 and 1.1 g/mL, so this is off by at most ~20%. chemutils raises for some
-  pages it cannot parse (ethyl acetate's), and finds none for many more.
+- **Vapor pressure**: PubChem's (the mean of its experimental values at or near 25 °C,
+  else of those with no temperature given), else estimated from the structure by
+  SIMPOL.1 (`chemutils.inchi2est_vapor_pressure`, often within 3×, but several times too
+  low for furans, tertiary alcohols and some phenols).
+- **Density**: PubChem's (most of its values relative to water, taken as g/mL), or
+  ChemSpider's, given a key; else 1 g/mL, for most odors between 0.8 and 1.1 g/mL, so
+  off by at most ~20%.
 - **Units**: from the partial pressure at 1 atm and 25 °C: ppm and ppb of the air by
   volume (p / 101325 Pa), log10 of that v/v, mol/L and molecules/cm³ by the ideal gas
   law, and µg/L (mg/m³) with the molar mass. These are computed in the browser, so that
@@ -518,8 +526,8 @@ tests/             pytest tests
 (one row per cell, for SQL queries), `matrices` (the same values as a float32 blob for
 fast serving), `users` (each user's folders on tensor), `odors` and `odor_syncs`,
 `pubchem` (each odor CID's InChI, and its properties looked up through chemutils: vapor pressure,
-estimated vapor pressure, molar mass, density and Henry's law constant, each with where it is from and
-when it was looked up), `settings` (site-wide settings from the Admin tab:
+estimated vapor pressure, molar mass, density and Henry's law constant, each with where it is from,
+when it was looked up and the chemutils commit that did), `settings` (site-wide settings from the Admin tab:
 the odor sheet's link), `reference_datasets` (reference datasets added there) and
 `file_log` (the files the server has read or written in its own folders). Files:
 `data/datasets/<id>/` holds the original data file, `README.md`, `metadata.json`,
@@ -633,6 +641,11 @@ POST   /api/admin/odor_sheet                {"url"} (empty to clear it) → save
 POST   /api/admin/odor_case                 {"lowercase_only": bool} → whether new odor names may
                                             only be lowercase, at once
 GET    /api/admin/host                      the server's name and IP addresses
+GET    /api/admin/chemutils                 the chemutils installed, what was looked up through
+                                            it (how much with an older one than changed how), and
+                                            the last re-lookup
+POST   /api/admin/chemutils/relookup        {"props": [...]}: look up again (in the background,
+                                            not from chemutils' cache) every value of these
 POST   /api/admin/restart                   the server stops, for Docker or systemd to start it
                                             again (409 if neither would)
 DELETE /api/admin/datasets/{id}             the dataset deleted, its folder moved to

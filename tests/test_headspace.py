@@ -77,7 +77,7 @@ def main(tmp_path, monkeypatch):
     apply_all(db, rows_of(HEADER + "ethyl acetate,ea,,8857,,,,,,,,,\n" "ethanol,EtOH,,702,,,,,,,,,\n" "no cid,y,,,,,,,,,,,\n"))
     main.asked = []
 
-    def look_up(odors, save):
+    def look_up(odors, save, refresh=False):
         odors = list(odors)
         main.asked.append(odors)
         failed = {}

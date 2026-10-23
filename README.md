@@ -329,10 +329,11 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     p-values).
 - **Odors**: the app's own table of odor metadata, one row per chemical, with links and
   structures (drawn as vector graphics by RDKit, from the InChI PubChem gives for each
-  CID) and vapor pressures (in kPa: the mean of the experimental values on the odor's
-  PubChem page, at the temperatures given there, looked up through
-  [chemutils](https://github.com/ejhonglab/chemutils) once an odor with a CID is added;
-  blank where PubChem has none), and molar masses (g/mol, PubChem's, likewise). It is synced one way from a Google sheet (its link set in
+  CID), vapor pressures (in kPa: the mean of the experimental values on the odor's
+  PubChem page at or near 25 °C, else of those with no temperature given, looked up
+  through [chemutils](https://github.com/ejhonglab/chemutils) once an odor with a CID is
+  added; blank where PubChem has none) and molar masses (g/mol, PubChem's, likewise).
+  It is synced one way from a Google sheet (its link set in
   the Admin tab) or a CSV imported in the Admin tab, with the columns of
   `config/odor_sheet_template.csv` (downloadable there), which starts it off with
   the odors from the thesis tables: the tab shows what a sync would do, adds new odors,
@@ -461,6 +462,13 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     unless that name is already in the database (in the odor table, or a dataset). The
     sheet also warns of abbreviations of different odors that differ only in case, and
     the upload form of odors of a file that do.
+  - *Odor properties from chemutils*: the chemutils installed, and for each property
+    looked up through it (vapor pressure, molar mass, and what the Headspace calculator
+    needs), how many odors have it, and how many were looked up with a chemutils older
+    than the last change to how it is looked up (from the server's first version with
+    this list: those then in the database count as older). Those are ticked, to look
+    them up again (in the background, about a second each, not from chemutils' cache,
+    each kept as it comes) after a newer chemutils is installed (DEPLOY.md, section 4).
   - *This server*: its name, and its IP addresses (in Docker, those the network's DNS
     gives its name).
 
@@ -479,6 +487,10 @@ python3 -m venv venv && . venv/bin/activate
 pip install -r requirements-dev.txt               # needs git (chemutils is installed from GitHub)
 uvicorn app.main:app --reload --port 8080      # data goes to ./data
 ```
+
+pip does not replace chemutils when its pin in `requirements.txt` changes (the version
+number stays the same): `pip install --force-reinstall --no-deps "$(grep '^chemutils'
+requirements.txt)"`.
 
 Settings and upload lookups need tensor mounted (at `/local/tensor`, or wherever
 `OLFDB_TENSOR_ROOT` points), and syncing the odor table from a sheet needs its link (in

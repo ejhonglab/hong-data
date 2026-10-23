@@ -522,7 +522,7 @@
       <ul>
         <li><b>In paraffin oil</b>, by Raoult's law for an ideal solution: each odor's partial pressure is its mole fraction in the liquid times its vapor pressure. Its moles are from its volume (the log<sub>10</sub> v/v concentration), density and molar mass; the oil's as if it were n-hexadecane (226 g/mol, 0.770 g/mL). Polar odors (alcohols, acids) are less soluble in oil than an ideal solution, so their real headspace is likely higher when dilute.</li>
         <li><b>In water</b>, by Henry's law: each odor's partial pressure is its concentration in the water over its Henry's law solubility constant (from <a href="https://henrys-law.org" target="_blank" rel="noopener">henrys-law.org</a>, else NIST), but at most its vapor pressure. With no constant found, as an ideal solution, as in oil, which is likely too low unless it mixes well with water.</li>
-        <li>Vapor pressures are from PubChem (the mean of the experimental values there), else estimated from the structure (SIMPOL.1, often within 3×, but several times too low for e.g. furans, tertiary alcohols and some phenols). With no density found, 1 g/mL is assumed.</li>
+        <li>Vapor pressures are from PubChem (the mean of its experimental values at or near 25 °C), else estimated from the structure (SIMPOL.1, often within 3×, but several times too low for e.g. furans, tertiary alcohols and some phenols). With no density found, 1 g/mL is assumed.</li>
         <li>Concentrations in the air are at 1 atm and 25 °C: ppm and ppb as parts of the air by volume (moles), mol/L and molecules/cm³ by the ideal gas law. At equilibrium, in a closed vial: air flowing over the liquid, and diluting it after, lowers what reaches the fly.</li>
       </ul>
       <p class="muted">For more details, see <a href="https://github.com/ejhonglab/hong-data/blob/main/design.md#headspace-calculator" target="_blank" rel="noopener">Headspace calculator</a> in the design notes.</p>
@@ -633,6 +633,17 @@
         <label class="check"><input type="checkbox" id="admin-lowercase"> New odor names in lowercase only</label>
         <p class="muted">Refuses uploads whose odors (as named in their data) have capital letters, and odor sheet rows whose name, abbreviation or aliases do, unless the name is already in the database (in the odor table, or in a dataset). Anyone can also have odor names shown in lowercase, in their Settings.</p>
         <div id="admin-lowercase-result" aria-live="polite"></div>
+      </div>
+
+      <div class="step" id="admin-chemutils">
+        <div class="step-head"><h2>Odor properties from chemutils</h2></div>
+        <p class="muted">Each odor's vapor pressure and molar mass, and what the Headspace calculator needs of the odors used in it, are looked up through <a href="https://github.com/ejhonglab/chemutils" target="_blank" rel="noopener">chemutils</a> once, and kept: in the database, and in chemutils' own cache in the data folder. A newer chemutils (installed when the server is rebuilt with a newer one pinned in <code>requirements.txt</code>) does not change them, so where it changed how it looks something up, those looked up with an older one are counted below. Look them up again here: about a second each, not from chemutils' cache, each kept as it comes.</p>
+        <p id="admin-chemutils-installed"></p>
+        <div id="admin-chemutils-table"></div>
+        <div class="actions">
+          <button type="button" class="btn primary" id="admin-chemutils-btn" disabled>Look up again</button>
+          <span class="status" id="admin-chemutils-msg" aria-live="polite"></span>
+        </div>
       </div>
 
       <div class="step" id="admin-server">

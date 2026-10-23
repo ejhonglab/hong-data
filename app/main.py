@@ -21,7 +21,7 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 import markdown
 import numpy as np
@@ -1344,16 +1344,23 @@ _props_failed: dict[tuple[int, str], tuple[float, str]] = {}
 SHOWN_PROPERTIES = ("vapor_pressure", "molar_mass")  # looked up for every odor, to show with it
 
 
-def _look_up_properties(todo: list[tuple[int, str, list[str]]]) -> None:
-    """Look up properties of odors through chemutils (`chemprops.look_up`), each saved as
-    it comes; those that could not be looked up kept in `_props_failed`."""
-    save = lambda cid, prop, found: db.save_property(cid, prop, found, when=dt.datetime.now().isoformat(timespec="seconds"))
+def _look_up_properties(todo: list[tuple[int, str, list[str]]], refresh: bool = False,
+                        saved: Optional[Callable[[], None]] = None) -> dict[tuple[int, str], str]:
+    """Look up properties of odors through chemutils (`chemprops.look_up`, with `refresh`),
+    each saved as it comes (then `saved` called), with the chemutils that looked it up;
+    those that could not be looked up kept in `_props_failed`, and returned."""
+    def save(cid: int, prop: str, found: Optional[dict]) -> None:
+        db.save_property(cid, prop, found, when=dt.datetime.now().isoformat(timespec="seconds"), chemutils=chemprops.installed())
+        if saved:
+            saved()
+
     now = time.time()
-    failed = chemprops.look_up(todo, save)
+    failed = chemprops.look_up(todo, save, refresh=refresh)
     _props_failed.update({k: (now, e) for k, e in failed.items()})
     if failed:
         log.warning("could not look up %d properties of odors (%s), e.g.: %s", len(failed),
                     ", ".join(f"CID {cid}: {prop}" for cid, prop in sorted(failed)), next(iter(failed.values())))
+    return failed
 
 
 def _to_look_up(odor: dict, props: Iterable[str], now: float, retry_s: float = 3600) -> list[str]:
@@ -1391,6 +1398,58 @@ def _look_up_odors() -> None:
     """`_fetch_properties` (and so `_fetch_inchis`) in a thread of its own, as each lookup
     takes about a second."""
     threading.Thread(target=_fetch_properties, name="odor-properties", daemon=True).start()
+
+
+# the last re-lookup started from the Admin tab (`_relookup`): ``running``, ``props``,
+# ``total`` and ``done`` (properties of odors), ``failed`` (how many could not be looked up,
+# ``error`` an example of why), ``started_at``, ``finished_at``
+_relookup_job: dict = {"running": False}
+_relookup_lock = threading.Lock()
+
+
+def _relookup(props: list[str]) -> None:
+    """Look up again every value of `props` looked up before, through chemutils (not from
+    its cache), each saved as it comes (for the Admin tab, after chemutils changed how it
+    looks them up); then what was not looked up yet (`_fetch_properties`), as after a
+    sync. Waits for lookups under way."""
+    job = _relookup_job
+    try:
+        with _props_lock:
+            todo = {o["cid"]: (o["cid"], o["inchi"], ps) for o in db.list_odors()
+                    if o["inchi"] and (ps := [p for p in props if o[f"{p}_at"]])}
+            job["total"] = sum(len(ps) for _, _, ps in todo.values())
+            failed = _look_up_properties(sorted(todo.values()), refresh=True, saved=lambda: job.update(done=job["done"] + 1))
+            job.update(done=job["done"] + len(failed), failed=len(failed), error=next(iter(failed.values()), None))
+        log.info("looked up again from the Admin tab: %s (%d, %d could not be)", ", ".join(props), job["total"], len(failed))
+    except Exception as e:
+        log.exception("could not look up %s again", ", ".join(props))
+        job["error"] = f"{type(e).__name__}: {e}"
+    finally:
+        job.update(running=False, finished_at=_aware(dt.datetime.now().isoformat(timespec="seconds")))
+    _fetch_properties()
+
+
+def _chemutils_state() -> dict:
+    """The Admin tab's: the chemutils installed (``installed``: ``commit`` or version, and
+    its ``url``), each property looked up through it (``properties``: ``prop``, ``label``,
+    ``looked_up`` and ``found`` of the odor table's CIDs, ``outdated``: how many were
+    looked up with a chemutils older than the last ``change`` to how it is looked up,
+    ``commit``, ``how`` and ``url``) and the last re-lookup (``job``, see `_relookup_job`)."""
+    installed = chemprops.installed()
+    url = lambda c: f"{chemprops.REPO}/commit/{c}"
+    props = []
+    for prop, rows in db.property_lookups().items():
+        change = next((c for c in reversed(chemprops.CHANGES) if prop in c[1]), None)
+        props.append({
+            "prop": prop, "label": chemprops.LABELS[prop], "looked_up": sum(r["n"] for r in rows), "found": sum(r["found"] for r in rows),
+            "outdated": sum(r["n"] for r in rows if chemprops.outdated(prop, r["chemutils"])),
+            "change": change and {"commit": change[0], "how": change[2], "url": url(change[0])},
+        })
+    is_commit = bool(installed and re.fullmatch(r"[0-9a-f]{40}", installed))
+    return {"installed": installed and {"commit" if is_commit else "version": installed, "url": url(installed) if is_commit else None},
+            "properties": props, "job": dict(_relookup_job)}
+
+
 
 
 HEADSPACE_MAX_ODORS = 50
@@ -1883,6 +1942,29 @@ def _host() -> dict:
     return {"name": name, "source": source, "addresses": [a for a in dict.fromkeys(addresses) if on_network(a)]}
 
 
+async def admin_chemutils(request: Request) -> Response:
+    """The chemutils installed, what was looked up through it, and the last re-lookup (`_chemutils_state`)."""
+    return JSONResponse(await run_in_threadpool(_chemutils_state))
+
+
+async def admin_chemutils_relookup(request: Request) -> Response:
+    """Look up again, in the background, every value of some properties looked up through
+    chemutils ({"props": [...]}, of `chemprops.PROPERTIES`: see `_relookup`); then, as from GET."""
+    body = await request.json()
+    props = body.get("props") if isinstance(body, dict) else None
+    if not isinstance(props, list) or not props or any(p not in chemprops.PROPERTIES for p in props):
+        return json_error(400, f"expected {{\"props\": [...]}}, of {', '.join(chemprops.PROPERTIES)}")
+    with _relookup_lock:
+        if _relookup_job.get("running"):
+            return json_error(409, "values are being looked up again already")
+        _relookup_job.clear()
+        _relookup_job.update(running=True, props=list(dict.fromkeys(props)), total=None, done=0, failed=0, error=None,
+                             started_at=_aware(dt.datetime.now().isoformat(timespec="seconds")), finished_at=None)
+    threading.Thread(target=_relookup, args=(_relookup_job["props"],), name="relookup", daemon=True).start()
+    log.info("looking up %s again, from the Admin tab", ", ".join(props))
+    return JSONResponse(await run_in_threadpool(_chemutils_state))
+
+
 async def admin_host(request: Request) -> Response:
     """The server's name and IP addresses (see `_host`)."""
     return JSONResponse(await run_in_threadpool(_host))
@@ -2033,6 +2115,8 @@ routes = [
     Route("/api/admin/odor_sheet", admin_odor_sheet, methods=["POST"]),
     Route("/api/admin/odor_case", admin_odor_case, methods=["POST"]),
     Route("/api/admin/host", admin_host),
+    Route("/api/admin/chemutils", admin_chemutils),
+    Route("/api/admin/chemutils/relookup", admin_chemutils_relookup, methods=["POST"]),
     Route("/api/admin/restart", admin_restart, methods=["POST"]),
     Route("/api/admin/datasets/{ds_id:int}", admin_dataset_delete, methods=["DELETE"]),
     Route("/api/admin/references/check", admin_reference_check, methods=["POST"]),

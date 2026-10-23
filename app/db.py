@@ -200,12 +200,14 @@ CREATE TABLE IF NOT EXISTS file_log (  -- files the server has read or written i
 # columns added since the first release: (table, column, type)
 # what is looked up through chemutils for an odor CID (chemprops.PROPERTIES): property -> the
 # column of its value (in the units there), beside which are <property>_source (where it is
-# from) and <property>_at (when it was looked up, with both null if none was found)
+# from), <property>_at (when it was looked up, with both null if none was found) and
+# <property>_chemutils (the chemutils that looked it up: chemprops.installed)
 PROPERTY_COLUMNS = {"vapor_pressure": "vapor_pressure_kpa", "est_vapor_pressure": "est_vapor_pressure_kpa",
                     "molar_mass": "molar_mass_g_mol", "density": "density_g_ml", "k_henry": "k_henry_mol_m3_pa"}
 ADDED_COLUMNS = [("datasets", "mocorr_data_path", "TEXT"), ("reference_datasets", "fields", "TEXT"), ("units", "bad", "INTEGER"),
                  *(c for p, col in PROPERTY_COLUMNS.items()
-                   for c in (("pubchem", col, "REAL"), ("pubchem", f"{p}_source", "TEXT"), ("pubchem", f"{p}_at", "TEXT")))]
+                   for c in (("pubchem", col, "REAL"), ("pubchem", f"{p}_source", "TEXT"), ("pubchem", f"{p}_at", "TEXT"),
+                             ("pubchem", f"{p}_chemutils", "TEXT")))]
 USER_DIR_COLUMNS = ("raw_dirs", "mocorr_dirs", "odor_dirs")
 ODOR_COLUMNS = ("name", "abbrev", "aliases", "cid", "cas", "solvent", "supplier", "catalog_no", "catalog_url",
                 "metacyc", "lotus", "inventory", "notes")
@@ -606,17 +608,29 @@ class Database:
                 [(cid, inchi, when) for cid, inchi in inchis.items()],
             )
 
-    def save_property(self, cid: int, prop: str, found: Optional[dict], when: str) -> None:
+    def save_property(self, cid: int, prop: str, found: Optional[dict], when: str, chemutils: Optional[str] = None) -> None:
         """Save a property looked up for a CID with an InChI (`chemprops.look_up`).
 
         Args:
             prop: of `PROPERTY_COLUMNS`.
             found: ``{"value", "source"}``, or None if there is none (kept, with when it was
                 looked up, so that it is not looked up again).
+            chemutils: the chemutils that looked it up (`chemprops.installed`).
         """
         with self.connect() as con:
-            con.execute(f"UPDATE pubchem SET {PROPERTY_COLUMNS[prop]} = ?, {prop}_source = ?, {prop}_at = ? WHERE cid = ?",
-                        (found and found["value"], found and found["source"], when, cid))
+            con.execute(f"UPDATE pubchem SET {PROPERTY_COLUMNS[prop]} = ?, {prop}_source = ?, {prop}_at = ?, "
+                        f"{prop}_chemutils = ? WHERE cid = ?",
+                        (found and found["value"], found and found["source"], when, chemutils, cid))
+
+    def property_lookups(self) -> dict[str, list[dict]]:
+        """For each property looked up through chemutils (`PROPERTY_COLUMNS`), of the odor
+        table's CIDs: how many were looked up (``n``) and found (``found``) with each
+        chemutils (``chemutils``, None for those looked up before it was kept)."""
+        with self.connect() as con:
+            return {prop: [dict(r) for r in con.execute(
+                f"SELECT {prop}_chemutils AS chemutils, count(*) AS n, count({col}) AS found FROM pubchem "
+                f"WHERE {prop}_at IS NOT NULL AND cid IN (SELECT cid FROM odors) GROUP BY 1 ORDER BY 1")]
+                for prop, col in PROPERTY_COLUMNS.items()}
 
     def odor_syncs(self, limit: int = 50, source: Optional[str] = None) -> list[dict]:
         """Most recent odor syncs first (optionally only those from `source`)."""

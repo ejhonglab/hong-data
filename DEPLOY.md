@@ -197,6 +197,12 @@ If you installed the unit, do not also run `docker compose up -d` by hand; use
 `systemctl start/stop/restart olfdb`. A restart from the Admin tab restarts the
 container as it is, without picking up new code.
 
+A new version that pins a newer chemutils (in `requirements.txt`) needs nothing more:
+the image is rebuilt from that line on, installing it. What was looked up through the
+older one is kept, though (in the database, and chemutils' cache in `data/`): where
+chemutils changed how it looks something up, the Admin tab (*Odor properties from
+chemutils*) counts those looked up before, to look them up again.
+
 ## 5. Backups
 
 Everything lives in `/opt/olfdb/data`. The Admin tab can back it up (*Backups*) into a
@@ -289,6 +295,12 @@ sudo cp deploy/olfdb-venv.service /etc/systemd/system/olfdb.service
 sudo systemctl daemon-reload && sudo systemctl enable --now olfdb
 systemctl status olfdb     # "active (running)", and still a minute later
 ```
+
+To deploy a new version: `git pull`, `venv/bin/pip install -r requirements.txt`, then
+`sudo systemctl restart olfdb`. pip does not install a newer chemutils pinned in
+`requirements.txt` over the one installed (they have the same version number), so after
+one: `venv/bin/pip install --force-reinstall --no-deps "$(grep '^chemutils' requirements.txt)"`
+(then see the end of section 4).
 
 Same behaviour (boot start, restart on crash or from the Admin tab; giving up after 5
 starts in 2 minutes, restarts from the Admin tab included, as in section 4). Instead of a

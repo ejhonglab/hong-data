@@ -2472,7 +2472,7 @@ function vaporHtml(o) {
   const url = o.links?.vapor_pressure;
   return url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${text}</a>` : text;
 }
-const VAPOR_TH = `<th title="The mean of the experimental values on the odor's PubChem page (at the temperatures given there),
+const VAPOR_TH = `<th title="The mean of the experimental values on the odor's PubChem page at or near 25 °C (else of those with no temperature given),
   looked up through chemutils once the odor is added; blank if PubChem has none.">Vapor pressure (kPa)</th>`;
 // an odor's molar mass (g/mol, PubChem's, looked up through chemutils), linked to where it is from
 const molarMassHtml = (o) => (o?.molar_mass_g_mol == null ? ''
@@ -3355,6 +3355,9 @@ class AdminPage {
     $('#admin-lowercase').addEventListener('change', (e) => this.saveCase(e.target.checked));
     $('#admin-sheet-url').addEventListener('keydown', (e) => { if (e.key === 'Enter') this.saveSheet(); });
     $('#admin-restart').addEventListener('click', () => this.restart());
+    $('#admin-chemutils-btn').addEventListener('click', () => this.relookup());
+    $('#admin-chemutils-table').addEventListener('change', () => this._syncRelookup());
+    this._chemutilsTimer = 0;
     $('#admin-confirm').addEventListener('close', () => this._answered());
     $('#ref-path').addEventListener('input', () => {
       clearTimeout(this._refTimer);
@@ -3404,6 +3407,7 @@ class AdminPage {
     this.loadHost();
     this.loadFiles();
     this.loadBackups();
+    this.loadChemutils(true);
     this.loadDatasets();
     this.loadRefs();
     $('#ref-result').replaceChildren();
@@ -3627,6 +3631,64 @@ class AdminPage {
     }
     this._watchingBackup = true;
     this._showBackups(s);
+  }
+
+  async loadChemutils(fresh = false) {
+    clearTimeout(this._chemutilsTimer);
+    let s;
+    try { s = await api('/api/admin/chemutils'); } catch (e) {
+      $('#admin-chemutils-table').replaceChildren(msgBox('error', `Could not read what was looked up: ${esc(e.message)}`));
+      return;
+    }
+    this._showChemutils(s, fresh);
+  }
+
+  // what was looked up through chemutils (as from /api/admin/chemutils), those looked up with
+  // an older one than changed how it looks them up ticked (but as they were ticked, unless
+  // `fresh` or once a re-lookup is done); checked again every second while one is under way
+  _showChemutils(s, fresh = false) {
+    const { installed, job } = s, short = (c) => c.slice(0, 7);
+    $('#admin-chemutils-installed').innerHTML = !installed ? '<span class="indicator bad">chemutils is not installed</span>'
+      : `Installed: chemutils ${installed.commit ? `<a href="${esc(installed.url)}" target="_blank" rel="noopener"><code>${short(installed.commit)}</code></a>`
+        : `${esc(installed.version)} <span class="muted">(not from git, so taken to be the newest)</span>`}.`;
+    const ticked = new Set($$('#admin-chemutils-table input:checked').map((x) => x.value));
+    const first = fresh || !$('#admin-chemutils-table table') || (this._job?.running && !job.running);
+    $('#admin-chemutils-table').innerHTML = `<table class="odor-table"><thead><tr><th></th><th>Property</th><th>Looked up</th><th>Found</th>
+      <th>Looked up with an older chemutils</th></tr></thead><tbody>${s.properties.map((p) => {
+        const change = p.change ? ` <span class="muted">(before <a href="${esc(p.change.url)}" target="_blank" rel="noopener"><code>${short(p.change.commit)}</code></a>:
+          ${esc(p.change.how)})</span>` : '';
+        const on = first ? p.outdated > 0 : ticked.has(p.prop);
+        return `<tr><td><input type="checkbox" value="${p.prop}" aria-label="Look up ${esc(p.label)} again"${on ? ' checked' : ''}${p.looked_up ? '' : ' disabled'}></td>
+          <td>${esc(p.label)}</td><td class="num">${p.looked_up.toLocaleString()}</td><td class="num">${p.found.toLocaleString()}</td>
+          <td>${p.outdated ? `<b>${p.outdated.toLocaleString()}</b>${change}` : '<span class="muted">none</span>'}</td></tr>`;
+      }).join('')}</tbody></table>`;
+    this._job = job;
+    this._syncRelookup();
+    const out = $('#admin-chemutils-msg');
+    if (job.running) {
+      setStatus(out, job.total == null ? 'Waiting for lookups under way…'
+        : `Looking up ${job.props.map((p) => s.properties.find((x) => x.prop === p)?.label.toLowerCase() || p).join(', ')} again: ${job.done.toLocaleString()} of ${job.total.toLocaleString()}…`);
+      this._chemutilsTimer = setTimeout(() => this.loadChemutils(), 1000);
+    } else if (job.finished_at) {
+      setStatus(out, job.error && !job.failed ? `Stopped: ${job.error}`
+        : `Looked up again ${fmtWhen(job.finished_at)}: ${(job.done - job.failed).toLocaleString()} of ${(job.total ?? 0).toLocaleString()}`
+          + (job.failed ? `; ${job.failed.toLocaleString()} could not be (kept as they were), e.g.: ${job.error}` : ''), job.failed || job.error ? 'error' : '');
+    }
+  }
+
+  _syncRelookup() {
+    $('#admin-chemutils-btn').disabled = !!this._job?.running || !$$('#admin-chemutils-table input:checked').length;
+  }
+
+  async relookup() {
+    const props = $$('#admin-chemutils-table input:checked').map((x) => x.value);
+    const out = $('#admin-chemutils-msg');
+    let s;
+    try { s = await api('/api/admin/chemutils/relookup', { method: 'POST', json: { props } }); } catch (e) {
+      setStatus(out, `Not started: ${e.message}`, 'error');
+      return;
+    }
+    this._showChemutils(s);
   }
 
   // the folders and restart state again (after a reference dataset added a folder, say),
