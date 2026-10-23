@@ -3429,6 +3429,7 @@ class AdminPage {
     const box = $('#admin-host-info');
     let h;
     try { h = await api('/api/admin/host'); } catch (e) { box.innerHTML = `<span>Name</span><span class="muted">could not be found (${esc(e.message)})</span>`; return; }
+    $('#admin-server-name').textContent = ` (${h.name})`; // (in the heading of the folders, at the top)
     const name = h.source === 'container'
       ? `${esc(h.name)} <span class="muted">(the Docker container's; for the server's, mount its /etc/hostname as docker-compose.yml does)</span>`
       : esc(h.name);
