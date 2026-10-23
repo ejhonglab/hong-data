@@ -100,6 +100,12 @@
       <h3 class="subhead">Optional</h3>
       <div class="grid">
         <label class="field span2"><span>Full fly genotype</span><input name="genotype" list="dl-genotypes" placeholder="e.g. w;GH146-Gal4/UAS-GCaMP6f;+"></label>
+        <div class="field span2"><span>Manipulations <span class="muted">(a name and a value, or a name alone; shown in brackets after the dataset's name)</span></span>
+          <div id="manip-rows" class="manip-rows"></div>
+          <div class="row"><button type="button" class="btn" id="manip-add">Add another</button></div>
+          <p class="muted small">Anything done to these flies that sets this dataset apart, e.g. drug = CNO, or starved. A dataset of yours of the
+            same flies and coding unit is refused unless their manipulations differ (e.g. before and after a drug).</p>
+        </div>
         <div class="field"><span>Fly age range (days after eclosion, from 0)</span>
           <div class="row"><input name="age_min_days" type="number" min="0" step="any" placeholder="min" class="narrow"><span class="dash">–</span><input name="age_max_days" type="number" min="0" step="any" placeholder="max" class="narrow"></div>
         </div>
@@ -153,6 +159,8 @@
       <datalist id="dl-drivers"></datalist>
       <datalist id="dl-genotypes"></datalist>
       <datalist id="dl-panels"></datalist>
+      <datalist id="dl-manip-keys"></datalist>
+      <datalist id="dl-manip-values"></datalist>
     </form>
 
     <div class="step" id="step-readme" hidden>

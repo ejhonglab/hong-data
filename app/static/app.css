@@ -125,6 +125,9 @@ textarea { resize: vertical; }
 .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .row .narrow { width: 120px; }
 .dash { color: var(--ink-muted); }
+.manip-rows { display: grid; gap: 6px; margin-bottom: 6px; }
+.manip-row input { flex: 1 1 180px; }
+.manip-remove { padding: 2px 10px; }
 .radios label { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; }
 .combo { display: flex; flex-direction: column; gap: 6px; }
 .subhead { margin: 20px 0 10px; padding-top: 14px; border-top: 1px solid var(--rule); }

@@ -51,6 +51,7 @@ from .metadata import (
     Metadata,
     dataset_title,
     generate_readme,
+    same_manipulations,
 )
 from .odors import odor_names
 
@@ -171,6 +172,8 @@ async def options(request: Request) -> Response:
             "panels": existing["panels"],
             "uploaders": existing["uploaders"],
             "genotypes": existing["genotypes"],
+            "manipulation_keys": existing["manipulation_keys"],
+            "manipulation_values": existing["manipulation_values"],
             "default_wavelength_nm": DEFAULT_WAVELENGTH_NM,
             "glomeruli": load_glomeruli(),
             "max_upload_mb": config.MAX_UPLOAD_MB,
@@ -301,16 +304,18 @@ def _same_unit(a: Optional[str], b: Optional[str]) -> bool:
 
 
 def _duplicates(parsed: ParsedData, files: list[dict], uploader: Optional[str] = None,
-                coding_unit: Optional[str] = None) -> tuple[list[str], list[str]]:
+                coding_unit: Optional[str] = None, manipulations: Optional[list[dict]] = None) -> tuple[list[str], list[str]]:
     """An upload (its data, and its files: [{name, sha256}]) against the datasets stored:
     errors (refusing it) if any of its files is one of theirs (byte for byte), or its data
-    is (the same flies, ROIs, trials and values),
-    whoever uploaded it. With its uploader and coding unit (once entered), errors too if its
-    flies (date, fly_num, and their ROIs' other levels: `ingest.fly_key`) are all and only
-    those of a dataset of theirs of that coding unit, and warnings if it shares only some
-    with one, saying which dataset may need to be deleted. Datasets of other uploaders or
-    coding units may have the same flies: one person's fly 1 of a day is not another's, and
-    a fly may be recorded in two places (as may each side of its brain, apart)."""
+    is (the same flies, ROIs, trials and values), whoever uploaded it. With its uploader,
+    coding unit and manipulations (once entered), errors too if its flies (date, fly_num,
+    and their ROIs' other levels: `ingest.fly_key`) are all and only those of a dataset of
+    theirs of that coding unit and those manipulations, and warnings if it shares only
+    some with one, saying which dataset may need to be deleted. Datasets of other
+    uploaders, coding units or manipulations may have the same flies: one person's fly 1
+    of a day is not another's, a fly may be recorded in two places (as may each side of
+    its brain, apart), and a dataset of the same flies otherwise treated (e.g. after a
+    drug: `metadata.Metadata.manipulations`) is another."""
     flies = {fly_key(u["date"], u["fly_num"], u.get("extra")) for u in parsed.units if u["date"] is not None}
     stored = db.dataset_flies()
     errors, warnings = [], []
@@ -319,7 +324,8 @@ def _duplicates(parsed: ParsedData, files: list[dict], uploader: Optional[str] =
         delete = f"If this replaces it, delete #{d['id']} first (Admin tab)."
         theirs = stored.get(d["id"], set())
         same_flies = bool(flies) and theirs == flies
-        mine = uploader is not None and _same_name(d["uploader_name"], uploader) and _same_unit(d["coding_unit"], coding_unit)
+        mine = (uploader is not None and _same_name(d["uploader_name"], uploader) and _same_unit(d["coding_unit"], coding_unit)
+                and same_manipulations(d["manipulations"], manipulations))
         again = [f["name"] for f in files if f["sha256"] in {g["sha256"] for g in d["data_files"]}]
         if again:
             what = "this file" if len(files) == 1 else files_text(again)
@@ -329,7 +335,8 @@ def _duplicates(parsed: ParsedData, files: list[dict], uploader: Optional[str] =
             errors.append(f"this is the data of {which}, already (the same ROIs, trials and values, in another file). {delete}")
         elif mine and same_flies:
             errors.append(f"its flies ({_flies_text(flies)}) are exactly those of {which}, also of {d['coding_unit']}: "
-                          f"one person's datasets of a coding unit cannot have the same flies. {delete}")
+                          f"one person's datasets of a coding unit cannot have the same flies, but for other manipulations "
+                          f"(e.g. after a drug: enter them under Manipulations). {delete}")
         elif mine and flies & theirs:
             shared = flies & theirs
             if theirs < flies:
@@ -597,7 +604,7 @@ _FIELD_LABELS = {
     "power_mw": "power (mW)", "power_tolerance_mw": "power tolerance", "wavelength_nm": "wavelength",
     "panel_names": "panel name(s)", "recording_system": "recording system", "source_code_url": "analysis code link",
     "raw_data_path": "raw data path", "mocorr_data_path": "motion-corrected data path", "genotype": "genotype",
-    "notes": "notes", "power_measured_same_day": "power measured on the day",
+    "notes": "notes", "power_measured_same_day": "power measured on the day", "manipulations": "manipulations",
 }
 
 
@@ -695,7 +702,8 @@ async def stage_readme(request: Request) -> Response:
     kc = _kc_problem(parsed, m.coding_unit)
     if kc:
         return JSONResponse({"ok": False, "errors": [kc]}, status_code=422)
-    errors, warnings = await run_in_threadpool(_duplicates, parsed, _stage_files(meta), m.uploader_name, m.coding_unit)
+    errors, warnings = await run_in_threadpool(_duplicates, parsed, _stage_files(meta), m.uploader_name, m.coding_unit,
+                                               m.manipulations)
     if errors:
         return JSONResponse({"ok": False, "errors": errors}, status_code=422)
     summary = parsed.summary()
@@ -727,7 +735,7 @@ def _commit(d: Path, meta: dict, m: Metadata, readme: str, readme_edited: bool) 
     # consistency checks that must pass before anything is written
     problems = [p for p in [_kc_problem(parsed, m.coding_unit)] if p]
     files = _stage_files(meta)
-    problems += _duplicates(parsed, files, m.uploader_name, m.coding_unit)[0]
+    problems += _duplicates(parsed, files, m.uploader_name, m.coding_unit, m.manipulations)[0]
     if meta["odor_yamls"]:
         check = _run_yaml_check(d, meta)
         if not check["ok"]:

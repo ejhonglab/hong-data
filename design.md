@@ -134,7 +134,7 @@ between the frontend and the server. Using the app is described in
   again (`ingest.FLIES_NEEDED`, `TRIALS_NEEDED`), but those stored then are still shown,
   so storage, the viewer and downloads keep handling them, and files of ROIs alone are
   still read far enough to say what they lack.
-- **Duplicates are the same data, or the same flies of one person and coding unit.** A
+- **Duplicates are the same data, or the same flies of one person, coding unit and manipulations.** A
   file is refused if it is any of a stored dataset's files byte for byte (`data_files`), or its data
   is (the same flies, ROIs, trials and values: `main._same_data`), whoever uploaded it,
   as soon as it is read. Its flies, (date, fly_num), are only compared with datasets of
@@ -142,8 +142,12 @@ between the frontend and the server. Using the app is described in
   writing KCs one), once those are entered (at the README step, and again on saving):
   all and only the same flies are refused, some of them warned of, naming the dataset
   that may need deleting, as a fuller upload may replace an earlier one. Another
-  person's fly numbers of a day are their own, and one fly may be recorded in two
-  places (coding units). A fly here is its ROIs' other column levels too
+  person's fly numbers of a day are their own, one fly may be recorded in two places
+  (coding units), and a dataset of the same flies otherwise treated (the upload form's
+  manipulations, `datasets.manipulations`: e.g. after a drug, matched in any case and
+  order) is another; the same data is refused whatever its manipulations. A
+  manipulation is of a whole dataset, not of its flies: a fly is still its (date,
+  fly_num) in it. A fly here is its ROIs' other column levels too
   (`ingest.fly_key`): each side of a fly's brain uploaded apart is not the other's
   duplicate.
 - **Panels are renamed when read, not stored so.** The Admin tab's renames (the setting

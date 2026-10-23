@@ -44,6 +44,7 @@ import pandas as pd
 from . import headspace, merge, odormeta
 from .db import Database
 from .ingest import BAD, CELLS
+from .metadata import manipulations_text
 from .odors import (SOLVENT_STR, format_conc, is_odor_level, lowercase_map, lowercase_odor, odor_level_sort_key,
                     odor_names)
 
@@ -134,11 +135,12 @@ def _ascii(s: str) -> str:
 
 def dataset_stem(d: dict, trials: list[dict]) -> str:
     """Standard file name (without extension) for one dataset's matrix:
-    ``<panels>_<uploader>_<coding unit>_<date of the last fly>``.
+    ``<panels>_<uploader>_<coding unit>[_<manipulations>]_<date of the last fly>``.
 
     Panels are those in the data (or, without a panel level, those entered at upload),
     sorted, leaving out diagnostic panels unless there are only those. The uploader's
-    name is lowercased, without periods. Each part is ASCII only, with spaces as '-'.
+    name is lowercased, without periods. Manipulations are each ``<key>-<value>`` (or the
+    key alone). Each part is ASCII only, with spaces as '-'.
 
     Args:
         d: as returned by `Database.get_dataset`.
@@ -147,8 +149,9 @@ def dataset_stem(d: dict, trials: list[dict]) -> str:
     panels = list(dict.fromkeys(t["panel"] for t in trials if t["panel"])) or d["metadata"].get("panel_names") or []
     if not all(DIAGNOSTICS_PANEL.search(p) for p in panels):
         panels = [p for p in panels if not DIAGNOSTICS_PANEL.search(p)]
+    manipulations = [m["key"] if m.get("value") is None else f"{m['key']}-{m['value']}" for m in d.get("manipulations") or []]
     parts = [*sorted(panels, key=str.casefold), d["uploader_name"].lower().replace(".", ""), d["coding_unit"],
-             d["last_fly_date"] or ""]
+             *manipulations, d["last_fly_date"] or ""]
     return "_".join(filter(None, map(_ascii, parts))) or f"olfdb_dataset-{d['id']}"
 
 
@@ -270,7 +273,8 @@ def datasets_frame(datasets: list[dict]) -> pd.DataFrame:
     for d in datasets:
         md = d["metadata"]
         row = {"dataset_id": d["id"], "title": d["title"], "created_at": d["created_at"]}
-        row.update({k: ", ".join(v) if isinstance(v, list) else v for k, v in md.items() if k != "notes"})
+        row.update({k: manipulations_text(v) if k == "manipulations" else ", ".join(v) if isinstance(v, list) else v
+                    for k, v in md.items() if k != "notes"})
         row.update({k: d.get(k) for k in SUMMARY_COLUMNS})
         if len(d.get("data_files") or []) > 1:  # (several combined)
             row.update(data_file="; ".join(f["name"] for f in d["data_files"]),

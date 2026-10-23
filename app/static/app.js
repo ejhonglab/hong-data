@@ -1272,6 +1272,16 @@ function yamlFileCheck(f) {
 // the upload under way, kept in this browser to be continued (see UploadFlow.resume)
 const UPLOAD_KEY = 'olfdb.upload';
 
+// A dataset's manipulations (as entered at upload: [{key, value}]) as written after its name: 'drug=CNO; starved'.
+const manipText = (ms) => (ms || []).map((m) => (m.value == null ? m.key : `${m.key}=${m.value}`)).join('; ');
+
+// A dataset as named in the lists of Browse and Compare (HTML): driver > indicator (coding
+// unit), then any manipulations in brackets.
+function datasetName(d) {
+  return `${esc(d.driver)} &gt; ${esc(d.indicator)} <span class="muted">(${esc(d.coding_unit)})</span>`
+    + (d.manipulations?.length ? ` [${esc(manipText(d.manipulations))}]` : '');
+}
+
 // Data files as said of an upload: the name of one, else how many ('10 CSVs').
 function filesLabel(names) {
   if (names.length === 1) return names[0];
@@ -1339,6 +1349,7 @@ class UploadFlow {
     sys.innerHTML = '<option value="">—</option>' + o.recording_systems.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join('') + '<option value="__other__">Other…</option>';
     const dl = (id, values) => { $(id).innerHTML = values.map((v) => `<option value="${esc(v)}">`).join(''); };
     dl('#dl-uploaders', o.uploaders); dl('#dl-drivers', o.drivers); dl('#dl-genotypes', o.genotypes); dl('#dl-panels', o.panels);
+    dl('#dl-manip-keys', o.manipulation_keys || []); dl('#dl-manip-values', o.manipulation_values || []);
     dl('#dl-indicators', o.indicators); dl('#dl-coding-units', o.coding_units); dl('#dl-systems', o.recording_systems);
     $('#step-meta').wavelength_nm.value = o.default_wavelength_nm ?? 925;
     for (const [sel, other] of Object.values(COMBOS)) {
@@ -1402,6 +1413,20 @@ class UploadFlow {
       }
     });
 
+    this._setManipulations([]);
+    $('#manip-add').addEventListener('click', () => {
+      const row = this._manipRow();
+      $('#manip-rows').appendChild(row);
+      row.querySelector('.manip-key').focus();
+    });
+    $('#manip-rows').addEventListener('click', (e) => {
+      const b = e.target.closest('.manip-remove');
+      if (!b) return;
+      b.closest('.manip-row').remove();
+      if (!$('#manip-rows').children.length) $('#manip-rows').appendChild(this._manipRow());
+      this._saveSoon();
+    });
+
     $('#yaml-btn').addEventListener('click', () => $('#yaml-input').click());
     $('#yaml-input').addEventListener('change', (e) => { if (e.target.files.length) this.addYaml([...e.target.files]); e.target.value = ''; });
     $('#xml-btn').addEventListener('click', () => $('#xml-input').click());
@@ -1411,6 +1436,29 @@ class UploadFlow {
     $('#readme-regenerate').addEventListener('click', () => this.generateReadme());
     $('#commit-btn').addEventListener('click', () => this.commit());
     $('#done-another').addEventListener('click', () => this.reset());
+  }
+
+  // ------------------------------------------------------------- manipulations
+  _manipRow(m = {}) {
+    const row = document.createElement('div');
+    row.className = 'row manip-row';
+    row.innerHTML = `<input class="manip-key" list="dl-manip-keys" placeholder="name, e.g. drug" aria-label="Manipulation name">
+      <span class="dash">=</span><input class="manip-value" list="dl-manip-values" placeholder="value (optional), e.g. CNO" aria-label="Its value">
+      <button type="button" class="btn manip-remove" aria-label="Remove this manipulation" title="Remove">×</button>`;
+    row.querySelector('.manip-key').value = m.key || '';
+    row.querySelector('.manip-value').value = m.value ?? '';
+    return row;
+  }
+
+  // the rows of manipulations (at least one, empty)
+  _setManipulations(list) {
+    $('#manip-rows').replaceChildren(...(list.length ? list : [{}]).map((m) => this._manipRow(m)));
+  }
+
+  // the manipulations entered: [{key, value (null if none)}], rows with neither left out
+  _manipulations() {
+    return $$('#manip-rows .manip-row').map((row) => ({ key: row.querySelector('.manip-key').value.trim(), value: row.querySelector('.manip-value').value.trim() || null }))
+      .filter((m) => m.key || m.value);
   }
 
   _syncPower() {
@@ -1767,7 +1815,7 @@ class UploadFlow {
     }
     const readme = $('#step-readme').hidden ? null : { text: $('#readme-text').value, generated: this.generatedReadme };
     LS.set(UPLOAD_KEY, { stage_id: this.stage.stage_id, file: this.fileName, saved_at: Date.now() / 1000, fields,
-      manual: [...this.manual], xml_auto: this.xmlAuto, readme });
+      manipulations: this._manipulations(), manual: [...this.manual], xml_auto: this.xmlAuto, readme });
   }
 
   // Continues the upload kept in this browser (`_save`), while the server still has it.
@@ -1791,6 +1839,7 @@ class UploadFlow {
       if (el.type === 'radio') el.checked = el.value === saved.fields[el.name]; else el.value = saved.fields[el.name];
     }
     for (const [sel, other] of Object.values(COMBOS)) $(other).hidden = $(sel).value !== '__other__';
+    this._setManipulations(saved.manipulations || []);
     this.manual = new Set(saved.manual);
     this.xmlAuto = !!saved.xml_auto;
     this._syncPower();
@@ -2020,6 +2069,7 @@ class UploadFlow {
       mocorr_data_path: f.mocorr_data_path.value.trim() || null,
       panel_names: f.panel_names.value,
       recording_system: other('#system-select', '#system-other') || null,
+      manipulations: this._manipulations(),
       notes: f.notes.value.trim() || null,
     };
   }
@@ -2276,7 +2326,7 @@ class Browse {
     const item = (d) => `<div class="ds-item${this.selected === d.id ? ' active' : ''}">
         <input type="checkbox" class="pick" data-id="${d.id}" aria-label="Select dataset #${d.id} for download">
         <button type="button" class="list-item" data-id="${d.id}">
-          <span class="t">${esc(d.driver)} &gt; ${esc(d.indicator)} <span class="muted">(${esc(d.coding_unit)})</span></span>
+          <span class="t">${datasetName(d)}</span>
           <span class="s">${fliesText(d)}, ${d.n_units.toLocaleString()} ROIs, ${d.n_odors} odors${lastFlyText(d)}</span>
           <span class="s">#${d.id}, ${esc(d.uploader_name)}${d.recording_system ? ', ' + esc(d.recording_system) : ''}${uploadedText(d, this.group)}</span>
         </button>
@@ -4333,7 +4383,7 @@ class ComparePage {
     const item = (d) => `<label class="ds-item${picked.has(d.id) ? ' active' : ''}">
         <input type="checkbox" class="pick" data-id="${d.id}"${picked.has(d.id) ? ' checked' : ''}>
         <span class="list-item">
-          <span class="t">${esc(d.driver)} &gt; ${esc(d.indicator)} <span class="muted">(${esc(d.coding_unit)})</span></span>
+          <span class="t">${datasetName(d)}</span>
           <span class="s">${fliesText(d)}, ${d.n_units.toLocaleString()} ROIs, ${d.n_odors} odors${lastFlyText(d)}</span>
           <span class="s">#${d.id}, ${esc(d.uploader_name)}${uploadedText(d, this.o.group)}</span>
         </span></label>`;

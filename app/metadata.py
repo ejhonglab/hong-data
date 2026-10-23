@@ -12,6 +12,9 @@ DEFAULT_RECORDING_SYSTEMS = ["upstairs-left 2p", "upstairs-right 2p", "downstair
 DEFAULT_WAVELENGTH_NM = 925.0
 REQUIRED_FIELDS = ("uploader_name", "indicator", "driver", "coding_unit")
 KC_UNITS = ("kc", "kcs", "kenyon cell", "kenyon cells")  # coding units (in any case) of KCs
+# what a manipulation's name (key) and value cannot have, as they are written 'key=value; key' in titles
+MANIPULATION_KEY_CHARS = "=;[]"
+MANIPULATION_VALUE_CHARS = ";[]"
 
 
 def is_kc(coding_unit: Optional[str]) -> bool:
@@ -24,6 +27,21 @@ def _clean(v):
         v = v.strip()
         return v or None
     return v
+
+
+def _norm(s: Optional[str]) -> Optional[str]:
+    return " ".join(s.split()).casefold() if s is not None else None
+
+
+def manipulations_text(manipulations: Optional[list[dict]]) -> str:
+    """Manipulations (`Metadata.manipulations`) as written after a dataset's name:
+    'drug=CNO; starved'; '' for none."""
+    return "; ".join(m["key"] if m.get("value") is None else f"{m['key']}={m['value']}" for m in manipulations or [])
+
+
+def same_manipulations(a: Optional[list[dict]], b: Optional[list[dict]]) -> bool:
+    """Whether two datasets' manipulations are the same, in any order, case and spacing."""
+    return {(_norm(m["key"]), _norm(m.get("value"))) for m in a or []} == {(_norm(m["key"]), _norm(m.get("value"))) for m in b or []}
 
 
 class Metadata(BaseModel):
@@ -44,6 +62,9 @@ class Metadata(BaseModel):
     mocorr_data_path: Optional[str] = None
     panel_names: list[str] = Field(default_factory=list)
     recording_system: Optional[str] = None
+    # anything done to the flies that sets this dataset apart from others of the same flies
+    # (e.g. a drug, before and after): [{key, value (None for a key alone)}]
+    manipulations: list[dict] = Field(default_factory=list)
     notes: Optional[str] = None
 
     @field_validator(
@@ -66,6 +87,35 @@ class Metadata(BaseModel):
             x = str(x).strip()
             if x and x not in out:
                 out.append(x)
+        return out
+
+    @field_validator("manipulations", mode="before")
+    @classmethod
+    def _manipulations(cls, v):
+        """Each {key, value}, stripped (spaces in keys collapsed), value None if empty; rows
+        with neither left out."""
+        if v is None:
+            return []
+        if not isinstance(v, list) or not all(isinstance(x, dict) for x in v):
+            raise ValueError("expected a list of {key, value}")
+        out, seen = [], set()
+        for x in v:
+            key, value = _clean(x.get("key")), _clean(x.get("value"))
+            if not isinstance(key, (str, type(None))) or not isinstance(value, (str, type(None))):
+                raise ValueError("names and values must be text")
+            if key is None and value is None:
+                continue
+            if key is None:
+                raise ValueError(f"'{value}' needs a name before it (e.g. drug, for CNO)")
+            key = " ".join(key.split())
+            if any(c in key for c in MANIPULATION_KEY_CHARS):
+                raise ValueError(f"'{key}': a name cannot have {' '.join(MANIPULATION_KEY_CHARS)}")
+            if value is not None and any(c in value for c in MANIPULATION_VALUE_CHARS):
+                raise ValueError(f"'{value}': a value cannot have {' '.join(MANIPULATION_VALUE_CHARS)}")
+            if _norm(key) in seen:
+                raise ValueError(f"'{key}' is given twice")
+            seen.add(_norm(key))
+            out.append({"key": key, "value": value})
         return out
 
     @model_validator(mode="after")
@@ -103,7 +153,8 @@ def _power_str(m: Metadata) -> Optional[str]:
 def dataset_title(m: Metadata, summary: dict) -> str:
     panels = m.panel_names or summary.get("panel_names") or []
     panel_part = ", ".join(panels) if panels else "odor panel"
-    return f"{panel_part}: {m.driver} > {m.indicator} ({m.coding_unit})"
+    manipulations = f" [{manipulations_text(m.manipulations)}]" if m.manipulations else ""
+    return f"{panel_part}: {m.driver} > {m.indicator} ({m.coding_unit}){manipulations}"
 
 
 def generate_readme(m: Metadata, summary: dict, files: dict[str, Any], *, created_at: Optional[dt.datetime] = None) -> str:
@@ -143,6 +194,7 @@ def generate_readme(m: Metadata, summary: dict, files: dict[str, Any], *, create
         ("Driver", m.driver),
         ("Indicator", m.indicator),
         ("Full genotype", m.genotype),
+        ("Manipulations", manipulations_text(m.manipulations) or None),
         ("Coding unit", m.coding_unit),
         ("Fly age", _age_str(m)),
         ("Excitation", (f"{m.wavelength_nm:g} nm" if m.wavelength_nm else None)),

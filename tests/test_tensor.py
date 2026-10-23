@@ -518,7 +518,8 @@ def test_duplicates(main, tmp_path, monkeypatch):
     status, r = readme()
     assert status == 422 and r["errors"] == [
         f"its flies (2024-01-01 fly 1, 2024-01-02 fly 1, 2024-01-02 fly 2) are exactly those of {which}, also of glomeruli: "
-        "one person's datasets of a coding unit cannot have the same flies. If this replaces it, delete #1 first (Admin tab)."]
+        "one person's datasets of a coding unit cannot have the same flies, but for other manipulations (e.g. after a drug: "
+        "enter them under Manipulations). If this replaces it, delete #1 first (Admin tab)."]
     status, r = call(main.stage_commit, body={"metadata": md, "readme": "#"}, path_params=stage)
     assert status == 422 and any("are exactly those of dataset #1" in e for e in r["errors"])
     # another's flies (one's fly 1 of a day is not another's), or of another coding unit (one fly recorded in two places)

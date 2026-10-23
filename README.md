@@ -171,12 +171,18 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   anyone: the same file (whatever its name, alone or among others), or the same data in
   another (the same flies, ROIs, trials and values). Once your name and the coding unit are entered (when the README is made, and
   again when saving), it is refused too if its flies (each `date` and `fly_num`) are
-  exactly those of a dataset of yours of that coding unit; one sharing only some flies
-  with one is accepted with a warning saying which of the two may need to be deleted if
-  they are the same recordings. Each names that dataset and who uploaded it: to replace
-  one, delete it first (Admin tab). Other uploaders' datasets, or other coding units',
-  may have the same flies (one person's fly 1 of a day is not another's, and one fly may
-  be recorded in two places).
+  exactly those of a dataset of yours of that coding unit and the same manipulations;
+  one sharing only some flies with one is accepted with a warning saying which of the two
+  may need to be deleted if they are the same recordings. Each names that dataset and who
+  uploaded it: to replace one, delete it first (Admin tab). Other uploaders' datasets,
+  other coding units', or other manipulations', may have the same flies (one person's
+  fly 1 of a day is not another's, one fly may be recorded in two places, and before and
+  after a drug).
+  *Manipulations* (optional): anything done to the flies that sets the dataset apart,
+  each a name and a value (`drug` = `CNO`) or a name alone (`starved`), shown in brackets
+  after the dataset's name (`[drug=CNO; starved]`: in Browse and Compare, its title and
+  README, and the names of its downloads). Names and values seen before are suggested;
+  they are matched in any case and order.
   An optional odor YAML must have every odor in the matrix, with the same
   abbreviation and concentration. Each YAML added is also checked on its own, as a
   warning only: its odors against the odor table (missing, or named, abbreviated or with
