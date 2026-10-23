@@ -728,6 +728,9 @@
     <div class="vt-group" data-role="chem" title="How the chemicals matched to the Odors tab are labelled">
       <label>Chemicals <select data-opt="chemLabels"><option value="name">names (Odors tab)</option><option value="abbrev">abbreviations</option><option value="file">as in the file</option></select></label>
     </div>
+    <div class="vt-group" data-role="kc" title="Of a table of glomeruli by something other than odors, that other axis is taken to be KCs: summed, each glomerulus's values over the KCs not removed (missing values left out)">
+      <label class="check"><input type="checkbox" data-opt="sumKCs"> Sum over KCs</label>
+    </div>
     <div class="vt-group" data-role="cluster" title="Hierarchical clustering (average linkage) of trial-averaged responses, of the ROIs and odors not removed (whatever order they are shown in). ROIs are clustered all together, whichever fly they come from (they are shown ungrouped while this is on). Odors are clustered within each panel, by their responses across all ROIs.">
       <span class="vt-label">Cluster</span>
       <label class="check"><input type="checkbox" data-opt="clusterRows"> ROIs</label>

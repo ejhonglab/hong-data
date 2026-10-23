@@ -471,6 +471,32 @@ function chemLabel(it, by, showAbbrev = (a) => a) {
   return { label, detail: others.join(' · ') };
 }
 
+// the axis of a reference dataset taken to be KCs: the other one, when one is glomeruli
+// and that other is not its chemicals (null if none)
+function kcAxisOf(ref) {
+  const g = ref.glomeruli?.axis;
+  if (!g) return null;
+  const other = g === 'rows' ? 'cols' : 'rows';
+  return ref.chemicals?.axis === other ? null : other;
+}
+
+// a model with the items of its `axis` (KCs) summed into one, missing values left out (a
+// cell none of them has a value for, missing)
+function sumOverAxis(m, axis) {
+  const nC = m.cols.length, onRows = axis === 'rows', n = m[axis].length;
+  const values = new Float32Array(onRows ? nC : m.rows.length);
+  for (let k = 0; k < values.length; k++) {
+    let sum = 0, any = false;
+    for (let i = 0; i < n; i++) {
+      const v = onRows ? m.values[i * nC + k] : m.values[k * nC + i];
+      if (v === v) { sum += v; any = true; }
+    }
+    values[k] = any ? sum : NaN;
+  }
+  const item = { label: `sum of ${n.toLocaleString()} KC${n === 1 ? '' : 's'}`, group: null, sub: null, key: -1 };
+  return { ...m, [axis]: [item], values, cellText: null, summed: n, [onRows ? 'rowGroupTitle' : 'colGroupTitle']: null };
+}
+
 // rows as columns and columns as rows, with their labels, titles and dendrograms
 function transposeModel(m) {
   const nR = m.rows.length, nC = m.cols.length;
@@ -529,7 +555,7 @@ class MatrixViewer {
     this.opts = Object.assign(
       {
         mode: 'average', rowOrder: 'fly', roiSort: 'file', odorOrder: 'file', clusterRows: false, clusterCols: false, metric: 'correlation',
-        cellW: 16, cellH: 16, colormap: 'oklab-div', range: 'twoslope', clip: false, chemLabels: 'name',
+        cellW: 16, cellH: 16, colormap: 'oklab-div', range: 'twoslope', clip: false, chemLabels: 'name', sumKCs: false,
       },
       saved,
       { transpose: !!saved.transposed?.[kind] },
@@ -579,6 +605,11 @@ class MatrixViewer {
     }
     $$('input[type=checkbox][data-opt]', tb).forEach((cb) => cb.addEventListener('change', () => {
       this.opts[cb.dataset.opt] = cb.checked;
+      // KCs' binary values summed are counts, colored as such (and back)
+      if (cb.dataset.opt === 'sumKCs' && COLORMAPS[this.opts.colormap]?.kind !== this._valueKind()) {
+        this._genericColormap();
+        this._syncToolbar();
+      }
       this._save();
       this._syncEnabled();
       this._rebuild();
@@ -592,7 +623,7 @@ class MatrixViewer {
     const o = this.opts, saved = LS.get('olfdb.viewer', {});
     LS.set('olfdb.viewer', {
       cellW: this.ownCells ? saved.cellW : o.cellW, cellH: this.ownCells ? saved.cellH : o.cellH, colormap: o.colormap, range: o.range, rowOrder: o.rowOrder, roiSort: o.roiSort, odorOrder: o.odorOrder,
-      clusterRows: o.clusterRows, clusterCols: o.clusterCols, metric: o.metric, chemLabels: o.chemLabels,
+      clusterRows: o.clusterRows, clusterCols: o.clusterCols, metric: o.metric, chemLabels: o.chemLabels, sumKCs: o.sumKCs,
       transposed: { ...saved.transposed, [this.kind]: o.transpose },
     });
   }
@@ -609,7 +640,8 @@ class MatrixViewer {
     const neural = this.kind === 'neural';
     for (const role of ['mode', 'rows', 'cols', 'cluster']) $(`[data-role=${role}]`, tb).hidden = !neural;
     $('[data-role=chem]', tb).hidden = neural || !this.data?.chemAxis;
-    const mapKind = neural ? 'diverging' : (this.data?.meta?.kind || 'sequential');
+    $('[data-role=kc]', tb).hidden = neural || !this.data?.kcAxis;
+    const mapKind = this._valueKind();
     const cmSel = $('select[data-opt=colormap]', tb);
     const maps = colormapsOfKind(mapKind);
     cmSel.innerHTML = maps.map((m) => `<option value="${m.id}">${esc(m.label)}</option>`).join('');
@@ -679,6 +711,7 @@ class MatrixViewer {
       this.data = {
         meta: ref.meta,
         chemAxis: ref.chemicals?.matched ? ref.chemicals.axis : null,
+        kcAxis: 'kcAxis' in ref ? ref.kcAxis : kcAxisOf(ref),
         model: {
           rows: rows.map((r) => ({ label: r.label, group: r.group, key: r.i, file: r.label, chem: r.chem, detail: r.detail })),
           cols: ref.cols.map((c, j) => ({ label: c.label, group: null, sub: null, key: j, file: c.label, chem: c.chem, detail: c.detail })),
@@ -691,10 +724,26 @@ class MatrixViewer {
         },
       };
     }
-    const kind = ref.meta.kind || 'sequential';
-    this.opts.colormap = kind === 'binary' ? 'binary' : kind === 'diverging' ? 'oklab-div' : (COLORMAPS[this.opts.colormapSeq]?.kind === 'sequential' ? this.opts.colormapSeq : 'viridis');
+    this._genericColormap();
     this._syncToolbar();
     this._rebuild();
+  }
+
+  // whether KCs are summed over (as chosen, if there are any)
+  _summing() { return !!(this.opts.sumKCs && this.data?.kcAxis); }
+
+  // the kind of values shown, as colormaps are of: KCs' binary values summed are counts
+  _valueKind() {
+    if (this.kind === 'neural') return 'diverging';
+    const kind = this.data?.meta?.kind || 'sequential';
+    return kind === 'binary' && this._summing() ? 'sequential' : kind;
+  }
+
+  // the colormap of a matrix (not neural data) to start with: of its kind of values, the
+  // sequential one last chosen for one
+  _genericColormap() {
+    const kind = this._valueKind();
+    this.opts.colormap = kind === 'binary' ? 'binary' : kind === 'diverging' ? 'oklab-div' : (COLORMAPS[this.opts.colormapSeq]?.kind === 'sequential' ? this.opts.colormapSeq : 'viridis');
   }
 
   _editsFor(payload) {
@@ -703,7 +752,7 @@ class MatrixViewer {
   }
 
   // the matrix less the rows and columns removed, in the order they were dragged into,
-  // its chemicals labelled as chosen
+  // its chemicals labelled as chosen, and its KCs (those not removed) summed if chosen
   _genericModel() {
     const b = this.data.model, nC = b.cols.length;
     const rows = arrange(b.rows.map((_, i) => i), (i) => b.rows[i].key, this.edits.rows);
@@ -712,8 +761,9 @@ class MatrixViewer {
     rows.forEach((i, r) => { cols.forEach((j, c) => { values[r * cols.length + c] = b.values[i * nC + j]; }); });
     const showAbbrev = abbrevShower([...b.rows, ...b.cols].map((it) => it.chem?.abbrev));
     const label = (it) => (it.chem ? { ...it, ...chemLabel(it, this.opts.chemLabels, showAbbrev) } : it);
-    return { ...b, rows: rows.map((i) => label(b.rows[i])), cols: cols.map((j) => label(b.cols[j])), values,
+    const m = { ...b, rows: rows.map((i) => label(b.rows[i])), cols: cols.map((j) => label(b.cols[j])), values,
       cellText: b.cellText && ((r, c) => b.cellText(rows[r], cols[c])) };
+    return this._summing() ? sumOverAxis(m, this.data.kcAxis) : m;
   }
 
   async _rebuild() {
@@ -778,7 +828,7 @@ class MatrixViewer {
     const o = this.opts;
     const neural = this.kind === 'neural';
     const cm = COLORMAPS[o.colormap] || COLORMAPS['oklab-div'];
-    const fixed = !neural && this.data.meta.value_range; // [vmin, vmax] whatever the values
+    const fixed = !neural && !model.summed && this.data.meta.value_range; // [vmin, vmax] whatever the values
     const { vmin, vmax } = fixed ? { vmin: fixed[0], vmax: fixed[1] } : dataRange(model.values, o.clip);
     let norm;
     if (cm.kind === 'diverging') norm = makeNorm(o.range === 'symmetric' ? 'symmetric' : 'twoslope', vmin, vmax);
@@ -799,8 +849,9 @@ class MatrixViewer {
     this.lut = cm.lut;
     this.heatmap.setModel(model, { cellW: o.cellW, cellH: o.cellH, lut: cm.lut, norm, reorder: drag });
     drawColorbar(this.colorbar, cm.lut, norm);
+    const valueLabel = this._valueLabel();
     this.statsText = `${dims.join(' × ')}` + (neural && model.nPanels > 1 ? ` in ${model.nPanels} panels` : '') + ` · range ${fmtNum(vmin)} to ${fmtNum(vmax)}` +
-      (!neural && this.data.meta.value_label ? ` (${this.data.meta.value_label})` : '');
+      (valueLabel ? ` (${valueLabel})` : '');
     this._setNote(note);
     const grouped = (drag.rows && model.rows.some((r) => r.group != null)) || (drag.cols && model.cols.some((c) => c.group != null));
     const which = drag.rows && drag.cols ? 'a label' : drag.rows ? 'a row label' : 'a column label';
@@ -809,6 +860,12 @@ class MatrixViewer {
       'Ctrl-click a label to remove it, or right-click it for a menu.',
     ].filter(Boolean).join('; ');
     this.onShow?.();
+  }
+
+  // what the values shown are, if said (of a matrix, not neural data), and whether summed over KCs
+  _valueLabel() {
+    const label = this.kind === 'neural' ? '' : this.data.meta?.value_label || '';
+    return this.model?.summed ? `${label ? `${label}, ` : ''}summed over ${this.model.summed.toLocaleString()} KCs` : label;
   }
 
   _setNote(note) {
@@ -934,7 +991,7 @@ class MatrixViewer {
     try {
       const { blob, note } = await exportFigure(format, this.model, {
         cellW: this.opts.cellW, cellH: this.opts.cellH, lut: this.lut, norm: this.norm, nanColor: this.heatmap.options.nanColor,
-        valueLabel: this.data.meta?.value_label || '', title: this.title,
+        valueLabel: this._valueLabel(), title: this.title,
       });
       const suffix = this.kind === 'neural' && this.opts.mode === 'trials' ? '_trials' : '';
       saveBlob(blob, `${this.fileStem}${suffix}.${format}`);
@@ -2626,7 +2683,8 @@ class Reference {
     const notes = [];
     if (c.axis) notes.push(`Its ${c.axis === 'rows' ? 'rows' : 'columns'} are chemicals: ${c.matched} of ${c.n} matched to the Odors table, labelled as there.`);
     const g = ref.glomeruli;
-    if (g?.axis) notes.push(`Its ${g.axis === 'rows' ? 'rows' : 'columns'} are glomeruli (${g.matched} of ${g.n}): it can be compared with datasets on their glomeruli (Compare tab).`);
+    const kc = kcAxisOf(ref), axisName = (a) => (a === 'rows' ? 'rows' : 'columns');
+    if (g?.axis) notes.push(`Its ${axisName(g.axis)} are glomeruli (${g.matched} of ${g.n})${kc ? `, and its ${axisName(kc)} taken to be KCs (<i>Sum over KCs</i> sums them)` : ''}: it can be compared with datasets on their glomeruli (Compare tab).`);
     if (c.ambiguous.length) notes.push(`More than one odor in the Odors table matches ${c.ambiguous.map(esc).join(', ')}.`);
     notes.push(...ref.notes.map((n) => `${esc(n[0].toUpperCase() + n.slice(1))}.`));
     if (m.origin === 'admin') notes.push(`Read from <code>${esc(m.path)}</code> on ${esc(fmtWhen(ref.imported_at))}.`);
@@ -3725,7 +3783,8 @@ function spaceData(s, ids, rowOf, noun = 'odor') {
   const at = new Map(s.space.ids.map((id, i) => [id, i])), { vectors, cols, meta } = s.space.data, nC = cols.length;
   const values = new Float32Array(ids.length * nC);
   ids.forEach((id, r) => values.set(vectors[at.get(id)], r * nC));
-  return { meta: { ...meta, row_label: noun }, rows: ids.map(rowOf), cols, values, chemicals: noun === 'odor' ? CHEM_ROWS : null };
+  return { meta: { ...meta, row_label: noun }, rows: ids.map(rowOf), cols, values, chemicals: noun === 'odor' ? CHEM_ROWS : null,
+    kcAxis: s.space.data.kcs ? 'cols' : null };
 }
 
 function spaceSims(s, ids, rowOf, noun = 'odor') {
@@ -3949,7 +4008,8 @@ class ComparePage {
       return {
         ids, sim: similarityMatrix(vectors, this.o.refMetric),
         data: { vectors, cols: (onRows ? ref.cols : ref.rows).map((it) => ({ label: it.label })),
-          meta: { kind: m.kind, value_label: m.value_label, col_label: (onRows ? m.col_label : m.row_label) || (onRows ? 'column' : 'row') } },
+          meta: { kind: m.kind, value_label: m.value_label, col_label: (onRows ? m.col_label : m.row_label) || (onRows ? 'column' : 'row') },
+          kcs: on === 'glomeruli' && kcAxisOf(ref) != null }, // (its other axis then, the columns of its data)
       };
     });
   }

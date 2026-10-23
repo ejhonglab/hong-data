@@ -45,16 +45,17 @@ ethyl acetate,8857,esters,2.1,1.4
 hexanal,6184,aldehydes,,1.9
 ```
 
-A matrix of glomeruli (by anything else, with no odors), e.g. counts of PNs or of
-synapses per glomerulus, is found by its labels: when at least 3 of the labels on one
+A matrix of glomeruli by KCs (with no odors), e.g. the synapses each KC gets from the
+PNs of each glomerulus, is found by its labels: when at least 3 of the labels on one
 axis, and at least half of them, are glomerulus names as accepted for datasets' ROIs
-(`DM2`, `VA1d`, ...; but for case). The Compare tab can then compare it with datasets
-of glomeruli, on their glomeruli.
+(`DM2`, `VA1d`, ...; but for case). Its other axis is taken to be KCs, whatever it is
+labelled by: the viewer can sum over them (*Sum over KCs*), and the Compare tab can
+compare it with datasets of glomeruli, on their glomeruli.
 
 ```
-glomerulus,PN count,KC inputs
-DM2,3,120
-VA2,2,85
+bodyid,DM2,VA2,DL5
+5813055184,3,0,1
+5813054622,0,2,4
 ```
 
 Rows and columns without a single number (notes, units) are left out, and cells that

@@ -107,7 +107,10 @@ between the frontend and the server. Using the app is described in
   responses to its odors; a reference dataset's whose labels on one axis are mostly
   glomerulus names, `reference.glomeruli`, by its values along the other), and all the
   rest (similarities, their correlations and p-values, the two side by side) is the
-  same, of glomeruli; no odor–odor similarity is shown then. Two spaces side
+  same, of glomeruli; no odor–odor similarity is shown then. That other axis, when it is
+  not chemicals, is taken to be KCs (`kcAxisOf`, in the browser: no reference dataset
+  yet is of glomeruli by anything else), which the viewer can sum over (only to show:
+  similarities are always of the KCs). Two spaces side
   by side are two viewers of the same odors in the same order, linked (`linked` in
   `MatrixViewer`) rather than one matrix of both, so each keeps its own colors and units:
   an edit of either's rows is copied to the other (rows keyed by their place in that

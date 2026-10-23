@@ -332,7 +332,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   adding one in the Admin tab); these are left out of its matrix unless a box by the
   warning is ticked. One that cannot be read is listed by its name alone, with why.
   A table of glomeruli (by their labels) has no chemicals, and so no warning: it says it
-  can be compared with datasets on their glomeruli.
+  can be compared with datasets on their glomeruli. Its other axis is taken to be KCs:
+  *Sum over KCs* in the viewer (here and in the Compare tab) shows each glomerulus's
+  values summed over them (those not removed; missing values left out), as one row or
+  column.
 - **Admin** (to the right of Docs; it first asks whether you are Tom, Jon or Betty, or
   have asked one of them): settings for the whole site.
   - *Folders on the server* the app may read (by default tensor) and also write (none
