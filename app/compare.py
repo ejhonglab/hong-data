@@ -19,6 +19,7 @@ from typing import Optional
 import numpy as np
 
 from . import glomeruli, odormeta
+from .ingest import extra_text
 from .odors import SOLVENT_STR, OdorFormatError, parse_odor
 
 FP_BITS = 2048  # ECFP fingerprints' length (bits)
@@ -32,8 +33,9 @@ def dataset(db, ds_id: int, datasets_dir: Path) -> Optional[dict]:
 
     Returns:
         dict with ``id``, ``title``, ``coding_unit``, ``driver``, ``kind`` ('glomeruli': a column per
-        glomerulus, the mean of the flies that have it, but ROIs marked bad; 'rois': a column per
-        ROI of each fly), ``rows`` (each odor, in the order shown in Browse: ``panel``, ``odor``,
+        glomerulus, the mean of the flies that have it (and of the sides of their brains, as
+        other column levels may tell apart), but ROIs marked bad; 'rois': a column per ROI of
+        each fly, labelled with its other levels too), ``rows`` (each odor, in the order shown in Browse: ``panel``, ``odor``,
         ``odor_id`` and ``chem`` (``name``, ``abbrev``, ``cid``) if it is one chemical of
         the odor table, ``log10_conc``), ``cols`` (``label``; for glomeruli ``n_flies``, for
         ROIs ``bad``: whether marked not to be used, None if the file did not say) and
@@ -86,8 +88,8 @@ def dataset(db, ds_id: int, datasets_dir: Path) -> Optional[dict]:
         matrix = np.stack(columns, axis=1) if columns else np.empty((len(keys), 0))  # odors × glomeruli (none: all bad)
         kind = "glomeruli"
     else:
-        cols = [{"label": f"{u['date']} fly {u['fly_num']}: {u['roi']}" if u["date"] is not None else u["roi"], "bad": u.get("bad")}
-                for u in units]
+        cols = [{"label": f"{u['date']} fly {u['fly_num']}{' ' + extra_text(u.get('extra')) if u.get('extra') else ''}: {u['roi']}"
+                 if u["date"] is not None else u["roi"], "bad": u.get("bad")} for u in units]
         matrix, kind = means.T, "rois"  # odors × ROIs
     return {
         "id": ds_id, "title": ds["title"], "coding_unit": ds["metadata"].get("coding_unit"), "driver": ds["metadata"].get("driver"),

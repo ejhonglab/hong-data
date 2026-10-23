@@ -317,6 +317,15 @@ function cmpRoi(a, b) {
 function cmpFly(a, b) {
   return a.date < b.date ? -1 : a.date > b.date ? 1 : a.fly_num - b.fly_num;
 }
+// ROIs' other column levels (e.g. hemibrain): of the same fly, by them (each level in turn)
+function cmpExtra(a, b) {
+  for (const k of Object.keys(a.extra || {})) {
+    const x = String(a.extra[k] ?? ''), y = String(b.extra?.[k] ?? '');
+    const c = cmpRoi(x, y);
+    if (c) return c;
+  }
+  return 0;
+}
 function odorComponents(odorStr) {
   if (odorStr === 'solvent') return [];
   return odorStr.split(' + ').map((c) => {
@@ -338,6 +347,12 @@ function cmpOdor(a, b) {
 // --------------------------------------------------------- neural data model
 // data: {units, trials, values: Float32Array (units x trials)}
 const flyKey = (u) => (u.date == null ? 'fly not given' : `${u.date} fly ${u.fly_num}`);
+// a ROI's other column levels (e.g. 'L' of hemibrain L), as in its label: their values ('' if none)
+const extraText = (u) => (u.extra ? Object.values(u.extra).join(' ') : '');
+// a ROI as told apart from the others of its fly ('L 3': cell 3 of the left side), and the
+// part of a fly it is of (its fly, and its other levels: 'YYYY-MM-DD fly 2 L')
+const roiLabel = (u) => (extraText(u) ? `${extraText(u)} ${u.roi}` : u.roi);
+const partKey = (u) => (extraText(u) ? `${flyKey(u)} ${extraText(u)}` : flyKey(u));
 // a dataset's flies as a list of them says it (none: a file of ROIs alone), and its last one's date
 const fliesText = (d) => (d.n_flies ? `${d.n_flies} ${d.n_flies === 1 ? 'fly' : 'flies'}` : 'flies not given');
 const lastFlyText = (d) => (d.last_fly_date ? `; last fly ${esc(d.last_fly_date)}` : '');
@@ -377,8 +392,8 @@ function neuralOrder(data, { rowOrder, roiSort, odorOrder }) {
   units.forEach((u, i) => { if (!firstRoi.has(u.roi)) firstRoi.set(u.roi, i); });
   const unitIdx = units.map((u, i) => i);
   const roiCmp = (i, j) => (roiSort === 'sorted' ? cmpRoi(units[i].roi, units[j].roi) : firstRoi.get(units[i].roi) - firstRoi.get(units[j].roi));
-  if (rowOrder === 'roi') unitIdx.sort((i, j) => roiCmp(i, j) || cmpFly(units[i], units[j]) || i - j);
-  else unitIdx.sort((i, j) => cmpFly(units[i], units[j]) || roiCmp(i, j) || i - j);
+  if (rowOrder === 'roi') unitIdx.sort((i, j) => roiCmp(i, j) || cmpFly(units[i], units[j]) || cmpExtra(units[i], units[j]) || i - j);
+  else unitIdx.sort((i, j) => cmpFly(units[i], units[j]) || cmpExtra(units[i], units[j]) || roiCmp(i, j) || i - j);
   return { conds: ordered.map((x) => x.c), panelOrder, unitIdx };
 }
 
@@ -481,9 +496,9 @@ function buildNeuralModel(data, order, { mode, rowOrder }, clustering) {
   }
   const rows = unitIdx.map((i) => {
     const u = units[i];
-    if (rowOrder === 'roi') return { label: flyKey(u), group: u.roi, key: i };
-    if (rowOrder === 'none') return { label: `${u.roi} (${flyKey(u)})`, group: null, key: i };
-    return { label: u.roi, group: flyKey(u), key: i };
+    if (rowOrder === 'roi') return { label: partKey(u), group: u.roi, key: i };
+    if (rowOrder === 'none') return { label: `${roiLabel(u)} (${flyKey(u)})`, group: null, key: i };
+    return { label: roiLabel(u), group: flyKey(u), key: i };
   });
   const model = {
     rows, cols, values: meanOver(values, trials.length, unitIdx, colTrials),
@@ -542,10 +557,11 @@ function sumOverAxis(m, axis) {
   return { ...m, [axis]: [item], values, cellText: null, summed: n, [onRows ? 'rowGroupTitle' : 'colGroupTitle']: null };
 }
 
-// a neural model with each fly's ROIs (KCs) shown summed into one row, missing values left out
+// a neural model with each fly's ROIs (KCs) shown summed into one row, missing values left
+// out (of each part of a fly apart, as its ROIs' other levels tell them: each side of its brain)
 function sumOverFlies(m, units) {
   const nC = m.cols.length, flies = new Map();
-  m.rows.forEach((r, i) => { const k = flyKey(units[r.key]); flies.set(k, [...(flies.get(k) || []), i]); });
+  m.rows.forEach((r, i) => { const k = partKey(units[r.key]); flies.set(k, [...(flies.get(k) || []), i]); });
   const values = new Float32Array(flies.size * nC), rows = [];
   [...flies].forEach(([fly, idx], f) => {
     for (let c = 0; c < nC; c++) {
@@ -555,7 +571,11 @@ function sumOverFlies(m, units) {
     }
     rows.push({ label: `sum of ${idx.length.toLocaleString()} KC${idx.length === 1 ? '' : 's'}`, group: fly, key: -1 - f });
   });
-  return { ...m, rows, values, rowDendro: null, rowTitle: 'KCs', rowGroupTitle: 'fly', summed: m.rows.length };
+  // how many flies, and by which other levels of the ROIs they were summed apart (if any)
+  const shown = m.rows.map((r) => units[r.key]);
+  const nFlies = new Set(shown.map(flyKey)).size;
+  const by = [...new Set(shown.flatMap((u) => Object.keys(u.extra || {})))];
+  return { ...m, rows, values, rowDendro: null, rowTitle: 'KCs', rowGroupTitle: 'fly', summed: m.rows.length, nFlies, summedBy: by };
 }
 
 // rows as columns and columns as rows, with their labels, titles and dendrograms
@@ -715,7 +735,7 @@ class MatrixViewer {
     for (const role of ['mode', 'rows', 'cols', 'cluster']) $(`[data-role=${role}]`, tb).hidden = !neural;
     $('[data-role=chem]', tb).hidden = neural || !this.data?.chemAxis;
     $('[data-role=kc]', tb).hidden = neural ? !this.kc : !this.data?.kcAxis;
-    $('[data-role=kc]', tb).title = neural ? "Each fly's KCs summed into one row (those not removed or hidden; missing values left out)"
+    $('[data-role=kc]', tb).title = neural ? "Each fly's KCs summed into one row (those not removed or hidden; missing values left out); a row for each part of a fly its ROIs' other column levels tell apart (e.g. each side of its brain)"
       : 'Of a table of glomeruli by something other than odors, that other axis is taken to be KCs: summed, each glomerulus\'s '
         + 'values over the KCs not removed (missing values left out)';
     const nBad = this._nBad(), bad = $('[data-bad]', tb);
@@ -987,7 +1007,9 @@ class MatrixViewer {
     else if (cm.kind === 'binary') norm = makeNorm('linear', 0, 1);
     else norm = makeNorm('linear', vmin, vmax);
     const dims = neural
-      ? [`${model.rows.length.toLocaleString()} ${model.summed ? (model.rows.length === 1 ? 'fly' : 'flies') : 'ROIs'}`,
+      ? [model.summed ? `${model.nFlies.toLocaleString()} ${model.nFlies === 1 ? 'fly' : 'flies'}${model.rows.length !== model.nFlies
+          ? ` (${model.rows.length.toLocaleString()} sums, by ${model.summedBy.join(' and ')})` : ''}`
+          : `${model.rows.length.toLocaleString()} ROIs`,
         `${model.cols.length} ${o.mode === 'trials' ? 'trials' : 'odors'}`]
       : [model.rows.length, model.cols.length];
     // labels can be dragged along axes not clustered (nor summed)
@@ -1662,6 +1684,7 @@ class UploadFlow {
     okBox.insertAdjacentHTML('beforeend', `<div class="summary-grid">
       <div><span>flies</span>${s.n_flies ? `${s.n_flies} (${esc(s.first_date)}${s.first_date !== s.last_date ? ' to ' + esc(s.last_date) : ''})` : 'not given'}</div>
       <div><span>ROI columns</span>${s.n_units.toLocaleString()} (${esc(s.roi_kind)})</div>
+      ${Object.entries(s.extra_levels || {}).map(([k, vs]) => `<div><span>${esc(k)} <span class="muted">(of each ROI)</span></span>${vs.map(esc).join(', ')}</div>`).join('')}
       <div><span>odors</span>${s.n_odors} in ${s.panels.length} panel${s.panels.length === 1 ? '' : 's'}</div>
       <div><span>trials per odor</span>${!s.has_repeat_level ? 'not given (a row each)' : s.repeats_min === s.repeats_max ? s.repeats_min : s.repeats_min + '–' + s.repeats_max}</div>
       <div><span>missing cells</span>${(s.nan_fraction * 100).toFixed(1)}%</div>

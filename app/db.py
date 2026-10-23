@@ -5,7 +5,7 @@ Tables
 datasets        one row per upload (metadata, README, file names, summary numbers)
 dataset_panels  normalised panel names per dataset (for "browse by panel")
 units           one row per (date, fly_num, roi) column of a dataset (date and fly_num null
-                without flies: ROIs alone)
+                without flies: ROIs alone), with its other column levels (extra_json)
 trials          one row per trial (panel, odor, repeat, ...) of a dataset
 responses       long table: one row per cell (unit_id, trial_id, value) -- queryable
 matrices        the same values as a float32 blob (units x trials) for fast serving
@@ -30,7 +30,7 @@ from typing import Any, Callable, Iterator, Optional
 
 import numpy as np
 
-from .ingest import drop_uninformative
+from .ingest import drop_uninformative, fly_key
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS datasets (
@@ -88,7 +88,8 @@ CREATE TABLE IF NOT EXISTS units (
     fly_num INTEGER,
     roi TEXT NOT NULL,
     roi_kind TEXT NOT NULL,
-    bad INTEGER  -- 1 for a ROI marked not to be used, 0 not; NULL when the file did not say
+    bad INTEGER,  -- 1 for a ROI marked not to be used, 0 not; NULL when the file did not say
+    extra_json TEXT  -- its other column levels, as JSON (e.g. hemibrain L), NULL if none
 );
 CREATE INDEX IF NOT EXISTS units_dataset ON units(dataset_id, idx);
 CREATE TABLE IF NOT EXISTS trials (
@@ -208,6 +209,7 @@ PROPERTY_COLUMNS = {"vapor_pressure": "vapor_pressure_kpa", "est_vapor_pressure"
                     "molar_mass": "molar_mass_g_mol", "density": "density_g_ml", "k_henry": "k_henry_mol_m3_pa",
                     "k_henry_pfo": "k_henry_pfo_mol_m3_pa"}
 ADDED_COLUMNS = [("datasets", "mocorr_data_path", "TEXT"), ("reference_datasets", "fields", "TEXT"), ("units", "bad", "INTEGER"),
+                 ("units", "extra_json", "TEXT"),
                  *(c for p, col in PROPERTY_COLUMNS.items()
                    for c in (("pubchem", col, "REAL"), ("pubchem", f"{p}_source", "TEXT"), ("pubchem", f"{p}_at", "TEXT"),
                              ("pubchem", f"{p}_chemutils", "TEXT"), ("pubchem", f"{p}_measured", "INTEGER"),
@@ -250,8 +252,8 @@ def _units_nullable(con: sqlite3.Connection) -> None:
     con.executescript(f"""PRAGMA foreign_keys = OFF;
         BEGIN;
         {create}
-        INSERT INTO units_new (id, dataset_id, idx, date, fly_num, roi, roi_kind)
-            SELECT id, dataset_id, idx, date, fly_num, roi, roi_kind FROM units;
+        INSERT INTO units_new (id, dataset_id, idx, date, fly_num, roi, roi_kind, bad, extra_json)
+            SELECT id, dataset_id, idx, date, fly_num, roi, roi_kind, bad, extra_json FROM units;
         DROP TABLE units;
         ALTER TABLE units_new RENAME TO units;
         CREATE INDEX IF NOT EXISTS units_dataset ON units(dataset_id, idx);
@@ -345,8 +347,9 @@ class Database:
             unit_ids = []
             for i, u in enumerate(units):
                 c = con.execute(
-                    "INSERT INTO units (dataset_id, idx, date, fly_num, roi, roi_kind, bad) VALUES (?,?,?,?,?,?,?)",
-                    (ds_id, i, u["date"], u["fly_num"], u["roi"], u["roi_kind"], u.get("bad")),
+                    "INSERT INTO units (dataset_id, idx, date, fly_num, roi, roi_kind, bad, extra_json) VALUES (?,?,?,?,?,?,?,?)",
+                    (ds_id, i, u["date"], u["fly_num"], u["roi"], u["roi_kind"], u.get("bad"),
+                     json.dumps(u["extra"]) if u.get("extra") else None),
                 )
                 unit_ids.append(c.lastrowid)
             trial_ids = []
@@ -393,13 +396,14 @@ class Database:
             out.append(d)
         return out
 
-    def dataset_flies(self) -> dict[int, set[tuple[str, int]]]:
-        """Each dataset's flies, (date, fly_num) (none for one stored without flies)."""
+    def dataset_flies(self) -> dict[int, set[tuple]]:
+        """Each dataset's flies, as `ingest.fly_key` (date, fly_num and their ROIs' other
+        levels: e.g. each side of a fly's brain, one) (none for one stored without flies)."""
         with self.connect() as con:
-            rows = con.execute("SELECT DISTINCT dataset_id, date, fly_num FROM units WHERE date IS NOT NULL").fetchall()
-        out: dict[int, set[tuple[str, int]]] = {}
+            rows = con.execute("SELECT DISTINCT dataset_id, date, fly_num, extra_json FROM units WHERE date IS NOT NULL").fetchall()
+        out: dict[int, set[tuple]] = {}
         for r in rows:
-            out.setdefault(r["dataset_id"], set()).add((r["date"], r["fly_num"]))
+            out.setdefault(r["dataset_id"], set()).add(fly_key(r["date"], r["fly_num"], json.loads(r["extra_json"] or "{}")))
         return out
 
     def get_dataset(self, ds_id: int) -> Optional[dict]:
@@ -429,7 +433,7 @@ class Database:
             if m is None:
                 return None
             units = con.execute(
-                "SELECT date, fly_num, roi, roi_kind, bad FROM units WHERE dataset_id = ? ORDER BY idx", (ds_id,)
+                "SELECT date, fly_num, roi, roi_kind, bad, extra_json FROM units WHERE dataset_id = ? ORDER BY idx", (ds_id,)
             ).fetchall()
             trials = con.execute(
                 "SELECT panel, odor, components_json, repeat, extra_json FROM trials WHERE dataset_id = ? ORDER BY idx",
@@ -437,7 +441,8 @@ class Database:
             ).fetchall()
         values = np.frombuffer(bytes(m["values_blob"]), dtype="<f4").reshape(m["n_units"], m["n_trials"])
         return {
-            "units": [{**dict(u), "bad": None if u["bad"] is None else bool(u["bad"])} for u in units],
+            "units": [{**{k: u[k] for k in ("date", "fly_num", "roi", "roi_kind")}, "bad": None if u["bad"] is None else bool(u["bad"]),
+                       "extra": json.loads(u["extra_json"] or "{}")} for u in units],
             "trials": drop_uninformative([
                 {
                     "panel": t["panel"],

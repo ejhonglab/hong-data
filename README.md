@@ -99,14 +99,26 @@ glomeruli_diagnostics,False,3mtp @ -5,solvent,0,-0.0377,0.13,...
 - **Columns** (three header rows): `date`, `fly_num`, `roi`; every column unique. Every
   ROI's fly (`date` and `fly_num`) is required: a file without them, or without one of
   them, is refused, saying which (as is a CSV with a single header line of ROIs alone).
+  Dates may be written e.g. `2024-07-10` (any way pandas reads one) or `20240710`, as
+  text or a number, each value on its own.
+- **Other column levels** (any number, in any order, e.g. `hemibrain`: `L` or `R`) are
+  kept with each ROI: ROIs of the same fly and name that differ in them are different
+  ROIs (e.g. cells of each side of one fly's brain, each numbered from 0), told apart
+  everywhere: in the viewer (labelled `L 3` under their fly; *Sum over KCs* sums each
+  side apart), the Compare tab and downloads (a level of its own, empty for the ROIs of
+  datasets without it). A fly's sides uploaded as separate datasets are not taken for
+  duplicates of each other. Every ROI needs a value of each; none may be named
+  `dataset_id`, `value` or as a row level.
   `roi` is a glomerulus name from `config/glomeruli.txt` or a non-negative integer. A
   file with other ROI names is refused with all of them listed (and the accepted name
   each is but for upper and lower case), along with the accepted names. The level may
   be called `cells` instead (in a long file too): its values are then KC ids, so must be
   non-negative integers, and the upload form takes the coding unit to be KCs.
 - **KCs**: every KC of each fly, their ids running from 0 (or 1) to the highest with
-  none missing; a file with gaps is refused, saying which ids each fly lacks (KCs by a
-  `cells` level when the file is read, else numbered ROIs once the coding unit is KCs).
+  none missing (of each side, if other column levels tell sides apart that are numbered
+  each on their own); a file with gaps is refused, saying which ids each fly lacks (KCs
+  by a `cells` level when the file is read, else numbered ROIs once the coding unit is
+  KCs).
   Those not to be used are marked in one more column level, `bad` (True or False): a
   header row after the ROIs' in a wide CSV (`date, fly_num, cells, bad`), a column in a
   long file. Any ROIs may be marked so. Downloads keep the level (False for the ROIs of
@@ -120,7 +132,9 @@ glomeruli_diagnostics,False,3mtp @ -5,solvent,0,-0.0377,0.13,...
   mixture written in one level that way (`ea @ -4.2 + eb @ -3.5`) is split into its
   components, as if each were in a level of its own (with a warning).
 - **Odor strings**: `<abbrev> @ <log10_conc>` with single spaces, concentration 0 or
-  negative; `solvent` for an unused component.
+  negative; `solvent` for an unused component. Odors written `<abbrev>(<log10_conc>)`
+  (`1-5ol(-3)`) are read as `1-5ol @ -3`, and a solvent alone (`PFO`, `water`) as at 0
+  (`pfo @ 0`), with a warning listing them.
 - Row levels that say nothing are dropped on upload: `is_pair` if it is False on every
   row, and `odor<n>` (from `odor2` on) together with every odor level after it, if all
   their values are the same one of: empty, `solvent`, `pfo`, `water`, `pfo @ 0`,
@@ -129,7 +143,9 @@ glomeruli_diagnostics,False,3mtp @ -5,solvent,0,-0.0377,0.13,...
   downloaded the same way.
 - A long layout (`date, fly_num, roi, [panel,] odor1, ..., repeat, value`) is also
   accepted for CSV and parquet (parquet with integer `fly_num` column labels cannot be
-  written in the wide layout by pandas, so use long there).
+  written in the wide layout by pandas, so use long there). Any other columns are other
+  levels of the ROIs (as above), but `Unnamed: <n>` ones (an index `to_csv` wrote), which
+  are ignored.
 - Datasets stored while files without flies or trials were accepted (for a while) are
   still shown: such a dataset says "flies not given", has no fly folders, raw data or
   movies to find, and downloads without `date` or `fly_num` (in the wide layout, with

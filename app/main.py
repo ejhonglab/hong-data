@@ -39,7 +39,8 @@ from starlette.staticfiles import StaticFiles
 from . import backup, chemprops, compare, config, export, filelog, headspace, merge, movies, odormeta, reference, sandbox, tensor, thorimage, yamlcheck
 from .db import PROPERTY_COLUMNS, Database
 from .glomeruli import load_glomeruli
-from .ingest import ParsedData, ValidationError, kc_id_problems, load_file, load_parsed, save_parsed
+from .ingest import (ParsedData, ValidationError, extra_text, fly_key, kc_id_problems, load_file, load_parsed, save_parsed,
+                     unit_key)
 from .metadata import (
     DEFAULT_CODING_UNITS,
     is_kc,
@@ -233,8 +234,9 @@ async def stage_create(request: Request) -> Response:
 MAX_FLIES_NAMED = 6  # flies listed in a message of datasets overlapping
 
 
-def _flies_text(flies: set[tuple[str, int]]) -> str:
-    named = [f"{d} fly {f}" for d, f in sorted(flies)]
+def _flies_text(flies: set[tuple]) -> str:
+    """Flies (`ingest.fly_key`s) as said: e.g. '2024-07-10 fly 2 (hemibrain L)'."""
+    named = [f"{d} fly {f}{f' ({extra_text(dict(e))})' if e else ''}" for d, f, e in sorted(flies)]
     return ", ".join(named[:MAX_FLIES_NAMED]) + (f" and {len(named) - MAX_FLIES_NAMED} more" if len(named) > MAX_FLIES_NAMED else "")
 
 
@@ -242,7 +244,7 @@ def _same_data(parsed: ParsedData, m: dict) -> bool:
     """Whether an upload's data is a stored dataset's (`Database.get_matrix_arrays`): the same
     ROIs and trials, whatever their order, with the same values (as float32 keeps them)."""
     def index(units, trials):
-        return ({(u["date"], u["fly_num"], u["roi"]): i for i, u in enumerate(units)},
+        return ({unit_key(u): i for i, u in enumerate(units)},
                 {(t["panel"], t["odor"], t["repeat"]): j for j, t in enumerate(trials)})
     (ua, ta), (ub, tb) = index(parsed.units, parsed.trials), index(m["units"], m["trials"])
     if set(ua) != set(ub) or set(ta) != set(tb):
@@ -268,11 +270,12 @@ def _duplicates(parsed: ParsedData, sha256: str, uploader: Optional[str] = None,
     """An upload against the datasets stored: errors (refusing it) if its file is one of
     theirs (byte for byte), or its data is (the same flies, ROIs, trials and values),
     whoever uploaded it. With its uploader and coding unit (once entered), errors too if its
-    flies (date, fly_num) are all and only those of a dataset of theirs of that coding
-    unit, and warnings if it shares only some with one, saying which dataset may need to
-    be deleted. Datasets of other uploaders or coding units may have the same flies: one
-    person's fly 1 of a day is not another's, and a fly may be recorded in two places."""
-    flies = {(u["date"], u["fly_num"]) for u in parsed.units if u["date"] is not None}
+    flies (date, fly_num, and their ROIs' other levels: `ingest.fly_key`) are all and only
+    those of a dataset of theirs of that coding unit, and warnings if it shares only some
+    with one, saying which dataset may need to be deleted. Datasets of other uploaders or
+    coding units may have the same flies: one person's fly 1 of a day is not another's, and
+    a fly may be recorded in two places (as may each side of its brain, apart)."""
+    flies = {fly_key(u["date"], u["fly_num"], u.get("extra")) for u in parsed.units if u["date"] is not None}
     stored = db.dataset_flies()
     errors, warnings = [], []
     for d in sorted(db.list_datasets(), key=lambda d: d["id"]):
@@ -676,7 +679,7 @@ def _kc_problem(parsed: ParsedData, coding_unit: str) -> Optional[str]:
     ``cells`` level whatever the coding unit, when the file was read)."""
     if not is_kc(coding_unit) or not parsed.units or any(u["roi_kind"] != "int" for u in parsed.units):
         return None
-    return kc_id_problems([(u["date"], u["fly_num"], u["roi"]) for u in parsed.units])
+    return kc_id_problems(parsed.units)
 
 
 def _commit(d: Path, meta: dict, m: Metadata, readme: str, readme_edited: bool) -> dict:

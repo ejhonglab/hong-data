@@ -5,9 +5,17 @@ Accepted layouts
 *wide* (what ``DataFrame.to_csv`` / ``to_parquet`` write for a frame with MultiIndex
 rows and columns):
 
-    columns: MultiIndex with levels  date, fly_num, roi
+    columns: MultiIndex with levels  date, fly_num, [any others,] roi
     rows:    MultiIndex with levels  panel, [is_pair,] odor1[, odor2, ...], repeat
              (``odor`` alone is accepted in place of ``odor1``)
+
+Dates may be written any way pandas reads one (e.g. 2024-07-10), or as YYYYMMDD
+(20240710, as text or a number), each value on its own (`date_str`).
+
+Column levels besides date, fly_num and roi (e.g. ``hemibrain``: L or R) are kept with
+each ROI (its ``extra``): ROIs of the same fly and name but different values of them are
+different ROIs (e.g. cells of the two sides of the brain of one fly). ``bad`` is not one
+of them (see below).
 
 The ROI level may be called ``cells`` instead of ``roi``: its values are then KC ids,
 which must be non-negative integers, every one of each fly's from 0 or 1 to its highest
@@ -25,10 +33,15 @@ names then the ROIs' (as ``to_csv`` writes a frame with plain columns).
 
     columns: date, fly_num, roi (or cells)[, bad], panel, odor1[, odor2, ...], repeat, value
 
+  (any other columns being more levels of the ROIs, as in the wide layout, but for
+  ``Unnamed: <n>`` ones, as ``to_csv`` writes an index, which are ignored)
+
 (``trial`` is read as ``repeat``, in either layout.)
 
 An odor level may hold a mixture itself (``a @ -3 + b @ -5``), split into its components
-as if they were in levels of their own. ROI names lose a ``_t<n>`` suffix (``DA1_t0`` -> ``DA1``), and may name
+as if they were in levels of their own. Odors written ``name(conc)`` are read as
+``name @ conc``, and a solvent alone (``PFO``, ``water``) as at 0 (``pfo @ 0``), saying so
+(`rewritten_odor`). ROI names lose a ``_t<n>`` suffix (``DA1_t0`` -> ``DA1``), and may name
 several glomeruli that could not be told apart (``VA1d/VA1v``: `glomeruli.merged`).
 
 Row levels that say nothing are dropped before anything else (`uninformative_levels`):
@@ -42,6 +55,7 @@ from __future__ import annotations
 
 import base64
 import csv
+import datetime as dt
 import itertools
 import math
 import re
@@ -58,6 +72,7 @@ from .odors import (
     COMPONENT_DELIM,
     SOLVENT_STR,
     OdorFormatError,
+    format_conc,
     format_mix_from_strs,
     is_odor_level,
     odor_level_sort_key,
@@ -80,6 +95,13 @@ PANEL_NEEDED = ("each trial's panel is needed (the name of the set of odors pres
 TRIALS_NEEDED = (f"each trial's number is needed, in a row level (in a long file, a column) named repeat (or {TRIAL}) of "
                  "integers (0, 1, 2... or 1, 2, 3...): one row per trial, not averaged over trials")
 KNOWN_ROW_LEVELS = {"panel", "is_pair", "repeat"}
+# names other column levels (a ROI's `extra`) may not have: those downloads add, and the row levels'
+RESERVED_COL_LEVELS = {"dataset_id", "value", TRIAL, *KNOWN_ROW_LEVELS}
+MAX_HEADER_ROWS = 12  # of a wide CSV: its column levels, then the row naming the row levels
+_YYYYMMDD = re.compile(r"(?:19|20)\d{6}")
+# an odor written 'name(conc)' (as '1-5ol(-3)'), read as 'name @ conc'
+_PAREN_ODOR = re.compile(r"(?P<name>[^@]*?\S)\s*\((?P<conc>[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)\)")
+SOLVENT_NAMES = ("pfo", "water")  # a solvent alone (as 'PFO'), read as at 0 ('pfo @ 0')
 LONG_VALUE_COLUMNS = ("value", "response", "resp", "df_over_f", "dff", "mean_dff", "delta_f", "mean_df_over_f")
 MAX_EXAMPLES = 15
 ROI_SUFFIX = re.compile(r"_t\d+$")  # removed from ROI names ('DA1_t0' -> 'DA1')
@@ -115,7 +137,7 @@ class ParsedData:
         flies: dict[tuple, dict] = {}
         n_glom = n_int = 0
         for u in self.units:
-            k = (u["date"], u["fly_num"])
+            k = (u["date"], u["fly_num"])  # (a fly's ROIs, whatever their other levels)
             if u["date"] is not None:  # (none, without flies)
                 flies.setdefault(k, {"date": u["date"], "fly_num": u["fly_num"], "n_rois": 0})
                 flies[k]["n_rois"] += 1
@@ -164,6 +186,9 @@ class ParsedData:
             "n_glomerulus_rois": n_glom,
             "n_int_rois": n_int,
             "n_bad": sum(1 for u in self.units if u.get("bad")),
+            # the ROIs' other column levels (e.g. hemibrain), each with its values
+            "extra_levels": {lvl: sorted({(u.get("extra") or {}).get(lvl) for u in self.units} - {None})
+                             for lvl in dict.fromkeys(k for u in self.units for k in (u.get("extra") or {}))},
             "roi_kind": roi_kind,
             "nan_fraction": float(1 - finite.mean()) if self.values.size else 0.0,
             "vmin": vmin,
@@ -268,48 +293,42 @@ def _read_head(path: Path, n: int, delim: Optional[str] = None) -> tuple[list[li
 def _sniff_csv(path: Path) -> tuple[str, int, int, bool, str]:
     """Return (layout, n_index_cols, n_header_rows, has_names_row, delimiter).
 
-    layout is 'wide' (3 header rows date/fly_num/roi, as pandas writes a frame with
-    MultiIndex columns), 'wide-rois' (one header row: the row levels' names, then the
-    ROIs', as pandas writes a frame with plain columns) or 'long'.
+    layout is 'wide' (header rows of the column levels, date / fly_num / roi and any
+    others, then one naming the row levels, as pandas writes a frame with MultiIndex
+    columns), 'wide-rois' (one header row: the row levels' names, then the ROIs', as
+    pandas writes a frame with plain columns) or 'long'.
     """
-    rows, delim = _read_head(path, 9)
-    while len(rows) < 9:
+    rows, delim = _read_head(path, MAX_HEADER_ROWS + 1)
+    while len(rows) < MAX_HEADER_ROWS + 1:
         rows.append([])
-    first_cells = [_col_level(r[0].strip()) if r else "" for r in rows[:4]]
-    head = first_cells if BAD in first_cells else first_cells[:3]  # (a 'bad' level among the first)
-    if set(head) != {*COL_LEVELS, *([BAD] if BAD in head else [])}:
-        # a single header line, of the row levels' names then the ROIs' (no flies)
-        header = [c.strip() for c in rows[0]]
-        lead = list(itertools.takewhile(_is_row_level, header))
-        if lead and len(header) > len(lead) and not ({*COL_LEVELS, CELLS, *LONG_VALUE_COLUMNS} & set(header)):
-            return "wide-rois", len(lead), 1, False, delim
-        # maybe a wide file with the wrong header levels: report them if it looks like one
-        n_index = 1 + sum(1 for _ in itertools.takewhile(lambda c: c.strip() == "", rows[0][1:]))
-        if n_index > 1 and len(rows[0]) > n_index:
-            levels = []
-            for r in rows[:8]:
-                if len(r) <= n_index or all(c.strip() == "" for c in r[n_index:]):
-                    break
-                levels.append(r[0].strip())
-            if 1 <= len(levels) <= 6 and all(not _is_number(x) for x in levels):
-                raise ValidationError([_col_levels_error(levels)])
-        return "long", 0, 0, False, delim
     n_index = 1 + sum(1 for _ in itertools.takewhile(lambda c: c.strip() == "", rows[0][1:]))
 
     def is_names_row(r: list[str]) -> bool:
         return len(r) >= n_index and all(c.strip() == "" for c in r[n_index:]) and any(c.strip() for c in r[:n_index])
 
     # header rows run until the row naming the index levels (empty after the index columns)
-    n_header, has_names_row = len(head), False
-    for k in range(len(head), 9):
-        if is_names_row(rows[k]):
-            n_header, has_names_row = k, True
-            break
-    levels = [r[0].strip() for r in rows[:n_header]]
-    core = [_col_level(n) for n in levels if n != BAD]
-    if set(core) != set(COL_LEVELS) or len(core) != len(COL_LEVELS) or len(levels) - len(core) > 1:
-        raise ValidationError([_col_levels_error(levels)])
-    return "wide", n_index, n_header, has_names_row, delim
+    n_header = next((k for k in range(1, MAX_HEADER_ROWS + 1) if is_names_row(rows[k])), None)
+    if n_index > 1 and len(rows[0]) > n_index:
+        levels = [r[0].strip() for r in rows[:n_header or MAX_HEADER_ROWS] if len(r) > n_index and any(c.strip() for c in r[n_index:])]
+        if {"date", "fly_num"} <= {_col_level(n) for n in levels} and "roi" in {_col_level(n) for n in levels}:
+            if n_header is None:
+                return "wide", n_index, len(levels), False, delim
+            return "wide", n_index, n_header, True, delim
+    # a single header line, of the row levels' names then the ROIs' (no flies)
+    header = [c.strip() for c in rows[0]]
+    lead = list(itertools.takewhile(_is_row_level, header))
+    if lead and len(header) > len(lead) and not ({*COL_LEVELS, CELLS, *LONG_VALUE_COLUMNS} & set(header)):
+        return "wide-rois", len(lead), 1, False, delim
+    # maybe a wide file with the wrong header levels: report them if it looks like one
+    if n_index > 1 and len(rows[0]) > n_index:
+        levels = []
+        for r in rows[:MAX_HEADER_ROWS]:
+            if len(r) <= n_index or all(c.strip() == "" for c in r[n_index:]):
+                break
+            levels.append(r[0].strip())
+        if 1 <= len(levels) <= MAX_HEADER_ROWS - 1 and all(not _is_number(x) for x in levels):
+            raise ValidationError([_col_levels_error(levels)])
+    return "long", 0, 0, False, delim
 
 
 def _col_levels_error(found: list[str]) -> str:
@@ -317,9 +336,14 @@ def _col_levels_error(found: list[str]) -> str:
     lacks, if those are all it lacks; else what they must be."""
     names = [_col_level(n) for n in found]
     missing = [n for n in COL_LEVELS if n not in names]
-    if missing and set(missing) <= {"date", "fly_num"} and names.count(BAD) <= 1 and len(set(names)) == len(names):
+    repeated = sorted({n for n in names if names.count(n) > 1})
+    reserved = sorted(set(names) & RESERVED_COL_LEVELS)
+    if missing and set(missing) <= {"date", "fly_num"} and not repeated and not reserved:
         return f"no {' or '.join(missing)} column level: {FLIES_NEEDED} (found {found})"
-    return f"column header levels must be exactly {list(COL_LEVELS)} ('{CELLS}' for 'roi' too), and '{BAD}' if any; found {found}"
+    why = (f"each named once (not {repeated})" if repeated else f"none named {reserved}" if reserved and not missing
+           else f"missing {missing}")
+    return (f"column header levels must include {list(COL_LEVELS)} ('{CELLS}' for 'roi' too), and may have '{BAD}' and "
+            f"others (e.g. hemibrain), {why}; found {found}")
 
 
 def _col_level(name: str) -> str:
@@ -410,14 +434,14 @@ def _long_to_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
             f"Found columns: {cols[:12]}{'...' if len(cols) > 12 else ''}"
         )
         raise ValidationError(errors)
-    col_levels = [c for c in (*levels, BAD) if c in cols]  # (roi alone: no flies)
     odor_cols = [c for c in cols if is_odor_level(c)]
     if not odor_cols:
         raise ValidationError(["long-format file has no 'odor1' (or 'odor') column"])
     value_col = next((c for c in LONG_VALUE_COLUMNS if c in cols), None)
     row_cols = [c for c in cols if c in KNOWN_ROW_LEVELS or is_odor_level(c)]
+    index_cols = [c for c in cols if re.fullmatch(r"Unnamed: \d+", c)]  # (as to_csv writes an index)
+    leftover = [c for c in cols if c not in (*levels, BAD) and c not in row_cols and c not in index_cols]
     if value_col is None:
-        leftover = [c for c in cols if c not in col_levels and c not in levels and c not in row_cols]
         if len(leftover) == 1:
             value_col = leftover[0]
         else:
@@ -425,10 +449,13 @@ def _long_to_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
                 [f"long-format file needs a value column named one of {list(LONG_VALUE_COLUMNS)}; "
                  f"ambiguous leftover columns: {leftover}"]
             )
-    extra = [c for c in cols if c not in col_levels and c not in levels and c not in row_cols and c != value_col]
+    # any other columns: more levels of the ROIs (as in the wide layout)
+    extra_cols = [c for c in leftover if c != value_col]
+    col_levels = [c for c in ("date", "fly_num", *(extra_cols if "date" in cols or "fly_num" in cols else []), roi, BAD)
+                  if c in cols]  # (roi alone: no flies)
     warnings = []
-    if extra:
-        warnings.append(f"ignoring extra columns in long-format file: {extra}")
+    if index_cols:
+        warnings.append(f"ignoring index columns in long-format file: {index_cols}")
     # order row levels: panel, is_pair, odor*, repeat (like the wide example)
     ordered_rows = [c for c in ("panel", "is_pair") if c in row_cols]
     ordered_rows += sorted(odor_cols, key=lambda c: (len(c), c))
@@ -465,6 +492,71 @@ def _long_to_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
 
 
 # ------------------------------------------------------ uninformative row levels
+
+
+def rewritten_odor(s: str) -> Optional[str]:
+    """An odor string as this app writes odors, if it is written another way it reads:
+    ``name(conc)`` as ``name @ conc`` (``'1-5ol(-3)'`` -> ``'1-5ol @ -3'``), and a solvent
+    alone as at 0 (``'PFO'`` -> ``'pfo @ 0'``); None if it is neither (as it is)."""
+    t = s.strip()
+    if "@" in t or COMPONENT_DELIM in t:
+        return None
+    if t.lower() in SOLVENT_NAMES:
+        return f"{t.lower()} @ 0"
+    m = _PAREN_ODOR.fullmatch(t)
+    if m is None:
+        return None
+    return f"{m['name']} @ {format_conc(float(m['conc']))}"
+
+
+def date_str(v) -> Optional[str]:
+    """A date as stored ('YYYY-MM-DD'), from one as a file may write it: as a date (or
+    datetime), as YYYYMMDD (text or a number), or any way pandas reads one (e.g.
+    '2024-07-10', '2024/07/10'); None if it is none of these (a number not YYYYMMDD
+    included, which pandas would read as nanoseconds since 1970)."""
+    if isinstance(v, (pd.Timestamp, dt.datetime, dt.date)):
+        return None if pd.isna(v) else pd.Timestamp(v).strftime("%Y-%m-%d")
+    i = _to_int_like(v)
+    s = str(i) if i is not None else ("" if _missing(v) else str(v).strip())
+    if _YYYYMMDD.fullmatch(s):
+        try:
+            return dt.datetime.strptime(s, "%Y%m%d").strftime("%Y-%m-%d")
+        except ValueError:
+            return None
+    if not s or re.fullmatch(r"[-+]?\d+(\.\d*)?", s):
+        return None
+    with warnings_module.catch_warnings():
+        warnings_module.simplefilter("ignore")
+        ts = pd.to_datetime(s, errors="coerce")
+    return None if pd.isna(ts) else ts.strftime("%Y-%m-%d")
+
+
+def _time_of_day(v) -> bool:
+    """Whether a date as written (`date_str`) has a time of day besides (but midnight)."""
+    if isinstance(v, (pd.Timestamp, dt.datetime)):
+        return pd.Timestamp(v).time() != dt.time()
+    if not isinstance(v, str) or _YYYYMMDD.fullmatch(v.strip()):
+        return False
+    with warnings_module.catch_warnings():
+        warnings_module.simplefilter("ignore")
+        ts = pd.to_datetime(v.strip(), errors="coerce")
+    return not pd.isna(ts) and ts.time() != dt.time()
+
+
+def fly_key(date: Optional[str], fly_num: Optional[int], extra: Optional[dict]) -> tuple:
+    """What tells ROIs of a recording apart from those of another: their fly, and their
+    other levels (`extra`, e.g. the side of the brain), whatever the levels' order."""
+    return (date, fly_num, tuple(sorted((extra or {}).items())))
+
+
+def unit_key(u: dict) -> tuple:
+    """What tells a ROI apart from every other (of a dataset, or among datasets): `fly_key`, and its name."""
+    return (*fly_key(u["date"], u["fly_num"], u.get("extra")), u["roi"])
+
+
+def extra_text(extra: Optional[dict]) -> str:
+    """A ROI's other levels as said of it, e.g. 'hemibrain L'; '' if none."""
+    return ", ".join(f"{k} {v}" for k, v in (extra or {}).items())
 
 
 def _missing(v) -> bool:
@@ -584,18 +676,26 @@ def _id_ranges(ids: list[int]) -> str:
     return ", ".join(text[:6]) + (f" and {len(text) - 6} more" if len(text) > 6 else "")
 
 
-def kc_id_problems(units: list[tuple]) -> Optional[str]:
-    """Why KCs' ids are not as they must be, or None: each fly's (``(date, fly_num, id)``,
-    ids as integer strings) every one from 0 or 1 (as the lowest is) to the highest, so
-    that every KC segmented is there, those not to be used marked `BAD`."""
-    by_fly: dict[tuple, set[int]] = {}
-    for d, f, r in units:
-        by_fly.setdefault((d, f), set()).add(int(r))
+def kc_id_problems(units: list[dict]) -> Optional[str]:
+    """Why KCs' ids are not as they must be, or None: each fly's (of ``units``: ``date``,
+    ``fly_num``, ``roi``, the id as an integer string, and ``extra``) every one from 0 or 1
+    (as the lowest is) to the highest, so that every KC segmented is there, those not to be
+    used marked `BAD`. Of a fly whose ids repeat among the values of its other levels
+    (e.g. both sides of its brain, each numbered from 0), each such part's."""
+    by_fly: dict[tuple, dict[tuple, set[int]]] = {}
+    for u in units:
+        part = fly_key(u["date"], u["fly_num"], u.get("extra"))
+        by_fly.setdefault(part[:2], {}).setdefault(part, set()).add(int(u["roi"]))
+    checked: list[tuple[tuple, set[int]]] = []
+    for fly, parts in by_fly.items():
+        separate = sum(map(len, parts.values())) > len(set().union(*parts.values()))
+        checked += list(parts.items()) if separate else [((*fly, ()), set().union(*parts.values()))]
     problems = []
-    for (d, f), ids in sorted(by_fly.items(), key=lambda kv: (kv[0][0] or "", kv[0][1] or 0)):
+    for (d, f, extra), ids in sorted(checked, key=lambda kv: (kv[0][0] or "", kv[0][1] or 0, kv[0][2])):
         missing = sorted(set(range(0 if min(ids) == 0 else 1, max(ids) + 1)) - ids)
         if missing:
-            problems.append(f"{f'{d} fly {f}' if d is not None else 'the KCs'} has no {_id_ranges(missing)}")
+            where = f"{d} fly {f}" if d is not None else "the KCs"
+            problems.append(f"{where}{f' ({extra_text(dict(extra))})' if extra else ''} has no {_id_ranges(missing)}")
     if not problems:
         return None
     return (f"KC data must have every KC of each fly, their ids running from 0 (or 1) to the highest, none missing: "
@@ -617,13 +717,15 @@ def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
     has_bad = BAD in file_levels
     core = [_col_level(n) for n in file_levels if n != BAD]
     flies = isinstance(df.columns, pd.MultiIndex) and core != ["roi"]
+    extra_levels = [n for n in core if n not in COL_LEVELS]  # (kept with each ROI: its `extra`)
     if cells:
         df = df.copy()
         df.columns = df.columns.set_names([_col_level(n) for n in file_levels])
-    if file_levels.count(BAD) > 1 or (flies and (set(core) != set(COL_LEVELS) or len(core) != len(COL_LEVELS))):
+    if (file_levels.count(BAD) > 1 or "" in core or len(set(core)) != len(core) or set(extra_levels) & RESERVED_COL_LEVELS
+            or (flies and not set(COL_LEVELS) <= set(core))):
         errors.append(_col_levels_error(file_levels))
         raise ValidationError(errors)
-    want = [*(COL_LEVELS if flies else ["roi"]), *([BAD] if has_bad else [])]
+    want = [*(["date", "fly_num", *extra_levels, "roi"] if flies else ["roi"]), *([BAD] if has_bad else [])]
     if isinstance(df.columns, pd.MultiIndex) and [_col_level(n) for n in file_levels] != want:
         df = df.reorder_levels(want, axis=1)
         warnings.append(f"column levels were reordered from {file_levels} to {[CELLS if cells and l == 'roi' else l for l in want]}")
@@ -646,6 +748,17 @@ def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
         raise ValidationError([str(e)])
     idx_frame = df.index.to_frame(index=False)
     idx_frame.columns = row_names
+    rewritten: dict[str, str] = {}  # odors written another way -> as this app writes them (`rewritten_odor`)
+    for lvl in odor_levels:
+        def rewrite(v):
+            r = rewritten_odor(v) if isinstance(v, str) else None
+            if r is not None:
+                rewritten.setdefault(v.strip(), r)
+            return v if r is None else r
+        idx_frame[lvl] = idx_frame[lvl].map(rewrite)
+    if rewritten:
+        warnings.append(f"{len(rewritten)} odor string(s) were read as written the usual way (name @ log10 conc): "
+                        + _examples([f"{a} → {b}" for a, b in rewritten.items()]))
     dropped = uninformative_levels({n: idx_frame[n].tolist() for n in row_names})
     if dropped:
         names = [n for levels, _ in dropped for n in levels]
@@ -675,16 +788,15 @@ def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
         if not_bool:
             errors.append(f"'{BAD}' values must be True or False: {_examples(not_bool)}")
     dates_raw = cols_frame["date"].tolist()
-    with warnings_module.catch_warnings():
-        warnings_module.simplefilter("ignore")
-        parsed_dates = pd.to_datetime(pd.Series(dates_raw, dtype=object), errors="coerce")
-    bad_dates = sorted({str(d) for d, p in zip(dates_raw, parsed_dates) if pd.isna(p)}) if flies else []
+    distinct = {(type(d), str(d)): d for d in dates_raw}  # (each value read once: there are few)
+    as_dates = {k: date_str(d) if flies else None for k, d in distinct.items()}
+    date_strs = [as_dates[(type(d), str(d))] for d in dates_raw]
+    bad_dates = sorted({str(d) for k, d in distinct.items() if as_dates[k] is None}) if flies else []
     if bad_dates:
-        errors.append(f"unparseable 'date' values in column header: {_examples(bad_dates)}")
-    elif flies:
-        if any(ts.time() != pd.Timestamp(0).time() for ts in parsed_dates):
-            warnings.append("'date' values carry a time-of-day; only the date is kept")
-    date_strs = [None if pd.isna(p) else p.strftime("%Y-%m-%d") for p in parsed_dates]
+        errors.append(f"unparseable 'date' values in column header (dates are written e.g. 2024-07-10 or 20240710): "
+                      f"{_examples(bad_dates)}")
+    elif flies and any(_time_of_day(d) for d in distinct.values()):
+        warnings.append("'date' values carry a time-of-day; only the date is kept")
 
     fly_nums = []
     bad_fly = []
@@ -750,22 +862,42 @@ def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
         warnings.append(f"{len(set(merged))} ROI name(s) are of glomeruli that could not be told apart, each kept as one ROI: "
                         + _examples(sorted(set(merged), key=glom.roi_sort_key)))
 
-    unit_keys = list(zip(date_strs, fly_nums, rois))
+    # other levels of each ROI (as text: integers whole), e.g. {'hemibrain': 'L'}
+    extras: list[dict] = [{} for _ in rois]
+    for lvl in extra_levels:
+        empty = 0
+        for e, v in zip(extras, cols_frame[lvl].tolist()):
+            whole = not isinstance(v, str) or re.fullmatch(r"[-+]?\d+\.0+", v.strip())  # (2.0, as a CSV writes 2: '2')
+            i = _to_int_like(v) if whole else None
+            text = str(i) if i is not None else ("" if _missing(v) else str(v).strip())
+            empty += not text
+            e[lvl] = text
+        if empty:
+            errors.append(f"{empty} column(s) have no '{lvl}' (each ROI's, as for the other column levels)")
+    if extra_levels:
+        warnings.append("column levels besides date, fly_num and roi are kept with each ROI (ROIs differing in them are "
+                        "different ROIs): " + "; ".join(f"{lvl} ({_examples(sorted({e[lvl] for e in extras}), 8)})"
+                                                         for lvl in extra_levels))
+
+    units_found = [{"date": d, "fly_num": f, "roi": r, "extra": e} for d, f, r, e in zip(date_strs, fly_nums, rois, extras)]
     if cells and not bad_rois and not bad_dates and not bad_fly:
-        problem = kc_id_problems(unit_keys)
+        problem = kc_id_problems(units_found)
         if problem:
             errors.append(problem)
     seen = {}
     dup_units = []
-    for k in unit_keys:
+    for u in units_found:
+        k = unit_key(u)
         if k in seen:
-            dup_units.append(k)
+            dup_units.append(u)
         seen[k] = True
     if dup_units:
-        after = " (after removing their suffixes)" if any(r in suffixed.values() for _, _, r in dup_units) else ""
+        after = " (after removing their suffixes)" if any(u["roi"] in suffixed.values() for u in dup_units) else ""
+        levels = ", ".join(["date", "fly_num", *extra_levels, "roi"])
         errors.append(
-            ("columns must be unique (date, fly_num, roi); duplicated: " if flies else "ROIs must be unique (there are no flies to tell them apart); duplicated: ")
-            + _examples(sorted({f"{d} fly{f} {r}" if flies else r for d, f, r in dup_units})) + after
+            (f"columns must be unique ({levels}); duplicated: " if flies else "ROIs must be unique (there are no flies to tell them apart); duplicated: ")
+            + _examples(sorted({f"{u['date']} fly{u['fly_num']}{' ' + extra_text(u['extra']) if u['extra'] else ''} {u['roi']}"
+                                if flies else u["roi"] for u in dup_units})) + after
         )
 
     # ---- row values: odors / repeat / panel ----------------------------------
@@ -878,10 +1010,7 @@ def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
     if all_nan_trials:
         warnings.append(f"{all_nan_trials} trial row(s) contain only NaN")
 
-    units = [
-        {"date": d, "fly_num": f, "roi": r, "roi_kind": k, "bad": b}
-        for (d, f, r), k, b in zip(unit_keys, roi_kinds, bads)
-    ]
+    units = [{**u, "roi_kind": k, "bad": b} for u, k, b in zip(units_found, roi_kinds, bads)]
     trials = []
     for i in range(len(idx_frame)):
         extra = {

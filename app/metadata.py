@@ -167,6 +167,8 @@ def generate_readme(m: Metadata, summary: dict, files: dict[str, Any], *, create
         lines.append("- flies: " + "; ".join(fly_strs))
     else:
         lines.append("- flies: not given (the columns are ROIs alone)")
+    for level, values in (summary.get("extra_levels") or {}).items():
+        lines.append(f"- {level} (of each ROI; ROIs differing in it are different ROIs): {', '.join(map(str, values))}")
     nan = summary.get("nan_fraction", 0.0) or 0.0
     if nan > 0:
         lines.append(f"- missing cells: {nan:.1%}")

@@ -220,7 +220,7 @@ def test_dataset_without_flies(store, tmp_path, monkeypatch):
     db, datasets_dir = store
     ds_id = add(store, parsed)
     m = db.get_matrix_arrays(ds_id)
-    assert m["units"][0] == {"date": None, "fly_num": None, "roi": "D", "roi_kind": "glomerulus", "bad": None}
+    assert m["units"][0] == {"date": None, "fly_num": None, "roi": "D", "roi_kind": "glomerulus", "bad": None, "extra": {}}
     d = db.get_dataset(ds_id)
     assert d["n_flies"] == 0 and d["last_fly_date"] is None
     # downloaded as uploaded (a single header line; long without date or fly_num), which would now be refused
@@ -534,3 +534,29 @@ def test_clusterings_kept(main, store, tmp_path, two):  # noqa: F811
     db.delete_dataset(ib)
     with db.connect() as con:
         assert con.execute("SELECT count(*) FROM clusterings WHERE dataset_id = ?", (ib,)).fetchone()[0] == 0
+
+
+def test_extra_levels(store, tmp_path):
+    # ROIs' other column levels (e.g. each side of a brain), downloaded as uploaded; empty for datasets without them
+    names = ("date", "fly_num", "hemibrain", "roi")
+    cols = [("2024-01-01", 1, "L", "DM2"), ("2024-01-01", 1, "R", "DM2"), ("2024-01-02", 1, "L", "DL5")]
+    sided = load_file(write_csv(make_wide(ROWS, cols, col_names=names), tmp_path, "sided.csv"))
+    db, datasets_dir = store
+    a, b = add(store, sided), add(store, parse(tmp_path, ROWS, COLS, name="plain.csv"))
+    assert [u["extra"] for u in db.get_matrix_arrays(a)["units"]] == [{"hemibrain": "L"}, {"hemibrain": "R"}, {"hemibrain": "L"}]
+    assert db.get_matrix_arrays(b)["units"][0]["extra"] == {}
+    out = tmp_path / "out.csv"
+    write_download(db, [a], "wide", out, datasets_dir)
+    again = load_file(out.rename(tmp_path / "again.csv"))
+    assert [(u["date"], u["extra"], u["roi"]) for u in again.units] == [(u["date"], u["extra"], u["roi"]) for u in sided.units]
+    write_download(db, [a], "long", out, datasets_dir)
+    assert out.read_text().splitlines()[0].startswith("date,fly_num,hemibrain,roi,")
+    assert [u["extra"] for u in load_file(out.rename(tmp_path / "again_long.csv")).units] == [u["extra"] for u in sided.units]
+    # of several: a level for it, empty for the ROIs of a dataset without it
+    zip_path = tmp_path / "both.zip"
+    write_download(db, [a, b], "wide", zip_path, datasets_dir)
+    with zipfile.ZipFile(zip_path) as zf:
+        member = next(n for n in zf.namelist() if n.endswith("responses_wide.csv"))
+    wide = read_member(zip_path, member, header=[0, 1, 2, 3, 4], index_col=[0, 1, 2, 3])
+    assert list(wide.columns.names) == ["dataset_id", "date", "fly_num", "hemibrain", "roi"]
+    assert [c[3] for c in wide.columns][:3] == ["L", "R", "L"] and all(str(c[3]).startswith("Unnamed") for c in wide.columns[3:])

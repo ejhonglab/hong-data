@@ -205,9 +205,121 @@ def test_missing_odor_level(tmp_path):
 
 
 def test_wrong_column_levels(tmp_path):
-    df = make_wide(ROWS, [("2024-01-01", 1, "DM2", "x")], col_names=("date", "fly_num", "roi", "extra"))
+    # date and fly_num needed, besides any others; each named once; none named as a row level, or as downloads add
+    df = make_wide(ROWS, [("x", "DM2")], col_names=("hemibrain", "roi"))
     e = errors_for(df, tmp_path)
     assert "date" in e and "fly_num" in e
+    for names in (("date", "fly_num", "x", "x", "roi"), ("date", "fly_num", "panel", "x", "roi"), ("date", "fly_num", "dataset_id", "x", "roi")):
+        e = errors_for(make_wide(ROWS, [("2024-01-01", 1, "a", "b", "DM2")], col_names=names), tmp_path)
+        assert "column header levels must include" in e, e
+
+
+def test_extra_column_levels(tmp_path):
+    # kept with each ROI: the same ROI of each side of the brain of a fly, two ROIs
+    cols = [("2024-01-01", 1, "L", "DM2"), ("2024-01-01", 1, "R", "DM2"), ("2024-01-01", 1, "L", "DL5"), ("2024-01-02", 1, "R", "DM2")]
+    parsed = load_file(write_csv(make_wide(ROWS, cols, col_names=("date", "fly_num", "hemibrain", "roi")), tmp_path))
+    assert [(u["roi"], u["extra"]) for u in parsed.units] == [("DM2", {"hemibrain": "L"}), ("DM2", {"hemibrain": "R"}),
+                                                              ("DL5", {"hemibrain": "L"}), ("DM2", {"hemibrain": "R"})]
+    s = parsed.summary()
+    assert s["n_units"] == 4 and s["n_flies"] == 2 and s["flies"][0]["n_rois"] == 3
+    assert s["col_levels"] == ["date", "fly_num", "hemibrain", "roi"] and s["extra_levels"] == {"hemibrain": ["L", "R"]}
+    assert any("hemibrain ('L', 'R')" in w for w in parsed.warnings)
+    # in any order (put after the fly), integers as such, several of them
+    cols = [("DM2", 1, "2024-01-01", 2.0, "a"), ("DM2", 1, "2024-01-01", 3.0, "a")]
+    parsed = load_file(write_csv(make_wide(ROWS, cols, col_names=("roi", "fly_num", "date", "plane", "x")), tmp_path))
+    assert [u["extra"] for u in parsed.units] == [{"plane": "2", "x": "a"}, {"plane": "3", "x": "a"}]
+    assert parsed.col_levels == ["date", "fly_num", "plane", "x", "roi"] and any("reordered" in w for w in parsed.warnings)
+    # unique with them; each ROI with each
+    e = errors_for(make_wide(ROWS, [("2024-01-01", 1, "L", "DM2"), ("2024-01-01", 1, "L", "DM2")],
+                             col_names=("date", "fly_num", "hemibrain", "roi")), tmp_path)
+    assert "columns must be unique (date, fly_num, hemibrain, roi)" in e and "2024-01-01 fly1 hemibrain L DM2" in e
+    e = errors_for(make_wide(ROWS, [("2024-01-01", 1, "", "DM2"), ("2024-01-01", 1, "R", "DM2")],
+                             col_names=("date", "fly_num", "hemibrain", "roi")), tmp_path)
+    assert "1 column(s) have no 'hemibrain'" in e
+    # in parquet too
+    p = tmp_path / "x.parquet"
+    make_wide(ROWS, cols[:2] and [("2024-01-01", "1", "L", "DM2"), ("2024-01-01", "1", "R", "DM2")],
+              col_names=("date", "fly_num", "hemibrain", "roi")).to_parquet(p)
+    assert [u["extra"] for u in load_file(p).units] == [{"hemibrain": "L"}, {"hemibrain": "R"}]
+
+
+def test_long_extra_columns(tmp_path):
+    cols = [("2024-01-01", 1, "L", "DM2"), ("2024-01-01", 1, "R", "DM2")]
+    wide = make_wide(ROWS, cols, col_names=("date", "fly_num", "hemibrain", "roi"))
+    long = wide.stack(list(range(4)), future_stack=True).rename("value").reset_index()
+    p = tmp_path / "long.csv"
+    long.to_csv(p)  # (with its index, an 'Unnamed: 0' column, ignored)
+    parsed = load_file(p)
+    assert [(u["roi"], u["extra"]) for u in parsed.units] == [("DM2", {"hemibrain": "L"}), ("DM2", {"hemibrain": "R"})]
+    assert any("ignoring index columns" in w for w in parsed.warnings)
+    # a value column by any name, if it is the only other one
+    long.rename(columns={"value": "x"}).to_csv(p, index=False)
+    with pytest.raises(ValidationError, match="ambiguous leftover columns"):
+        load_file(p)
+
+
+def test_dates(tmp_path):
+    # as YYYYMMDD too (text, or a number), each value read on its own
+    cols = [("20240710", 1, "DM2"), ("2024-07-11", 1, "DM2"), (20240712, 1, "DM2"), ("2024/07/13", 1, "DM2")]
+    parsed = load_file(write_csv(make_wide(ROWS, cols), tmp_path))
+    assert [u["date"] for u in parsed.units] == ["2024-07-10", "2024-07-11", "2024-07-12", "2024-07-13"]
+    assert not any("time-of-day" in w for w in parsed.warnings)
+    # as numbers, in parquet and long files (not as nanoseconds since 1970)
+    p = tmp_path / "x.parquet"
+    df = make_wide(ROWS, [(20240710, 1, "DM2")])
+    df.columns = pd.MultiIndex.from_tuples([(20240710, "1", "DM2")], names=["date", "fly_num", "roi"])
+    df.to_parquet(p)
+    assert load_file(p).units[0]["date"] == "2024-07-10"
+    long = make_wide(ROWS, [("2024-07-10", 1, "DM2")]).stack(list(range(3)), future_stack=True).rename("value").reset_index()
+    long["date"] = 20240710
+    long.to_csv(p := tmp_path / "long.csv", index=False)
+    assert load_file(p).units[0]["date"] == "2024-07-10"
+    # not dates
+    e = errors_for(make_wide(ROWS, [("20241340", 1, "DM2"), ("12345", 1, "DM2")]), tmp_path)
+    assert "unparseable 'date' values" in e and "'20241340'" in e and "'12345'" in e
+    parsed = load_file(write_csv(make_wide(ROWS, [("2024-07-10 13:00", 1, "DM2")]), tmp_path))
+    assert any("time-of-day" in w for w in parsed.warnings)
+
+
+def test_odors_written_otherwise(tmp_path):
+    # 'name(conc)' as 'name @ conc', and a solvent alone as at 0, said so
+    rows = [("p1", False, odor, "PFO", rep) for odor in ("1-5ol(-3)", "PFO", "a-Pine (-2)") for rep in (0, 1)]
+    parsed = load_file(write_csv(make_wide(rows, COLS), tmp_path))
+    assert [t["odor"] for t in parsed.trials[::2]] == ["1-5ol @ -3", "pfo @ 0", "a-Pine @ -2"]
+    assert parsed.row_levels == ["panel", "odor1", "repeat"]  # (odor2: nothing but pfo, as is_pair: nothing)
+    assert any("3 odor string(s) were read as written the usual way" in w and "1-5ol(-3) → 1-5ol @ -3" in w for w in parsed.warnings)
+
+
+def test_kc_ids_by_side(tmp_path):
+    # numbered on each side of the brain (each from 0): each side's checked; else the fly's
+    names = ("date", "fly_num", "hemibrain", "cells")
+    ok = [("2024-01-01", 1, "L", i) for i in range(3)] + [("2024-01-01", 1, "R", i) for i in range(2)]
+    assert load_file(write_csv(make_wide(ROWS, ok, col_names=names), tmp_path)).summary()["n_units"] == 5
+    gap = [("2024-01-01", 1, "L", i) for i in range(3)] + [("2024-01-01", 1, "R", i) for i in (0, 2)]
+    e = errors_for(make_wide(ROWS, gap, col_names=names), tmp_path)
+    assert "2024-01-01 fly 1 (hemibrain R) has no 1" in e
+    across = [("2024-01-01", 1, "L", 0), ("2024-01-01", 1, "L", 1), ("2024-01-01", 1, "R", 2)]
+    assert load_file(write_csv(make_wide(ROWS, across, col_names=names), tmp_path)).summary()["n_units"] == 3
+    across[2] = ("2024-01-01", 1, "R", 3)
+    assert "2024-01-01 fly 1 has no 2" in errors_for(make_wide(ROWS, across, col_names=names), tmp_path)
+
+
+TNT3C = HERE.parent / "examples" / "yang_data" / "TNT3c"
+
+
+@pytest.mark.skipif(not (TNT3C / "TNT3c_20240710_2FLfun1_respbytrial.csv").exists(), reason="examples/yang_data not here")
+def test_tnt3c_example(tmp_path):
+    # each side of a fly's brain, as recorded, and both together: their cells told apart by their hemibrain
+    left = load_file(TNT3C / "TNT3c_20240710_2FLfun1_respbytrial.csv")
+    right = load_file(TNT3C / "TNT3c_20240710_2FRfun1_respbytrial.csv")
+    assert {u["extra"]["hemibrain"] for u in left.units} == {"L"} and {u["date"] for u in right.units} == {"2024-07-10"}
+    assert left.summary()["panel_names"] == ["APL16"] and left.trials[0]["odor"] == "1-5ol @ -3"
+    both = pd.concat([pd.read_csv(TNT3C / f"TNT3c_20240710_2F{side}fun1_respbytrial.csv", header=[0, 1, 2, 3], index_col=[0, 1, 2])
+                      for side in "LR"], axis=1)
+    parsed = load_file(write_csv(both, tmp_path))
+    s = parsed.summary()
+    assert s["n_units"] == len(left.units) + len(right.units) and s["n_flies"] == 1 and s["extra_levels"] == {"hemibrain": ["L", "R"]}
+    assert len({(u["extra"]["hemibrain"], u["roi"]) for u in parsed.units}) == s["n_units"]
 
 
 def test_bad_date_and_fly(tmp_path):

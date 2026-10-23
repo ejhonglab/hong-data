@@ -42,7 +42,7 @@ import pandas as pd
 
 from . import merge, odormeta
 from .db import Database
-from .ingest import BAD, CELLS, COL_LEVELS
+from .ingest import BAD, CELLS
 from .odors import SOLVENT_STR, is_odor_level, lowercase_map, lowercase_odor, odor_level_sort_key, odor_names
 
 FORMATS = ("files", "wide", "long")
@@ -158,10 +158,17 @@ def _has_bad(matrices: Iterable[dict]) -> bool:
     return any(u.get("bad") is not None for m in matrices for u in m["units"])
 
 
+def extra_levels(matrices: Iterable[dict]) -> list[str]:
+    """The ROIs' other column levels (e.g. hemibrain) of any of the datasets, in the order first found."""
+    return list(dict.fromkeys(k for m in matrices for u in m["units"] for k in (u.get("extra") or {})))
+
+
 def unit_levels(matrices: Iterable[dict]) -> list[str]:
-    """The column levels of a download of several datasets: ``UNIT_LEVELS``, and `BAD` if
-    any says (False for the ROIs of those that do not)."""
-    return [*UNIT_LEVELS, *([BAD] if _has_bad(matrices) else [])]
+    """The column levels of a download of several datasets: ``UNIT_LEVELS``, with the ROIs'
+    other levels of any of them before roi (empty for the ROIs of those without), and `BAD`
+    if any says (False for the ROIs of those that do not)."""
+    matrices = list(matrices)
+    return [*UNIT_LEVELS[:-1], *extra_levels(matrices), UNIT_LEVELS[-1], *([BAD] if _has_bad(matrices) else [])]
 
 
 def wide_frame(matrices: list[tuple[int, dict]]) -> pd.DataFrame:
@@ -181,9 +188,11 @@ def wide_frame(matrices: list[tuple[int, dict]]) -> pd.DataFrame:
     values = np.full((len(row_index), sum(len(m["units"]) for _, m in matrices)), np.nan, dtype=np.float32)
     cols = []
     names = unit_levels(m for _, m in matrices)
+    extras = extra_levels(m for _, m in matrices)
     for (ds_id, m), r in zip(matrices, rows):
         values[r, len(cols):len(cols) + len(m["units"])] = m["values"].T
-        cols += [(ds_id, u["date"], u["fly_num"], u["roi"], *([bool(u.get("bad"))] if BAD in names else [])) for u in m["units"]]
+        cols += [(ds_id, u["date"], u["fly_num"], *((u.get("extra") or {}).get(k, "") for k in extras), u["roi"],
+                  *([bool(u.get("bad"))] if BAD in names else [])) for u in m["units"]]
     return pd.DataFrame(
         values,
         index=pd.MultiIndex.from_tuples(list(row_index), names=levels),
@@ -193,8 +202,8 @@ def wide_frame(matrices: list[tuple[int, dict]]) -> pd.DataFrame:
 
 def dataset_frame(m: dict, levels: list[str], keys: list[tuple], cells: bool = False) -> pd.DataFrame:
     """One dataset's trials x ROIs as uploaded: rows indexed by `levels`, columns by date /
-    fly_num / roi (by roi alone, for a dataset without flies, so a CSV of it has one header
-    line), and `BAD` if it says which ROIs are not to be used.
+    fly_num / its ROIs' other levels / roi (by roi alone, for a dataset without flies, so a
+    CSV of it has one header line), and `BAD` if it says which ROIs are not to be used.
 
     Args:
         m: as returned by `Database.get_matrix_arrays`.
@@ -203,9 +212,11 @@ def dataset_frame(m: dict, levels: list[str], keys: list[tuple], cells: bool = F
     """
     flies = any(u["date"] is not None for u in m["units"])
     bad = _has_bad([m])
-    names = [*(COL_LEVELS if flies else ["roi"]), *([BAD] if bad else [])]
+    extras = extra_levels([m])
+    names = [*(["date", "fly_num", *extras, "roi"] if flies else ["roi"]), *([BAD] if bad else [])]
     names = [CELLS if cells and n == "roi" else n for n in names]
-    cols = [(*((u["date"], u["fly_num"]) if flies else ()), u["roi"], *([bool(u["bad"])] if bad else [])) for u in m["units"]]
+    cols = [(*((u["date"], u["fly_num"], *((u.get("extra") or {}).get(k, "") for k in extras)) if flies else ()), u["roi"],
+             *([bool(u["bad"])] if bad else [])) for u in m["units"]]
     return pd.DataFrame(
         m["values"].T,
         index=pd.MultiIndex.from_tuples(keys, names=levels),
@@ -215,9 +226,10 @@ def dataset_frame(m: dict, levels: list[str], keys: list[tuple], cells: bool = F
 
 def write_long(f: TextIO, matrices: list[tuple[int, dict]], levels: list[str], keys: list[list[tuple]], *,
                dataset_id: bool = True) -> None:
-    """Write one CSV row per non-missing value: [dataset_id,] date, fly_num, roi, [bad,] trial
-    levels, value (date and fly_num left out for a dataset alone without flies; empty for one
-    among others; bad if any dataset says which ROIs are not to be used, False for others').
+    """Write one CSV row per non-missing value: [dataset_id,] date, fly_num, [the ROIs' other
+    levels,] roi, [bad,] trial levels, value (date and fly_num left out for a dataset alone
+    without flies; empty for one among others, as other levels are for a dataset without
+    them; bad if any dataset says which ROIs are not to be used, False for others').
 
     Args:
         matrices: (dataset id, `Database.get_matrix_arrays` dict) pairs.
@@ -228,6 +240,7 @@ def write_long(f: TextIO, matrices: list[tuple[int, dict]], levels: list[str], k
     header = True
     flies = dataset_id or any(u["date"] is not None for _, m in matrices for u in m["units"])
     bad = _has_bad(m for _, m in matrices)
+    extras = extra_levels(m for _, m in matrices) if flies else []
     for (ds_id, m), ks in zip(matrices, keys):
         trial_cols = [np.array(col, dtype=object) for col in zip(*ks)]
         for start in range(0, len(m["units"]), LONG_CHUNK_UNITS):
@@ -238,6 +251,7 @@ def write_long(f: TextIO, matrices: list[tuple[int, dict]], levels: list[str], k
                 **({"dataset_id": np.full(len(ui), ds_id)} if dataset_id else {}),
                 **({"date": np.array([u["date"] for u in units], dtype=object)[ui],
                     "fly_num": np.array([u["fly_num"] for u in units], dtype=object)[ui]} if flies else {}),
+                **{k: np.array([(u.get("extra") or {}).get(k, "") for u in units], dtype=object)[ui] for k in extras},
                 "roi": np.array([u["roi"] for u in units], dtype=object)[ui],
                 **({BAD: np.array([bool(u.get("bad")) for u in units])[ui]} if bad else {}),
                 **{lvl: col[ti] for lvl, col in zip(levels, trial_cols)},

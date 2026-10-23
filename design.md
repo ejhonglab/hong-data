@@ -138,7 +138,22 @@ between the frontend and the server. Using the app is described in
   all and only the same flies are refused, some of them warned of, naming the dataset
   that may need deleting, as a fuller upload may replace an earlier one. Another
   person's fly numbers of a day are their own, and one fly may be recorded in two
-  places (coding units).
+  places (coding units). A fly here is its ROIs' other column levels too
+  (`ingest.fly_key`): each side of a fly's brain uploaded apart is not the other's
+  duplicate.
+- **Other column levels are part of a ROI's identity.** Besides date, fly_num and roi
+  (and bad), a file's column levels (e.g. `hemibrain`) are kept with each unit
+  (`units.extra_json`, as `extra` in the arrays served), and a unit is its fly, those
+  and its name (`ingest.unit_key`): the left and right cells 0 of a fly are two units,
+  as their recordings are two parts of the fly (for KC ids, numbered each on its own
+  when their ids repeat across them; for Sum over KCs, summed apart). A fly's count of
+  ROIs is still over all its parts. In Compare, a glomerulus column is the mean over the
+  flies and sides that have it, as a reference dataset's glomerulus is one; ROI columns
+  are labelled with their levels. Downloads have a level for each (empty for datasets
+  without it), so that a download reads back as it was uploaded.
+- **Dates are read value by value.** As YYYYMMDD (text or a number) first, then any way
+  pandas reads one: a number pandas would take for nanoseconds since 1970 is not a date,
+  and one file may mix ways of writing them.
 - **ROIs marked bad are kept, and left out where used.** KC datasets must have every KC
   of each fly (ids from 0 or 1 to the highest, `ingest.kc_id_problems`), so that a
   dataset says which KCs were segmented and not used rather than leaving gaps: those
@@ -544,7 +559,7 @@ tests/             pytest tests
 ## Storage
 
 `data/olfdb.sqlite3` tables: `datasets` (metadata, README, summary), `dataset_panels`,
-`units` (date, fly_num, roi), `trials` (panel, odor, components, repeat), `responses`
+`units` (date, fly_num, roi, bad, other column levels), `trials` (panel, odor, components, repeat), `responses`
 (one row per cell, for SQL queries), `matrices` (the same values as a float32 blob for
 fast serving), `users` (each user's folders on tensor), `odors` and `odor_syncs`,
 `pubchem` (each odor CID's InChI, and its properties looked up through chemutils: vapor pressure,

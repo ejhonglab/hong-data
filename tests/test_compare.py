@@ -93,3 +93,19 @@ def test_api(main, tmp_path):  # noqa: F811
     ds_id, _ = insert(main.db, tmp_path)
     status, r = call(main.compare_dataset, path_params={"ds_id": ds_id})
     assert status == 200 and r["kind"] == "glomeruli" and r["rows"][0]["odor"] == "va @ -3"
+
+
+def test_dataset_extra_levels(tmp_path):
+    # a ROI's other levels in its label (each side of a brain); glomeruli the mean over both
+    db = Database(tmp_path / "db.sqlite3")
+    apply_all(db, rows_of(HEADER + "valeric acid,va,,7991,,,,,,,,,\nethyl acetate,ea,,8857,,,,,,,,,\n"))
+    cols = [("2024-01-01", 1, "L", "0"), ("2024-01-01", 1, "R", "0")]
+    ds_id, v = insert(db, tmp_path, cols=cols, col_names=("date", "fly_num", "hemibrain", "roi"))
+    assert [c["label"] for c in compare.dataset(db, ds_id, tmp_path)["cols"]] == ["2024-01-01 fly 1 hemibrain L: 0",
+                                                                                  "2024-01-01 fly 1 hemibrain R: 0"]
+    ds_id, v = insert(db, tmp_path, cols=[("2024-01-01", 1, "L", "DM2"), ("2024-01-01", 1, "R", "DM2")],
+                      col_names=("date", "fly_num", "hemibrain", "roi"))
+    d = compare.dataset(db, ds_id, tmp_path)
+    assert [(c["label"], c["n_flies"]) for c in d["cols"]] == [("DM2", 1)]
+    m = np.frombuffer(base64.b64decode(d["values_b64"]), "<f4").reshape(3, 1)
+    np.testing.assert_allclose(m[0, 0], v[0:2].mean())

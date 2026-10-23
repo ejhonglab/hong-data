@@ -557,6 +557,36 @@ def test_duplicates(main, tmp_path, monkeypatch):
     assert status == 422 and any("are exactly those of dataset #2 (t), uploaded by Jon on 2026-10-22" in e for e in r["errors"])
 
 
+def test_duplicates_by_side(main, tmp_path, monkeypatch):
+    # each side of a fly's brain (as other column levels tell them apart) a recording of its own
+    from app import config
+
+    monkeypatch.setattr(config, "STAGING_DIR", tmp_path / "staging")
+    monkeypatch.setattr(config, "ODOR_SHEET_URL", "")
+    names = ("date", "fly_num", "hemibrain", "roi")
+    side = lambda s, n=2: [("2024-07-10", 2, s, str(i)) for i in range(n)]
+    left = load_file(write_csv(make_wide(ROWS, side("L"), col_names=names), tmp_path, "left.csv"))
+    main.db.insert_dataset(
+        created_at="2026-10-23T10:00:00", title="t", readme_md="#", readme_edited=False, data_file="left.csv",
+        metadata={"uploader_name": "Yang", "indicator": "GCaMP6f", "driver": "MB247", "coding_unit": "KCs"},
+        data_format=left.source_format, data_sha256="2" * 64, odor_yaml_files=[], experiment_xml_file=None,
+        experiment_xml_info=None, summary=left.summary(), units=left.units, trials=left.trials, values=left.values)
+    md = {"uploader_name": "Yang", "indicator": "GCaMP6f", "driver": "MB247", "coding_unit": "KCs"}
+
+    def readme(path):
+        status, r = upload(main, path)
+        assert status == 200, r
+        return call(main.stage_readme, body={"metadata": md}, path_params={"stage_id": r["stage"]["stage_id"]})[1]
+
+    # the other side: no duplicate; the same side again: refused; both: a possible duplicate
+    r = readme(write_csv(make_wide(ROWS, side("R"), col_names=names), tmp_path, "right.csv"))
+    assert r["ok"] and r["warnings"] == []
+    r = readme(write_csv(make_wide(ROWS, side("L"), np.ones((len(ROWS), 2)), col_names=names), tmp_path, "left2.csv"))
+    assert not r["ok"] and "its flies (2024-07-10 fly 2 (hemibrain L)) are exactly those of dataset #1" in r["errors"][0]
+    r = readme(write_csv(make_wide(ROWS, side("L") + side("R"), col_names=names), tmp_path, "both.csv"))
+    assert r["ok"] and r["warnings"][0].startswith("possible duplicate: 1 of its 2 flies (2024-07-10 fly 2 (hemibrain L)) is also in")
+
+
 def test_check_data_path(root, tmp_path):
     assert tensor.check_data_path("tom//raw/", root) == {"input": "tom//raw/", "path": "tom/raw", "ok": True, "error": None,
                                                           "warning": None}
