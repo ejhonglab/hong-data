@@ -464,7 +464,7 @@ async def stage_lookup(request: Request) -> Response:
 
 
 _FIELD_LABELS = {
-    "uploader_name": "your name", "indicator": "calcium indicator", "driver": "Gal4 driver",
+    "uploader_name": "your name", "indicator": "calcium indicator", "driver": "driver",
     "coding_unit": "coding unit", "age_min_days": "fly age (min)", "age_max_days": "fly age (max)",
     "power_mw": "power (mW)", "power_tolerance_mw": "power tolerance", "wavelength_nm": "wavelength",
     "panel_names": "panel name(s)", "recording_system": "recording system", "source_code_url": "analysis code link",

@@ -82,7 +82,7 @@
         <label class="field"><span>Calcium indicator *</span>
           <div class="combo"><select name="indicator_select" id="indicator-select"></select><input name="indicator_other" id="indicator-other" placeholder="e.g. jGCaMP8f-opt" hidden></div>
         </label>
-        <label class="field"><span>Gal4 driver *</span><input name="driver" required list="dl-drivers" placeholder="e.g. GH146-Gal4"></label>
+        <label class="field"><span>Driver * <span class="muted">(e.g. Gal4, LexA, etc.)</span></span><input name="driver" required list="dl-drivers" placeholder="e.g. GH146-Gal4"></label>
         <label class="field"><span>Coding unit recorded from *</span>
           <div class="combo"><select name="coding_unit_select" id="coding-unit-select"></select><input name="coding_unit_other" id="coding-unit-other" placeholder="e.g. PNs" hidden></div>
         </label>
@@ -438,7 +438,7 @@
       <p class="muted">Filled into the upload form for every new dataset, unless its files (or its data on tensor) give a value. Checked as the upload form checks them when you leave a field, and kept on this computer only.</p>
       <div class="grid">
         <label class="field"><span>Calcium indicator</span><input name="indicator" list="dl-indicators"></label>
-        <label class="field"><span>Gal4 driver</span><input name="driver" list="dl-drivers" placeholder="e.g. GH146-Gal4"></label>
+        <label class="field"><span>Driver <span class="muted">(e.g. Gal4, LexA, etc.)</span></span><input name="driver" list="dl-drivers" placeholder="e.g. GH146-Gal4"></label>
         <label class="field"><span>Coding unit recorded from</span><input name="coding_unit" list="dl-coding-units"></label>
         <label class="field"><span>Recording system</span><input name="recording_system" list="dl-systems"></label>
         <label class="field span2"><span>Full fly genotype</span><input name="genotype" list="dl-genotypes" placeholder="e.g. w;GH146-Gal4/UAS-GCaMP6f;+"></label>

@@ -19,7 +19,7 @@ expected, and nothing secret is entered. If a download or the page is blocked, s
 2. **Upload**: drop your CSV or parquet file of responses (see
    [Data file format](#data-file-format)). It is checked and shown as a heatmap before
    anything is saved; if problems are listed, fix them all and drop the file again. Fill
-   in the experiment details (your name, indicator, Gal4 driver and coding unit are
+   in the experiment details (your name, indicator, driver and coding unit are
    required). Most are filled in for you from your settings, the file and your data on
    tensor, each colored by where it came from. If some of its odors are not in the odor
    table yet, the form lists them, with rows to paste into the odor sheet and a button

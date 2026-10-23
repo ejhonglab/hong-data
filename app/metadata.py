@@ -131,7 +131,7 @@ def generate_readme(m: Metadata, summary: dict, files: dict[str, Any], *, create
     rows = [
         ("Uploaded by", f"{m.uploader_name} ({created_at:%Y-%m-%d})"),
         ("Panel(s)", ", ".join(m.panel_names) if m.panel_names else None),
-        ("Gal4 driver", m.driver),
+        ("Driver", m.driver),
         ("Indicator", m.indicator),
         ("Full genotype", m.genotype),
         ("Coding unit", m.coding_unit),

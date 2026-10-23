@@ -1703,7 +1703,7 @@ class UploadFlow {
     const errs = [];
     if (!meta.uploader_name) errs.push('your name is required');
     if (!meta.indicator) errs.push('calcium indicator is required');
-    if (!meta.driver) errs.push('Gal4 driver is required');
+    if (!meta.driver) errs.push('driver is required');
     if (!meta.coding_unit) errs.push('coding unit is required');
     if (meta.age_min_days != null && meta.age_max_days != null && meta.age_max_days < meta.age_min_days) errs.push('fly age range: max is smaller than min');
     if (this.yamlCheck && !this.yamlCheck.ok) errs.push('the odor YAML check has not passed');
@@ -3519,7 +3519,7 @@ const COMPARE_KEY = 'olfdb.compare';
 const UNIT_NAMES = { kc: 'KCs', kcs: 'KCs', orn: 'ORNs', orns: 'ORNs', pn: 'PNs', pns: 'PNs' };
 
 // a dataset's name as a space: what was recorded (its coding unit; for glomeruli, ORNs if
-// its Gal4 driver is pebbled, PNs if GH146)
+// its driver is pebbled, PNs if GH146)
 function neuralSpaceName(d) {
   const unit = (d.coding_unit || '').trim().replace(/\s+/g, ' ');
   if (unitKey(unit) !== 'glomeruli') return UNIT_NAMES[unitKey(unit)] || unit || `#${d.id}`;
