@@ -135,11 +135,20 @@ def test_int_rois_and_single_odor_level(tmp_path):
     assert [u["roi"] for u in p.units] == ["0", "1", "25"]
 
 
-def test_no_repeat_level_warns(tmp_path):
-    df = make_wide([("va @ -3",), ("ea @ -2",)], COLS, row_names=("odor1",))
+def test_trials_required(tmp_path):
+    # each trial numbered: without, refused (as averaged over trials, say)
+    e = errors_for(make_wide([("va @ -3",), ("ea @ -2",)], COLS, row_names=("odor1",)), tmp_path)
+    assert e.startswith("no trials: each trial's number is needed, in a row level (in a long file, a column) named repeat "
+                        "(or trial) of integers (0, 1, 2... or 1, 2, 3...): one row per trial, not averaged over trials")
+    # 'trial' for 'repeat', in either layout; integers
+    df = make_wide([("va @ -3", 1), ("va @ -3", 2)], COLS, row_names=("odor1", "trial"))
     p = load_file(write_csv(df, tmp_path))
-    assert any("repeat" in w for w in p.warnings)
-    assert all(t["repeat"] == 0 for t in p.trials)
+    assert [t["repeat"] for t in p.trials] == [1, 2] and "repeat" in p.row_levels and p.summary()["has_repeat_level"]
+    long = df.stack(list(range(3)), future_stack=True).rename("value").reset_index()
+    long.to_csv(tmp_path / "long.csv", index=False)
+    assert [t["repeat"] for t in load_file(tmp_path / "long.csv").trials] == [1, 2]
+    e = errors_for(make_wide([("va @ -3", 1.5), ("va @ -3", "two")], COLS, row_names=("odor1", "trial")), tmp_path)
+    assert "'trial' values must be non-negative integers (each trial's number): '1.5', 'two'" in e
 
 
 def errors_for(df, tmp_path) -> str:
@@ -266,41 +275,55 @@ ROIS_ALONE = ("odor1,D,DA1_t0,VA1d/VA1v_t0,V_t1,DM2\n"
 
 
 def test_rois_alone(tmp_path):
+    # without flies or trials: refused, saying both (and what else there is to say)
     p = tmp_path / "x.csv"
     p.write_text(ROIS_ALONE)
-    parsed = load_file(p)
-    # no flies, suffixes removed, glomeruli that could not be told apart kept as one ROI
-    assert [u["roi"] for u in parsed.units] == ["D", "DA1", "VA1d/VA1v", "V", "DM2"]
-    assert all(u["date"] is None and u["fly_num"] is None and u["roi_kind"] == "glomerulus" for u in parsed.units)
-    assert parsed.col_levels == ["roi"] and parsed.values.shape == (5, 3) and parsed.values[3, 1] == pytest.approx(0.5)
-    assert [t["odor"] for t in parsed.trials] == ["IaA @ -5", "IaA @ -4", "ban @ -0"] and all(t["repeat"] == 0 for t in parsed.trials)
-    s = parsed.summary()
-    assert s["n_flies"] == 0 and s["flies"] == [] and s["first_date"] is None and s["roi_kind"] == "glomeruli"
-    assert not s["has_repeat_level"]
-    # allowed, but each said
+    with pytest.raises(ValidationError) as ei:
+        load_file(p)
+    assert [e.split(":")[0] for e in ei.value.errors] == ["no flies", "no trials"]
+    assert ei.value.errors[0].startswith("no flies: the columns are ROIs alone, without date or fly_num, but each ROI's fly is "
+                                         "needed, by its date and its number that day: in a wide file, header rows date, fly_num")
+    w = "\n".join(ei.value.warnings)
+    assert "'DA1_t0 → DA1'" in w and "'V_t1 → V'" in w and "'VA1d/VA1v'" in w
+
+
+def test_roi_suffixes(tmp_path):
+    # suffixes removed, glomeruli that could not be told apart kept as one ROI, each said
+    cols = [("2024-01-01", 1, r) for r in ("D", "DA1_t0", "VA1d/VA1v_t0", "V_t1")]
+    parsed = load_file(write_csv(make_wide(ROWS, cols), tmp_path))
+    assert [u["roi"] for u in parsed.units] == ["D", "DA1", "VA1d/VA1v", "V"]
+    assert all(u["roi_kind"] == "glomerulus" for u in parsed.units)
     w = "\n".join(parsed.warnings)
-    assert "no flies" in w and "no trials" in w and "'DA1_t0 → DA1'" in w and "'V_t1 → V'" in w and "'VA1d/VA1v'" in w
+    assert "'DA1_t0 → DA1'" in w and "'V_t1 → V'" in w and "'VA1d/VA1v'" in w
 
 
-def test_rois_alone_layouts(tmp_path):
-    # with panels and repeats, as pandas writes a frame with plain columns, and long, and parquet
+def test_flies_required(tmp_path):
+    def errors(path):
+        with pytest.raises(ValidationError) as ei:
+            load_file(path)
+        return ei.value.errors
+
+    # ROIs alone, with trials, in each layout: refused for their flies only
     rows = [r for r in ROWS if r[3] == "solvent"]
-    wide = make_wide(rows, [("DM2",), ("DL5_t1",), ("VA2",)], col_names=("roi",))
+    wide = make_wide(rows, [("DM2",), ("DL5",), ("VA2",)], col_names=("roi",))
     wide.columns = wide.columns.get_level_values(0).rename("roi")
-    a = load_file(write_csv(wide, tmp_path))
-    assert [u["roi"] for u in a.units] == ["DM2", "DL5", "VA2"] and a.summary()["repeats_max"] == 2
-    assert a.source_format == "wide-csv" and not any("no trials" in w for w in a.warnings)
+    assert [e.split(":")[0] for e in errors(write_csv(wide, tmp_path))] == ["no flies"]
     long = wide.stack(future_stack=True).rename("value").reset_index()
-    assert list(long.columns[-2:]) == ["roi", "value"] and "date" not in long
     long.to_csv(tmp_path / "long.csv", index=False)
-    b = load_file(tmp_path / "long.csv")
-    assert b.source_format == "long-csv" and b.col_levels == ["roi"] and [u["roi"] for u in b.units] == ["DM2", "DL5", "VA2"]
-    np.testing.assert_allclose(b.values, a.values)
+    assert [e.split(":")[0] for e in errors(tmp_path / "long.csv")] == ["no flies"]
     if importlib.util.find_spec("pyarrow"):
         wide.to_parquet(tmp_path / "x.parquet")
-        c = load_file(tmp_path / "x.parquet")
-        assert c.source_format == "wide-parquet" and c.summary()["n_flies"] == 0
-        np.testing.assert_allclose(c.values, a.values)
+        assert [e.split(":")[0] for e in errors(tmp_path / "x.parquet")] == ["no flies"]
+    # one of date and fly_num: named
+    long = make_wide(ROWS, COLS).stack(list(range(3)), future_stack=True).rename("value").reset_index()
+    long.drop(columns="date").to_csv(tmp_path / "nodate.csv", index=False)
+    assert errors(tmp_path / "nodate.csv")[0].startswith("no date column: each ROI's fly is needed")
+    two = make_wide(ROWS, [(d, r) for d, _, r in COLS], col_names=("date", "roi"))
+    e = errors(write_csv(two, tmp_path, "two.csv"))
+    assert e[0].startswith("no fly_num column level: each ROI's fly is needed") and e[0].endswith("(found ['date', 'roi'])")
+    if importlib.util.find_spec("pyarrow"):
+        two.to_parquet(tmp_path / "two.parquet")
+        assert errors(tmp_path / "two.parquet")[0].startswith("no fly_num column level")
 
 
 def test_rois_alone_errors(tmp_path):
@@ -315,9 +338,9 @@ def test_rois_alone_errors(tmp_path):
     assert "ROIs must be unique" in e and "'DA1'" in e and "after removing their suffixes" in e
     # only glomeruli may be joined
     assert "'VA1d/XX'" in errors("odor1,VA1d/XX,DM2\nva @ -3,1,2\n")
-    # a long file without its flies has neither date nor fly_num
-    e = errors("fly_num,roi,odor1,value\n1,DM2,va @ -3,0.5\n", "long.csv")
-    assert "'date' and 'fly_num' may both be left out" in e
+    # a long file with fly_num but not date
+    e = errors("fly_num,roi,odor1,repeat,value\n1,DM2,va @ -3,0,0.5\n", "long.csv")
+    assert e.startswith("no date column")
 
 
 
@@ -371,8 +394,9 @@ def test_bad_level(tmp_path):
     assert [u["bad"] for u in g.units] == [True, False]
     nf = make_wide(ROWS, [(0, False), (1, True)], col_names=("cells", "bad"))
     nf.to_parquet(tmp_path / "nf.parquet")
-    n = load_file(tmp_path / "nf.parquet")
-    assert n.col_levels == ["cells", "bad"] and [(u["roi"], u["bad"], u["date"]) for u in n.units] == [("0", False, None), ("1", True, None)]
+    with pytest.raises(ValidationError) as ei:
+        load_file(tmp_path / "nf.parquet")
+    assert [e.split(":")[0] for e in ei.value.errors] == ["no flies"]
     # True or False only, and one such level
     bad = make_wide(ROWS, [("2024-01-01", 1, 0, "maybe"), ("2024-01-01", 1, 1, "")], col_names=("date", "fly_num", "cells", "bad"))
     assert "'bad' values must be True or False: '', 'maybe'" in errors_for(bad, tmp_path)
@@ -380,17 +404,18 @@ def test_bad_level(tmp_path):
 
 def test_mixture_in_one_level(tmp_path):
     # a mixture written in one odor level: its components, as if in levels of their own
-    rows = [("p1", "ea @ -4.2 + eb @ -3.5", "solvent"), ("p1", "ea @ -4.2", "solvent"), ("p1", "ea @ -4.2", "IaA @ -3")]
-    p = load_file(write_csv(make_wide(rows, COLS, row_names=("panel", "odor1", "odor2")), tmp_path))
+    rows = [("p1", "ea @ -4.2 + eb @ -3.5", "solvent", 0), ("p1", "ea @ -4.2", "solvent", 0), ("p1", "ea @ -4.2", "IaA @ -3", 0)]
+    p = load_file(write_csv(make_wide(rows, COLS, row_names=("panel", "odor1", "odor2", "repeat")), tmp_path))
     assert [t["components"] for t in p.trials] == [["ea @ -4.2", "eb @ -3.5", "solvent"], ["ea @ -4.2", "solvent", "solvent"],
                                                     ["ea @ -4.2", "solvent", "IaA @ -3"]]
     assert [t["odor"] for t in p.trials] == ["ea @ -4.2 + eb @ -3.5", "ea @ -4.2", "ea @ -4.2 + IaA @ -3"]
     assert any("1 rows name a mixture in one odor level" in w and "'ea @ -4.2 + eb @ -3.5'" in w for w in p.warnings)
     # each component is checked
-    e = errors_for(make_wide([("ea @ -4.2 + eb",), ("ea @ -3",)], COLS, row_names=("odor1",)), tmp_path)
+    e = errors_for(make_wide([("ea @ -4.2 + eb", 0), ("ea @ -3", 0)], COLS, row_names=("odor1", "repeat")), tmp_path)
     assert "'eb'" in e
     # the same mixture written both ways is the same trial twice
-    e = errors_for(make_wide([("ea @ -4 + eb @ -3", "solvent"), ("ea @ -4", "eb @ -3")], COLS, row_names=("odor1", "odor2")), tmp_path)
+    e = errors_for(make_wide([("ea @ -4 + eb @ -3", "solvent", 0), ("ea @ -4", "eb @ -3", 0)], COLS,
+                             row_names=("odor1", "odor2", "repeat")), tmp_path)
     assert "duplicate trials" in e
 
 

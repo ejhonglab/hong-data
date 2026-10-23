@@ -16,19 +16,19 @@ which must be non-negative integers, every one of each fly's from 0 or 1 to its 
 Any of these may have one more column level, ``bad`` (True or False): whether each ROI
 is one not to be used (hidden by default where KCs are shown, left out of comparisons).
 
-Or, without flies (for now, with a warning), columns of ROIs alone: in a CSV, a single
-header line of the row levels' names then the ROIs' (as ``to_csv`` writes a frame with
-plain columns).
+Every ROI's fly (date and fly_num) and every trial's number (``repeat``, or ``trial``:
+integers) are needed: a file without them is refused, saying what it lacks. Files of ROIs
+alone are recognised only to say so: in a CSV, a single header line of the row levels'
+names then the ROIs' (as ``to_csv`` writes a frame with plain columns).
 
 *long* (one row per value):
 
     columns: date, fly_num, roi (or cells)[, bad], [panel,] odor1[, odor2, ...][, repeat], value
 
-(``date`` and ``fly_num`` both left out, without flies.)
+(``trial`` is read as ``repeat``, in either layout.)
 
 An odor level may hold a mixture itself (``a @ -3 + b @ -5``), split into its components
-as if they were in levels of their own. Without a ``repeat`` level, each row is one trial (perhaps already averaged over trials),
-with a warning. ROI names lose a ``_t<n>`` suffix (``DA1_t0`` -> ``DA1``), and may name
+as if they were in levels of their own. ROI names lose a ``_t<n>`` suffix (``DA1_t0`` -> ``DA1``), and may name
 several glomeruli that could not be told apart (``VA1d/VA1v``: `glomeruli.merged`).
 
 Row levels that say nothing are dropped before anything else (`uninformative_levels`):
@@ -69,6 +69,13 @@ COL_LEVELS = ("date", "fly_num", "roi")
 CELLS = "cells"  # the roi level, by another name: its values KC ids (integers)
 BAD = "bad"  # a column level that may be added: whether each ROI is not to be used (True/False)
 MAX_KC_PROBLEMS = 5  # flies whose KC ids have gaps, named in that error
+TRIAL = "trial"  # the repeat level, by another name
+# what a file needs of flies and trials, said when it lacks them
+FLIES_NEEDED = (f"each ROI's fly is needed, by its date and its number that day: in a wide file, header rows date, fly_num, "
+                f"then roi (or {CELLS}; and {BAD} if any) before the row naming the row levels, as pandas' to_csv writes a "
+                "frame whose columns are a MultiIndex of those levels; in a long file, columns date and fly_num")
+TRIALS_NEEDED = (f"each trial's number is needed, in a row level (in a long file, a column) named repeat (or {TRIAL}) of "
+                 "integers (0, 1, 2... or 1, 2, 3...): one row per trial, not averaged over trials")
 KNOWN_ROW_LEVELS = {"panel", "is_pair", "repeat"}
 LONG_VALUE_COLUMNS = ("value", "response", "resp", "df_over_f", "dff", "mean_dff", "delta_f", "mean_df_over_f")
 MAX_EXAMPLES = 15
@@ -282,8 +289,7 @@ def _sniff_csv(path: Path) -> tuple[str, int, int, bool, str]:
                     break
                 levels.append(r[0].strip())
             if 1 <= len(levels) <= 6 and all(not _is_number(x) for x in levels):
-                raise ValidationError([f"column header levels must be exactly {list(COL_LEVELS)} ('{CELLS}' for 'roi' too), "
-                                       f"and '{BAD}' if any; found {levels}"])
+                raise ValidationError([_col_levels_error(levels)])
         return "long", 0, 0, False, delim
     n_index = 1 + sum(1 for _ in itertools.takewhile(lambda c: c.strip() == "", rows[0][1:]))
 
@@ -299,9 +305,18 @@ def _sniff_csv(path: Path) -> tuple[str, int, int, bool, str]:
     levels = [r[0].strip() for r in rows[:n_header]]
     core = [_col_level(n) for n in levels if n != BAD]
     if set(core) != set(COL_LEVELS) or len(core) != len(COL_LEVELS) or len(levels) - len(core) > 1:
-        raise ValidationError([f"column header levels must be exactly {list(COL_LEVELS)} ('{CELLS}' for 'roi' too), "
-                               f"and '{BAD}' if any; found {levels}"])
+        raise ValidationError([_col_levels_error(levels)])
     return "wide", n_index, n_header, has_names_row, delim
+
+
+def _col_levels_error(found: list[str]) -> str:
+    """Why column levels `found` (as named in a file) are not accepted: the fly's levels it
+    lacks, if those are all it lacks; else what they must be."""
+    names = [_col_level(n) for n in found]
+    missing = [n for n in COL_LEVELS if n not in names]
+    if missing and set(missing) <= {"date", "fly_num"} and names.count(BAD) <= 1 and len(set(names)) == len(names):
+        return f"no {' or '.join(missing)} column level: {FLIES_NEEDED} (found {found})"
+    return f"column header levels must be exactly {list(COL_LEVELS)} ('{CELLS}' for 'roi' too), and '{BAD}' if any; found {found}"
 
 
 def _col_level(name: str) -> str:
@@ -310,7 +325,7 @@ def _col_level(name: str) -> str:
 
 
 def _is_row_level(name: str) -> bool:
-    return name in KNOWN_ROW_LEVELS or is_odor_level(name)
+    return name in KNOWN_ROW_LEVELS or name == TRIAL or is_odor_level(name)
 
 
 def _is_number(x: str) -> bool:
@@ -375,17 +390,20 @@ def _load_csv(path: Path) -> ParsedData:
 
 def _long_to_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
     cols = [str(c) for c in df.columns]
+    if TRIAL in cols and "repeat" not in cols:
+        cols = ["repeat" if c == TRIAL else c for c in cols]
     df.columns = cols
     errors = []
     roi = CELLS if CELLS in cols and "roi" not in cols else "roi"
     levels = ("date", "fly_num", roi)
     missing = [c for c in levels if c not in cols]
+    if roi in cols and missing in (["date"], ["fly_num"]):
+        raise ValidationError([f"no {missing[0]} column: {FLIES_NEEDED}"])
     if missing and missing != ["date", "fly_num"]:
         errors.append(
             f"this does not look like the expected format. For a wide (matrix) file the "
-            f"first three header rows must start with 'date', 'fly_num', 'roi' (or a single header "
-            f"line name the row levels, then the ROIs); for a long file the columns must include "
-            f"{list(COL_LEVELS)} ('{CELLS}' for 'roi' too; 'date' and 'fly_num' may both be left out; missing {missing}). "
+            f"first three header rows must start with 'date', 'fly_num', 'roi'; for a long file the columns must include "
+            f"{list(COL_LEVELS)} ('{CELLS}' for 'roi' too; missing {missing}). "
             f"Found columns: {cols[:12]}{'...' if len(cols) > 12 else ''}"
         )
         raise ValidationError(errors)
@@ -600,16 +618,14 @@ def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
         df = df.copy()
         df.columns = df.columns.set_names([_col_level(n) for n in file_levels])
     if file_levels.count(BAD) > 1 or (flies and (set(core) != set(COL_LEVELS) or len(core) != len(COL_LEVELS))):
-        errors.append(f"column header levels must be exactly {list(COL_LEVELS)} ('{CELLS}' for 'roi' too, or either alone), "
-                      f"and '{BAD}' if any; found {file_levels}")
+        errors.append(_col_levels_error(file_levels))
         raise ValidationError(errors)
     want = [*(COL_LEVELS if flies else ["roi"]), *([BAD] if has_bad else [])]
     if isinstance(df.columns, pd.MultiIndex) and [_col_level(n) for n in file_levels] != want:
         df = df.reorder_levels(want, axis=1)
         warnings.append(f"column levels were reordered from {file_levels} to {[CELLS if cells and l == 'roi' else l for l in want]}")
     if not flies:
-        warnings.append("no flies: the columns are ROIs alone, without 'date' or 'fly_num'. This is allowed for now, "
-                        "but nothing is known of the flies (how many, when, their raw data and movies)")
+        errors.append(f"no flies: the columns are ROIs alone, without date or fly_num, but {FLIES_NEEDED}")
 
     # ---- row levels ---------------------------------------------------------
     row_names = list(df.index.names)
@@ -619,6 +635,8 @@ def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
         )
         raise ValidationError(errors)
     row_names = [str(n) for n in row_names]
+    trial = TRIAL in row_names and "repeat" not in row_names  # (the repeat level by its other name)
+    row_names = ["repeat" if trial and n == TRIAL else n for n in row_names]
     try:
         odor_levels = validate_odor_levels(row_names)
     except ValueError as e:
@@ -640,8 +658,7 @@ def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
             f"odor1..odorN, repeat); they are kept as trial metadata but ignored for display"
         )
     if "repeat" not in row_names:
-        warnings.append("no trials: no 'repeat' level in the row index, so each row is taken as one trial "
-                        "(as when already averaged over trials)")
+        errors.append(f"no trials: {TRIALS_NEEDED}")
 
     # ---- column values: date / fly_num / roi ---------------------------------
     cols_frame = df.columns.to_frame(index=False)
@@ -802,7 +819,8 @@ def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
             else:
                 repeats.append(i)
         if bad_rep:
-            errors.append(f"'repeat' values must be non-negative integers: {_examples(sorted({str(x) for x in bad_rep}))}")
+            errors.append(f"'{TRIAL if trial else 'repeat'}' values must be non-negative integers (each trial's number): "
+                          f"{_examples(sorted({str(x) for x in bad_rep}))}")
     else:
         repeats = [0] * len(idx_frame)
 

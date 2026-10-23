@@ -93,7 +93,9 @@ panel,is_pair,odor1,odor2,repeat,
 glomeruli_diagnostics,False,3mtp @ -5,solvent,0,-0.0377,0.13,...
 ```
 
-- **Columns** (three header rows): `date`, `fly_num`, `roi`; every column unique.
+- **Columns** (three header rows): `date`, `fly_num`, `roi`; every column unique. Every
+  ROI's fly (`date` and `fly_num`) is required: a file without them, or without one of
+  them, is refused, saying which (as is a CSV with a single header line of ROIs alone).
   `roi` is a glomerulus name from `config/glomeruli.txt` or a non-negative integer. A
   file with other ROI names is refused with all of them listed (and the accepted name
   each is but for upper and lower case), along with the accepted names. The level may
@@ -106,8 +108,9 @@ glomeruli_diagnostics,False,3mtp @ -5,solvent,0,-0.0377,0.13,...
   header row after the ROIs' in a wide CSV (`date, fly_num, cells, bad`), a column in a
   long file. Any ROIs may be marked so. Downloads keep the level (False for the ROIs of
   datasets without it, among others).
-- **Rows**: at least `odor1` (or `odor`); optionally `panel`, `is_pair`, `odor2`, ...,
-  `repeat`. Several `odor<n>` levels are mixture components presented together and
+- **Rows**: at least `odor1` (or `odor`) and `repeat` (or `trial`: each trial's number,
+  an integer); optionally `panel`, `is_pair`, `odor2`, .... A file without trials (one
+  row per odor, as when averaged over trials) is refused. Several `odor<n>` levels are mixture components presented together and
   are displayed joined with ` + ` (solvent components dropped), as in `hong2p.olf`. A
   mixture written in one level that way (`ea @ -4.2 + eb @ -3.5`) is split into its
   components, as if each were in a level of its own (with a warning).
@@ -119,16 +122,13 @@ glomeruli_diagnostics,False,3mtp @ -5,solvent,0,-0.0377,0.13,...
   `water @ 0` (with the 0 written any way: `pfo @ 0.0` too). (Only there are `pfo` and
   `water` accepted without a concentration.) Datasets stored before this are shown and
   downloaded the same way.
-- A long layout (`date, fly_num, roi, [panel,] odor1, ..., [repeat,] value`) is also
+- A long layout (`date, fly_num, roi, [panel,] odor1, ..., repeat, value`) is also
   accepted for CSV and parquet (parquet with integer `fly_num` column labels cannot be
   written in the wide layout by pandas, so use long there).
-- For now, with a warning: no flies, columns of ROIs alone (in a CSV, a single header
-  line of the row levels' names then the ROIs', as `DataFrame.to_csv` writes a frame
-  with plain columns, e.g. `odor1,D,DA1,...`; in a long file, neither `date` nor
-  `fly_num`), and no trials (no `repeat` level: each row is one trial, as when already
-  averaged over them). Such a dataset says "flies not given", has no fly folders, raw
-  data or movies to find, and downloads without `date` or `fly_num` (in the wide layout,
-  with one header line).
+- Datasets stored while files without flies or trials were accepted (for a while) are
+  still shown: such a dataset says "flies not given", has no fly folders, raw data or
+  movies to find, and downloads without `date` or `fly_num` (in the wide layout, with
+  one header line).
 - A `_t0`, `_t1`, ... suffix is removed from ROI names (`DA1_t0` becomes `DA1`), and an
   ROI of glomeruli that could not be told apart may be named by them joined with `/`
   (`VA1d/VA1v`), kept as one ROI (each said in a warning).

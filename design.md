@@ -125,7 +125,10 @@ between the frontend and the server. Using the app is described in
   `date` or `fly_num`) has units with both null (`units` remade once, in a database from
   before, to allow it: `db._units_nullable`), so it counts no flies, is grouped in the
   viewer as "fly not given", has nothing looked for on tensor, and downloads as it came
-  (one header line). It is allowed with a warning for now, as is a file without trials.
+  (one header line). Such files were accepted for a while; flies and trials are required
+  again (`ingest.FLIES_NEEDED`, `TRIALS_NEEDED`), but those stored then are still shown,
+  so storage, the viewer and downloads keep handling them, and files of ROIs alone are
+  still read far enough to say what they lack.
 - **ROIs marked bad are kept, and left out where used.** KC datasets must have every KC
   of each fly (ids from 0 or 1 to the highest, `ingest.kc_id_problems`), so that a
   dataset says which KCs were segmented and not used rather than leaving gaps: those

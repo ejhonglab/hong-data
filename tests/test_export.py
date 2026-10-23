@@ -15,7 +15,7 @@ from starlette.requests import Request
 from app import config, odormeta
 from app.db import Database
 from app.export import ExportError, dataset_odors_download, dataset_stem, odors_frame, odors_tex, trial_keys, write_download
-from app.ingest import ParsedData, load_file
+from app.ingest import ParsedData, ValidationError, load_file
 from tests.test_ingest import COLS, ROWS, make_wide, write_csv
 from tests.test_tensor import call, main, root  # noqa: F401 (fixtures)
 
@@ -210,26 +210,27 @@ def test_lowercase(store, tmp_path):
 
 def test_dataset_without_flies(store, tmp_path, monkeypatch):
     from app import db as dbmod
-    from tests.test_ingest import ROIS_ALONE
 
-    (tmp_path / "rois.csv").write_text(ROIS_ALONE)
-    parsed = load_file(tmp_path / "rois.csv")
+    # one stored while files without flies were accepted (no longer): as it was
+    rois = ["D", "DA1", "VA1d/VA1v", "V", "DM2"]
+    parsed = ParsedData(
+        units=[{"date": None, "fly_num": None, "roi": r, "roi_kind": "glomerulus"} for r in rois],
+        trials=[{"panel": None, "odor": o, "components": [o], "repeat": 0, "extra": {}} for o in ("IaA @ -5", "IaA @ -4", "ban @ -0")],
+        values=np.arange(15, dtype=np.float32).reshape(5, 3) / 10, row_levels=["odor1"], col_levels=["roi"], source_format="wide-csv")
     db, datasets_dir = store
     ds_id = add(store, parsed)
     m = db.get_matrix_arrays(ds_id)
     assert m["units"][0] == {"date": None, "fly_num": None, "roi": "D", "roi_kind": "glomerulus", "bad": None}
     d = db.get_dataset(ds_id)
     assert d["n_flies"] == 0 and d["last_fly_date"] is None
-    # downloaded as uploaded (a single header line; long without date or fly_num), so it uploads again
+    # downloaded as uploaded (a single header line; long without date or fly_num), which would now be refused
     out = tmp_path / "out"
     name, _ = write_download(db, [ds_id], "wide", out, datasets_dir)
     assert out.read_text().splitlines()[0] == "odor1,D,DA1,VA1d/VA1v,V,DM2"
-    again = load_file(out.rename(tmp_path / "again.csv"))
-    assert again.units == parsed.units and [t["odor"] for t in again.trials] == [t["odor"] for t in parsed.trials]
-    np.testing.assert_allclose(again.values, parsed.values, rtol=1e-6)
+    with pytest.raises(ValidationError, match="no flies"):
+        load_file(out.rename(tmp_path / "again.csv"))
     write_download(db, [ds_id], "long", out, datasets_dir)
     assert out.read_text().splitlines()[0] == "roi,odor1,value"
-    np.testing.assert_allclose(load_file(out.rename(tmp_path / "again_long.csv")).values, parsed.values, rtol=1e-6)
 
     # a database from before: its units remade so that they may have no fly, nothing else changed
     old = tmp_path / "old.sqlite3"
@@ -369,7 +370,7 @@ REAL_COLS = [("2023-11-19 00:00:00", 1, "DM2"), ("2023-11-19 00:00:00", 1, "DL5"
                                                         (True, "ea @ -2", "va @ -3")] for r in range(3)],
      ("panel", "is_pair", "odor1", "odor2", "repeat")),
     ([("2h @ -6", r) for r in range(2)] + [("ms @ -3", r) for r in range(2)], ("odor1", "repeat")),
-    ([("diag", "1-6ol @ -3"), ("megamat", "1-6ol @ -3"), ("megamat", "pa @ -3")], ("panel", "odor")),
+    ([("diag", "1-6ol @ -3", 0), ("megamat", "1-6ol @ -3", 0), ("megamat", "pa @ -3", 0)], ("panel", "odor", "repeat")),
 ])
 def test_wide_download_matches_upload(store, tmp_path, rows, row_names):
     values = np.random.default_rng(1).normal(size=(len(rows), len(REAL_COLS)))
