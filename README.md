@@ -324,7 +324,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   their names in the Odors tab where they can be matched (or abbreviations, or as in the
   file: *Chemicals* in the viewer), the rest as in the file. A yellow warning is by a
   table with chemicals not identified by a CID or InChI (in the file, or through the
-  Odors tab), naming them; one that cannot be read is listed by its name alone, with why.
+  Odors tab), naming the first of them, with all of them to show and copy (also when
+  adding one in the Admin tab); one that cannot be read is listed by its name alone, with why.
   A table of glomeruli (by their labels) has no chemicals, and so no warning: it says it
   can be compared with datasets on their glomeruli.
 - **Admin** (to the right of Docs; it first asks whether you are Tom, Jon or Betty, or

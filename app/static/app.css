@@ -283,6 +283,10 @@ table.diff .new { color: var(--ok); }
 .tab-badge { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #d08a00; margin-left: 5px; vertical-align: super; }
 .tab-badge.error { background: var(--danger); }
 #ds-odors .odor-table th { top: -12px; }
+.unidentified { margin-top: 8px; }
+.unidentified summary { cursor: pointer; font-weight: 500; }
+.unidentified .actions { margin: 6px 0; }
+.unidentified ol { max-height: 260px; overflow: auto; margin: 0; padding: 6px 8px 6px 3em; font-size: 12.5px; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; }
 .odors-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-bottom: 8px; }
 .odors-head > p { flex: 1 1 320px; margin: 0; }
 

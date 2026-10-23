@@ -101,6 +101,30 @@ function msgBox(kind, html) {
   d.innerHTML = html;
   return d;
 }
+// A warning of a reference dataset's chemicals not identified (no CID or InChI), naming
+// the first `n` of them (`labels`, as in its file); when there are more, all of them can
+// be shown (listed once asked for) and copied, one per line. after: what to do, after it
+function unidentifiedBox(warning, labels, after, n = 20) {
+  const box = msgBox('warn', `<b>${esc(warning)}</b>${labels.length ? `: ${labels.slice(0, n).map(esc).join(', ')}` : ''}${labels.length > n ? ', …' : '.'} ${after}`);
+  if (labels.length <= n) return box;
+  const all = document.createElement('details');
+  all.className = 'unidentified';
+  all.innerHTML = `<summary>Show all ${labels.length.toLocaleString()}</summary>
+    <div class="actions"><button type="button" class="btn small">Copy them, one per line</button><span class="status"></span></div><ol></ol>`;
+  all.addEventListener('toggle', () => {
+    const ol = $('ol', all);
+    if (all.open && !ol.childElementCount) ol.innerHTML = labels.map((l) => `<li>${l ? esc(l) : '<span class="muted">(no label)</span>'}</li>`).join('');
+  });
+  $('button', all).addEventListener('click', async (e) => {
+    const status = e.target.nextElementSibling;
+    try { await copyText(labels.join('\n')); setStatus(status, `✓ Copied ${labels.length.toLocaleString()}`); } catch (err) {
+      setStatus(status, `Could not copy them: ${err.message}`, 'error');
+    }
+  });
+  box.appendChild(all);
+  return box;
+}
+
 function listHtml(items) { return `<ul>${items.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`; }
 
 function fmtBytes(n) { return n < 1e6 ? `${Math.max(1, Math.round(n / 1e3))} kB` : `${(n / 1e6).toFixed(1)} MB`; }
@@ -2538,8 +2562,7 @@ class Reference {
     $('#ref-desc').textContent = [m.description, m.source ? `Source: ${m.source}` : ''].filter(Boolean).join(' ');
     const c = ref.chemicals, msgs = [];
     if (ref.warning) {
-      const list = c.unidentified.length ? `: ${c.unidentified.slice(0, 30).map(esc).join(', ')}${c.unidentified.length > 30 ? ', …' : ''}` : '';
-      msgs.push(msgBox('warn', `<b>${esc(ref.warning)}</b>${list}. Add them to the Odors table (with their CID), or give their CIDs or InChIs in the file.`));
+      msgs.push(unidentifiedBox(ref.warning, c.unidentified, 'Add them to the Odors table (with their CID), or give their CIDs or InChIs in the file.', 30));
     }
     const notes = [];
     if (c.axis) notes.push(`Its ${c.axis === 'rows' ? 'rows' : 'columns'} are chemicals: ${c.matched} of ${c.n} matched to the Odors table, labelled as there.`);
@@ -2948,8 +2971,7 @@ function showRefCheck(c) {
   lines.push(...p.notes.map((n) => `${esc(n[0].toUpperCase() + n.slice(1))}.`));
   if (lines.length) box.appendChild(Object.assign(document.createElement('p'), { className: 'muted small', innerHTML: lines.join(' ') }));
   if (p.warning) {
-    const list = ch.unidentified?.length ? `: ${ch.unidentified.slice(0, 20).map(esc).join(', ')}${ch.unidentified.length > 20 ? ', …' : ''}` : '';
-    box.appendChild(msgBox('warn', `⚠ ${esc(p.warning)}${list}. It can be added anyway, with a warning by it in the Reference data tab.`));
+    box.appendChild(unidentifiedBox(p.warning, ch.unidentified || [], 'It can be added anyway, with a warning by it in the Reference data tab, where they are listed too.'));
   }
 }
 
@@ -3326,7 +3348,8 @@ class AdminPage {
       if (r.state === 'pending') return '<span class="warn">Read once the server restarts (below)</span>';
       const [nr, nc] = r.shape;
       return `${nr.toLocaleString()} × ${nc.toLocaleString()}, ${esc(r.kind)}${r.imported_at ? `, read ${esc(fmtWhen(r.imported_at))}` : ''}`
-        + (r.warning ? `<br><span class="warn">⚠ ${esc(r.warning)}</span>` : '');
+        + (r.warning ? `<br><span class="warn">⚠ ${esc(r.warning)}</span>${r.chemicals?.axis && r.chemicals.identified < r.chemicals.n
+          ? ` <a href="#reference/${esc(r.id)}">(which)</a>` : ''}` : '');
     };
     $('#admin-refs-list').innerHTML = `<table class="odor-table"><thead><tr><th>Title</th><th>File</th><th>State</th><th></th></tr></thead><tbody>
       ${listed.map((r) => `<tr><td><a href="#reference/${esc(r.id)}">${esc(r.title)}</a></td>
