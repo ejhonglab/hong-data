@@ -343,7 +343,11 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   repeats or show individual trials; rows by fly→ROI, ROI→fly or ungrouped; odors as in
   the file or by name. The default colormap is blue–white–red, with lightness linear in
   |value| and white at 0, over the full data range. *Transpose* shows odors as rows
-  and ROIs as columns (in reference data too, rows as columns).
+  and ROIs as columns (in reference data too, rows as columns). Every matrix shown (here,
+  in reference data and in Compare) has *Full screen* (Esc, or the button again, to
+  leave; the browser's window filled where full screen is not available) and *Hide
+  controls*, folding away everything above the matrix but its colorbar and the line of
+  buttons (remembered for the matrices shown next).
   - *Moving and removing rows and columns* (also in reference data): drag a label
     to move it within its group (fly, panel, ...), or a group's name to move the whole
     group; with individual trials, an odor's trials move with its label (the repeat

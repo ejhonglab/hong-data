@@ -466,6 +466,12 @@ dialog.mismatches::backdrop { background: rgba(29,31,34,.45); }
 .colorbar { width: 220px; height: 30px; color: var(--ink); }
 .vt-legend { align-self: stretch; }
 .hm-wrap { flex: 1; min-height: 0; position: relative; }
+/* controls hidden: only the colorbar and the status line (with the buttons) stay */
+.viewer.controls-hidden .vt > .vt-group:not(.vt-legend) { display: none; }
+.vt-status [data-role=controls], .vt-status [data-role=fullscreen] { flex: none; }
+/* a viewer filling the screen (or the browser's window, without the Fullscreen API) */
+.viewer:fullscreen, .viewer.full-window { width: 100vw; height: 100vh !important; max-height: none; border: 0; border-radius: 0; }
+.viewer.full-window { position: fixed; inset: 0; z-index: 900; }
 
 .hm { position: relative; height: 100%; background: var(--hm-surface); }
 .hm-scroll { position: absolute; inset: 0; overflow: auto; overscroll-behavior: contain; user-select: none; }

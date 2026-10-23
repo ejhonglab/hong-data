@@ -186,7 +186,7 @@ async function copyText(text) {
   const t = document.createElement('textarea');
   t.value = text;
   t.style.cssText = 'position: fixed; opacity: 0;';
-  document.body.appendChild(t);
+  (document.fullscreenElement || document.body).appendChild(t);
   t.select();
   const ok = document.execCommand('copy');
   t.remove();
@@ -249,7 +249,7 @@ function showContextMenu(x, y, entries) {
     b.addEventListener('click', () => { closeContextMenu(); e.onPick(); });
     menu.appendChild(b);
   }
-  document.body.appendChild(menu);
+  (document.fullscreenElement || document.body).appendChild(menu); // (only that is shown, in full screen)
   const r = menu.getBoundingClientRect();
   menu.style.left = `${Math.max(4, Math.min(x, innerWidth - r.width - 4))}px`;
   menu.style.top = `${Math.max(4, Math.min(y, innerHeight - r.height - 4))}px`;
@@ -576,7 +576,7 @@ class MatrixViewer {
     this.opts = Object.assign(
       {
         mode: 'average', rowOrder: 'fly', roiSort: 'file', odorOrder: 'file', clusterRows: false, clusterCols: false, metric: 'correlation',
-        cellW: 16, cellH: 16, colormap: 'oklab-div', range: 'twoslope', clip: false, chemLabels: 'name', sumKCs: false,
+        cellW: 16, cellH: 16, colormap: 'oklab-div', range: 'twoslope', clip: false, chemLabels: 'name', sumKCs: false, hideControls: false,
       },
       saved,
       { transpose: !!saved.transposed?.[kind] },
@@ -599,6 +599,7 @@ class MatrixViewer {
     // chemical labels and scrolling are kept the same in both, and what is hovered is marked
     this.linked = null;
     this._wire();
+    this._syncControls();
   }
 
   _wire() {
@@ -638,6 +639,15 @@ class MatrixViewer {
     }));
     $('[data-role=reset]', tb).addEventListener('click', () => { Object.assign(this.edits, newEdits()); this._rebuild(); this._linkEdits(); });
     $('[data-bad]', tb).addEventListener('change', (e) => { this.hideBad = e.target.checked; this._rebuild(); });
+    $('[data-role=controls]', tb).addEventListener('click', () => {
+      this.opts.hideControls = !this.opts.hideControls;
+      this._save();
+      this._syncControls();
+      this.linked?.other._setLinkedOpts({ hideControls: this.opts.hideControls });
+      this.onShow?.();
+    });
+    $('[data-role=fullscreen]', tb).addEventListener('click', () => this.toggleFullscreen());
+    this.container._viewer = this; // (for full screen changes: see below the class)
     wireMenu($('[data-role=export]', tb), ({ export: format }) => this.exportFigure(format));
   }
 
@@ -646,7 +656,7 @@ class MatrixViewer {
     LS.set('olfdb.viewer', {
       cellW: this.ownCells ? saved.cellW : o.cellW, cellH: this.ownCells ? saved.cellH : o.cellH, colormap: o.colormap, range: o.range, rowOrder: o.rowOrder, roiSort: o.roiSort, odorOrder: o.odorOrder,
       clusterRows: o.clusterRows, clusterCols: o.clusterCols, metric: o.metric, chemLabels: o.chemLabels, sumKCs: o.sumKCs,
-      transposed: { ...saved.transposed, [this.kind]: o.transpose },
+      hideControls: o.hideControls, transposed: { ...saved.transposed, [this.kind]: o.transpose },
     });
   }
 
@@ -682,8 +692,34 @@ class MatrixViewer {
     $('input[data-opt=transpose]', tb).parentElement.title = neural ? 'Odors as rows and ROIs as columns' : 'Rows as columns and columns as rows';
     for (const k of ['rowOrder', 'roiSort', 'odorOrder', 'metric', 'range', 'chemLabels']) { const s = $(`select[data-opt=${k}]`, tb); if (s) s.value = o[k]; }
     for (const k of ['cellW', 'cellH']) { $(`input[data-opt=${k}]`, tb).value = o[k]; $(`[data-out=${k}]`, tb).textContent = o[k]; }
+    this._syncControls();
     $$('input[type=checkbox][data-opt]', tb).forEach((cb) => { cb.checked = !!o[cb.dataset.opt]; });
     this._syncEnabled();
+  }
+
+  // the controls above the matrix shown or hidden, as chosen (all but its colorbar and status line)
+  _syncControls() {
+    this.container.classList.toggle('controls-hidden', !!this.opts.hideControls);
+    $('[data-role=controls]', this.toolbar).textContent = this.opts.hideControls ? 'Show controls' : 'Hide controls';
+  }
+
+  // the viewer filling the screen (the browser's full screen, else its window), or back
+  toggleFullscreen() {
+    const el = this.container;
+    if (document.fullscreenElement === el) document.exitFullscreen();
+    else if (el.classList.contains('full-window')) this._fullWindow(false);
+    else if (el.requestFullscreen) el.requestFullscreen().catch(() => this._fullWindow(true));
+    else this._fullWindow(true);
+  }
+
+  _fullWindow(on) {
+    this.container.classList.toggle('full-window', on);
+    this._syncFullscreen();
+  }
+
+  _syncFullscreen() {
+    const full = document.fullscreenElement === this.container || this.container.classList.contains('full-window');
+    $('[data-role=fullscreen]', this.toolbar).textContent = full ? 'Exit full screen' : 'Full screen';
   }
 
   // orderings that clustering replaces are disabled while it is on (rows show as
@@ -1072,6 +1108,10 @@ class MatrixViewer {
     }
   }
 }
+
+// a viewer leaving or entering full screen: its button says so; Esc leaves the window filled without it
+document.addEventListener('fullscreenchange', () => $$('.viewer').forEach((el) => el._viewer?._syncFullscreen()));
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('.viewer.full-window')?._viewer?._fullWindow(false); });
 
 // a cell of a CSV table, quoted if need be
 const csvCell = (v) => (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
