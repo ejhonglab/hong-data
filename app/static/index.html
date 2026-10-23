@@ -542,17 +542,6 @@
         <div class="actions"><button type="button" class="btn primary" id="ref-add">Add</button></div>
       </div>
 
-      <div class="step" id="admin-server">
-        <div class="step-head"><h2>Restart</h2></div>
-        <div class="paths-status" id="admin-status" aria-live="polite"></div>
-        <div class="kv" id="admin-info"></div>
-        <div class="actions">
-          <button type="button" class="btn" id="admin-restart">Restart the server</button>
-          <span class="dl-status" id="admin-restart-status" aria-live="polite"></span>
-        </div>
-        <p class="muted small">It takes a few seconds; uploads and downloads under way are given up to 30 s to finish.</p>
-      </div>
-
       <div class="step" id="admin-datasets">
         <div class="step-head"><h2>Delete datasets</h2></div>
         <p class="muted">A dataset deleted here is gone from the site at once: from Browse, downloads and merges. Its files (the data file as uploaded, odor YAMLs, <code>Experiment.xml</code>, README and <code>metadata.json</code>, which has every detail entered) are moved on the server to <code id="admin-deleted-dir">…</code>, from where it could be uploaded again. Delete them there to free the space.</p>
@@ -582,6 +571,17 @@
         <label class="check"><input type="checkbox" id="admin-lowercase"> New odor names in lowercase only</label>
         <p class="muted">Refuses uploads whose odors (as named in their data) have capital letters, and odor sheet rows whose name, abbreviation or aliases do, unless the name is already in the database (in the odor table, or in a dataset). Anyone can also have odor names shown in lowercase, in their Settings.</p>
         <div id="admin-lowercase-result" aria-live="polite"></div>
+      </div>
+
+      <div class="step" id="admin-server">
+        <div class="step-head"><h2>Restart</h2></div>
+        <div class="paths-status" id="admin-status" aria-live="polite"></div>
+        <div class="kv" id="admin-info"></div>
+        <div class="actions">
+          <button type="button" class="btn" id="admin-restart">Restart the server</button>
+          <span class="dl-status" id="admin-restart-status" aria-live="polite"></span>
+        </div>
+        <p class="muted small">It takes a few seconds; uploads and downloads under way are given up to 30 s to finish.</p>
       </div>
 
       <div class="step" id="admin-host">
