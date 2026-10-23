@@ -1264,7 +1264,8 @@ class UploadFlow {
     const sum = this.data?.summary;
     if (sum?.panel_names?.length) offer('panel_names', sum.panel_names.join(', '), 'file', 3, 'the panel level of the data file');
     if (sum?.roi_kind === 'glomeruli') offer('coding_unit', 'glomeruli', 'file', 3, 'the ROIs are glomeruli');
-    if (sum?.roi_kind === 'integers' && this.options?.coding_units.includes('KCs')) offer('coding_unit', 'KCs', 'file', 1, 'numbered ROIs');
+    if (sum?.col_levels?.includes('cells') && this.options?.coding_units.includes('KCs')) offer('coding_unit', 'KCs', 'file', 3, "its columns are 'cells' (KC ids)");
+    else if (sum?.roi_kind === 'integers' && this.options?.coding_units.includes('KCs')) offer('coding_unit', 'KCs', 'file', 1, 'numbered ROIs');
     for (const [key, kind, flies, what] of [['raw_data_path', 'raw_dirs', 'raw', 'raw data'], ['mocorr_data_path', 'mocorr_dirs', 'mocorr', 'motion-corrected data']]) {
       const dirs = this.user?.[kind] || [];
       if (!dirs.length || (sum && !sum.n_flies)) continue; // (of data without flies, nothing is known to be in them)

@@ -320,6 +320,39 @@ def test_rois_alone_errors(tmp_path):
     assert "'date' and 'fly_num' may both be left out" in e
 
 
+
+def test_cells_are_kc_ids(tmp_path):
+    # 'cells' for 'roi': KC ids, integers
+    cols = [("2024-01-01", 1, 0), ("2024-01-01", 1, 7), ("2024-01-02", 1, 0)]
+    p = load_file(write_csv(make_wide(ROWS, cols, col_names=("date", "fly_num", "cells")), tmp_path))
+    assert p.col_levels == ["date", "fly_num", "cells"] and [u["roi"] for u in p.units] == ["0", "7", "0"]
+    assert {u["roi_kind"] for u in p.units} == {"int"} and p.summary()["roi_kind"] == "integers"
+    # long, too
+    long = make_wide(ROWS, cols, col_names=("date", "fly_num", "cells")).stack(list(range(3)), future_stack=True).rename("value").reset_index()
+    long.to_csv(tmp_path / "long.csv", index=False)
+    q = load_file(tmp_path / "long.csv")
+    assert q.col_levels == ["date", "fly_num", "cells"] and sorted(u["roi"] for u in q.units) == ["0", "0", "7"]
+    # glomeruli are not KC ids
+    e = errors_for(make_wide(ROWS, [("2024-01-01", 1, "DM2"), ("2024-01-01", 1, 3)], col_names=("date", "fly_num", "cells")), tmp_path)
+    assert "'cells' values are KC ids, so must be non-negative integers; not: 'DM2'" in e
+
+
+def test_mixture_in_one_level(tmp_path):
+    # a mixture written in one odor level: its components, as if in levels of their own
+    rows = [("p1", "ea @ -4.2 + eb @ -3.5", "solvent"), ("p1", "ea @ -4.2", "solvent"), ("p1", "ea @ -4.2", "IaA @ -3")]
+    p = load_file(write_csv(make_wide(rows, COLS, row_names=("panel", "odor1", "odor2")), tmp_path))
+    assert [t["components"] for t in p.trials] == [["ea @ -4.2", "eb @ -3.5", "solvent"], ["ea @ -4.2", "solvent", "solvent"],
+                                                    ["ea @ -4.2", "solvent", "IaA @ -3"]]
+    assert [t["odor"] for t in p.trials] == ["ea @ -4.2 + eb @ -3.5", "ea @ -4.2", "ea @ -4.2 + IaA @ -3"]
+    assert any("1 rows name a mixture in one odor level" in w and "'ea @ -4.2 + eb @ -3.5'" in w for w in p.warnings)
+    # each component is checked
+    e = errors_for(make_wide([("ea @ -4.2 + eb",), ("ea @ -3",)], COLS, row_names=("odor1",)), tmp_path)
+    assert "'eb'" in e
+    # the same mixture written both ways is the same trial twice
+    e = errors_for(make_wide([("ea @ -4 + eb @ -3", "solvent"), ("ea @ -4", "eb @ -3")], COLS, row_names=("odor1", "odor2")), tmp_path)
+    assert "duplicate trials" in e
+
+
 # ------------------------------------------------------------------ YAML check
 def test_yaml_check():
     text = """

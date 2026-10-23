@@ -96,10 +96,14 @@ glomeruli_diagnostics,False,3mtp @ -5,solvent,0,-0.0377,0.13,...
 - **Columns** (three header rows): `date`, `fly_num`, `roi`; every column unique.
   `roi` is a glomerulus name from `config/glomeruli.txt` or a non-negative integer. A
   file with other ROI names is refused with all of them listed (and the accepted name
-  each is but for upper and lower case), along with the accepted names.
+  each is but for upper and lower case), along with the accepted names. The level may
+  be called `cells` instead (in a long file too): its values are then KC ids, so must be
+  non-negative integers, and the upload form takes the coding unit to be KCs.
 - **Rows**: at least `odor1` (or `odor`); optionally `panel`, `is_pair`, `odor2`, ...,
   `repeat`. Several `odor<n>` levels are mixture components presented together and
-  are displayed joined with ` + ` (solvent components dropped), as in `hong2p.olf`.
+  are displayed joined with ` + ` (solvent components dropped), as in `hong2p.olf`. A
+  mixture written in one level that way (`ea @ -4.2 + eb @ -3.5`) is split into its
+  components, as if each were in a level of its own (with a warning).
 - **Odor strings**: `<abbrev> @ <log10_conc>` with single spaces, concentration 0 or
   negative; `solvent` for an unused component.
 - Row levels that say nothing are dropped on upload: `is_pair` if it is False on every

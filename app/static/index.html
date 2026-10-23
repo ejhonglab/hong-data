@@ -52,9 +52,11 @@
         <div class="format-help-body">
           <p>The wide layout written by <code>DataFrame.to_csv</code> / <code>to_parquet</code> for a frame with a 3-level column index and a multi-level row index:</p>
           <ul>
-            <li><strong>Columns</strong> (three header rows): <code>date</code>, <code>fly_num</code>, <code>roi</code>. Each column must be unique. <code>roi</code> is either a glomerulus name (D, DA1, … VM7v) or a non-negative integer ROI id.</li>
+            <li><strong>Columns</strong> (three header rows): <code>date</code>, <code>fly_num</code>, <code>roi</code>. Each column must be unique. <code>roi</code> is either a glomerulus name (D, DA1, … VM7v) or a non-negative integer ROI id.
+              It may be called <code>cells</code> instead: its values are then KC ids, so must be non-negative integers (and the coding unit is taken to be KCs).</li>
             <li><strong>Rows</strong> (leading columns): at least <code>odor1</code> (or <code>odor</code>); optionally <code>panel</code>, <code>is_pair</code>, <code>odor2</code>, …, <code>repeat</code>. Extra <code>odor&lt;n&gt;</code> levels are mixture components presented together in air.</li>
-            <li><strong>Odor strings</strong> look like <code>va @ -3</code>: abbreviation, a space, <code>@</code>, a space, log<sub>10</sub> concentration (0 or negative). <code>solvent</code> marks an unused component.</li>
+            <li><strong>Odor strings</strong> look like <code>va @ -3</code>: abbreviation, a space, <code>@</code>, a space, log<sub>10</sub> concentration (0 or negative). <code>solvent</code> marks an unused component.
+              A mixture may also be written in one level, its components joined by <code> + </code> (<code>ea @ -4.2 + eb @ -3.5</code>).</li>
           </ul>
           <p>A long layout (one row per value, with columns <code>date, fly_num, roi, [panel,] odor1, …, [repeat,] value</code>) is also accepted; parquet files with integer <code>fly_num</code> usually need this layout.</p>
           <p>For now, with a warning: <strong>no flies</strong>, columns of ROIs alone (in a CSV, a single header line of the row levels' names then
