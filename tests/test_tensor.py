@@ -4,8 +4,10 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from pathlib import Path
 from urllib.parse import urlencode
 
+import numpy as np
 import pytest
 from starlette.requests import Request
 
@@ -465,6 +467,76 @@ def test_kc_ids_by_coding_unit(main, tmp_path, monkeypatch):
     status, r = call(main.stage_commit, body={"metadata": md, "readme": "#"}, path_params=stage)
     assert status == 422 and r["errors"][0].startswith("KC data must have every KC")
     assert call(main.stage_readme, body={"metadata": {**md, "coding_unit": "PNs"}}, path_params=stage)[1]["ok"]
+
+
+def upload(main, path: Path) -> tuple[int, dict]:
+    """Status and JSON of uploading a file to the staging area, as the upload form does (multipart)."""
+    boundary = "olfdbtestboundary"
+    body = (f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{path.name}"\r\n'
+            "Content-Type: text/csv\r\n\r\n").encode() + path.read_bytes() + f"\r\n--{boundary}--\r\n".encode()
+    scope = {"type": "http", "method": "POST", "path": "/", "query_string": b"", "path_params": {},
+             "headers": [(b"content-type", f"multipart/form-data; boundary={boundary}".encode())]}
+
+    async def receive():
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    response = asyncio.run(main.stage_create(Request(scope, receive)))
+    return response.status_code, json.loads(response.body)
+
+
+def test_duplicates(main, tmp_path, monkeypatch):
+    from app import config
+
+    monkeypatch.setattr(config, "STAGING_DIR", tmp_path / "staging")
+    monkeypatch.setattr(config, "DATASETS_DIR", tmp_path / "datasets")
+    monkeypatch.setattr(config, "ODOR_SHEET_URL", "")
+    values = np.arange(len(ROWS) * len(COLS), dtype=float).reshape(len(ROWS), len(COLS))
+    first = write_csv(make_wide(ROWS, COLS, values), tmp_path, "first.csv")
+    parsed = load_file(first)
+    main.db.insert_dataset(
+        created_at="2026-10-21T10:00:00", title="p1: GH146 > GCaMP6f (glomeruli)", readme_md="#", readme_edited=False,
+        data_file="first.csv", metadata={"uploader_name": "Betty", "indicator": "GCaMP6f", "driver": "GH146", "coding_unit": "glomeruli"},
+        data_format=parsed.source_format, data_sha256=main._sha256(first), odor_yaml_files=[], experiment_xml_file=None,
+        experiment_xml_info=None, summary=parsed.summary(), units=parsed.units, trials=parsed.trials, values=parsed.values)
+    which = "dataset #1 (p1: GH146 > GCaMP6f (glomeruli)), uploaded by Betty on 2026-10-21"
+    # the same file, under another name: refused
+    renamed = tmp_path / "renamed.csv"
+    renamed.write_bytes(first.read_bytes())
+    status, r = upload(main, renamed)
+    assert status == 422 and r["errors"] == [f"this file was uploaded already: it is {which}. If this replaces it, delete #1 first (Admin tab)."]
+    # the same data in another file (its ROIs in another order)
+    status, r = upload(main, write_csv(make_wide(ROWS, COLS[::-1], values[:, ::-1]), tmp_path, "reordered.csv"))
+    assert status == 422 and r["errors"][0].startswith(f"this is the data of {which}, already (the same ROIs, trials and values")
+    # other data of the same flies
+    status, r = upload(main, write_csv(make_wide(ROWS, COLS, values + 1), tmp_path, "same_flies.csv"))
+    assert status == 422 and r["errors"][0] == (
+        f"its flies (2024-01-01 fly 1, 2024-01-02 fly 1, 2024-01-02 fly 2) are exactly those of {which}, and two datasets "
+        "cannot have the same flies. If this replaces it, delete #1 first (Admin tab).")
+    # some flies of it: allowed, with a warning saying which dataset may need to be deleted, and whose
+    more = COLS + [("2024-01-03", 1, "DM2")]
+    status, r = upload(main, write_csv(make_wide(ROWS, more), tmp_path, "more.csv"))
+    assert status == 200 and (f"possible duplicate: 3 of its 4 flies (2024-01-01 fly 1, 2024-01-02 fly 1, 2024-01-02 fly 2) are "
+                              f"also in {which}, all of whose flies are here, with 1 more: if this replaces it, #1 may need "
+                              "to be deleted (Admin tab)") in r["data"]["warnings"]
+    stage = {"stage_id": r["stage"]["stage_id"]}
+    status, r = upload(main, write_csv(make_wide(ROWS, COLS[:3]), tmp_path, "fewer.csv"))  # (2 of its 3 flies)
+    assert status == 200 and any(w.startswith("possible duplicate: 2 of its 2 flies") and "which has 1 more: if these are the same "
+                                 "recordings, this repeats part of #1" in w for w in r["data"]["warnings"])
+    status, r = upload(main, write_csv(make_wide(ROWS, [COLS[0], ("2024-01-03", 1, "DM2")]), tmp_path, "some.csv"))
+    assert status == 200 and any(w.startswith("possible duplicate: 1 of its 2 flies (2024-01-01 fly 1) is also in") and "which has 2 others" in w
+                                 for w in r["data"]["warnings"])
+    status, r = upload(main, write_csv(make_wide(ROWS, [("2024-02-01", 1, "DM2")]), tmp_path, "other.csv"))
+    assert status == 200 and not any("duplicate" in w for w in r["data"]["warnings"])
+    # and refused when saving, if a dataset with its flies was saved since
+    p = load_file(tmp_path / "more.csv")
+    main.db.insert_dataset(
+        created_at="2026-10-22T10:00:00", title="t", readme_md="#", readme_edited=False, data_file="x.csv",
+        metadata={"uploader_name": "Jon", "indicator": "GCaMP6f", "driver": "GH146", "coding_unit": "glomeruli"},
+        data_format=p.source_format, data_sha256="1" * 64, odor_yaml_files=[], experiment_xml_file=None,
+        experiment_xml_info=None, summary=p.summary(), units=p.units, trials=p.trials, values=p.values + 1)
+    md = {"uploader_name": "Ann", "indicator": "GCaMP6f", "driver": "GH146", "coding_unit": "glomeruli"}
+    status, r = call(main.stage_commit, body={"metadata": md, "readme": "#"}, path_params=stage)
+    assert status == 422 and any("are exactly those of dataset #2 (t), uploaded by Jon on 2026-10-22" in e for e in r["errors"])
 
 
 def test_check_data_path(root, tmp_path):

@@ -369,7 +369,7 @@ REAL_COLS = [("2023-11-19 00:00:00", 1, "DM2"), ("2023-11-19 00:00:00", 1, "DL5"
     ([("megamat", pair, o1, o2, r) for pair, o1, o2 in [(False, "va @ -3", "solvent"), (False, "ea @ -2", "solvent"),
                                                         (True, "ea @ -2", "va @ -3")] for r in range(3)],
      ("panel", "is_pair", "odor1", "odor2", "repeat")),
-    ([("2h @ -6", r) for r in range(2)] + [("ms @ -3", r) for r in range(2)], ("odor1", "repeat")),
+    ([("p", "2h @ -6", r) for r in range(2)] + [("p", "ms @ -3", r) for r in range(2)], ("panel", "odor1", "repeat")),
     ([("diag", "1-6ol @ -3", 0), ("megamat", "1-6ol @ -3", 0), ("megamat", "pa @ -3", 0)], ("panel", "odor", "repeat")),
 ])
 def test_wide_download_matches_upload(store, tmp_path, rows, row_names):
@@ -396,26 +396,27 @@ def test_dataset_stem():
 
 def test_stored_before_levels_were_dropped(store, tmp_path):
     """Trials stored with levels that say nothing are read (and downloaded) without them."""
-    rows = [(False, "va @ -3", "pfo @ 0", 0), (False, "ea @ -2", "pfo @ 0", 0)]
-    with_levels = load_file(write_csv(make_wide(rows, COLS, row_names=("is_pair", "odor1", "odor2", "repeat")), tmp_path))
+    rows = [("p1", False, "va @ -3", "pfo @ 0", 0), ("p1", False, "ea @ -2", "pfo @ 0", 0)]
+    with_levels = load_file(write_csv(make_wide(rows, COLS, row_names=("panel", "is_pair", "odor1", "odor2", "repeat")), tmp_path))
     # as it was parsed before: odor2 and is_pair dropped now
-    assert with_levels.row_levels == ["odor1", "repeat"]
+    assert with_levels.row_levels == ["panel", "odor1", "repeat"]
     with_levels.trials = [{**t, "odor": f"{t['odor']} + pfo @ 0", "components": [*t["components"], "pfo @ 0"],
                            "extra": {"is_pair": False}} for t in with_levels.trials]
-    with_levels.row_levels = ["is_pair", "odor1", "odor2", "repeat"]
+    with_levels.row_levels = ["panel", "is_pair", "odor1", "odor2", "repeat"]
     ds_id = add(store, with_levels)
     m = store[0].get_matrix_arrays(ds_id)
     assert [(t["odor"], t["components"], t["extra"]) for t in m["trials"]] == [("va @ -3", ["va @ -3"], {}), ("ea @ -2", ["ea @ -2"], {})]
-    assert store[0].get_trials(ds_id)[0] == {"panel": None, "odor": "va @ -3", "components": ["va @ -3"]}
+    assert store[0].get_trials(ds_id)[0] == {"panel": "p1", "odor": "va @ -3", "components": ["va @ -3"]}
     out = tmp_path / "out"
     write_download(store[0], [ds_id], "wide", out, store[1])
-    assert out.read_text().splitlines()[3].split(",")[:3] == ["odor1", "repeat", ""]
+    assert out.read_text().splitlines()[3].split(",")[:4] == ["panel", "odor1", "repeat", ""]
 
 
 def test_extra_levels(tmp_path):
     with_pair = parse(tmp_path, [("p1", False, "va @ -3", 0), ("p1", True, "va @ -3", 0)], COLS,
                       row_names=("panel", "is_pair", "odor1", "repeat"), name="a.csv")
-    no_pair = parse(tmp_path, [("va @ -3", 0), ("ea @ -2", 0)], COLS, row_names=("odor1", "repeat"), name="b.csv")
+    no_pair = parse(tmp_path, [("p1", "va @ -3", 0), ("p1", "ea @ -2", 0)], COLS, row_names=("panel", "odor1", "repeat"), name="b.csv")
+    no_pair.trials = [{**t, "panel": None} for t in no_pair.trials]  # (as stored before panels were needed)
     other_pair = parse(tmp_path, [("p1", True, "ea @ -2", 0), ("p1", False, "ms @ -3", 0)], COLS,
                        row_names=("panel", "is_pair", "odor1", "repeat"), name="c.csv")
     levels_of = lambda *ps: trial_keys([{"trials": p.trials} for p in ps])

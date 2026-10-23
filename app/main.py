@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import markdown
+import numpy as np
 from pydantic import ValidationError as PydanticValidationError
 from starlette.applications import Starlette
 from starlette.background import BackgroundTask
@@ -204,6 +205,12 @@ async def stage_create(request: Request) -> Response:
         shutil.rmtree(d, ignore_errors=True)
         return JSONResponse({"ok": False, "errors": [f"unexpected error while reading the file: {e}"], "warnings": []}, status_code=422)
 
+    sha256 = await run_in_threadpool(_sha256, dest)
+    errors, warnings = await run_in_threadpool(_duplicates, parsed, sha256)
+    if errors:
+        shutil.rmtree(d, ignore_errors=True)
+        return JSONResponse({"ok": False, "errors": errors, "warnings": parsed.warnings, "filename": fname}, status_code=422)
+    parsed.warnings += warnings
     await run_in_threadpool(save_parsed, parsed, d / "parsed")
     payload = await run_in_threadpool(parsed.to_payload)
     meta = {
@@ -212,7 +219,7 @@ async def stage_create(request: Request) -> Response:
         "data_file": fname,
         "original_filename": upload.filename,
         "size_bytes": size,
-        "sha256": _sha256(dest),
+        "sha256": sha256,
         "source_format": parsed.source_format,
         "odor_yamls": [],
         "experiment_xml": None,
@@ -220,6 +227,66 @@ async def stage_create(request: Request) -> Response:
     }
     _write_stage_meta(d, meta)
     return JSONResponse({"ok": True, "stage": _public_stage(meta), "data": payload})
+
+
+MAX_FLIES_NAMED = 6  # flies listed in a message of datasets overlapping
+
+
+def _flies_text(flies: set[tuple[str, int]]) -> str:
+    named = [f"{d} fly {f}" for d, f in sorted(flies)]
+    return ", ".join(named[:MAX_FLIES_NAMED]) + (f" and {len(named) - MAX_FLIES_NAMED} more" if len(named) > MAX_FLIES_NAMED else "")
+
+
+def _same_data(parsed: ParsedData, m: dict) -> bool:
+    """Whether an upload's data is a stored dataset's (`Database.get_matrix_arrays`): the same
+    ROIs and trials, whatever their order, with the same values (as float32 keeps them)."""
+    def index(units, trials):
+        return ({(u["date"], u["fly_num"], u["roi"]): i for i, u in enumerate(units)},
+                {(t["panel"], t["odor"], t["repeat"]): j for j, t in enumerate(trials)})
+    (ua, ta), (ub, tb) = index(parsed.units, parsed.trials), index(m["units"], m["trials"])
+    if set(ua) != set(ub) or set(ta) != set(tb):
+        return False
+    us, ts = sorted(ua, key=str), sorted(ta, key=str)
+    a = parsed.values[np.ix_([ua[k] for k in us], [ta[k] for k in ts])]
+    b = m["values"][np.ix_([ub[k] for k in us], [tb[k] for k in ts])]
+    return bool(np.allclose(a, b, rtol=1e-5, atol=1e-7, equal_nan=True))
+
+
+def _duplicates(parsed: ParsedData, sha256: str) -> tuple[list[str], list[str]]:
+    """An upload against the datasets stored: errors (refusing it) if its file is one of
+    theirs (byte for byte), or its flies (date, fly_num) are all of one's and only those
+    (saying if its data is that dataset's too); warnings if it shares only some flies with
+    one, saying which dataset may need to be deleted, and whose it is."""
+    flies = {(u["date"], u["fly_num"]) for u in parsed.units if u["date"] is not None}
+    stored = db.dataset_flies()
+    errors, warnings = [], []
+    for d in sorted(db.list_datasets(), key=lambda d: d["id"]):
+        which = f"dataset #{d['id']} ({d['title']}), uploaded by {d['uploader_name']} on {d['created_at'][:10]}"
+        delete = f"If this replaces it, delete #{d['id']} first (Admin tab)."
+        theirs = stored.get(d["id"], set())
+        if d["data_sha256"] == sha256:
+            errors.append(f"this file was uploaded already: it is {which}. {delete}")
+        elif flies and theirs == flies:
+            m = db.get_matrix_arrays(d["id"])
+            errors.append(f"this is the data of {which}, already (the same ROIs, trials and values, in another file). {delete}"
+                          if m is not None and _same_data(parsed, m) else
+                          f"its flies ({_flies_text(flies)}) are exactly those of {which}, and two datasets cannot have the "
+                          f"same flies. {delete}")
+        elif flies & theirs:
+            shared = flies & theirs
+            if theirs < flies:
+                tail = (f"all of whose flies are here, with {len(flies - theirs)} more: if this replaces it, #{d['id']} "
+                        "may need to be deleted (Admin tab)")
+            elif flies < theirs:
+                tail = (f"which has {len(theirs - flies)} more: if these are the same recordings, this repeats part of "
+                        f"#{d['id']}, or #{d['id']} may need to be deleted (Admin tab) if this replaces it")
+            else:
+                n = len(theirs - shared)
+                tail = (f"which has {n} other{'s' if n != 1 else ''}: if these are the same recordings, #{d['id']} may need "
+                        "to be deleted (Admin tab), or they left out of this file")
+            warnings.append(f"possible duplicate: {len(shared)} of its {len(flies)} flies ({_flies_text(shared)}) "
+                            f"{'is' if len(shared) == 1 else 'are'} also in {which}, {tail}")
+    return errors, warnings
 
 
 def _public_stage(meta: dict) -> dict:
@@ -597,7 +664,7 @@ def _commit(d: Path, meta: dict, m: Metadata, readme: str, readme_edited: bool) 
     parsed = load_parsed(d / "parsed")
     summary = parsed.summary()
     # consistency checks that must pass before anything is written
-    problems = [p for p in [_kc_problem(parsed, m.coding_unit)] if p]
+    problems = [p for p in [_kc_problem(parsed, m.coding_unit)] if p] + _duplicates(parsed, meta["sha256"])[0]
     if meta["odor_yamls"]:
         check = _run_yaml_check(d, meta)
         if not check["ok"]:

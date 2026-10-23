@@ -358,7 +358,7 @@ class Database:
             rows = con.execute(
                 """SELECT id, created_at, title, uploader_name, indicator, driver, coding_unit, panel_names,
                           recording_system, n_flies, n_units, n_trials, n_odors, repeats_min, repeats_max,
-                          first_fly_date, last_fly_date, roi_kind, data_file
+                          first_fly_date, last_fly_date, roi_kind, data_file, data_sha256
                    FROM datasets ORDER BY last_fly_date DESC, id DESC"""
             ).fetchall()
             panels = con.execute("SELECT dataset_id, panel, source FROM dataset_panels ORDER BY rowid").fetchall()
@@ -370,6 +370,15 @@ class Database:
             d = dict(r)
             d["panels"] = by_ds.get(r["id"], [])
             out.append(d)
+        return out
+
+    def dataset_flies(self) -> dict[int, set[tuple[str, int]]]:
+        """Each dataset's flies, (date, fly_num) (none for one stored without flies)."""
+        with self.connect() as con:
+            rows = con.execute("SELECT DISTINCT dataset_id, date, fly_num FROM units WHERE date IS NOT NULL").fetchall()
+        out: dict[int, set[tuple[str, int]]] = {}
+        for r in rows:
+            out.setdefault(r["dataset_id"], set()).add((r["date"], r["fly_num"]))
         return out
 
     def get_dataset(self, ds_id: int) -> Optional[dict]:

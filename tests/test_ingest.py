@@ -127,9 +127,9 @@ def test_minimal_wide_ok(tmp_path):
 
 
 def test_int_rois_and_single_odor_level(tmp_path):
-    rows = [("va @ -3", 0), ("va @ -3", 1), ("ea @ -2", 0)]
+    rows = [("p1", "va @ -3", 0), ("p1", "va @ -3", 1), ("p1", "ea @ -2", 0)]
     cols = [("2024-01-01", 1, 0), ("2024-01-01", 1, 1), ("2024-01-01", 1, 25)]
-    df = make_wide(rows, cols, row_names=("odor", "repeat"))
+    df = make_wide(rows, cols, row_names=("panel", "odor", "repeat"))
     p = load_file(write_csv(df, tmp_path))
     assert p.summary()["roi_kind"] == "integers"
     assert [u["roi"] for u in p.units] == ["0", "1", "25"]
@@ -137,17 +137,17 @@ def test_int_rois_and_single_odor_level(tmp_path):
 
 def test_trials_required(tmp_path):
     # each trial numbered: without, refused (as averaged over trials, say)
-    e = errors_for(make_wide([("va @ -3",), ("ea @ -2",)], COLS, row_names=("odor1",)), tmp_path)
+    e = errors_for(make_wide([("p1", "va @ -3"), ("p1", "ea @ -2")], COLS, row_names=("panel", "odor1")), tmp_path)
     assert e.startswith("no trials: each trial's number is needed, in a row level (in a long file, a column) named repeat "
                         "(or trial) of integers (0, 1, 2... or 1, 2, 3...): one row per trial, not averaged over trials")
     # 'trial' for 'repeat', in either layout; integers
-    df = make_wide([("va @ -3", 1), ("va @ -3", 2)], COLS, row_names=("odor1", "trial"))
+    df = make_wide([("p1", "va @ -3", 1), ("p1", "va @ -3", 2)], COLS, row_names=("panel", "odor1", "trial"))
     p = load_file(write_csv(df, tmp_path))
     assert [t["repeat"] for t in p.trials] == [1, 2] and "repeat" in p.row_levels and p.summary()["has_repeat_level"]
     long = df.stack(list(range(3)), future_stack=True).rename("value").reset_index()
     long.to_csv(tmp_path / "long.csv", index=False)
     assert [t["repeat"] for t in load_file(tmp_path / "long.csv").trials] == [1, 2]
-    e = errors_for(make_wide([("va @ -3", 1.5), ("va @ -3", "two")], COLS, row_names=("odor1", "trial")), tmp_path)
+    e = errors_for(make_wide([("p1", "va @ -3", 1.5), ("p1", "va @ -3", "two")], COLS, row_names=("panel", "odor1", "trial")), tmp_path)
     assert "'trial' values must be non-negative integers (each trial's number): '1.5', 'two'" in e
 
 
@@ -280,7 +280,7 @@ def test_rois_alone(tmp_path):
     p.write_text(ROIS_ALONE)
     with pytest.raises(ValidationError) as ei:
         load_file(p)
-    assert [e.split(":")[0] for e in ei.value.errors] == ["no flies", "no trials"]
+    assert [e.split(":")[0] for e in ei.value.errors] == ["no flies", "no trials", "no panel"]
     assert ei.value.errors[0].startswith("no flies: the columns are ROIs alone, without date or fly_num, but each ROI's fly is "
                                          "needed, by its date and its number that day: in a wide file, header rows date, fly_num")
     w = "\n".join(ei.value.warnings)
@@ -295,6 +295,16 @@ def test_roi_suffixes(tmp_path):
     assert all(u["roi_kind"] == "glomerulus" for u in parsed.units)
     w = "\n".join(parsed.warnings)
     assert "'DA1_t0 → DA1'" in w and "'V_t1 → V'" in w and "'VA1d/VA1v'" in w
+
+
+def test_panel_required(tmp_path):
+    # every trial's panel: a level, with a value on every row
+    e = errors_for(make_wide([("va @ -3", 0), ("ea @ -2", 0)], COLS, row_names=("odor1", "repeat")), tmp_path)
+    assert e.startswith("no panel: each trial's panel is needed (the name of the set of odors presented in that experiment, "
+                        "e.g. megamat; which odors it has may vary somewhat from experiment to experiment)")
+    e = errors_for(make_wide([("p1", "va @ -3", 0), ("", "ea @ -2", 0), (None, "ea @ -2", 1)], COLS,
+                             row_names=("panel", "odor1", "repeat")), tmp_path)
+    assert e.startswith("2 of its 3 rows have no panel, but each trial's panel is needed")
 
 
 def test_flies_required(tmp_path):
@@ -411,11 +421,11 @@ def test_mixture_in_one_level(tmp_path):
     assert [t["odor"] for t in p.trials] == ["ea @ -4.2 + eb @ -3.5", "ea @ -4.2", "ea @ -4.2 + IaA @ -3"]
     assert any("1 rows name a mixture in one odor level" in w and "'ea @ -4.2 + eb @ -3.5'" in w for w in p.warnings)
     # each component is checked
-    e = errors_for(make_wide([("ea @ -4.2 + eb", 0), ("ea @ -3", 0)], COLS, row_names=("odor1", "repeat")), tmp_path)
+    e = errors_for(make_wide([("p1", "ea @ -4.2 + eb", 0), ("p1", "ea @ -3", 0)], COLS, row_names=("panel", "odor1", "repeat")), tmp_path)
     assert "'eb'" in e
     # the same mixture written both ways is the same trial twice
-    e = errors_for(make_wide([("ea @ -4 + eb @ -3", "solvent", 0), ("ea @ -4", "eb @ -3", 0)], COLS,
-                             row_names=("odor1", "odor2", "repeat")), tmp_path)
+    e = errors_for(make_wide([("p1", "ea @ -4 + eb @ -3", "solvent", 0), ("p1", "ea @ -4", "eb @ -3", 0)], COLS,
+                             row_names=("panel", "odor1", "odor2", "repeat")), tmp_path)
     assert "duplicate trials" in e
 
 

@@ -6,7 +6,7 @@ Accepted layouts
 rows and columns):
 
     columns: MultiIndex with levels  date, fly_num, roi
-    rows:    MultiIndex with levels  [panel, is_pair,] odor1[, odor2, ...][, repeat]
+    rows:    MultiIndex with levels  panel, [is_pair,] odor1[, odor2, ...], repeat
              (``odor`` alone is accepted in place of ``odor1``)
 
 The ROI level may be called ``cells`` instead of ``roi``: its values are then KC ids,
@@ -23,7 +23,7 @@ names then the ROIs' (as ``to_csv`` writes a frame with plain columns).
 
 *long* (one row per value):
 
-    columns: date, fly_num, roi (or cells)[, bad], [panel,] odor1[, odor2, ...][, repeat], value
+    columns: date, fly_num, roi (or cells)[, bad], panel, odor1[, odor2, ...], repeat, value
 
 (``trial`` is read as ``repeat``, in either layout.)
 
@@ -74,6 +74,9 @@ TRIAL = "trial"  # the repeat level, by another name
 FLIES_NEEDED = (f"each ROI's fly is needed, by its date and its number that day: in a wide file, header rows date, fly_num, "
                 f"then roi (or {CELLS}; and {BAD} if any) before the row naming the row levels, as pandas' to_csv writes a "
                 "frame whose columns are a MultiIndex of those levels; in a long file, columns date and fly_num")
+PANEL_NEEDED = ("each trial's panel is needed (the name of the set of odors presented in that experiment, e.g. megamat; "
+                "which odors it has may vary somewhat from experiment to experiment), in a row level (in a long file, a "
+                "column) named panel, on every row")
 TRIALS_NEEDED = (f"each trial's number is needed, in a row level (in a long file, a column) named repeat (or {TRIAL}) of "
                  "integers (0, 1, 2... or 1, 2, 3...): one row per trial, not averaged over trials")
 KNOWN_ROW_LEVELS = {"panel", "is_pair", "repeat"}
@@ -833,9 +836,10 @@ def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
                 n_missing_panel += 1
             else:
                 panels.append(str(v))
-        if n_missing_panel and n_missing_panel < len(panels):
-            warnings.append(f"{n_missing_panel} rows have no 'panel' value")
+        if n_missing_panel:
+            errors.append(f"{n_missing_panel} of its {len(panels)} rows have no panel, but {PANEL_NEEDED}")
     else:
+        errors.append(f"no panel: {PANEL_NEEDED}")
         panels = [None] * len(idx_frame)
 
     # duplicate rows

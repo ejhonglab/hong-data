@@ -108,9 +108,11 @@ glomeruli_diagnostics,False,3mtp @ -5,solvent,0,-0.0377,0.13,...
   header row after the ROIs' in a wide CSV (`date, fly_num, cells, bad`), a column in a
   long file. Any ROIs may be marked so. Downloads keep the level (False for the ROIs of
   datasets without it, among others).
-- **Rows**: at least `odor1` (or `odor`) and `repeat` (or `trial`: each trial's number,
-  an integer); optionally `panel`, `is_pair`, `odor2`, .... A file without trials (one
-  row per odor, as when averaged over trials) is refused. Several `odor<n>` levels are mixture components presented together and
+- **Rows**: `panel`, at least `odor1` (or `odor`) and `repeat` (or `trial`: each trial's
+  number, an integer); optionally `is_pair`, `odor2`, .... A file without trials (one
+  row per odor, as when averaged over trials) is refused, as is one without a panel on
+  every row. A panel names the set of odors presented in an experiment (e.g. `megamat`);
+  which odors it has may vary somewhat from experiment to experiment. Several `odor<n>` levels are mixture components presented together and
   are displayed joined with ` + ` (solvent components dropped), as in `hong2p.olf`. A
   mixture written in one level that way (`ea @ -4.2 + eb @ -3.5`) is split into its
   components, as if each were in a level of its own (with a warning).
@@ -138,7 +140,13 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
 
 ## The tabs in detail
 
-- **Upload**: an optional odor YAML must have every odor in the matrix, with the same
+- **Upload**: a file is refused if it was uploaded already (the same file, whatever its
+  name), or if its flies (each `date` and `fly_num`) are exactly those of a dataset
+  uploaded already (saying if its data is that dataset's too), naming that dataset and who
+  uploaded it: to replace one, delete it first (Admin tab). A file sharing only some of
+  its flies with a dataset is accepted with a warning naming that dataset and its
+  uploader, and which of the two may need to be deleted if they are the same recordings.
+  An optional odor YAML must have every odor in the matrix, with the same
   abbreviation and concentration. Each YAML added is also checked on its own, as a
   warning only: its odors against the odor table (missing, or named, abbreviated or with
   a CID unlike there), odors without a concentration, and an abbreviation used for two

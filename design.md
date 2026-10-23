@@ -129,6 +129,14 @@ between the frontend and the server. Using the app is described in
   again (`ingest.FLIES_NEEDED`, `TRIALS_NEEDED`), but those stored then are still shown,
   so storage, the viewer and downloads keep handling them, and files of ROIs alone are
   still read far enough to say what they lack.
+- **A dataset's flies are its identity for duplicates.** A file is refused if it is a
+  stored dataset's byte for byte (`data_sha256`), or if its flies, (date, fly_num), are
+  all and only one's (`main._duplicates`, when the file is read and again on saving):
+  the same data in another file has the same flies, so this catches it too, and the
+  message says whether its ROIs, trials and values are that dataset's (`_same_data`).
+  Flies shared only in part are a warning, naming the dataset that may need deleting,
+  as a fuller upload may replace an earlier one. Flies are matched across uploaders:
+  (date, fly_num) is taken to name one fly in the lab.
 - **ROIs marked bad are kept, and left out where used.** KC datasets must have every KC
   of each fly (ids from 0 or 1 to the highest, `ingest.kc_id_problems`), so that a
   dataset says which KCs were segmented and not used rather than leaving gaps: those
