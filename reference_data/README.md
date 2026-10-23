@@ -37,7 +37,7 @@ chemicals) or `"detect"` (the default). Chemicals are identified by columns name
 (then the rows are chemicals), or rows labelled so (then the columns are); without
 these, by their labels, as names or abbreviations in the Odors tab. They are labelled by
 their names there, and a matrix with chemicals not identified by a CID or InChI is
-shown with a warning.
+shown with a warning, and without them unless they are chosen to be shown too.
 
 ```
 chemical,cid,group,banana,strawberry
@@ -60,6 +60,32 @@ VA2,2,85
 Rows and columns without a single number (notes, units) are left out, and cells that
 are not numbers are shown as missing.
 
+A table can instead have one value per line (a "list", or long table), as VCF's does:
+
+```
+inchi,name,quantity,product_name,reference,...
+1S/C4H8O2/c1-3-6-4(2)5/h3H2,1-2H3,ethyl acetate,0.5,APPLE,"J. Agric. ..."
+,linalool,q,BEER,"Flavour Fragr. J. ..."
+```
+
+Its manifest entry (or the Admin tab, when adding it) then says which of its fields make
+the matrix, the rest being ignored:
+
+```json
+"fields": {"layout": "list",
+           "rows": {"label": "name", "keep": ["inchi", "cas"]},
+           "cols": {"label": "product_name", "keep": ["reference"]},
+           "value": "quantity",          // or null: 1 where a line lists the row and column, else 0
+           "empty": "missing"}           // or "zero": a cell no line lists
+```
+
+Each combination of the rows' fields on a line is a row (and so for columns), labelled
+by `label`'s value, those labelled alike told apart by the others (and all shown on
+hover). Several lines of one cell give the mean of their numbers; values that are not
+numbers (`q`, `trace`, ...) are missing. Identifier fields (`cid`, `inchi`, with or
+without its `InChI=`, `name`, ...) of the rows (else of the columns) identify chemicals.
+A matrix of more than 20 million cells is refused.
+
 A file can also be an xarray DataArray of two dimensions saved as netCDF (`.nc`, `.nc4`,
 by `DataArray.to_netcdf`), read with `xarray.load_dataarray`. Its first dimension is the
 rows, and its missing values are taken as 0 (absent). Each item is labelled by its
@@ -67,7 +93,9 @@ dimension's coordinate named `name`, `label` or `title`, or ending in "name" (e.
 `product_name`), else the dimension's own coordinate. Items labelled alike are told apart
 by the values of its other coordinates that differ among them, coarsest first (those with
 the fewest values: e.g. a product's group, then its category, then the reference), and
-every item's other coordinates are shown on hover (but identifiers and links).
+every item's other coordinates are shown on hover (but identifiers and links). Its
+`"fields"` can choose which coordinates label and describe its rows and columns
+(`{"rows": {"label": ..., "keep": [...]}, "cols": ...}`), ignoring the rest.
 Coordinates named as the identifier columns above (`cid`, `inchi`, `name`, ...) identify
 the chemicals.
 

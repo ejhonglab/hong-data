@@ -325,7 +325,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   file: *Chemicals* in the viewer), the rest as in the file. A yellow warning is by a
   table with chemicals not identified by a CID or InChI (in the file, or through the
   Odors tab), naming the first of them, with all of them to show and copy (also when
-  adding one in the Admin tab); one that cannot be read is listed by its name alone, with why.
+  adding one in the Admin tab); these are left out of its matrix unless a box by the
+  warning is ticked. One that cannot be read is listed by its name alone, with why.
   A table of glomeruli (by their labels) has no chemicals, and so no warning: it says it
   can be compared with datasets on their glomeruli.
 - **Admin** (to the right of Docs; it first asks whether you are Tom, Jon or Betty, or
@@ -356,6 +357,14 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     description, source, labels, colors (or from its values) and whether its rows or
     columns are chemicals (or found from identifier columns, e.g. `cid`, `pubchem_cid`,
     `inchi`, `cas`, `name`, or rows labelled so; of a DataArray, coordinates named so).
+    Once read, its fields are listed, to choose which make the matrix (the rest are
+    ignored): a table laid out as its matrix, or one value per line (a long table, e.g.
+    VCF's: suggested when it looks like one), whose rows and columns are each
+    combination of the fields chosen for them (labelled by the first, the others told
+    apart and shown on hover), and whose values are a field of numbers (the mean of
+    several lines of a cell) or presence (1 where a line lists a row and column); of a
+    DataArray, which coordinates label and describe its rows and columns. Each choice
+    shows what it makes (its size, chemicals identified) before it is added.
     The app never changes the file: it reads a copy into `data/references/`, again
     whenever the file changes. A file outside the folders the server may read is added
     to them (itself, to read only), and read once the server restarts, with what that

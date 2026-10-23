@@ -283,7 +283,20 @@ table.diff .new { color: var(--ok); }
 .tab-badge { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #d08a00; margin-left: 5px; vertical-align: super; }
 .tab-badge.error { background: var(--danger); }
 #ds-odors .odor-table th { top: -12px; }
+.ref-fields { margin: 12px 0 4px; padding: 12px 14px; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--surface-2); display: flex; flex-direction: column; gap: 8px; }
+.ref-fields h4 { margin: 0; font-size: 13.5px; }
+.ref-role { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 13px; }
+.ref-role b { min-width: 64px; }
+.ref-role select { width: auto; max-width: 100%; }
+.ref-role .chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border: 1px solid var(--rule); border-radius: 999px; background: var(--panel); cursor: pointer; }
+.ref-role .chip input { width: auto; margin: 0; }
+.ref-role .chip:has(input:disabled) { opacity: 0.45; cursor: default; }
+.ref-list { display: flex; flex-direction: column; gap: 8px; }
+.ref-list[hidden] { display: none; }
+.ref-list p { margin: 0; }
 .unidentified { margin-top: 8px; }
+.ref-unidentified { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-weight: 500; }
+.ref-unidentified input { width: auto; margin: 0; }
 .unidentified summary { cursor: pointer; font-weight: 500; }
 .unidentified .actions { margin: 6px 0; }
 .unidentified ol { max-height: 260px; overflow: auto; margin: 0; padding: 6px 8px 6px 3em; font-size: 12.5px; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; }

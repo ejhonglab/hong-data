@@ -117,7 +117,7 @@ def test_builtin_and_chemicals(env):
     assert gone["state"] == "error" and gone["error"] == "file missing from reference_data/"
     status, r = call(env.reference_get, path_params={"ref_id": "fruits"})
     assert status == 200 and r["rows"][0]["chem"] == {"odor_id": 1, "name": "ethyl acetate", "abbrev": "ea", "cid": 8857,
-                                                      "how": "name"}
+                                                      "how": "name", "identified": True}
     assert r["rows"][1]["chem"]["cid"] is None and r["meta"]["kind"] == "sequential"
     values = np.frombuffer(base64.b64decode(r["values_b64"]), "<f4").reshape(r["shape"])
     assert values[0].tolist() == [1, 2] and np.isnan(values[1, 1])
@@ -251,6 +251,14 @@ def test_dataarray(env, tmp_path):
                                       {"name": "linalool", "cid": 6549}], "cols": None}
     chem = reference.chemicals(record, odormeta.OdorIndex(env.db.list_odors()))
     assert chem["axis"] == "rows" and chem["matched"] == 2 and chem["identified"] == 3
+    record, _ = reference.parse(p, fields={"rows": {"label": "name", "keep": []}, "cols": {"label": "product_name", "keep": ["product_group"]}})
+    assert [c["label"] for c in record["cols"]] == ["COGNAC (1)", "COGNAC (2)", "APPLE", "ROSEMARY"]  # (no reference to tell them apart)
+    assert record["cols"][0]["detail"] == "product group: Alcoholic" and record["ids"]["rows"][0] == {"name": "ethyl acetate"}
+    d = reference.describe_fields(p)
+    assert d["kind"] == "dataarray" and d["dims"] == ["compound", "source"]
+    assert d["suggested"]["cols"] == {"label": "product_name", "keep": ["reference", "product_category", "product_group"]}
+    with pytest.raises(reference.ReferenceError, match="'nope'"):
+        reference.parse(p, fields={"rows": {"label": "nope"}})
     xr.DataArray(np.zeros((2, 2, 2))).to_netcdf(tmp_path / "three.nc")
     with pytest.raises(reference.ReferenceError, match="3 dimensions"):
         reference.parse(tmp_path / "three.nc")
@@ -268,3 +276,69 @@ def test_dataarray(env, tmp_path):
              "path_params": {"ref_id": "big"}}
     res = asyncio.run(env.reference_get(Request(scope)))
     assert res.headers["content-encoding"] == "gzip" and json.loads(gzip.decompress(res.body))["shape"] == [600, 600]
+
+
+def test_list(env, tmp_path, monkeypatch):
+    # one value per line, as VCF's: compounds (an InChI without its "InChI="), products, references, and quantities
+    p = write(tmp_path / "vcf.csv", "inchi,name,quantity,product_name,reference,vcf_url\n"
+              '"1S/C4H8O2/c1-3-6-4(2)5/h3H2,1-2H3",ethyl acetate,0.5,APPLE,Ref A,https://x/1\n'
+              ",ethyl acetate,1.5,APPLE,Ref B,https://x/2\n"
+              ",linalool,q,APPLE,Ref A,https://x/3\n"
+              ",linalool,2,BEER,Ref C,https://x/4\n"
+              ",,7,BEER,Ref C,https://x/5\n")
+    d = reference.describe_fields(p)
+    assert d["kind"] == "table" and [f["name"] for f in d["fields"]][:3] == ["inchi", "name", "quantity"]
+    quantity = next(f for f in d["fields"] if f["name"] == "quantity")
+    assert quantity["distinct"] == 5 and quantity["numeric"] == 0.8 and quantity["samples"] == ["0.5", "1.5", "q"]
+    assert d["suggested"] == {"layout": "list", "rows": {"label": "name", "keep": ["inchi"]}, "cols": {"label": "product_name", "keep": []},
+                              "value": "quantity", "empty": "missing"}
+    # each name a row (the line with none left out), each product a column; several lines of one cell, their mean
+    spec = {"layout": "list", "rows": {"label": "name", "keep": []}, "cols": {"label": "product_name", "keep": []}, "value": "quantity"}
+    record, values = reference.parse(p, fields=spec)
+    assert [r["label"] for r in record["rows"]] == ["ethyl acetate", "linalool"] and [c["label"] for c in record["cols"]] == ["APPLE", "BEER"]
+    assert values[0, 0] == 1.0 and np.isnan(values[0, 1]) and np.isnan(values[1, 0]) and values[1, 1] == 2
+    assert record["notes"] == ["1 line with no 'name' or 'product_name' left out", "1 value is not a number (e.g. 'q'): missing",
+                               "1 cell is on more than one line: the mean of their numbers"]
+    assert record["ids"] == {"rows": [{"name": "ethyl acetate"}, {"name": "linalool"}], "cols": None}
+    # or presence; cells no line lists 0; the columns of products told apart by reference where need be
+    record, values = reference.parse(p, fields={**spec, "value": None, "cols": {"label": "product_name", "keep": ["reference"]}})
+    assert record["kind"] == "binary" and values.tolist() == [[1, 1, 0], [1, 0, 1]]
+    assert [c["label"] for c in record["cols"]] == ["APPLE — Ref A", "APPLE — Ref B", "BEER"] and record["cols"][2]["detail"] == "reference: Ref C"
+    record, values = reference.parse(p, fields={**spec, "empty": "zero"})
+    assert values[0, 1] == 0 and np.isnan(values[1, 0])  # (listed, but no number: still missing)
+    # an InChI without "InChI=" identifies its chemical; the rows of each combination of their fields
+    record, _ = reference.parse(p, fields={**spec, "rows": {"label": "name", "keep": ["inchi"]}})
+    assert [r["label"] for r in record["rows"]] == ["ethyl acetate (1)", "ethyl acetate (2)", "linalool"]
+    assert record["ids"]["rows"][0] == {"name": "ethyl acetate", "inchi": "InChI=1S/C4H8O2/c1-3-6-4(2)5/h3H2,1-2H3"}
+    for bad, why in (({**spec, "cols": {"label": "name"}}, "cannot be of both"), ({**spec, "value": "nope"}, "no field of"),
+                     ({**spec, "rows": {"label": None}}, "choose the fields"), ({**spec, "value": "reference"}, "has no numbers")):
+        with pytest.raises(reference.ReferenceError, match=why):
+            reference.parse(p, fields=bad)
+    # a matrix as laid out is not taken for a list
+    m = write(tmp_path / "m.csv", "chemical,cid,banana,apple\nlinalool,6549,1,2\nethyl acetate,8857,2,3\nfoo,,3,4\n")
+    assert reference.describe_fields(m)["suggested"]["layout"] == "matrix"
+    # too large a matrix: refused, saying how large
+    monkeypatch.setattr(reference, "MAX_CELLS", 3)
+    with pytest.raises(reference.ReferenceError, match="2 rows × 2 columns"):
+        reference.parse(p, fields=spec)
+
+
+def test_list_added(env, tmp_path):
+    p = write(tmp_path / "refs" / "vcf.csv", "name,product_name,reference,quantity\nethyl acetate,APPLE,A,1\nlinalool,APPLE,B,q\n"
+              "ethyl acetate,BEER,C,2\nmystery,BEER,C,3\n")
+    sandbox.activate({"read_dirs": [str(tmp_path / "refs")], "write_dirs": []})
+    # checked as suggested, then as chosen; added with its choices, which it is read by again
+    c = call(env.admin_reference_check, body={"path": str(p)})[1]
+    assert c["ok"] and c["fields"]["used"]["layout"] == "list" and c["preview"]["shape"] == [3, 2]
+    fields = {"layout": "list", "rows": {"label": "name", "keep": []}, "cols": {"label": "product_name", "keep": ["reference"]}, "value": None}
+    c = call(env.admin_reference_check, body={"path": str(p), "fields": fields})[1]
+    assert c["preview"]["shape"] == [3, 3] and c["preview"]["kind"] == "binary"
+    bad = call(env.admin_reference_check, body={"path": str(p), "fields": {**fields, "cols": {"label": "name"}}})[1]
+    assert not bad["ok"] and "cannot be of both" in bad["error"] and bad["fields"]["fields"]  # (its fields, to choose again)
+    status, r = call(env.admin_reference_add, body={"path": str(p), "title": "VCF", "fields": fields})
+    assert status == 200 and r["state"] == "ok"
+    assert json.loads(env.db.list_references()[0]["fields"]) == {**fields, "layout": "list"}
+    r = call(env.reference_get, path_params={"ref_id": "vcf"})[1]
+    assert r["shape"] == [3, 3] and [x["label"] for x in r["cols"]] == ["APPLE — A", "APPLE — B", "BEER"]
+    # each chemical said to be identified or not (shown only if so, by default): linalool by the odor table's CID
+    assert [x["chem"]["identified"] for x in r["rows"]] == [True, True, False] and r["chemicals"]["unidentified"] == ["mystery"]

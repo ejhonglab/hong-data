@@ -1626,19 +1626,19 @@ def _delete_dataset(ds_id: int) -> tuple[int, dict]:
 
 
 async def admin_reference_check(request: Request) -> Response:
-    """Check a file to add as a reference dataset ({"path", "chemical_axis", "kind"}), see `reference.check`."""
+    """Check a file to add as a reference dataset ({"path", "chemical_axis", "kind", "fields"}), see `reference.check`."""
     body = await request.json()
     if not isinstance(body, dict):
         return json_error(400, 'expected {"path": ...}')
     axis = body.get("chemical_axis") if body.get("chemical_axis") in reference.AXES else "detect"
     kind = body.get("kind") if body.get("kind") in reference.KINDS else "detect"
     return JSONResponse(await run_in_threadpool(
-        lambda: reference.check(str(body.get("path") or ""), axis, kind, _odor_index(), _supervisor())))
+        lambda: reference.check(str(body.get("path") or ""), axis, kind, _odor_index(), _supervisor(), body.get("fields"))))
 
 
 async def admin_reference_add(request: Request) -> Response:
     """Add a reference dataset ({"path", "title", "description", "kind", "chemical_axis",
-    "value_label", "row_label", "col_label", "source"}), see `reference.add`."""
+    "value_label", "row_label", "col_label", "source", "fields"}), see `reference.add`."""
     body = await request.json()
     if not isinstance(body, dict):
         return json_error(400, 'expected {"path": ..., "title": ...}')

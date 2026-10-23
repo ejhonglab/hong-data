@@ -2522,7 +2522,30 @@ function setAdminBadge(items) {
 }
 
 class Reference {
-  constructor() { this.items = null; this.viewer = null; this.selected = null; this.cache = new Map(); }
+  constructor() {
+    this.items = null; this.viewer = null; this.selected = null; this.cache = new Map();
+    this.showUnidentified = false; // chemicals with no CID or InChI shown in the matrix
+    this.identified = new WeakMap(); // a dataset as loaded -> it without those
+  }
+
+  // a dataset as shown: but for its chemicals not identified (no CID or InChI), unless chosen
+  _shown(ref) {
+    if (this.showUnidentified || !ref.chemicals?.axis) return ref;
+    if (!this.identified.has(ref)) {
+      const onRows = ref.chemicals.axis === 'rows', items = onRows ? ref.rows : ref.cols;
+      const keep = items.flatMap((it, k) => (it.chem?.identified === false ? [] : [k]));
+      if (keep.length === items.length) this.identified.set(ref, ref);
+      else {
+        const all = ref.values || decodeValues(ref.values_b64), nR = ref.rows.length, nC = ref.cols.length;
+        const values = new Float32Array(onRows ? keep.length * nC : nR * keep.length);
+        if (onRows) keep.forEach((r, i) => values.set(all.subarray(r * nC, (r + 1) * nC), i * nC));
+        else for (let r = 0; r < nR; r++) keep.forEach((c, j) => { values[r * keep.length + j] = all[r * nC + c]; });
+        this.identified.set(ref, { ...ref, values, rows: onRows ? keep.map((k) => ref.rows[k]) : ref.rows,
+          cols: onRows ? ref.cols : keep.map((k) => ref.cols[k]) });
+      }
+    }
+    return this.identified.get(ref);
+  }
 
   // after reference datasets were added or deleted, or the odor table changed
   invalidate() { this.items = null; this.cache.clear(); }
@@ -2572,7 +2595,16 @@ class Reference {
     $('#ref-desc').textContent = [m.description, m.source ? `Source: ${m.source}` : ''].filter(Boolean).join(' ');
     const c = ref.chemicals, msgs = [];
     if (ref.warning) {
-      msgs.push(unidentifiedBox(ref.warning, c.unidentified, 'Add them to the Odors table (with their CID), or give their CIDs or InChIs in the file.', 30));
+      const box = unidentifiedBox(ref.warning, c.unidentified, 'Add them to the Odors table (with their CID), or give their CIDs or InChIs in the file.', 30);
+      if (c.axis && c.identified < c.n) {
+        const n = c.n - c.identified, toggle = document.createElement('label');
+        toggle.className = 'check ref-unidentified';
+        toggle.innerHTML = `<input type="checkbox"${this.showUnidentified ? ' checked' : ''}> Show ${n === 1 ? 'it' : `these ${n.toLocaleString()}`} in the matrix
+          <span class="muted">(left out of it unless so)</span>`;
+        $('input', toggle).addEventListener('change', (e) => { this.showUnidentified = e.target.checked; this.show(id); });
+        box.appendChild(toggle);
+      }
+      msgs.push(box);
     }
     const notes = [];
     if (c.axis) notes.push(`Its ${c.axis === 'rows' ? 'rows' : 'columns'} are chemicals: ${c.matched} of ${c.n} matched to the Odors table, labelled as there.`);
@@ -2584,7 +2616,7 @@ class Reference {
     if (notes.length) msgs.push(Object.assign(document.createElement('p'), { className: 'muted small ref-notes', innerHTML: notes.join(' ') }));
     $('#ref-msgs').replaceChildren(...msgs);
     if (!this.viewer) this.viewer = new MatrixViewer($('#reference-viewer'), { kind: 'generic' });
-    this.viewer.setGenericData(ref, { title: m.title, fileStem: `olfdb_reference-${id}` });
+    this.viewer.setGenericData(this._shown(ref), { title: m.title, fileStem: `olfdb_reference-${id}` });
   }
 }
 
@@ -3072,6 +3104,8 @@ class AdminPage {
       if (!problem && $('#ref-path').value.trim()) this._refTimer = setTimeout(() => this.checkRef(), 500);
     });
     $('#ref-path').addEventListener('change', () => { clearTimeout(this._refTimer); this.checkRef(); });
+    $('#ref-path').addEventListener('input', () => { this.refFields = null; }); // another file: as suggested for it
+    $('#ref-fields').addEventListener('change', () => { this.refFields = this._readFields(); this.checkRef(); });
     for (const sel of ['#ref-axis', '#ref-kind']) $(sel).addEventListener('change', () => this.checkRef());
     $('#ref-add').addEventListener('click', () => this.addRef());
     $('#admin-refs-list').addEventListener('click', (e) => {
@@ -3369,12 +3403,75 @@ class AdminPage {
   }
 
   _refBody() {
-    const v = (id) => $(id).value.trim();
+    const v = (id) => $(id).value.trim(), f = this.refFields, chosen = f && f.layout !== 'matrix';
     return {
       path: v('#ref-path'), title: v('#ref-title'), description: v('#ref-description'), source: v('#ref-source'),
-      chemical_axis: $('#ref-axis').value, kind: $('#ref-kind').value,
-      value_label: v('#ref-value-label'), row_label: v('#ref-row-label'), col_label: v('#ref-col-label'),
+      chemical_axis: $('#ref-axis').value, kind: $('#ref-kind').value, fields: f,
+      // by default, the fields chosen
+      value_label: v('#ref-value-label') || (chosen && f.layout === 'list' ? (f.value || 'presence') : ''),
+      row_label: v('#ref-row-label') || (chosen ? f.rows?.label || '' : ''),
+      col_label: v('#ref-col-label') || (chosen ? f.cols?.label || '' : ''),
     };
+  }
+
+  // Which of the file's fields make its matrix (as checked: c.fields, see
+  // /api/admin/references/check): a table laid out as it is, or one value per line (a
+  // list), made into a matrix by the fields chosen for its rows, columns and values; a
+  // DataArray's coordinates labelling and describing its rows and columns. The rest are
+  // ignored. Drawn again only for another file; each choice checks it again.
+  _renderFields(c) {
+    const box = $('#ref-fields'), f = c?.fields;
+    if (!f) { box.replaceChildren(); this._fieldsKey = ''; return; }
+    this.refFields = f.used;
+    const key = JSON.stringify([c.path, f.kind, f.fields.map((x) => [x.name, x.dim])]);
+    if (key === this._fieldsKey) return;
+    this._fieldsKey = key;
+    const u = f.used, dims = f.dims || [];
+    const named = (x) => `${esc(x.name)} <span class="muted">(${x.distinct.toLocaleString()}${x.numeric ? `, ${Math.round(x.numeric * 100)}% numbers` : ''})</span>`;
+    const tip = (x) => esc(x.samples.length ? `e.g. ${x.samples.join(' · ')}` : 'empty');
+    const axis = (which, title, of) => {
+      const spec = u[which] || {}, keep = new Set(spec.keep || []);
+      return `<div class="ref-role" data-axis="${which}"><b>${title}</b> labelled by
+        <select data-label aria-label="${title} labelled by"><option value="">${f.kind === 'dataarray' ? 'their numbers' : '—'}</option>
+          ${of.map((x) => `<option value="${esc(x.name)}"${spec.label === x.name ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select>
+        ${of.length ? `<span class="muted">and</span> ${of.map((x) => `<label class="chip" title="${tip(x)}"><input type="checkbox" data-keep value="${esc(x.name)}"${keep.has(x.name) ? ' checked' : ''}${x.name === spec.label ? ' disabled' : ''}> ${named(x)}</label>`).join('')}` : ''}</div>`;
+    };
+    const parts = ['<h4>Its fields</h4>'];
+    if (f.kind === 'table') {
+      parts.push(`<div class="ref-role"><b>Layout</b>
+        <label class="chip"><input type="radio" name="ref-layout" value="matrix"${u.layout !== 'list' ? ' checked' : ''}> a matrix, as laid out (labels in its first column)</label>
+        <label class="chip"><input type="radio" name="ref-layout" value="list"${u.layout === 'list' ? ' checked' : ''}> one value per line, made into a matrix</label></div>`);
+    }
+    const list = `<div class="ref-list"${f.kind === 'table' && u.layout !== 'list' ? ' hidden' : ''}>
+      ${axis('rows', 'Rows', f.kind === 'dataarray' ? f.fields.filter((x) => x.dim === dims[0]) : f.fields)}
+      ${axis('cols', 'Columns', f.kind === 'dataarray' ? f.fields.filter((x) => x.dim === dims[1]) : f.fields)}
+      ${f.kind === 'table' ? `<div class="ref-role"><b>Values</b> <select data-value aria-label="Values">
+          <option value="">presence: 1 where a line lists the row and column, else 0</option>
+          ${f.fields.map((x) => `<option value="${esc(x.name)}"${u.value === x.name ? ' selected' : ''}>${esc(x.name)} (${Math.round(x.numeric * 100)}% numbers; several lines' the mean)</option>`).join('')}</select>
+        <select data-empty aria-label="Cells no line lists"><option value="missing">cells no line lists: missing</option>
+          <option value="zero"${u.empty === 'zero' ? ' selected' : ''}>cells no line lists: 0</option></select></div>` : ''}
+      <p class="muted small">${f.kind === 'dataarray' ? `Its dimensions: rows <code>${esc(dims[0])}</code>, columns <code>${esc(dims[1])}</code>. `
+        : 'Every combination of the fields chosen for a row (or a column) is one. '}Each is labelled by the first field chosen;
+        those labelled alike are told apart by the others (all shown on hover), and fields named as identifiers (<code>cid</code>,
+        <code>inchi</code>, <code>name</code>, …) identify chemicals. Fields not chosen are ignored.</p></div>`;
+    parts.push(list);
+    box.innerHTML = `<div class="ref-fields">${parts.join('')}</div>`;
+    const values = $('[data-value]', box);
+    if (values) values.value = u.value || '';
+  }
+
+  // the choices of fields as the controls say
+  _readFields() {
+    const box = $('#ref-fields'), layout = $('input[name=ref-layout]:checked', box)?.value;
+    if ($('.ref-list', box)) $('.ref-list', box).hidden = layout === 'matrix';
+    const axis = (which) => {
+      const el = $(`[data-axis=${which}]`, box), label = $('[data-label]', el).value || null;
+      $$('input[data-keep]', el).forEach((i) => { i.disabled = i.value === label; }); // (the label's own: it is already)
+      return { label, keep: $$('input[data-keep]:checked', el).map((i) => i.value).filter((k) => k !== label) };
+    };
+    const out = { rows: axis('rows'), cols: axis('cols') };
+    if (layout) Object.assign(out, { layout, value: $('[data-value]', box)?.value || null, empty: $('[data-empty]', box)?.value || 'missing' });
+    return out;
   }
 
   // the file, checked on the server: read now if it may be, else what adding it would take
@@ -3384,7 +3481,7 @@ class AdminPage {
     showRefCheck({ ok: true, checking: true });
     let c;
     try { c = await api('/api/admin/references/check', { method: 'POST', json: body }); } catch (e) { c = { ok: false, error: e.message }; }
-    if (seq === this._refSeq && $('#ref-path').value.trim() === body.path) showRefCheck(c);
+    if (seq === this._refSeq && $('#ref-path').value.trim() === body.path) { showRefCheck(c); this._renderFields(c); }
   }
 
   async addRef() {
@@ -3411,6 +3508,8 @@ class AdminPage {
     }
     for (const id of ['#ref-path', '#ref-title', '#ref-description', '#ref-source', '#ref-value-label', '#ref-row-label', '#ref-col-label']) $(id).value = '';
     showRefCheck(null);
+    this._renderFields(null);
+    this.refFields = null;
     reference.invalidate();
     this._reloadState();
     this.loadRefs();
