@@ -10,7 +10,9 @@ data tab. Two kinds:
   added to them, and read once the server restarts.
 
 Either is a CSV, TSV or parquet file: row labels in the first column, an optional
-``group`` column (row grouping), and one column per matrix column (blank = missing).
+``group`` column (row grouping), and one column per matrix column (blank = missing). Or
+an xarray DataArray of two dimensions saved as netCDF (`DataArray.to_netcdf`), its
+coordinates labelling and identifying its items (`_parse_dataarray`).
 Chemicals can be identified by columns named ``cid`` (or ``pubchem_cid``, ...),
 ``inchi``, ``cas``, ``metacyc``, ``lotus``, ``name`` or ``abbrev`` (then the rows are
 chemicals), or by rows labelled so (then the columns are). They are matched to the odor
@@ -29,7 +31,7 @@ import re
 import shutil
 import stat
 import threading
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from pathlib import Path
 from typing import Any, Optional
 
@@ -38,7 +40,8 @@ import pandas as pd
 
 from . import config, glomeruli as glom, odormeta, sandbox
 
-SUFFIXES = (".csv", ".tsv", ".tab", ".txt", ".parquet", ".pq")
+NETCDF_SUFFIXES = (".nc", ".nc4", ".netcdf")  # xarray DataArrays
+SUFFIXES = (".csv", ".tsv", ".tab", ".txt", ".parquet", ".pq", *NETCDF_SUFFIXES)
 KINDS = ("detect", "sequential", "diverging", "binary")
 AXES = ("detect", "rows", "cols", "none")
 # identifier columns (or rows) of a chemical, by accepted header (matched as odor sheet headers are)
@@ -125,6 +128,8 @@ def parse(path: Path, chemical_axis: str = "detect", kind: str = "detect") -> tu
     Raises:
         ReferenceError: if it has no numbers. Errors reading the file are raised as they are.
     """
+    if path.suffix.lower() in NETCDF_SUFFIXES:
+        return _parse_dataarray(path, chemical_axis, kind)
     df = read_table(path)
     labels = [_text(v) or "" for v in df.index]
     headers = [_text(c) or "" for c in df.columns]
@@ -185,6 +190,86 @@ def parse(path: Path, chemical_axis: str = "detect", kind: str = "detect") -> tu
         "rows": [{"label": labels[i], "group": _text(df.iat[i, group_col]) or "" if group_col is not None else None} for i in rows],
         "cols": [{"label": headers[j]} for j in cols],
         "ids": {"rows": ids(rows, id_cols, lambda i, j: df.iat[i, j]), "cols": ids(cols, id_rows, lambda j, i: df.iat[i, j])},
+        "chemical_axis": chemical_axis,
+        "kind": kind if kind != "detect" else _detect_kind(values),
+        "shape": list(values.shape),
+        "notes": notes,
+    }
+    return record, values.astype(np.float32)
+
+
+def _parse_dataarray(path: Path, chemical_axis: str, kind: str) -> tuple[dict, np.ndarray]:
+    """`parse` of an xarray DataArray file (netCDF): a matrix of its two dimensions (rows the
+    first), its missing values 0 (absent).
+
+    Each item of a dimension is labelled by its coordinate named ``name`` (or ``label`` or
+    ``title``, or ending in "name", e.g. ``product_name``), else the dimension's own
+    coordinate, else its number. Items labelled alike are told apart by the values of its
+    other coordinates that differ among them (coarsest first: those with the fewest
+    values), and each item's ``detail`` has them all (but identifiers and links).
+    Coordinates named as identifier columns (``cid``, ``inchi``, ``name``, ...) identify
+    chemicals, as those columns do.
+    """
+    # HDF5 (netCDF4's) locks a file it opens, which fails on NFS and read-only mounts, as
+    # tensor's may be: only ever read here
+    os.environ.setdefault("HDF5_USE_FILE_LOCKING", "FALSE")
+    import xarray as xr
+
+    da = xr.load_dataarray(path)
+    if da.ndim != 2:
+        raise ReferenceError(f"it has {da.ndim} dimension{'' if da.ndim == 1 else 's'} ({', '.join(map(str, da.dims))}), and a matrix has 2")
+    try:
+        numbers = np.asarray(da.values, dtype=np.float64)
+    except (TypeError, ValueError):
+        raise ReferenceError("its values are not numbers") from None
+    if not np.isfinite(numbers).any():
+        raise ReferenceError("it has no numbers")
+    notes = []
+    n_missing = int(np.isnan(numbers).sum())
+    if n_missing:
+        notes.append(f"{n_missing:,} missing value{'s' if n_missing > 1 else ''} taken as 0 (absent)")
+    values = np.where(np.isnan(numbers), 0.0, numbers)
+
+    def items(dim: str, id_fields: dict[str, str]) -> tuple[list[dict], Optional[list[dict]]]:
+        coords = {str(k): [_text(v) for v in c.values] for k, c in da.coords.items() if c.dims == (dim,)}
+        keys = list(coords)
+        label_key = (next((k for k in keys if _header_key(k) in ("name", "label", "title")), None)
+                     or next((k for k in keys if k.lower().endswith("name")), None) or (dim if dim in coords else None))
+        labels = [v or "" for v in coords[label_key]] if label_key else [str(i + 1) for i in range(da.sizes[dim])]
+        links = lambda vs: all(v is None or re.match(r"https?://", v) for v in vs)
+        told = sorted((k for k in keys if k != label_key and k not in id_fields and not links(coords[k])),
+                      key=lambda k: len(set(coords[k])))
+        alike: dict[str, list[int]] = {}
+        for i, lab in enumerate(labels):
+            alike.setdefault(lab, []).append(i)
+        out = []
+        for i, lab in enumerate(labels):
+            same = alike[lab]
+            apart = [coords[k][i] for k in told if len(same) > 1 and len({coords[k][j] for j in same}) > 1 and coords[k][i]]
+            detail = " · ".join(f"{k.replace('_', ' ')}: {coords[k][i]}" for k in told if coords[k][i])
+            out.append({"label": f"{lab} — {' · '.join(apart)}" if apart else lab, "detail": detail or None})
+        n, seen = Counter(o["label"] for o in out), Counter()
+        for o in out:  # still alike: numbered
+            if n[o["label"]] > 1:
+                seen[o["label"]] += 1
+                o["label"] = f"{o['label']} ({seen[o['label']]})"
+        ids = [{f: v for k, f in id_fields.items() if (v := _id_value(f, coords[k][i])) is not None}
+               for i in range(len(labels))] if id_fields else None
+        return out, ids
+
+    def id_fields(dim: str) -> dict[str, str]:
+        return {str(k): _ID_FIELD[_header_key(str(k))] for k, c in da.coords.items() if c.dims == (dim,) and _header_key(str(k)) in _ID_FIELD}
+
+    # as for a table: the rows' identifiers, if they have any, else the columns'
+    rows_dim, cols_dim = map(str, da.dims)
+    row_fields = {} if chemical_axis in ("cols", "none") else id_fields(rows_dim)
+    col_fields = {} if chemical_axis in ("rows", "none") or row_fields else id_fields(cols_dim)
+    rows, row_ids = items(rows_dim, row_fields)
+    cols, col_ids = items(cols_dim, col_fields)
+    record = {
+        "rows": [{"label": r["label"], "group": None, "detail": r["detail"]} for r in rows],
+        "cols": [{"label": c["label"], "detail": c["detail"]} for c in cols],
+        "ids": {"rows": row_ids, "cols": col_ids},
         "chemical_axis": chemical_axis,
         "kind": kind if kind != "detect" else _detect_kind(values),
         "shape": list(values.shape),

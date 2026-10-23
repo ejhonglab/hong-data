@@ -518,7 +518,11 @@
 
       <div class="step" id="admin-refs">
         <div class="step-head"><h2>Reference data</h2></div>
-        <p class="muted">Tables shown in the Reference data tab, each a CSV, TSV or parquet file on the server, which the app never changes: it reads it into its data folder, and again whenever it changes. Deleting one deletes only that copy. The file has row labels in its first column, an optional <code>group</code> column, then one column of numbers per matrix column (blank: missing). Its chemicals are shown by their names in the Odors tab, matched by CID (a column such as <code>cid</code> or <code>pubchem_cid</code>), else InChI (<code>inchi</code>), else CAS, MetaCyc or LOTUS ID, name or abbreviation (columns of these, or the labels themselves). When its columns are the chemicals, give these as rows instead (labelled <code>cid</code>, ...).</p>
+        <p class="muted">Tables shown in the Reference data tab, each a CSV, TSV or parquet file on the server, which the app never changes: it reads it into its data folder, and again whenever it changes. Deleting one deletes only that copy. The file has row labels in its first column, an optional <code>group</code> column, then one column of numbers per matrix column (blank: missing). Its chemicals are shown by their names in the Odors tab, matched by CID (a column such as <code>cid</code> or <code>pubchem_cid</code>), else InChI (<code>inchi</code>), else CAS, MetaCyc or LOTUS ID, name or abbreviation (columns of these, or the labels themselves). When its columns are the chemicals, give these as rows instead (labelled <code>cid</code>, ...).
+          Or an xarray DataArray of two dimensions saved as netCDF (<code>.nc</code>, by <code>DataArray.to_netcdf</code>): rows its first dimension,
+          missing values taken as 0, each item labelled by its coordinate named <code>name</code> (or e.g. <code>product_name</code>), and those labelled
+          alike told apart by its other coordinates that differ among them (all of them shown on hover); coordinates named as the columns above
+          (<code>cid</code>, <code>inchi</code>, ...) identify chemicals.</p>
         <div id="admin-refs-status" aria-live="polite"></div>
         <div id="admin-refs-list"></div>
         <h3 class="subhead">Add one</h3>

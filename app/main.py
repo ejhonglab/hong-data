@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import datetime as dt
+import gzip
 import hashlib
 import ipaddress
 import json
@@ -1381,10 +1382,15 @@ async def reference_list(request: Request) -> Response:
 
 
 async def reference_get(request: Request) -> Response:
+    """A reference dataset for the viewer (`reference.load`): gzipped, if large and the browser takes it."""
     data = await run_in_threadpool(lambda: reference.load(db, request.path_params["ref_id"], _odor_index()))
     if data is None:
         return json_error(404, "reference dataset not found")
-    return JSONResponse(data)
+    body = await run_in_threadpool(lambda: json.dumps(data, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode())
+    if len(body) > 1_000_000 and "gzip" in request.headers.get("accept-encoding", ""):
+        body = await run_in_threadpool(gzip.compress, body, 6)
+        return Response(body, media_type="application/json", headers={"content-encoding": "gzip", "vary": "accept-encoding"})
+    return Response(body, media_type="application/json")
 
 
 # ----------------------------------------------------------------------- admin

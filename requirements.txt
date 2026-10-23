@@ -9,4 +9,6 @@ PyYAML>=6
 Markdown>=3.5
 tifffile>=2024.1
 roifile>=2024.1
-rdkit>=2024.3  # ECFP fingerprints of odors (Compare tab)
+rdkit>=2024.3  # ECFP fingerprints and structure drawings of odors
+xarray>=2024.1  # reference data as DataArrays (netCDF)
+netCDF4>=1.6

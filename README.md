@@ -349,11 +349,12 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     made, its size and what is new in it; above them, when the last was made and whether
     it is current (else what changed since: the database, or files new, changed or
     removed).
-  - *Reference data*: add a CSV, TSV or parquet file on the server (checked as you
-    type its path, when the server may read it: its size, and how many of its chemicals
-    match the Odors tab), with a title, description, source, labels, colors (or from its
-    values) and whether its rows or columns are chemicals (or found from identifier
-    columns, e.g. `cid`, `pubchem_cid`, `inchi`, `cas`, `name`, or rows labelled so).
+  - *Reference data*: add a CSV, TSV or parquet file on the server, or an xarray
+    DataArray saved as netCDF (`.nc`) (checked as you type its path, when the server may
+    read it: its size, and how many of its chemicals match the Odors tab), with a title,
+    description, source, labels, colors (or from its values) and whether its rows or
+    columns are chemicals (or found from identifier columns, e.g. `cid`, `pubchem_cid`,
+    `inchi`, `cas`, `name`, or rows labelled so; of a DataArray, coordinates named so).
     The app never changes the file: it reads a copy into `data/references/`, again
     whenever the file changes. A file outside the folders the server may read is added
     to them (itself, to read only), and read once the server restarts, with what that

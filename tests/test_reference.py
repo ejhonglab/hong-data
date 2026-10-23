@@ -2,13 +2,16 @@
 OLFDB_DATA_DIR=<a scratch folder> python -m pytest tests/"""
 from __future__ import annotations
 
+import asyncio
 import base64
+import gzip
 import json
 from collections import OrderedDict
 
 import numpy as np
 import pandas as pd
 import pytest
+from starlette.requests import Request
 
 from app import config, odormeta, reference, sandbox
 from tests.test_tensor import call, main, root  # noqa: F401 (fixtures)
@@ -129,7 +132,8 @@ def test_add_readable(env, tmp_path):
     c = check(str(src))
     assert c["ok"] and c["readable"] and not c["restart"] and c["grant"] is None
     assert c["preview"]["chemicals"] == {"axis": "rows", "n": 3, "matched": 2, "identified": 2, "unidentified": ["foo"], "ambiguous": []}
-    assert check(str(tmp_path / "refs"))["error"] == "not a table it can read: give a .csv, .tsv, .tab, .txt, .parquet or .pq file"
+    assert check(str(tmp_path / "refs"))["error"] == ("not a table it can read: give a .csv, .tsv, .tab, .txt, .parquet, .pq, .nc, .nc4 "
+                                                       "or .netcdf file")
     assert "not found" in check(str(tmp_path / "refs/none.csv"))["error"] and "absolute" in check("refs/x.csv")["error"]
     add = lambda **kw: call(env.admin_reference_add, body=kw)  # noqa: E731
     status, r = add(path=str(src))
@@ -219,3 +223,48 @@ def test_glomeruli(env, tmp_path):
     assert item["glomeruli"] == {"axis": "rows", "n": 4, "matched": 3, "names": ["DM2", "VA2", "DL5"]} and item["warning"] is None
     r = call(env.reference_get, path_params={"ref_id": "glom"})[1]
     assert [x.get("glomerulus") for x in r["rows"]] == ["DM2", "VA2", "DL5", None] and r["glomeruli"]["axis"] == "rows"
+
+
+def test_dataarray(env, tmp_path):
+    import xarray as xr
+
+    # as the VCF one: compounds (identified) by sources (one product's twice, told apart)
+    v = np.array([[1.0, np.nan, 2.0, 0.5], [np.nan, 3.0, np.nan, np.nan], [4.0, 4.0, np.nan, 1.0]])
+    da = xr.DataArray(v, dims=["compound", "source"], coords={
+        "name": ("compound", ["ethyl acetate", "δ-terpineol", "linalool"]), "cid": ("compound", np.array([8857, 81722, 6549])),
+        "vcf_url": ("compound", [f"https://vcf.example/{i}" for i in range(3)]),
+        "reference": ("source", ["Ref A", "Ref B", "Ref C", "Ref D"]),
+        "product_name": ("source", ["COGNAC", "COGNAC", "APPLE", "ROSEMARY"]),
+        "product_category": ("source", ["BRANDY", "BRANDY", "APPLE", "HERB"]),
+        "product_group": ("source", ["Alcoholic", "Alcoholic", "Plants", "Plants"])})
+    p = tmp_path / "vcf.nc"
+    da.to_netcdf(p)
+    record, values = reference.parse(p)
+    assert values.tolist() == [[1, 0, 2, 0.5], [0, 3, 0, 0], [4, 4, 0, 1]] and record["notes"] == ["5 missing values taken as 0 (absent)"]
+    assert [r["label"] for r in record["rows"]] == ["ethyl acetate", "δ-terpineol", "linalool"]
+    # a product's name, but where two sources share it, what differs between them
+    assert [c["label"] for c in record["cols"]] == ["COGNAC — Ref A", "COGNAC — Ref B", "APPLE", "ROSEMARY"]
+    # (coarsest first: the fewest values)
+    assert record["cols"][0]["detail"] == "product group: Alcoholic · product category: BRANDY · reference: Ref A"
+    assert record["rows"][0]["detail"] is None  # (its link left out)
+    assert record["ids"] == {"rows": [{"name": "ethyl acetate", "cid": 8857}, {"name": "δ-terpineol", "cid": 81722},
+                                      {"name": "linalool", "cid": 6549}], "cols": None}
+    chem = reference.chemicals(record, odormeta.OdorIndex(env.db.list_odors()))
+    assert chem["axis"] == "rows" and chem["matched"] == 2 and chem["identified"] == 3
+    xr.DataArray(np.zeros((2, 2, 2))).to_netcdf(tmp_path / "three.nc")
+    with pytest.raises(reference.ReferenceError, match="3 dimensions"):
+        reference.parse(tmp_path / "three.nc")
+
+    # added in the Admin tab, and served with each item's detail; large, gzipped if asked
+    big = xr.DataArray(np.where(np.random.default_rng(0).random((600, 600)) < 0.1, 1.0, np.nan), dims=["compound", "source"],
+                       coords={"cid": ("compound", np.arange(1, 601))})
+    big.to_netcdf(tmp_path / "big.nc")
+    for path, title in ((p, "VCF"), (tmp_path / "big.nc", "Big")):
+        status, r = call(env.admin_reference_add, body={"path": str(path), "title": title})
+        assert status == 200, r
+    r = call(env.reference_get, path_params={"ref_id": "vcf"})[1]
+    assert r["cols"][1] == {"label": "COGNAC — Ref B", "detail": "product group: Alcoholic · product category: BRANDY · reference: Ref B"}
+    scope = {"type": "http", "method": "GET", "path": "/", "headers": [(b"accept-encoding", b"gzip, br")], "query_string": b"",
+             "path_params": {"ref_id": "big"}}
+    res = asyncio.run(env.reference_get(Request(scope)))
+    assert res.headers["content-encoding"] == "gzip" and json.loads(gzip.decompress(res.body))["shape"] == [600, 600]

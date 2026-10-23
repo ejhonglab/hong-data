@@ -60,5 +60,28 @@ VA2,2,85
 Rows and columns without a single number (notes, units) are left out, and cells that
 are not numbers are shown as missing.
 
+A file can also be an xarray DataArray of two dimensions saved as netCDF (`.nc`, `.nc4`,
+by `DataArray.to_netcdf`), read with `xarray.load_dataarray`. Its first dimension is the
+rows, and its missing values are taken as 0 (absent). Each item is labelled by its
+dimension's coordinate named `name`, `label` or `title`, or ending in "name" (e.g.
+`product_name`), else the dimension's own coordinate. Items labelled alike are told apart
+by the values of its other coordinates that differ among them, coarsest first (those with
+the fewest values: e.g. a product's group, then its category, then the reference), and
+every item's other coordinates are shown on hover (but identifiers and links).
+Coordinates named as the identifier columns above (`cid`, `inchi`, `name`, ...) identify
+the chemicals.
+
+```
+<xarray.DataArray (compound: 2768, source: 2686)>
+Coordinates:
+    name              (compound) <U102 '(+)-2-carene' ... 'δ-terpineol'
+    cid               (compound) int64 78249 439263 ... 520383 81722
+    inchi             (compound) <U244 'InChI=1S/C10H16/c1-7-4-5-8-9(6-7)...
+    product_name      (source) <U50 'COGNAC (French brandy)' ... 'ROSEMARY'
+    product_category  (source) <U50 'GRAPE BRANDY' ... 'ROSEMARY (Rosma...
+    product_group     (source) <U30 'Alcoholic Beverages > 20% alc.' ...
+    reference         (source) <U250 '1er Symp. Sci. Int. de Cognac, ...
+```
+
 The two `example_*.csv` files are synthetic placeholders; delete them (and their
 manifest entries) once real data is in place.

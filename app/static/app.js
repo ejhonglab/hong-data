@@ -642,7 +642,7 @@ class MatrixViewer {
       this._editsFor(ref);
       const values = ref.values || decodeValues(ref.values_b64);
       const hasGroups = ref.rows.some((r) => r.group != null);
-      let rows = ref.rows.map((r, i) => ({ label: r.label, group: hasGroups ? (r.group ?? '') : null, chem: r.chem, i }));
+      let rows = ref.rows.map((r, i) => ({ label: r.label, group: hasGroups ? (r.group ?? '') : null, chem: r.chem, detail: r.detail, i }));
       let vals = values;
       if (hasGroups) {
         const first = new Map();
@@ -656,8 +656,8 @@ class MatrixViewer {
         meta: ref.meta,
         chemAxis: ref.chemicals?.matched ? ref.chemicals.axis : null,
         model: {
-          rows: rows.map((r) => ({ label: r.label, group: r.group, key: r.i, file: r.label, chem: r.chem })),
-          cols: ref.cols.map((c, j) => ({ label: c.label, group: null, sub: null, key: j, file: c.label, chem: c.chem })),
+          rows: rows.map((r) => ({ label: r.label, group: r.group, key: r.i, file: r.label, chem: r.chem, detail: r.detail })),
+          cols: ref.cols.map((c, j) => ({ label: c.label, group: null, sub: null, key: j, file: c.label, chem: c.chem, detail: c.detail })),
           values: vals,
           cellText: ref.cellText, // (row, col) of the matrix as given: text to write in that cell
           rowTitle: ref.meta.row_label || 'row',
