@@ -101,7 +101,13 @@ between the frontend and the server. Using the app is described in
   dataset's odor counts only alone (not in a mixture) and once, at the concentration
   chosen. Similarities of similarities are correlated over one side of the matrices
   (without the diagonal), pairs missing in either left out; their p-values, how they are
-  tested and why, are under [Statistical testing](#statistical-testing). Two spaces side
+  tested and why, are under [Statistical testing](#statistical-testing). Spaces can be
+  compared on glomeruli instead of odors (one or the other for the whole tab, never
+  both): then each space is keyed by glomerulus names (a dataset of glomeruli's, by their
+  responses to its odors; a reference dataset's whose labels on one axis are mostly
+  glomerulus names, `reference.glomeruli`, by its values along the other), and all the
+  rest (similarities, their correlations and p-values, the two side by side) is the
+  same, of glomeruli; no odor–odor similarity is shown then. Two spaces side
   by side are two viewers of the same odors in the same order, linked (`linked` in
   `MatrixViewer`) rather than one matrix of both, so each keeps its own colors and units:
   an edit of either's rows is copied to the other (rows keyed by their place in that

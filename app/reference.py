@@ -16,7 +16,8 @@ Chemicals can be identified by columns named ``cid`` (or ``pubchem_cid``, ...),
 chemicals), or by rows labelled so (then the columns are). They are matched to the odor
 table when served (`chemicals`), so that they are shown by its names whatever it is
 changed to: by CID, else InChI, else the other identifiers and labels, never against a
-CID or InChI.
+CID or InChI. Glomeruli are found by their labels (`glomeruli`): such a dataset (of
+glomeruli by anything else, and no odors) is compared with datasets on their glomeruli.
 """
 from __future__ import annotations
 
@@ -35,7 +36,7 @@ from typing import Any, Optional
 import numpy as np
 import pandas as pd
 
-from . import config, odormeta, sandbox
+from . import config, glomeruli as glom, odormeta, sandbox
 
 SUFFIXES = (".csv", ".tsv", ".tab", ".txt", ".parquet", ".pq")
 KINDS = ("detect", "sequential", "diverging", "binary")
@@ -337,8 +338,29 @@ def chemicals(record: dict, index: odormeta.OdorIndex) -> dict:
             "identified": sum(bool(i["cid"] or i["inchi"]) for i in items)}
 
 
-def warning(chem: dict) -> Optional[str]:
-    """The yellow warning of a matrix whose chemicals are not all identified (None if they are)."""
+def glomeruli(record: dict) -> dict:
+    """A reference dataset's glomeruli: on the axis more of whose labels are glomerulus names
+    (as accepted for datasets' ROIs, but for case), if at least 3 of them are, and at least
+    half of that axis.
+
+    Returns:
+        ``axis`` ('rows' | 'cols' | None), ``names`` (per item of that axis, the glomerulus
+        it is, or None), ``n`` (its items) and ``matched`` (those that are glomeruli).
+    """
+    best = {"axis": None, "names": [], "n": 0, "matched": 0}
+    for axis in ("rows", "cols"):
+        names = [it["label"] if glom.is_glomerulus(it["label"]) else glom.same_but_case(it["label"]) for it in record[axis]]
+        k = sum(n is not None for n in names)
+        if k >= 3 and 2 * k >= len(names) and k > best["matched"]:
+            best = {"axis": axis, "names": names, "n": len(names), "matched": k}
+    return best
+
+
+def warning(chem: dict, glomeruli: Optional[dict] = None) -> Optional[str]:
+    """The yellow warning of a matrix whose chemicals are not all identified (None if they
+    are, or if it has none, but glomeruli)."""
+    if chem["unrecognized"] and glomeruli and glomeruli["axis"]:
+        return None
     if chem["unrecognized"]:
         return ("no chemicals recognized: no identifier columns or rows (CID, InChI, ...), and no labels the Odors "
                 "table knows (if it has none, say so when adding it)")
@@ -387,11 +409,13 @@ def listing(db, index: odormeta.OdorIndex) -> list[dict]:
                                       "read_grant", "created_at")}
         item["warning"] = None
         if rec:
-            chem = chemicals(rec, index)
+            chem, gl = chemicals(rec, index), glomeruli(rec)
             item.update(kind=rec["kind"], shape=rec["shape"], notes=rec["notes"], imported_at=rec.get("imported_at"),
                         chemicals={**{k: chem[k] for k in ("axis", "n", "matched", "identified")},
                                    "odor_ids": [i["odor_id"] for i in chem["items"] if i["odor_id"] is not None]},
-                        warning=warning(chem))
+                        glomeruli={"axis": gl["axis"], "n": gl["n"], "matched": gl["matched"],
+                                   "names": [n for n in gl["names"] if n is not None]},
+                        warning=warning(chem, gl))
         out.append(item)
     return out
 
@@ -410,19 +434,23 @@ def load(db, ref_id: str, index: odormeta.OdorIndex) -> Optional[dict[str, Any]]
     else:
         values = _parsed(Path(e["path"]), e.get("chemical_axis", "detect"), e.get("kind") or "detect")[1]
     meta["kind"] = record["kind"]
-    chem = chemicals(record, index)
+    chem, gl = chemicals(record, index), glomeruli(record)
     rows = [dict(r) for r in record["rows"]]
     cols = [dict(c) for c in record["cols"]]
     if chem["axis"]:
         for it, c in zip(rows if chem["axis"] == "rows" else cols, chem["items"]):
             it["chem"] = {k: c[k] for k in ("odor_id", "name", "abbrev", "cid", "how")}
+    if gl["axis"]:
+        for it, name in zip(rows if gl["axis"] == "rows" else cols, gl["names"]):
+            it["glomerulus"] = name
     finite = np.isfinite(values)
     return {
         "meta": meta, "state": "ok", "rows": rows, "cols": cols, "shape": list(values.shape), "dtype": "float32",
         "values_b64": base64.b64encode(values.astype("<f4").tobytes()).decode("ascii"),
         "vmin": float(values[finite].min()) if finite.any() else None,
         "vmax": float(values[finite].max()) if finite.any() else None,
-        "chemicals": {k: v for k, v in chem.items() if k != "items"}, "warning": warning(chem), "notes": record["notes"],
+        "chemicals": {k: v for k, v in chem.items() if k != "items"}, "warning": warning(chem, gl), "notes": record["notes"],
+        "glomeruli": {k: gl[k] for k in ("axis", "n", "matched")},
         "imported_at": record.get("imported_at"),
     }
 
@@ -457,9 +485,10 @@ def check(path_input: str, chemical_axis: str, kind: str, index: odormeta.OdorIn
         record, _ = _parsed(Path(p), chemical_axis, kind)
     except Exception as e:
         return {**out, "error": _read_error(Path(p), e)}
-    chem = chemicals(record, index)
-    preview = {"shape": record["shape"], "kind": record["kind"], "notes": record["notes"], "warning": warning(chem),
-               "chemicals": {k: chem[k] for k in ("axis", "n", "matched", "identified", "unidentified", "ambiguous")}}
+    chem, gl = chemicals(record, index), glomeruli(record)
+    preview = {"shape": record["shape"], "kind": record["kind"], "notes": record["notes"], "warning": warning(chem, gl),
+               "chemicals": {k: chem[k] for k in ("axis", "n", "matched", "identified", "unidentified", "ambiguous")},
+               "glomeruli": {k: gl[k] for k in ("axis", "n", "matched")}}
     return {**out, "ok": True, "readable": True, "preview": preview}
 
 

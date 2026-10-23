@@ -2543,6 +2543,8 @@ class Reference {
     }
     const notes = [];
     if (c.axis) notes.push(`Its ${c.axis === 'rows' ? 'rows' : 'columns'} are chemicals: ${c.matched} of ${c.n} matched to the Odors table, labelled as there.`);
+    const g = ref.glomeruli;
+    if (g?.axis) notes.push(`Its ${g.axis === 'rows' ? 'rows' : 'columns'} are glomeruli (${g.matched} of ${g.n}): it can be compared with datasets on their glomeruli (Compare tab).`);
     if (c.ambiguous.length) notes.push(`More than one odor in the Odors table matches ${c.ambiguous.map(esc).join(', ')}.`);
     notes.push(...ref.notes.map((n) => `${esc(n[0].toUpperCase() + n.slice(1))}.`));
     if (m.origin === 'admin') notes.push(`Read from <code>${esc(m.path)}</code> on ${esc(fmtWhen(ref.imported_at))}.`);
@@ -2941,6 +2943,8 @@ function showRefCheck(c) {
   msg.textContent = `✓ read: ${p.shape[0].toLocaleString()} rows × ${p.shape[1].toLocaleString()} columns, ${p.kind}`;
   const lines = [];
   if (ch.axis) lines.push(`Its ${ch.axis === 'rows' ? 'rows' : 'columns'} are chemicals: ${ch.matched} of ${ch.n} matched to the Odors table, ${ch.identified} identified by CID or InChI.`);
+  const g = p.glomeruli;
+  if (g?.axis) lines.push(`Its ${g.axis === 'rows' ? 'rows' : 'columns'} are glomeruli (${g.matched} of ${g.n}, by name): it can be compared with datasets on their glomeruli.`);
   lines.push(...p.notes.map((n) => `${esc(n[0].toUpperCase() + n.slice(1))}.`));
   if (lines.length) box.appendChild(Object.assign(document.createElement('p'), { className: 'muted small', innerHTML: lines.join(' ') }));
   if (p.warning) {
@@ -3526,8 +3530,31 @@ function neuralSpaceName(d) {
 // the Holm–Bonferroni method, by which the p-values of correlations between similarities are adjusted
 const HOLM_URL = 'https://en.wikipedia.org/wiki/Holm%E2%80%93Bonferroni_method';
 
-// how those p-values can be had (pvalue-worker.js), as their CSV says
-const P_BY = { pairs: 'bootstrap of the pairs of odors', odors: 'bootstrap of the odors', permute: 'permutation of the odors (Mantel test)' };
+// what spaces are compared on (ComparePage's o.on), as the page says it: and its options panel's notes
+const ON = {
+  odors: {
+    one: 'odor', many: 'odors', sim: 'odor–odor similarity',
+    show: 'Datasets, reference data (over the odors shown that it has) and the two side by side alike; chemical structure only ever as similarity.',
+    simNote: "Of two odors: by their responses across a dataset's glomeruli or ROIs (those both have), or by their values across a "
+      + "reference dataset's other axis. The correlations between similarities below are of these.",
+    match: "Odors are matched by the odor table, mixtures left out. Each space's similarities are shown over the odors shown that it has.",
+    none: 'No reference datasets with chemicals (Reference data tab).',
+  },
+  glomeruli: {
+    one: 'glomerulus', many: 'glomeruli', sim: 'glomerulus–glomerulus similarity',
+    show: 'Datasets of glomeruli (as glomeruli × odors, every fly averaged) and reference data of glomeruli (over the glomeruli shown that it has), '
+      + 'and the two side by side alike. No odor–odor similarity is shown, nor chemical structure.',
+    simNote: "Of two glomeruli: by their responses across a dataset's odors (every one, mixtures and concentrations as they are), or "
+      + "by their values across a reference dataset's other axis. The correlations between similarities below are of these.",
+    match: "Glomeruli are matched by name (but for case), as datasets' ROIs are named. Each space's similarities are shown over the "
+      + 'glomeruli shown that it has.',
+    none: 'No reference datasets with glomeruli: rows or columns labelled by glomerulus names (Reference data tab).',
+  },
+};
+
+// how those p-values can be had (pvalue-worker.js), as their CSV says, of odors or glomeruli
+const pBy = (unit, many) => ({ pairs: `bootstrap of the pairs of ${many}`, odors: `bootstrap of the ${many}`,
+  permute: `permutation of the ${many} (Mantel test)` }[unit]);
 
 // a p-value in a few characters
 const fmtP = (p) => (p < 0.001 ? p.toExponential(1) : p < 0.01 ? p.toFixed(4) : p.toFixed(3));
@@ -3542,22 +3569,23 @@ function hashString(str) {
 // so the viewer offers chemicals' names or abbreviations as row labels
 const CHEM_ROWS = { matched: true, axis: 'rows' };
 
-// a space (as in ComparePage's `all`) over some of its odors, in their order, as a viewer
-// shows a matrix: its data (by its glomeruli, ROIs or other axis) or its similarities.
-// chemRow: an odor's row (label, chemical)
-function spaceData(s, ids, chemRow) {
+// a space (as in ComparePage's `all`) over some of its odors (or glomeruli: `noun`), in
+// their order, as a viewer shows a matrix: its data (by its glomeruli, ROIs, odors or other
+// axis) or its similarities. rowOf: an odor's (or glomerulus's) row (label, chemical)
+function spaceData(s, ids, rowOf, noun = 'odor') {
   const at = new Map(s.space.ids.map((id, i) => [id, i])), { vectors, cols, meta } = s.space.data, nC = cols.length;
   const values = new Float32Array(ids.length * nC);
   ids.forEach((id, r) => values.set(vectors[at.get(id)], r * nC));
-  return { meta: { ...meta, row_label: 'odor' }, rows: ids.map(chemRow), cols, values, chemicals: CHEM_ROWS };
+  return { meta: { ...meta, row_label: noun }, rows: ids.map(rowOf), cols, values, chemicals: noun === 'odor' ? CHEM_ROWS : null };
 }
 
-function spaceSims(s, ids, chemRow) {
+function spaceSims(s, ids, rowOf, noun = 'odor') {
   const at = new Map(s.space.ids.map((id, i) => [id, i])), n = s.space.ids.length, m = ids.length;
   const values = new Float32Array(m * m);
   ids.forEach((a, i) => ids.forEach((b, j) => { values[i * m + j] = s.space.sim[at.get(a) * n + at.get(b)]; }));
-  const rows = ids.map(chemRow);
-  return { meta: { kind: 'diverging', row_label: 'odor', col_label: 'odor', value_label: s.simLabel }, rows, cols: rows, values, chemicals: CHEM_ROWS };
+  const rows = ids.map(rowOf);
+  return { meta: { kind: 'diverging', row_label: noun, col_label: noun, value_label: s.simLabel }, rows, cols: rows, values,
+    chemicals: noun === 'odor' ? CHEM_ROWS : null };
 }
 
 // two linked viewers ({el, viewer}) side by side made level, the same height above their
@@ -3583,12 +3611,13 @@ function fitViewer(el, v) {
 
 class ComparePage {
   constructor() {
-    // metric, refMetric: odor–odor similarity within datasets, and within reference data;
-    // show: each space as its 'data' or its odor–odor similarities ('sim');
-    // bootN, pBy: the resamplings (or permutations) for p-values, and how (a key of P_BY);
+    // on: what spaces are compared on, 'odors' or 'glomeruli' (a key of ON);
+    // metric, refMetric: similarity (of odors, or of glomeruli) within datasets, and within reference data;
+    // show: each space as its 'data' or its similarities ('sim');
+    // bootN, pBy: the resamplings (or permutations) for p-values, and how (a unit pBy names);
     // pair: the keys of two spaces shown side by side (null: not chosen)
     this.o = {
-      group: 'panel', unit: '', picked: [], metric: 'pearson', refMetric: 'pearson', show: 'data', spaces: [], ecfpD: 6, conc: 'max',
+      group: 'panel', unit: '', picked: [], on: 'odors', metric: 'pearson', refMetric: 'pearson', show: 'data', spaces: [], ecfpD: 6, conc: 'max',
       rsa: false, rsaMethod: 'spearman', bootN: 5000, pBy: 'permute', pair: [null, null], ...LS.get(COMPARE_KEY, {}),
     };
     // `place` once, for datasets alone: under their data ('below'), instead of it, or 'none'
@@ -3598,7 +3627,7 @@ class ComparePage {
     delete this.o.sim; // a checkbox once, besides `place`
     delete this.o.bootUnit; // pBy once, when bootstrapping pairs of odors was the default
     this.datasets = null;
-    this.refs = []; // reference datasets with chemicals, as listed
+    this.refs = []; // reference datasets with chemicals or glomeruli, as listed
     this.data = new Map(); // dataset id -> as from /api/compare/datasets/<id>, with its values
     this.refData = new Map(); // reference id -> as from /api/reference/<id>
     this.ecfp = new Map(); // diameter -> fingerprints
@@ -3628,7 +3657,7 @@ class ComparePage {
     });
     $('#compare-clear').addEventListener('click', () => { this.o.picked = []; this._changed(); });
     $('#cmp-metric').innerHTML = Object.entries(SIMILARITIES).map(([k, m]) => `<option value="${k}">${m.label}</option>`).join('');
-    for (const [id, key, read] of [['#cmp-metric', 'metric'], ['#cmp-ref-metric', 'refMetric'], ['#cmp-show', 'show'], ['#cmp-conc', 'conc'],
+    for (const [id, key, read] of [['#cmp-on', 'on'], ['#cmp-metric', 'metric'], ['#cmp-ref-metric', 'refMetric'], ['#cmp-show', 'show'], ['#cmp-conc', 'conc'],
       ['#cmp-rsa', 'rsa', (el) => el.checked], ['#cmp-rsa-method', 'rsaMethod'], ['#cmp-p-by', 'pBy'],
       ['#cmp-boot-n', 'bootN', (el) => { const n = Math.round(+el.value); return el.value && n > 0 ? Math.min(100000, Math.max(100, n)) : this.o.bootN; }]]) {
       $(id).addEventListener('change', (e) => { this.o[key] = read ? read(e.target) : e.target.value; this._changed(); });
@@ -3663,7 +3692,7 @@ class ComparePage {
       return;
     }
     this.datasets = ds.datasets;
-    this.refs = refs.datasets.filter((r) => r.state === 'ok' && r.chemicals?.axis && r.chemicals.matched);
+    this.refs = refs.datasets.filter((r) => r.state === 'ok' && ((r.chemicals?.axis && r.chemicals.matched) || r.glomeruli?.axis));
     const ids = new Set(this.datasets.map((d) => d.id));
     this.o.picked = this.o.picked.filter((id) => ids.has(id));
     this.o.spaces = this.o.spaces.filter((k) => k === 'ecfp' || this.refs.some((r) => `ref:${r.id}` === k));
@@ -3741,14 +3770,28 @@ class ComparePage {
     });
   }
 
-  // a reference dataset's, by their values along its other axis (each chemical once, the
-  // first of its rows or columns)
-  _refSpace(ref) {
-    return this._memo(`ref:${ref.meta.id}:${this.o.refMetric}`, () => {
-      const values = decodeValues(ref.values_b64), nR = ref.rows.length, nC = ref.cols.length, onRows = ref.chemicals.axis === 'rows';
+  // a dataset's of glomeruli, by their responses (the mean of the flies with each) to every
+  // odor of it, its data its glomeruli × its odors
+  _datasetGlomSpace(d) {
+    return this._memo(`dsglom:${d.id}:${this.o.metric}:${display.lowerOdors}`, () => {
+      const nR = d.rows.length, nC = d.cols.length, showOdor = odorShower(d.rows.map((r) => r.odor));
+      const vectors = d.cols.map((_, c) => Float32Array.from({ length: nR }, (_, i) => d.values[i * nC + c]));
+      return {
+        ids: d.cols.map((c) => c.label), sim: similarityMatrix(vectors, this.o.metric),
+        data: { vectors, cols: d.rows.map((r) => ({ label: showOdor(r.odor) })), meta: { kind: 'diverging', col_label: 'odor' } },
+      };
+    });
+  }
+
+  // a reference dataset's, of its chemicals (on 'odors') or its glomeruli (on 'glomeruli'),
+  // by their values along its other axis (each once, the first of its rows or columns)
+  _refSpace(ref, on = 'odors') {
+    return this._memo(`ref:${ref.meta.id}:${on}:${this.o.refMetric}`, () => {
+      const axis = on === 'odors' ? ref.chemicals.axis : ref.glomeruli.axis;
+      const values = decodeValues(ref.values_b64), nR = ref.rows.length, nC = ref.cols.length, onRows = axis === 'rows';
       const ids = [], vectors = [];
       (onRows ? ref.rows : ref.cols).forEach((it, k) => {
-        const id = it.chem?.odor_id;
+        const id = on === 'odors' ? it.chem?.odor_id : it.glomerulus;
         if (id == null || ids.includes(id)) return;
         ids.push(id);
         vectors.push(onRows ? values.subarray(k * nC, (k + 1) * nC) : Float32Array.from({ length: nR }, (_, r) => values[r * nC + k]));
@@ -3789,10 +3832,16 @@ class ComparePage {
     return this.refs.find((r) => `ref:${r.id}` === key)?.title || key;
   }
 
-  // the spaces compared to, loaded: [{key, title, space, note}]
+  // the reference datasets that can be compared to on what the page compares on
+  _refsOn() {
+    return this.refs.filter((r) => (this.o.on === 'odors' ? r.chemicals?.axis && r.chemicals.matched : r.glomeruli?.axis));
+  }
+
+  // the spaces compared to (of those chosen, those of what the page compares on), loaded:
+  // [{key, title, space, note, simLabel}]
   async _spaces() {
-    const out = [];
-    for (const key of this.o.spaces) {
+    const out = [], on = this.o.on, refs = new Set(this._refsOn().map((r) => `ref:${r.id}`));
+    for (const key of this.o.spaces.filter((k) => (k === 'ecfp' ? on === 'odors' : refs.has(k)))) {
       try {
         if (key === 'ecfp') {
           const fp = await this._fingerprints();
@@ -3802,9 +3851,10 @@ class ComparePage {
           const id = key.slice(4);
           if (!this.refData.has(id)) this.refData.set(id, await api(`/api/reference/${encodeURIComponent(id)}`));
           const ref = this.refData.get(id);
-          const along = ref.chemicals.axis === 'rows' ? ref.meta.col_label || 'columns' : ref.meta.row_label || 'rows';
+          const axis = on === 'odors' ? ref.chemicals.axis : ref.glomeruli.axis;
+          const along = axis === 'rows' ? ref.meta.col_label || 'columns' : ref.meta.row_label || 'rows';
           const simLabel = SIMILARITIES[this.o.refMetric].label;
-          out.push({ key, title: ref.meta.title, space: this._refSpace(ref), note: `by their values across its ${along}, ${simLabel}`, simLabel });
+          out.push({ key, title: ref.meta.title, space: this._refSpace(ref, on), note: `by their values across its ${along}, ${simLabel}`, simLabel });
         }
       } catch (e) {
         out.push({ key, title: this._spaceTitle(key), error: e.message });
@@ -3820,30 +3870,43 @@ class ComparePage {
   }
 
   // ------------------------------------------------------------------- render
-  // the options: the spaces to compare to, each with how many of the odors shown it has
+  // the options: the spaces to compare to, each with how many of the odors (or glomeruli) shown it has
   _renderOptions(shown) {
+    const on = this.o.on, N = ON[on];
     $('#cmp-rsa').checked = !!this.o.rsa;
-    for (const [id, key] of [['#cmp-metric', 'metric'], ['#cmp-ref-metric', 'refMetric'], ['#cmp-show', 'show'], ['#cmp-conc', 'conc'], ['#cmp-rsa-method', 'rsaMethod'],
-      ['#cmp-boot-n', 'bootN'], ['#cmp-p-by', 'pBy']]) $(id).value = this.o[key];
-    $('#cmp-shown').textContent = shown.size
-      ? `The datasets shown have ${shown.size} odor${shown.size === 1 ? '' : 's'} of the odor table (by themselves, not mixed).`
-      : 'No odors of the odor table shown yet.';
+    for (const [id, key] of [['#cmp-on', 'on'], ['#cmp-metric', 'metric'], ['#cmp-ref-metric', 'refMetric'], ['#cmp-show', 'show'], ['#cmp-conc', 'conc'],
+      ['#cmp-rsa-method', 'rsaMethod'], ['#cmp-boot-n', 'bootN'], ['#cmp-p-by', 'pBy']]) $(id).value = this.o[key];
+    $('#cmp-show option[value=sim]').textContent = `its ${N.sim}`;
+    $('#cmp-sim-head').textContent = N.sim[0].toUpperCase() + N.sim.slice(1);
+    for (const [id, note] of [['#cmp-show-note', N.show], ['#cmp-sim-note', N.simNote], ['#cmp-match-note', N.match],
+      ['#cmp-pair-note', `Two of the spaces shown next to each other, over the ${N.many} both have, in one order, each row level with its other; `
+        + 'or click a cell of the correlations between similarities.']]) $(id).textContent = note;
+    $('#cmp-conc-opt').hidden = on !== 'odors';
+    if (on === 'odors') {
+      $('#cmp-shown').textContent = shown.size
+        ? `The datasets shown have ${shown.size} odor${shown.size === 1 ? '' : 's'} of the odor table (by themselves, not mixed).`
+        : 'No odors of the odor table shown yet.';
+    } else {
+      $('#cmp-shown').textContent = shown.size ? `The datasets of glomeruli shown have ${shown.size} glomerul${shown.size === 1 ? 'us' : 'i'}.`
+        : 'No glomeruli shown yet: tick datasets of glomeruli on the left.';
+    }
     const overlap = (ids) => {
-      if (!shown.size) return `<span class="overlap">it has ${ids.length} odors</span>`;
+      if (!shown.size) return `<span class="overlap">it has ${ids.length} ${N.many}</span>`;
       const n = ids.filter((id) => shown.has(id)).length;
-      return `<span class="overlap${n < 3 && this.o.picked.length ? ' few' : ''}">${n} of the ${shown.size} odors shown${ids.length ? ` (it has ${ids.length})` : ''}</span>`;
+      return `<span class="overlap${n < 3 && this.o.picked.length ? ' few' : ''}">${n} of the ${shown.size} ${N.many} shown${ids.length ? ` (it has ${ids.length})` : ''}</span>`;
     };
     const fp = this.ecfp.get(this.o.ecfpD);
     const checked = (key) => (this.o.spaces.includes(key) ? ' checked' : '');
-    const html = [`<div class="space"><label class="check"><input type="checkbox" data-space="ecfp"${checked('ecfp')}> Chemical structure:
+    const html = on !== 'odors' ? [] : [`<div class="space"><label class="check"><input type="checkbox" data-space="ecfp"${checked('ecfp')}> Chemical structure:
         ECFP fingerprints, by their Jaccard similarity (1 − Jaccard distance)</label>
         <label class="opt">Diameter <input type="number" id="cmp-ecfp-d" min="0" max="12" step="2" value="${this.o.ecfpD}"> (ECFP${this.o.ecfpD})</label>
         ${fp ? overlap(Object.keys(fp.fingerprints).map(Number)) : '<span class="overlap">…</span>'}</div>`];
-    for (const r of this.refs) {
+    const refs = this._refsOn();
+    for (const r of refs) {
       html.push(`<div class="space"><label class="check"><input type="checkbox" data-space="ref:${esc(r.id)}"${checked(`ref:${r.id}`)}> ${esc(r.title)}</label>
-        ${overlap(r.chemicals.odor_ids || [])}</div>`);
+        ${overlap((on === 'odors' ? r.chemicals.odor_ids : r.glomeruli.names) || [])}</div>`);
     }
-    if (!this.refs.length) html.push('<p class="muted small">No reference datasets with chemicals (Reference data tab).</p>');
+    if (!refs.length) html.push(`<p class="muted small">${esc(N.none)}</p>`);
     const active = document.activeElement?.id === 'cmp-ecfp-d';
     $('#cmp-spaces').innerHTML = html.join('');
     if (active) $('#cmp-ecfp-d').focus();
@@ -3899,28 +3962,31 @@ class ComparePage {
         this.data.set(id, { ...d, values: decodeValues(d.values_b64) });
       } catch (e) { this.data.set(id, { id, error: e.message }); }
     }));
-    try { await this._fingerprints(); } catch { /* said so when compared to */ }
+    const on = this.o.on, N = ON[on];
+    if (on === 'odors') try { await this._fingerprints(); } catch { /* said so when compared to */ }
     const spaces = await this._spaces();
     if (seq !== this._seq) return;
     const datasets = this.o.picked.map((id) => this.data.get(id));
-    const shown = new Set(datasets.flatMap((d) => (d.rows || []).filter((r) => r.odor_id != null).map((r) => r.odor_id)));
+    // what is compared on, of the datasets shown: their odors of the odor table, or their glomeruli
+    const shown = new Set(on === 'odors' ? datasets.flatMap((d) => (d.rows || []).filter((r) => r.odor_id != null).map((r) => r.odor_id))
+      : datasets.flatMap((d) => (d.kind === 'glomeruli' ? d.cols.map((c) => c.label) : [])));
     this._renderOptions(shown);
     // every space shown: the datasets by what was recorded (ORNs, PNs, KCs...), by their
     // full names those that would share one, then the spaces compared to
     const metric = SIMILARITIES[this.o.metric].label, show = this.o.show;
-    const loaded = datasets.filter((d) => !d.error);
+    const loaded = datasets.filter((d) => !d.error && (on === 'odors' || d.kind === 'glomeruli'));
     const short = loaded.map(neuralSpaceName);
     const all = [
       ...loaded.map((d, i) => {
         const full = `#${d.id} ${d.title}`;
         return { key: `ds:${d.id}`, title: short.filter((n) => n === short[i]).length > 1 ? full : short[i], fullTitle: full,
-          space: this._datasetSpace(d), simLabel: metric };
+          space: on === 'odors' ? this._datasetSpace(d) : this._datasetGlomSpace(d), simLabel: metric };
       }),
       ...spaces.filter((s) => !s.error),
     ];
     this.all = all;
     this._renderPairOptions(all);
-    const chemRow = this._chemRows(datasets), state = this._stateKey();
+    const rowOf = on === 'odors' ? this._chemRows(datasets) : (g) => ({ label: g }), state = this._stateKey();
 
     const parts = [], shows = [], used = new Set();
     const block = (key, ...args) => { used.add(key); const b = this._block(key, ...args); parts.push(b.section); shows.push(b.show); return b.section; };
@@ -3935,14 +4001,14 @@ class ComparePage {
       const row = document.createElement('div');
       row.className = 'cmp-row';
       row.append(
-        block('rsa', 'Between similarities', `${method} correlation of each two spaces' odor–odor similarities (${esc(metric)} within datasets,
-          ${esc(SIMILARITIES[this.o.refMetric].label)} within reference data), over the pairs of odors both have. Click a cell to see its two
+        block('rsa', 'Between similarities', `${method} correlation of each two spaces' ${N.one}–${N.one} similarities (${esc(metric)} within datasets,
+          ${esc(SIMILARITIES[this.o.refMetric].label)} within reference data), over the pairs of ${N.many} both have. Click a cell to see its two
           spaces side by side.`, ...this._rsa(all, method), { cells: [84, 40], table, onCellClick }),
         block('rsa-p', 'Their p-values', `Two-sided ${job.unit === 'permute'
-          ? `permutation p of each correlation against 0 (${job.resamplings.toLocaleString()} permutations of one space's odors:
+          ? `permutation p of each correlation against 0 (${job.resamplings.toLocaleString()} permutations of one space's ${N.many}:
             a <a href="https://en.wikipedia.org/wiki/Mantel_test" target="_blank" rel="noopener">Mantel test</a>)`
           : `bootstrap p of each correlation against 0 (${job.resamplings.toLocaleString()} resamplings of the
-            ${job.unit === 'odors' ? 'odors, with replacement)' : 'pairs of odors, with replacement: these can be far too small, see on the right)'}`},
+            ${job.unit === 'odors' ? `${N.many}, with replacement)` : `pairs of ${N.many}, with replacement: these can be far too small, see on the right)`}`},
           <a href="${HOLM_URL}" target="_blank" rel="noopener">Holm–Bonferroni</a> adjusted for the ${job.pairs.length} pair${job.pairs.length === 1 ? '' : 's'}
           of spaces (more on the right); * below 0.05. <span class="cmp-status"></span>`,
         job.payload, 'similarities_correlated_p', { cells: [84, 40], table, onCellClick }));
@@ -3954,11 +4020,25 @@ class ComparePage {
     // two of them side by side
     this.pairs = [];
     this.pairRO.disconnect();
-    const pair = this._pairSection(all, chemRow, used, shows);
+    const pair = this._pairSection(all, rowOf, used, shows);
     if (pair) parts.push(pair);
     for (const s of spaces.filter((x) => x.error)) parts.push(msgBox('error', `${esc(s.title)} could not be compared to: ${esc(s.error)}`));
     for (const d of datasets) {
       if (d.error) { parts.push(msgBox('error', `Dataset #${d.id} could not be shown: ${esc(d.error)}`)); continue; }
+      if (on === 'glomeruli') {
+        if (d.kind !== 'glomeruli') { info(`#${d.id} ${esc(d.title)}: its ROIs are not glomeruli, so it is left out when comparing on glomeruli.`); continue; }
+        // its glomeruli (rows) by its odors, or their similarities
+        const s = { space: this._datasetGlomSpace(d), simLabel: metric }, ids = s.space.ids;
+        if (show !== 'sim') {
+          block(`dsg:${d.id}`, `#${d.id} ${d.title}`, `${esc(d.coding_unit || '')}: ${ids.length} glomeruli, each the mean of the flies with it, × ${d.rows.length} odors;
+            every trial averaged`, this._memo(`glomdata:${d.id}:${display.lowerOdors}`, () => spaceData(s, ids, rowOf, 'glomerulus')),
+          `dataset_${d.id}_mean_by_glomerulus`);
+        } else {
+          block(`simg:${d.id}`, `#${d.id} ${d.title}: glomerulus–glomerulus similarity`, `${metric} of their responses across its ${d.rows.length} odors`,
+            this._memo(`glomsim:${d.id}:${this.o.metric}`, () => spaceSims(s, ids, rowOf, 'glomerulus')), `dataset_${d.id}_glomerulus_similarity`);
+        }
+        continue;
+      }
       const what = d.kind === 'glomeruli' ? `${d.cols.length} glomeruli, each the mean of the flies with it` : `${d.cols.length.toLocaleString()} ROIs`;
       const sub = `${esc(d.coding_unit || '')}: ${d.rows.length} odors × ${what}; every trial averaged`;
       const showOdor = odorShower(d.rows.map((r) => r.odor));
@@ -3978,19 +4058,20 @@ class ComparePage {
           }), `dataset_${d.id}_similarity`);
       }
     }
-    // each space compared to, over the odors shown it has: its data (if it has any worth
-    // showing), its similarities
+    // each space compared to, over the odors (or glomeruli) shown it has: its data (if it
+    // has any worth showing), its similarities
     for (const s of spaces.filter((x) => !x.error)) {
       const has = new Set(s.space.ids), ids = [...shown].filter((id) => has.has(id)), stem = s.key.replace(/\W+/g, '_');
-      if (ids.length < 2) { parts.push(msgBox('info', `${esc(s.title)}: ${ids.length ? 'only one' : 'none'} of the odors shown.`)); continue; }
+      if (ids.length < 2) { parts.push(msgBox('info', `${esc(s.title)}: ${ids.length ? 'only one' : 'none'} of the ${N.many} shown.`)); continue; }
       const data = s.space.data;
       if (show !== 'sim' && data) {
-        const sub = `the ${ids.length} of the odors shown it has, by its ${data.meta.col_label}${data.meta.value_label ? ` (${data.meta.value_label})` : ''}`;
-        block(`spacedata:${s.key}`, s.title, esc(sub), this._memo(`spacevals:${s.key}:${state}:${ids.join(',')}`, () => spaceData(s, ids, chemRow)), `${stem}_data`);
+        const sub = `the ${ids.length} of the ${N.many} shown it has, by its ${data.meta.col_label}${data.meta.value_label ? ` (${data.meta.value_label})` : ''}`;
+        block(`spacedata:${s.key}`, s.title, esc(sub), this._memo(`spacevals:${s.key}:${state}:${ids.join(',')}`, () => spaceData(s, ids, rowOf, N.one)),
+          `${stem}_data`);
       }
       if (show !== 'data' || !data) {
-        block(`space:${s.key}`, `${s.title}: odor–odor similarity`, esc(`${s.note}; the ${ids.length} of the odors shown it has`),
-          this._memo(`spacesims:${s.key}:${state}:${ids.join(',')}`, () => spaceSims(s, ids, chemRow)), `${stem}_similarity`);
+        block(`space:${s.key}`, `${s.title}: ${N.sim}`, esc(`${s.note}; the ${ids.length} of the ${N.many} shown it has`),
+          this._memo(`spacesims:${s.key}:${state}:${ids.join(',')}`, () => spaceSims(s, ids, rowOf, N.one)), `${stem}_similarity`);
       }
     }
     for (const key of [...this.blocks.keys()]) if (!used.has(key)) this.blocks.delete(key);
@@ -4001,14 +4082,16 @@ class ComparePage {
   // what every space's similarities (and so the correlations between them) depend on, but which spaces
   _stateKey() {
     const o = this.o;
-    return `${o.metric}:${o.refMetric}:${o.conc}:${o.ecfpD}`;
+    return `${o.on}:${o.metric}:${o.refMetric}:${o.conc}:${o.ecfpD}`;
   }
 
-  // Two spaces side by side (o.pair): the odors both have, in one order (that of the first
-  // dataset of the two, else of the first), each as its data or its similarities
-  // (o.show), each two viewers next to each other linked, so their rows stay level. A
-  // section, or null if none is chosen; its viewers' keys added to `used`, their shows to `shows`
-  _pairSection(all, chemRow, used, shows) {
+  // Two spaces side by side (o.pair): the odors (or glomeruli) both have, in one order (that
+  // of the first dataset of the two, else of the first), each as its data or its
+  // similarities (o.show), each two viewers next to each other linked, so their rows stay
+  // level. A section, or null if none is chosen; its viewers' keys added to `used`, their
+  // shows to `shows`. rowOf: an odor's (or glomerulus's) row
+  _pairSection(all, rowOf, used, shows) {
+    const N = ON[this.o.on];
     const [ka, kb] = this.o.pair;
     if (!ka && !kb) return null;
     const section = document.createElement('section');
@@ -4026,10 +4109,10 @@ class ComparePage {
     const first = [a, b].find((s) => s.key.startsWith('ds:')) || a, has = new Set((first === a ? b : a).space.ids);
     const ids = first.space.ids.filter((id) => has.has(id));
     if (ids.length < 2) {
-      sub.textContent = `${a.title} and ${b.title} have ${ids.length ? 'only one odor' : 'no odors'} in common.`;
+      sub.textContent = `${a.title} and ${b.title} have ${ids.length ? `only one ${N.one}` : `no ${N.many}`} in common.`;
       return section;
     }
-    sub.textContent = `${a.title} and ${b.title}: the ${ids.length} odors both have, in the order of ${first.title}. Rows moved or removed,
+    sub.textContent = `${a.title} and ${b.title}: the ${ids.length} ${N.many} both have, in the order of ${first.title}. Rows moved or removed,
       cell sizes, transposing and scrolling stay the same in both.`;
     // chemical structure, with no data worth showing, as its similarities either way
     const state = this._stateKey(), row = document.createElement('div');
@@ -4037,9 +4120,10 @@ class ComparePage {
     const [x, y] = [a, b].map((s, k) => {
       const asData = this.o.show === 'data' && !!s.space.data, what = asData ? 'data' : 'similarity', key = `pair:${k}`;
       used.add(key);
-      const payload = this._memo(`pair:${what}:${s.key}:${state}:${ids.join(',')}`, () => (asData ? spaceData(s, ids, chemRow) : spaceSims(s, ids, chemRow)));
+      const payload = this._memo(`pair:${what}:${s.key}:${state}:${ids.join(',')}`,
+        () => (asData ? spaceData(s, ids, rowOf, N.one) : spaceSims(s, ids, rowOf, N.one)));
       const v = this._viewer(key, payload, `${s.fullTitle || s.title}: ${what}`, `side_by_side_${(s.fullTitle || s.title).replace(/\W+/g, '_')}_${what}`);
-      const cap = asData ? `its data${payload.meta.value_label ? ` (${payload.meta.value_label})` : ''}` : `odor–odor ${s.simLabel}`;
+      const cap = asData ? `its data${payload.meta.value_label ? ` (${payload.meta.value_label})` : ''}` : `${N.one}–${N.one} ${s.simLabel}`;
       const side = document.createElement('div');
       side.className = 'cmp-pair-side';
       side.innerHTML = `<div class="cmp-pair-cap" title="${esc(`${s.fullTitle || s.title}: ${cap}`)}">${esc(s.title)}: <span class="muted">${esc(cap)}</span></div>`;
@@ -4072,14 +4156,14 @@ class ComparePage {
   // cell saying it and of how many odors), its file name]
   _rsa(all, method) {
     return [this._memo(`rsa:${this._rsaKey(all)}`, () => {
-      const n = all.length, cells = this._rsaCells(all);
+      const n = all.length, cells = this._rsaCells(all), many = ON[this.o.on].many;
       const values = new Float32Array(n * n);
       cells.forEach((row, i) => row.forEach((c, j) => { values[i * n + j] = c ? c.r : 1; }));
       const labels = all.map((s) => ({ label: s.title }));
       return {
         meta: { kind: 'diverging', row_label: 'space', col_label: 'space', value_label: `${method} r of their similarities` },
         rows: labels, cols: labels, values,
-        cellText: (i, j) => { const c = cells[i][j]; return c ? `${c.r === c.r ? c.r.toFixed(2) : '–'}\n${c.nOdors} odors` : '1'; },
+        cellText: (i, j) => { const c = cells[i][j]; return c ? `${c.r === c.r ? c.r.toFixed(2) : '–'}\n${c.nOdors} ${many}` : '1'; },
       };
     }), 'similarities_correlated'];
   }
@@ -4106,7 +4190,8 @@ class ComparePage {
     const n = all.length, pairs = [];
     for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) pairs.push([i, j]);
     const at = new Map(pairs.map(([i, j], k) => [i * n + j, k]));
-    const job = { key, pairs, resamplings: o.bootN, unit: o.pBy, progress: 0, ps: null, adjusted: null, valid: null, error: null, status: null };
+    const job = { key, pairs, resamplings: o.bootN, unit: o.pBy, many: ON[o.on].many, progress: 0, ps: null, adjusted: null, valid: null,
+      error: null, status: null };
     const values = new Float32Array(n * n).fill(NaN), labels = all.map((s) => ({ label: s.title }));
     job.payload = {
       meta: { kind: 'sequential', row_label: 'space', col_label: 'space', value_label: '−log10 of the Holm-adjusted p',
@@ -4166,13 +4251,13 @@ class ComparePage {
   // (once computed), as a CSV table
   _rsaCsv(all, method, job) {
     const cells = this._rsaCells(all), num = (v) => (v != null && v === v ? String(v) : '');
-    const lines = [['space_a', 'space_b', 'correlation', 'similarity_a', 'similarity_b', 'r', 'n_odors', 'n_pairs', 'p', 'p_holm', 'p_by', 'resamplings']];
+    const lines = [['space_a', 'space_b', 'correlation', 'similarity_a', 'similarity_b', 'r', `n_${job.many}`, 'n_pairs', 'p', 'p_holm', 'p_by', 'resamplings']];
     let k = 0;
     all.forEach((a, i) => all.forEach((b, j) => {
       if (j <= i) return;
       const c = cells[i][j], t = k++;
       lines.push([a.fullTitle || a.title, b.fullTitle || b.title, method, a.simLabel, b.simLabel, num(c.r), c.nOdors, c.nPairs,
-        num(job.ps?.[t]), num(job.adjusted?.[t]), P_BY[job.unit], job.valid ? job.valid[t] : '']);
+        num(job.ps?.[t]), num(job.adjusted?.[t]), pBy(job.unit, job.many), job.valid ? job.valid[t] : '']);
     }));
     return { name: 'similarities_correlated.csv', text: `${lines.map((l) => l.map(csvCell).join(',')).join('\n')}\n` };
   }

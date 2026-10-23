@@ -241,6 +241,13 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   in the viewer of reference data (colors, cell size, transpose, moving and removing
   rows and columns, figure export), without trials, ROI ordering or clustering. On the
   right:
+  - *Compare on* odors (the default) or glomeruli. On glomeruli, everything below is of
+    glomeruli instead of odors: only datasets of glomeruli are compared (as glomeruli
+    by odors, every fly averaged), to reference datasets of glomeruli (found by their
+    labels: see [reference_data/README.md](reference_data/README.md)), by
+    glomerulus–glomerulus similarity (of their responses across a dataset's odors, or
+    their values across a reference dataset's other axis), and side by side on the
+    glomeruli both have; no odor–odor similarity is shown, nor chemical structure.
   - *Show* each space as its data (by default) or its odor–odor similarity: one menu
     for the datasets, the reference data and the two side by side (chemical structure
     only ever as similarity).
@@ -315,6 +322,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   file: *Chemicals* in the viewer), the rest as in the file. A yellow warning is by a
   table with chemicals not identified by a CID or InChI (in the file, or through the
   Odors tab), naming them; one that cannot be read is listed by its name alone, with why.
+  A table of glomeruli (by their labels) has no chemicals, and so no warning: it says it
+  can be compared with datasets on their glomeruli.
 - **Admin** (to the right of Docs; it first asks whether you are Tom, Jon or Betty, or
   have asked one of them): settings for the whole site.
   - *Folders on the server* the app may read (by default tensor) and also write (none

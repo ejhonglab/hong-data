@@ -45,6 +45,18 @@ ethyl acetate,8857,esters,2.1,1.4
 hexanal,6184,aldehydes,,1.9
 ```
 
+A matrix of glomeruli (by anything else, with no odors), e.g. counts of PNs or of
+synapses per glomerulus, is found by its labels: when at least 3 of the labels on one
+axis, and at least half of them, are glomerulus names as accepted for datasets' ROIs
+(`DM2`, `VA1d`, ...; but for case). The Compare tab can then compare it with datasets
+of glomeruli, on their glomeruli.
+
+```
+glomerulus,PN count,KC inputs
+DM2,3,120
+VA2,2,85
+```
+
 Rows and columns without a single number (notes, units) are left out, and cells that
 are not numbers are shown as missing.
 

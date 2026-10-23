@@ -196,3 +196,26 @@ def test_access_steps(monkeypatch, tmp_path):
     assert sandbox.access_steps("/local/tensor/nothing/x.csv", "systemd")[0] == "It is not on the server now: put it there first."
     assert sandbox.access_steps("/srv/nothing/x.csv", "systemd") == ["It is not on the server now: put it there first.",
                                                                       "Restart the server (below)."]
+
+
+def test_glomeruli(env, tmp_path):
+    p = write(tmp_path / "g.csv", "glomerulus,kc a,kc b\nDM2,1,0\nva2,0,1\nDL5,2,2\ntotal,3,3\n")
+    record, _ = reference.parse(p)
+    # by labels, but for case; not every label need be one
+    assert reference.glomeruli(record) == {"axis": "rows", "names": ["DM2", "VA2", "DL5", None], "n": 4, "matched": 3}
+    chem = reference.chemicals(record, odormeta.OdorIndex(env.db.list_odors()))
+    assert chem["unrecognized"] and reference.warning(chem, reference.glomeruli(record)) is None
+    # on columns too; too few (or under half of the labels) are none
+    record, _ = reference.parse(write(tmp_path / "h.csv", "x,DA1,DA2,DA3\na,1,2,3\n"))
+    assert reference.glomeruli(record)["axis"] == "cols"
+    for text in ("x,DA1,DA2,y\na,1,2,3\n", "x,DA1,DA2,DA3,p,q,r,s\nt,1,2,3,4,5,6,7\n"):
+        assert reference.glomeruli(reference.parse(write(tmp_path / "i.csv", text))[0])["axis"] is None
+    # listed with them, and served with each item's
+    (config.REFERENCE_DIR / "glom.csv").write_text(p.read_text())
+    manifest = json.loads((config.REFERENCE_DIR / "manifest.json").read_text())
+    manifest["datasets"].append({"id": "glom", "title": "Glomeruli", "file": "glom.csv"})
+    (config.REFERENCE_DIR / "manifest.json").write_text(json.dumps(manifest))
+    item = next(d for d in call(env.reference_list)[1]["datasets"] if d["id"] == "glom")
+    assert item["glomeruli"] == {"axis": "rows", "n": 4, "matched": 3, "names": ["DM2", "VA2", "DL5"]} and item["warning"] is None
+    r = call(env.reference_get, path_params={"ref_id": "glom"})[1]
+    assert [x.get("glomerulus") for x in r["rows"]] == ["DM2", "VA2", "DL5", None] and r["glomeruli"]["axis"] == "rows"

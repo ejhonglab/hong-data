@@ -328,27 +328,28 @@
     </div>
     <aside class="compare-options" aria-label="What to compare">
       <h2>Show</h2>
+      <label class="opt">Compare on <select id="cmp-on"><option value="odors">odors</option><option value="glomeruli">glomeruli</option></select></label>
       <label class="opt">Each space as <select id="cmp-show"><option value="data">its data</option>
         <option value="sim">its odor–odor similarity</option></select></label>
-      <p class="muted small">Datasets, reference data (over the odors shown that it has) and the two side by side alike; chemical structure only ever as similarity.</p>
+      <p class="muted small" id="cmp-show-note"></p>
 
-      <h2>Odor–odor similarity</h2>
+      <h2 id="cmp-sim-head">Odor–odor similarity</h2>
       <label class="opt">Within datasets, by <select id="cmp-metric"></select></label>
       <label class="opt">Within reference data, by <select id="cmp-ref-metric"><option value="pearson">Pearson correlation</option>
         <option value="cosine">cosine similarity</option></select></label>
-      <p class="muted small">Of two odors: by their responses across a dataset's glomeruli or ROIs (those both have), or by their values across a reference dataset's other axis. The correlations between similarities below are of these.</p>
+      <p class="muted small" id="cmp-sim-note"></p>
 
       <h2>Compare to</h2>
       <p class="muted small" id="cmp-shown"></p>
       <div id="cmp-spaces"></div>
-      <label class="opt">An odor at several concentrations: <select id="cmp-conc">
+      <label class="opt" id="cmp-conc-opt">An odor at several concentrations: <select id="cmp-conc">
         <option value="max">its highest</option><option value="min">its lowest</option><option value="mean">the mean of them</option>
       </select></label>
-      <p class="muted small">Odors are matched by the odor table, mixtures left out. Each space's similarities are shown over the odors shown that it has.</p>
+      <p class="muted small" id="cmp-match-note"></p>
 
       <h2>Side by side</h2>
       <div id="cmp-pair"></div>
-      <p class="muted small">Two of the spaces shown next to each other, over the odors both have, in one order, each row level with its other; or click a cell of the correlations between similarities.</p>
+      <p class="muted small" id="cmp-pair-note"></p>
 
       <h2>Between similarities</h2>
       <label class="check"><input type="checkbox" id="cmp-rsa"> Correlate the similarities of each two</label>
@@ -370,7 +371,8 @@
         those drawn) keeps that dependence, but its p-values are often too large. Permuting odors (a
         <a href="https://en.wikipedia.org/wiki/Mantel_test" target="_blank" rel="noopener">Mantel test</a>; the stimulus-label randomization test of
         <a href="https://doi.org/10.1371/journal.pcbi.1003553" target="_blank" rel="noopener">Nili et al. 2014</a>) keeps it too, and is exact: for
-        unrelated spaces, p &lt; 0.05 at most 5% of the time, however their odors respond.</p>
+        unrelated spaces, p &lt; 0.05 at most 5% of the time, however their odors respond. Compared on glomeruli, the same goes for
+        glomeruli in place of odors.</p>
       <p class="muted small">For more details, and the simulations behind them, see
         <a href="https://github.com/ejhonglab/hong-data/blob/main/design.md#statistical-testing" target="_blank" rel="noopener">Statistical testing</a>
         in the design notes.</p>
