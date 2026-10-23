@@ -47,15 +47,24 @@ RETRY_WAITS_S = (2, 5, 15)  # waits before each retry of a lookup a server was t
 # - density: `inchi2density`, of the pure compound, from PubChem (or ChemSpider, with a key)
 # - k_henry: `inchi2k_henry`, its Henry's law solubility constant in water at 25 °C
 #   (concentration in water over partial pressure above it) from henrys-law.org, else NIST
+# - k_henry_pfo: `inchi2k_henry_pfo`, the same in paraffin oil, estimated (modified UNIFAC
+#   activity coefficient in n-hexadecane, and a vapor pressure; computed, not looked up)
 PROPERTIES = {"vapor_pressure": "kPa", "est_vapor_pressure": "kPa", "molar_mass": "g/mol", "density": "g/mL",
-              "k_henry": "mol/m^3/Pa"}
+              "k_henry": "mol/m^3/Pa", "k_henry_pfo": "mol/m^3/Pa"}
 LABELS = {"vapor_pressure": "Vapor pressure", "est_vapor_pressure": "Vapor pressure estimated from the structure",
-          "molar_mass": "Molar mass", "density": "Density", "k_henry": "Henry's law constant"}
+          "molar_mass": "Molar mass", "density": "Density", "k_henry": "Henry's law constant",
+          "k_henry_pfo": "Henry's law constant in paraffin oil"}
+COMPUTED = ("est_vapor_pressure", "k_henry_pfo")  # (not kept in chemutils' cache)
+# what of inchi2k_henry_pfo's output is kept with its value (`look_up`'s ``details``)
+K_HENRY_PFO_DETAILS = ("k_henry_pfo_method", "log10_k_oil_air", "solvent_surrogate", "gamma_inf", "unifac_groups",
+                       "unifac_groups_source", "unifac_parameters", "vapor_pressure_kpa", "vapor_pressure_source",
+                       "vapor_pressure_measured", "notes")
 
 REPO = "https://github.com/ejhonglab/chemutils"
 # chemutils' commits from the first this app was pinned to, oldest first (abbreviated), the
 # last the one pinned in requirements.txt (DEPLOY.md, "Updating chemutils")
-COMMITS = ("53e658bd70ad", "209e47f1eee9", "5bfa72506efe", "95a66c6566cd", "a6bcb4a3aa6f", "713f950668e8", "9196a0c9df65")
+COMMITS = ("53e658bd70ad", "209e47f1eee9", "5bfa72506efe", "95a66c6566cd", "a6bcb4a3aa6f", "713f950668e8", "9196a0c9df65",
+           "caf3c6bde452")
 # those of them that changed what a lookup gives, oldest first: (commit, the properties, how)
 CHANGES = [
     ("95a66c6566cd", ("vapor_pressure",), "PubChem's vapor pressures only from its values at or near 25 °C (they "
@@ -106,8 +115,11 @@ def look_up(odors: Iterable[tuple[int, str, Sequence[str]]], save: Callable[[int
     Args:
         odors: (CID, InChI, the `PROPERTIES` to look up) of each.
         save: called with the CID, the property and what was found, as it is: ``{"value"
-            (in the units of `PROPERTIES`), "source"}`` (where it is from: a URL, or how it
-            was estimated), or None if there is none to be found.
+            (in the units of `PROPERTIES`; None if there is none, but with details why),
+            "source"`` (where it is from: a URL, or how it was estimated), ``"measured"``
+            (whether from measurements, rather than an estimate; None if not known),
+            ``"details"}`` (of k_henry_pfo, `K_HENRY_PFO_DETAILS`, else None), or None if
+            there is none to be found.
         refresh: look them up again rather than take them from chemutils' cache (which
             keeps what this looks up instead).
 
@@ -143,30 +155,44 @@ def look_up(odors: Iterable[tuple[int, str, Sequence[str]]], save: Callable[[int
             if "error" in r:
                 failed[key] = r["error"]
             else:
-                save(*key, {"value": r["value"], "source": r["source"]} if r["value"] is not None else None)
+                found = {k: r.get(k) for k in ("value", "source", "measured", "details")}
+                save(*key, found if r["value"] is not None or r.get("details") else None)
             done.add(key)
     error = error or f"chemutils' process ended early (exit status {proc.returncode})"
     return {**failed, **{k: error for k in every if k not in done}}
 
 
-def _property(chemutils, cid: int, inchi: str, prop: str, refresh: bool = False) -> tuple[Optional[float], Optional[str]]:
-    """A property of a compound as chemutils gives it, in the units of `PROPERTIES`, and
-    where it is from; with `refresh`, not from chemutils' cache."""
-    # (estimates are computed, not kept)
-    kwargs = {"ignore_cache": True} if refresh and prop != "est_vapor_pressure" else {}
+def _plain(v):
+    """A value of chemutils' output as JSON takes it (numpy's as Python's, NaN as None)."""
+    if v is None or isinstance(v, str):
+        return v
+    if hasattr(v, "item"):
+        v = v.item()
+    return None if isinstance(v, float) and math.isnan(v) else v
+
+
+def _property(chemutils, cid: int, inchi: str, prop: str, refresh: bool = False) -> dict:
+    """A property of a compound as chemutils gives it (as `look_up` saves it: ``value``, in
+    the units of `PROPERTIES`, ``source``, ``measured`` and ``details``); with `refresh`,
+    not from chemutils' cache."""
+    kwargs = {"ignore_cache": True} if refresh and prop not in COMPUTED else {}
     if prop == "molar_mass":
         r = chemutils.cid2molar_mass(cid, **kwargs)  # (from the CID itself: `inchi2molar_mass` would look it up again)
     else:
         r = getattr(chemutils, f"inchi2{prop}")(inchi, **kwargs)
     key = prop.removeprefix("est_")  # (estimates have the keys of what they estimate)
-    q, units, source = r[key], r[f"{key}_units"], r[f"{key}_sources"]
-    if q is None or math.isnan(q := float(q)):
-        return None, None
+    q, units, source = _plain(r[key]), r[f"{key}_units"], r[f"{key}_sources"]
+    details = {k: _plain(r.get(k)) for k in K_HENRY_PFO_DETAILS} if prop == "k_henry_pfo" else None
+    measured = {"vapor_pressure": lambda: _plain(r.get("vapor_pressure_measured")), "est_vapor_pressure": lambda: False,
+                "k_henry_pfo": lambda: bool(_plain(r.get("k_henry_pfo_measured_partitioning")))}.get(prop, lambda: None)()
+    if q is None:
+        return {"value": None, "source": None, "measured": None, "details": details}
     if not units:
         raise ValueError(f"{q} without units")
     if isinstance(source, (list, tuple)):
         source = "; ".join(map(str, source))
-    return float(chemutils.ureg.Quantity(q, units).to(PROPERTIES[prop]).magnitude), source and str(source)
+    return {"value": float(chemutils.ureg.Quantity(float(q), units).to(PROPERTIES[prop]).magnitude),
+            "source": source and str(source), "measured": measured, "details": details}
 
 
 def _busy(e: Exception) -> bool:
@@ -178,8 +204,8 @@ def _main() -> None:
     """The process `look_up` starts: on stdin, JSON with ``odors`` ([CID, InChI, properties]
     lists), ``refresh`` and ``retry_waits_s`` (`RETRY_WAITS_S`); on stdout, as each property is looked
     up (tried again after each wait while a server is too busy for it), a line of JSON: its
-    ``cid`` and ``prop`` with ``value`` and ``source`` (both None if there is none), or with
-    the ``error`` its lookup raised. Only an ``error`` if chemutils cannot be imported."""
+    ``cid`` and ``prop`` with `_property`'s (``value`` None if there is none), or with the
+    ``error`` its lookup raised. Only an ``error`` if chemutils cannot be imported."""
     out, sys.stdout = sys.stdout, sys.stderr  # (chemutils prints)
     # a handler on the root logger first, so that chemutils' logging.basicConfig writes no log file
     logging.basicConfig(level=logging.ERROR, format="chemutils: %(levelname)s %(message)s")
@@ -190,17 +216,16 @@ def _main() -> None:
     except Exception as e:
         print(json.dumps({"error": f"chemutils could not be imported: {type(e).__name__}: {e}"}), file=out, flush=True)
         return
-    root = logging.getLogger()
-    if getattr(chemutils, "sh", None) in root.handlers:
-        root.removeHandler(chemutils.sh)
+    for logger in (logging.getLogger(), getattr(chemutils, "logger", None)):  # (on either, by version)
+        if logger is not None and getattr(chemutils, "sh", None) in logger.handlers:
+            logger.removeHandler(chemutils.sh)
     if not getattr(chemutils, "chemspipy_api_key", None):
         chemutils.chemspipy_api_key = None  # (none to give: not asked, rather than refused)
     for cid, inchi, props in given["odors"]:
         for prop in props:
             for wait in (*given["retry_waits_s"], None):
                 try:
-                    value, source = _property(chemutils, cid, inchi, prop, given.get("refresh", False))
-                    line = {"cid": cid, "prop": prop, "value": value, "source": source}
+                    line = {"cid": cid, "prop": prop, **_property(chemutils, cid, inchi, prop, given.get("refresh", False))}
                 except Exception as e:
                     line = {"cid": cid, "prop": prop, "error": f"{type(e).__name__}: {e}"}
                     if wait is not None and _busy(e):

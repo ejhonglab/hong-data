@@ -200,14 +200,18 @@ CREATE TABLE IF NOT EXISTS file_log (  -- files the server has read or written i
 # columns added since the first release: (table, column, type)
 # what is looked up through chemutils for an odor CID (chemprops.PROPERTIES): property -> the
 # column of its value (in the units there), beside which are <property>_source (where it is
-# from), <property>_at (when it was looked up, with both null if none was found) and
-# <property>_chemutils (the chemutils that looked it up: chemprops.installed)
+# from), <property>_at (when it was looked up, with both null if none was found),
+# <property>_chemutils (the chemutils that looked it up: chemprops.installed),
+# <property>_measured (1 if from measurements, 0 if an estimate, null if not known) and
+# <property>_details (JSON: more of what chemutils said of it, for k_henry_pfo)
 PROPERTY_COLUMNS = {"vapor_pressure": "vapor_pressure_kpa", "est_vapor_pressure": "est_vapor_pressure_kpa",
-                    "molar_mass": "molar_mass_g_mol", "density": "density_g_ml", "k_henry": "k_henry_mol_m3_pa"}
+                    "molar_mass": "molar_mass_g_mol", "density": "density_g_ml", "k_henry": "k_henry_mol_m3_pa",
+                    "k_henry_pfo": "k_henry_pfo_mol_m3_pa"}
 ADDED_COLUMNS = [("datasets", "mocorr_data_path", "TEXT"), ("reference_datasets", "fields", "TEXT"), ("units", "bad", "INTEGER"),
                  *(c for p, col in PROPERTY_COLUMNS.items()
                    for c in (("pubchem", col, "REAL"), ("pubchem", f"{p}_source", "TEXT"), ("pubchem", f"{p}_at", "TEXT"),
-                             ("pubchem", f"{p}_chemutils", "TEXT")))]
+                             ("pubchem", f"{p}_chemutils", "TEXT"), ("pubchem", f"{p}_measured", "INTEGER"),
+                             ("pubchem", f"{p}_details", "TEXT")))]
 USER_DIR_COLUMNS = ("raw_dirs", "mocorr_dirs", "odor_dirs")
 ODOR_COLUMNS = ("name", "abbrev", "aliases", "cid", "cas", "solvent", "supplier", "catalog_no", "catalog_url",
                 "metacyc", "lotus", "inventory", "notes")
@@ -552,7 +556,8 @@ class Database:
         """Every odor, with the InChI of its CID (None until fetched from PubChem), and what
         was looked up for it through chemutils (the columns of `PROPERTY_COLUMNS`: see
         `save_property`)."""
-        cols = ", ".join(f"pubchem.{c}" for p, col in PROPERTY_COLUMNS.items() for c in (col, f"{p}_source", f"{p}_at"))
+        cols = ", ".join(f"pubchem.{c}" for p, col in PROPERTY_COLUMNS.items()
+                         for c in (col, f"{p}_source", f"{p}_at", f"{p}_measured", f"{p}_details"))
         with self.connect() as con:
             rows = con.execute(
                 f"SELECT odors.*, pubchem.inchi, {cols} FROM odors LEFT JOIN pubchem USING (cid) ORDER BY name_key"
@@ -562,6 +567,9 @@ class Database:
             d = dict(r)
             del d["name_key"]
             d["aliases"] = json.loads(d["aliases"])
+            for p in PROPERTY_COLUMNS:
+                d[f"{p}_measured"] = None if d[f"{p}_measured"] is None else bool(d[f"{p}_measured"])
+                d[f"{p}_details"] = d[f"{p}_details"] and json.loads(d[f"{p}_details"])
             out.append(d)
         return out
 
@@ -613,14 +621,18 @@ class Database:
 
         Args:
             prop: of `PROPERTY_COLUMNS`.
-            found: ``{"value", "source"}``, or None if there is none (kept, with when it was
+            found: ``{"value", "source"}``, and optionally ``"measured"`` and ``"details"``
+                (see `chemprops.look_up`), or None if there is none (kept, with when it was
                 looked up, so that it is not looked up again).
             chemutils: the chemutils that looked it up (`chemprops.installed`).
         """
+        found = found or {}
+        measured, details = found.get("measured"), found.get("details")
         with self.connect() as con:
             con.execute(f"UPDATE pubchem SET {PROPERTY_COLUMNS[prop]} = ?, {prop}_source = ?, {prop}_at = ?, "
-                        f"{prop}_chemutils = ? WHERE cid = ?",
-                        (found and found["value"], found and found["source"], when, chemutils, cid))
+                        f"{prop}_chemutils = ?, {prop}_measured = ?, {prop}_details = ? WHERE cid = ?",
+                        (found.get("value"), found.get("source"), when, chemutils, None if measured is None else int(measured),
+                         json.dumps(details) if details else None, cid))
 
     def property_lookups(self) -> dict[str, list[dict]]:
         """For each property looked up through chemutils (`PROPERTY_COLUMNS`), of the odor

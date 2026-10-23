@@ -4857,7 +4857,11 @@ const HS_UNITS = [
   ['ug_l', 'µg/L (= mg/m³)', 'µg/L', (pa, mw) => ((pa * mw) / (HS_R * HS_T)) * 1e3],
 ];
 const HS_PROPS = { molar_mass: 'molar mass', density: 'density', vapor_pressure: 'vapor pressure',
-  est_vapor_pressure: 'estimated vapor pressure', k_henry: "Henry's law constant" };
+  est_vapor_pressure: 'estimated vapor pressure', k_henry: "Henry's law constant", k_henry_pfo: "Henry's law constant in oil" };
+const HS_MODELS = ['henry', 'raoult']; // how the headspace over paraffin oil is computed (headspace.MODELS)
+// whether a value is from measurements (true), an estimate (false) or not known (null), as a label
+const measuredTag = (measured, title = '') => (measured == null ? ''
+  : ` <span class="hs-tag ${measured ? 'measured' : 'estimate'}"${title ? ` title="${esc(title)}"` : ''}>${measured ? 'measured' : 'estimate'}</span>`);
 const isWater = (solvent) => /water|h2o|milli-?q/i.test(solvent || '');
 // a number to `digits` significant figures, as a power of ten if very small or large
 function sigHtml(v, digits = 3) {
@@ -4879,9 +4883,18 @@ class HeadspacePage {
     this.components = Array.isArray(saved.components) ? saved.components : []; // {odor_id, log10_conc: as typed}
     this.solventChosen = !!saved.solventChosen; // else the solvent follows the odor table's
     this.odors = null; // the odor table, by id
-    this.result = null; // the last calculation ({res, key: what it was of})
+    this.panels = []; // the panels of the datasets, as mixtures (/api/headspace/panels)
+    this.cache = new Map(); // what was calculated since the page was opened, by what of (`_key`)
+    this.shown = null; // the calculation last shown ({res, key})
     this.active = -1; // the suggestion highlighted
     if (['paraffin oil', 'water'].includes(saved.solvent)) $('#hs-solvent').value = saved.solvent;
+    if (HS_MODELS.includes(saved.model)) $('#hs-model').value = saved.model;
+    $('#hs-model').addEventListener('change', () => this.changed({ rerender: false }));
+    $('#hs-panel').addEventListener('change', (e) => {
+      const i = e.target.value;
+      e.target.value = '';
+      if (i !== '') this.fromPanel(+i);
+    });
     const units = $('#hs-units');
     units.innerHTML = HS_UNITS.map(([k, label]) => `<option value="${k}">${esc(label)}</option>`).join('');
     units.value = HS_UNITS.some(([k]) => k === saved.units) ? saved.units : 'ppm';
@@ -4889,7 +4902,8 @@ class HeadspacePage {
     $('#hs-solvent').addEventListener('change', () => { this.solventChosen = true; this.changed(); });
     $('#hs-calc').addEventListener('click', () => this.calculate());
     $('#hs-clear').addEventListener('click', () => {
-      this.components = []; this.solventChosen = false; this.result = null;
+      this.components = []; this.solventChosen = false; this.shown = null;
+      $('#hs-panel-note').hidden = true;
       this.render(); this.save(); $('#hs-search').focus();
     });
 
@@ -4947,18 +4961,49 @@ class HeadspacePage {
       } catch (e) { $('#hs-status').textContent = `Could not read the odor table: ${e.message}`; return; }
       this.components = this.components.filter((c) => this.odors.has(c.odor_id));
     }
+    this.loadPanels();
     this.render();
     if (document.activeElement === $('#hs-search') && $('#hs-search').value.trim()) this.suggest(); // (typed while it was read)
   }
 
-  save() {
-    LS.set(HS_KEY, { components: this.components, solvent: $('#hs-solvent').value, solventChosen: this.solventChosen,
-      units: $('#hs-units').value });
+  // the panels of the datasets, to start a mixture from (read again each time the tab is opened)
+  async loadPanels() {
+    try { ({ panels: this.panels } = await api('/api/headspace/panels')); } catch { this.panels = []; }
+    const sel = $('#hs-panel');
+    sel.innerHTML = `<option value="">${this.panels.length ? 'Panels of the datasets…' : 'No panels in the datasets yet'}</option>`
+      + this.panels.map((p, i) => `<option value="${i}"${p.components.length ? '' : ' disabled'}>${esc(p.panel)} (${p.components.length} odor${p.components.length === 1 ? '' : 's'})</option>`).join('');
+    sel.disabled = !this.panels.length;
   }
+
+  // the mixture as a panel's (its odors at their concentrations), saying what was left out
+  fromPanel(i) {
+    const p = this.panels[i];
+    if (!p || !this.odors) return;
+    const comps = p.components.filter((c) => this.odors.has(c.odor_id));
+    this.components = comps.map((c) => ({ odor_id: c.odor_id, log10_conc: String(c.log10_conc) }));
+    this.solventChosen = false;
+    const showAbbrev = abbrevShower([...this.odors.values()].map((o) => o.abbrev));
+    const label = (id) => { const o = this.odors.get(id); return showAbbrev(o.abbrev) || o.name; };
+    const several = comps.filter((c) => c.concs.length > 1);
+    const note = $('#hs-panel-note');
+    note.hidden = false;
+    note.textContent = `The ${p.panel} panel's odors (of ${p.datasets} dataset${p.datasets === 1 ? '' : 's'}): ${comps.length}.`
+      + (p.skipped.length ? ` Left out: ${p.skipped.map((x) => `${x.odor} (${x.why})`).join(', ')}.` : '')
+      + (several.length ? ` Presented at several concentrations, so at the highest: ${several.map((c) => `${label(c.odor_id)} (${c.concs.join(', ')})`).join(', ')}.` : '');
+    this.changed();
+  }
+
+  save() {
+    LS.set(HS_KEY, { components: this.components, solvent: $('#hs-solvent').value, model: $('#hs-model').value,
+      solventChosen: this.solventChosen, units: $('#hs-units').value });
+  }
+
+  // the model, for paraffin oil (null for water)
+  _model() { return $('#hs-solvent').value === 'water' ? null : $('#hs-model').value; }
 
   // what a calculation would be of, as it is now
   _key() {
-    return JSON.stringify([$('#hs-solvent').value, this.components.map((c) => [c.odor_id, hsConc(c.log10_conc)])]);
+    return JSON.stringify([$('#hs-solvent').value, this._model(), this.components.map((c) => [c.odor_id, hsConc(c.log10_conc)])]);
   }
 
   // the mixture changed: the solvent follows the odor table's (unless one was chosen), saved, shown
@@ -5063,6 +5108,7 @@ class HeadspacePage {
     $('#hs-clear').disabled = !n;
     if (!this.busy) $('#hs-status').textContent = why;
     const water = $('#hs-solvent').value === 'water';
+    $('#hs-model-field').hidden = water;
     const other = this.components.map((c) => this.odors?.get(c.odor_id)).filter((o) => o?.solvent && isWater(o.solvent) !== water);
     const note = $('#hs-solvent-note');
     note.hidden = !other.length;
@@ -5073,14 +5119,17 @@ class HeadspacePage {
   }
 
   async calculate() {
-    const json = { solvent: $('#hs-solvent').value, components: this.components.map((c) => ({ odor_id: c.odor_id, log10_conc: hsConc(c.log10_conc) })) };
+    const json = { solvent: $('#hs-solvent').value, model: this._model(),
+      components: this.components.map((c) => ({ odor_id: c.odor_id, log10_conc: hsConc(c.log10_conc) })) };
     const key = this._key();
+    if (this.cache.has(key)) { this.shown = { res: this.cache.get(key), key }; this.renderResults(); return; }
     this.busy = true;
     this.renderState();
     $('#hs-status').textContent = 'Calculating (what is not known yet of an odor is looked up first: a few seconds for each)…';
     try {
       const res = await api('/api/headspace', { method: 'POST', json });
-      this.result = { res, key };
+      this.cache.set(key, res);
+      this.shown = { res, key };
       $('#hs-status').textContent = '';
       odorsPage.odors = null; // (with what was looked up, when the Odors tab is opened)
     } catch (e) {
@@ -5094,12 +5143,16 @@ class HeadspacePage {
     this.renderResults();
   }
 
+  // the calculation of the mixture as it is now, if there was one since the page was opened
+  // (of another solvent or model too), else the last one shown, as changed since
   renderResults() {
     const box = $('#hs-results');
-    if (!this.result) { box.hidden = true; box.innerHTML = ''; return; }
-    const { res, key } = this.result;
+    const now = this._key();
+    if (this.cache.has(now)) this.shown = { res: this.cache.get(now), key: now };
+    if (!this.shown) { box.hidden = true; box.innerHTML = ''; return; }
+    const { res, key } = this.shown;
     const [unit, unitLabel, unitShort, of] = HS_UNITS.find(([k]) => k === $('#hs-units').value) || HS_UNITS[0];
-    const water = res.solvent === 'water';
+    const water = res.solvent === 'water', henry = water || res.model === 'henry';
     const showAbbrev = abbrevShower([...(this.odors?.values() || [])].map((o) => o.abbrev));
     const amount = (v) => (v == null ? '' : unit === 'log10' ? (v > 0 ? of(v).toFixed(2) : '−∞') : sigHtml(of(v)));
     const link = (c, p, html) => (c.links?.[p] ? `<a href="${esc(c.links[p])}" target="_blank" rel="noopener">${html}</a>` : html);
@@ -5107,28 +5160,39 @@ class HeadspacePage {
       const o = this.odors?.get(c.odor_id) || { name: `odor #${c.odor_id}` };
       const pr = c.properties || {};
       const mw = pr.molar_mass;
-      const vp = pr.vapor_pressure != null ? link(c, 'vapor_pressure', sigHtml(pr.vapor_pressure))
-        : pr.est_vapor_pressure != null ? `${link(c, 'est_vapor_pressure', sigHtml(pr.est_vapor_pressure))} <span class="muted small">est.</span>` : '';
+      // (the vapor pressure used: in oil by Henry's law, the one its constant was estimated with)
+      const vpTitle = c.vapor_pressure_source ? `Used to estimate its Henry's law constant: ${c.vapor_pressure_source}` : '';
+      const vpLink = c.vapor_pressure_source ? null : pr.vapor_pressure != null ? 'vapor_pressure' : 'est_vapor_pressure';
+      const vp = c.vapor_pressure == null ? ''
+        : `${vpLink ? link(c, vpLink, sigHtml(c.vapor_pressure)) : `<span title="${esc(vpTitle)}">${sigHtml(c.vapor_pressure)}</span>`}${measuredTag(c.vapor_pressure_measured, vpTitle)}`;
+      const kTitle = water ? '' : `${c.sources?.k_henry_pfo || ''}${c.k_henry_measured === false ? ' (no measured solubility of it in oil or alkanes, e.g. squalane, is used)' : ''}`;
+      const k = c.law === 'henry' ? `${water ? link(c, 'k_henry', sigHtml(c.k_henry)) : `<span title="${esc(kTitle)}">${sigHtml(c.k_henry)}</span>`}${measuredTag(c.k_henry_measured, kTitle)}`
+        : '<span class="muted" title="Not by Henry\'s law: see its notes">—</span>';
       const dens = pr.density != null ? link(c, 'density', sigHtml(pr.density)) : '<span class="muted">1 (assumed)</span>';
       const hs = c.pa == null ? '' : unit === 'ug_l' ? sigHtml(of(c.pa, mw)) : amount(c.pa);
       const notes = [...c.notes.map(esc), ...Object.entries(c.failed || {}).map(([p, e]) => `${esc(HS_PROPS[p] || p)} could not be looked up:
         <span class="muted" title="${esc(e)}">${esc(e.length > 90 ? `${e.slice(0, 90)}…` : e)}</span>`)];
       return `<tr><td><a href="#odors/${c.odor_id}">${esc(o.name)}</a>${o.abbrev ? ` <span class="muted">${esc(showAbbrev(o.abbrev))}</span>` : ''}</td>
         <td class="num">${c.log10_conc}</td><td class="num">${mw != null ? link(c, 'molar_mass', mw.toFixed(2)) : ''}</td><td class="num">${dens}</td>
-        <td class="num">${vp}</td>${water ? `<td class="num">${link(c, 'k_henry', sigHtml(pr.k_henry))}</td>` : ''}
+        <td class="num">${vp}</td>${henry ? `<td class="num">${k}</td>` : ''}
         <td class="num">${sigHtml(c.mole_fraction)}</td><td class="num hs-amount">${hs}</td>
         <td class="notes">${notes.length ? `<ul>${notes.map((t) => `<li>${t}</li>`).join('')}</ul>` : ''}</td></tr>`;
     }).join('');
     const computed = res.components.filter((c) => c.pa != null);
     const total = unit === 'ug_l' ? computed.reduce((t, c) => t + of(c.pa, c.properties.molar_mass), 0) : null;
-    const totalRow = res.components.length > 1 ? `<tr class="hs-total"><td colspan="${water ? 7 : 6}">All together${computed.length < res.components.length ? ' (of those that could be computed)' : ''}</td>
+    const totalRow = res.components.length > 1 ? `<tr class="hs-total"><td colspan="${henry ? 7 : 6}">All together${computed.length < res.components.length ? ' (of those that could be computed)' : ''}</td>
       <td class="num hs-amount">${computed.length ? (total != null ? sigHtml(total) : amount(res.total_pa)) : ''}</td><td></td></tr>` : '';
     box.hidden = false;
-    box.innerHTML = `<div class="step-head"><h2>Headspace</h2><span class="muted">in ${esc(res.solvent)}, at ${+res.temperature_c.toFixed(2)} °C, in ${esc(unitLabel)}</span></div>
-      ${key !== this._key() ? '<p class="msg warn">The mixture has changed since this was calculated: calculate it again to see it.</p>' : ''}
-      <table class="odor-table hs-table${key !== this._key() ? ' stale' : ''}"><thead><tr><th>Odor</th><th>log<sub>10</sub> conc.</th>
-        <th>Molar mass (g/mol)</th><th>Density (g/mL)</th><th title="From PubChem, else estimated from its structure (est.)">Vapor pressure (kPa)</th>
-        ${water ? '<th title="Henry\'s law solubility constant in water at 25 °C">K<sub>H</sub> (mol/m³/Pa)</th>' : ''}
+    const how = water ? "by Henry's law" : res.model === 'henry' ? "by Henry's law, with constants estimated by chemutils" : "by Raoult's law only";
+    const anyTag = res.components.some((c) => c.vapor_pressure_measured != null || (henry && c.k_henry_measured != null));
+    box.innerHTML = `<div class="step-head"><h2>Headspace</h2><span class="muted">in ${esc(res.solvent)} ${how}, at ${+res.temperature_c.toFixed(2)} °C, in ${esc(unitLabel)}</span></div>
+      ${key !== now ? '<p class="msg warn">The mixture has changed since this was calculated: calculate it again to see it.</p>' : ''}
+      ${anyTag ? `<p class="muted small hs-legend"><span class="hs-tag measured">measured</span> from measurements of the compound;
+        <span class="hs-tag estimate">estimate</span> estimated, with nothing measured of the compound itself${water ? '' : ` (in oil, every Henry's law
+        constant is: no measured solubilities in oil or alkanes are used; the vapor pressure it was estimated with is shown, as measured or not)`}.</p>` : ''}
+      <table class="odor-table hs-table${key !== now ? ' stale' : ''}"><thead><tr><th>Odor</th><th>log<sub>10</sub> conc.</th>
+        <th>Molar mass (g/mol)</th><th>Density (g/mL)</th><th title="As used: from PubChem, else estimated from its structure; in oil by Henry's law, the one its constant was estimated with">Vapor pressure (kPa)</th>
+        ${henry ? `<th title="Henry's law solubility constant at 25 °C (concentration in the ${water ? 'water' : 'oil'} over partial pressure above it)">K<sub>H</sub> in ${water ? 'water' : 'oil'} (mol/m³/Pa)</th>` : ''}
         <th title="In the liquid">Mole fraction</th><th>Headspace (${esc(unitShort)})</th><th>Notes</th></tr></thead>
       <tbody>${rows}${totalRow}</tbody></table>`;
   }

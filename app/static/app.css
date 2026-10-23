@@ -585,7 +585,14 @@ dialog.player::backdrop { background: rgba(29,31,34,.55); }
 @keyframes progress-stripes { to { background-position: 22.6px 0; } }
 
 /* Headspace calculator */
-.hs-add { position: relative; max-width: 480px; margin-bottom: 12px; }
+.hs-start { display: flex; flex-wrap: wrap; gap: 14px 24px; align-items: flex-end; margin-bottom: 12px; }
+.hs-start > .field { min-width: 220px; }
+.hs-add { position: relative; flex: 1 1 320px; max-width: 480px; }
+#hs-panel-note { margin: -4px 0 12px; }
+.hs-tag { display: inline-block; font-size: 10.5px; font-weight: 600; padding: 0 5px; border-radius: 3px; vertical-align: 1px; white-space: nowrap; }
+.hs-tag.measured { background: var(--ok-soft); color: var(--ok); }
+.hs-tag.estimate { background: var(--warn-soft); color: var(--warn); }
+.hs-legend { margin: -4px 0 10px; }
 .hs-suggestions { position: absolute; z-index: 20; left: 0; right: 0; top: 100%; margin: 2px 0 0; padding: 4px 0; list-style: none;
   background: var(--panel); border: 1px solid var(--rule-strong); border-radius: var(--radius); box-shadow: 0 6px 18px rgba(0, 0, 0, .12);
   max-height: 320px; overflow: auto; }

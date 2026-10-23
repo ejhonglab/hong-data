@@ -36,7 +36,22 @@ def inchi2vapor_pressure(inchi, **kwargs):
         raise ValueError("not understood")
     q, units = VALUES[inchi]
     return {"vapor_pressure": q, "vapor_pressure_units": units,
-            "vapor_pressure_sources": "https://pubchem.ncbi.nlm.nih.gov/compound/1" if q is not None else None}
+            "vapor_pressure_sources": "https://pubchem.ncbi.nlm.nih.gov/compound/1" if q is not None else None,
+            **({"vapor_pressure_measured": True} if inchi == "InChI=1S/a" else {})}  # (older chemutils have no such key)
+
+def inchi2k_henry_pfo(inchi):
+    import numpy as np
+    out = {k: None for k in ("k_henry_pfo", "k_henry_pfo_sources", "k_henry_pfo_units", "k_henry_pfo_method",
+                             "k_henry_pfo_measured_partitioning", "log10_k_oil_air", "solvent_surrogate", "gamma_inf",
+                             "unifac_groups", "unifac_groups_source", "unifac_parameters", "vapor_pressure_kpa",
+                             "vapor_pressure_source", "vapor_pressure_measured", "notes")}
+    if inchi == "InChI=1S/b":
+        return {**out, "notes": "no UNIFAC groups"}
+    return {**out, "k_henry_pfo": np.float64(0.0977), "k_henry_pfo_sources": "UNIFAC estimate: ...",
+            "k_henry_pfo_units": "mol / m^3 / Pa", "k_henry_pfo_method": "UNIFAC estimate",
+            "k_henry_pfo_measured_partitioning": np.bool_(False), "log10_k_oil_air": np.float64(2.38),
+            "gamma_inf": np.float64(2.76), "vapor_pressure_kpa": 12.6, "vapor_pressure_source": "thermo WAGNER_MCGARRY",
+            "vapor_pressure_measured": np.bool_(True), "notes": None, "solvent_surrogate": "hexadecane"}
 
 def inchi2est_vapor_pressure(inchi):
     return {"vapor_pressure": 0.5, "vapor_pressure_units": "kPa",
@@ -78,20 +93,29 @@ def test_look_up(fake_chemutils, tmp_path, monkeypatch):
     saved = {}
     save = lambda cid, prop, found: saved.__setitem__((cid, prop), found)
     vp = ["vapor_pressure"]
-    failed = chemprops.look_up([(1, "InChI=1S/a", vp + ["molar_mass", "est_vapor_pressure"]), (2, "InChI=1S/b", vp + ["density"]),
-                                (3, "InChI=1S/c", vp + ["density", "k_henry"]), (4, "InChI=1S/x", vp), (5, "InChI=1S/d", vp),
-                                (6, "InChI=1S/a", [])], save)
-    # each as it comes, in the units kept (from others converted); none found is saved too, but
-    # what could not be looked up is not
+    failed = chemprops.look_up([(1, "InChI=1S/a", vp + ["molar_mass", "est_vapor_pressure", "k_henry_pfo"]),
+                                (2, "InChI=1S/b", vp + ["density", "k_henry_pfo"]), (3, "InChI=1S/c", vp + ["density", "k_henry"]),
+                                (4, "InChI=1S/x", vp), (5, "InChI=1S/d", vp), (6, "InChI=1S/a", [])], save)
+    # each as it comes, in the units kept (from others converted), with whether it is from measurements
+    # (if chemutils says); none found is saved too, but what could not be looked up is not
     assert saved.pop((3, "vapor_pressure"))["value"] == pytest.approx(0.266645, rel=1e-5)
+    pfo = saved.pop((1, "k_henry_pfo"))
+    found = lambda value, source, measured=None: {"value": value, "source": source, "measured": measured, "details": None}
     assert saved == {
-        (1, "vapor_pressure"): {"value": 11.27, "source": "https://pubchem.ncbi.nlm.nih.gov/compound/1"},
-        (1, "molar_mass"): {"value": 88.11, "source": "https://pubchem.ncbi.nlm.nih.gov/compound/1"},
-        (1, "est_vapor_pressure"): {"value": 0.5, "source": "SIMPOL.1 estimate (https://doi.org/10.5194/acp-8-2773-2008)"},
+        (1, "vapor_pressure"): found(11.27, "https://pubchem.ncbi.nlm.nih.gov/compound/1", True),
+        (1, "molar_mass"): found(88.11, "https://pubchem.ncbi.nlm.nih.gov/compound/1"),
+        (1, "est_vapor_pressure"): found(0.5, "SIMPOL.1 estimate (https://doi.org/10.5194/acp-8-2773-2008)", False),
         (2, "vapor_pressure"): None, (2, "density"): None,
-        (3, "density"): {"value": pytest.approx(0.902), "source": "https://a; https://b"},
-        (3, "k_henry"): {"value": pytest.approx(5.9e-4), "source": "https://henrys-law.org/x"},
+        (3, "density"): found(pytest.approx(0.902), "https://a; https://b"),
+        (3, "k_henry"): found(pytest.approx(5.9e-4), "https://henrys-law.org/x"),
+        # none estimated, but why kept
+        (2, "k_henry_pfo"): {"value": None, "source": None, "measured": None,
+                             "details": {**dict.fromkeys(chemprops.K_HENRY_PFO_DETAILS), "notes": "no UNIFAC groups"}},
     }
+    # an estimate (no measured partitioning), and what it was estimated with
+    assert (pfo["value"], pfo["measured"]) == (0.0977, False)
+    assert {k: pfo["details"][k] for k in ("gamma_inf", "vapor_pressure_kpa", "vapor_pressure_source", "vapor_pressure_measured")} == {
+        "gamma_inf": 2.76, "vapor_pressure_kpa": 12.6, "vapor_pressure_source": "thermo WAGNER_MCGARRY", "vapor_pressure_measured": True}
     assert failed == {(4, "vapor_pressure"): "ValueError: not understood",
                       (5, "vapor_pressure"): "DimensionalityError: Cannot convert from 'gram / mole' ([mass] / [substance]) to "
                                              "'kilopascal' ([mass] / [length] / [time] ** 2)"}
@@ -263,7 +287,8 @@ def test_relookup(tmp_path, monkeypatch):
     # those looked up with a chemutils older than the last change to how they are looked up (only of the odor table)
     assert s["installed"] == {"commit": chemprops.installed(), "url": f"{chemprops.REPO}/commit/{chemprops.installed()}"}
     assert {p: (by[p]["looked_up"], by[p]["found"], by[p]["outdated"]) for p in by} == {
-        "vapor_pressure": (2, 2, 2), "est_vapor_pressure": (0, 0, 0), "molar_mass": (2, 2, 0), "density": (1, 0, 1), "k_henry": (0, 0, 0)}
+        "vapor_pressure": (2, 2, 2), "est_vapor_pressure": (0, 0, 0), "molar_mass": (2, 2, 0), "density": (1, 0, 1), "k_henry": (0, 0, 0),
+        "k_henry_pfo": (0, 0, 0)}
     assert by["density"]["change"]["commit"] == "9196a0c9df65" and by["molar_mass"]["change"] is None
 
     # those looked up before, again, not from chemutils' cache; then what is still missing (as after a sync)

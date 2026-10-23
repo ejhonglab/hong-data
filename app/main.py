@@ -1456,29 +1456,33 @@ HEADSPACE_MAX_ODORS = 50
 HEADSPACE_RETRY_S = 60  # what could not be looked up is tried again by a calculation after this (s)
 
 
-def _headspace_properties(odor: dict, solvent: str) -> list[str]:
-    """The properties `headspace.calculate` needs of an odor in a solvent."""
+def _headspace_properties(odor: dict, solvent: str, model: Optional[str]) -> list[str]:
+    """The properties `headspace.calculate` needs of an odor in a solvent (with `model`, for paraffin oil)."""
     props = ["molar_mass", "density", "vapor_pressure"]
     if not odor["vapor_pressure_at"] or odor["vapor_pressure_kpa"] is None:
         props.append("est_vapor_pressure")  # (if PubChem has no vapor pressure)
-    return props + ["k_henry"] * (solvent == "water")
+    henry = solvent == "water" or model == "henry"
+    return props + [headspace.HENRY_PROPERTIES[solvent]] * henry
 
 
-def _headspace(solvent: str, comps: list[dict]) -> dict:
+def _headspace(solvent: str, comps: list[dict], model: Optional[str] = None) -> dict:
     """The headspace of odors diluted together (`headspace.calculate`), with the properties
     it needs of each looked up through chemutils first, where they have not been (but those
     that could not be in the last `HEADSPACE_RETRY_S`).
 
     Args:
         comps: ``odor_id`` (in the odor table) and ``log10_conc`` of each.
+        model: of `headspace.MODELS`, for paraffin oil (the default if None).
 
     Returns:
         `headspace.calculate`'s, with each component's ``odor_id``, ``log10_conc``,
         ``properties`` (property -> its value, None if there is none; of those it needs),
-        ``links`` (property -> where it is from, see `odormeta.property_link`) and ``failed``
-        (property -> why it could not be looked up, on one line, for those that could not); and
-        ``solvent`` and ``temperature_c``.
+        ``sources`` (property -> where it is from, as chemutils said), ``links`` (property ->
+        where it is from, see `odormeta.property_link`) and ``failed`` (property -> why it
+        could not be looked up, on one line, for those that could not); and ``solvent``,
+        ``model`` (for paraffin oil, else None) and ``temperature_c``.
     """
+    model = (model or headspace.MODELS[0]) if solvent != "water" else None
     def odors() -> dict[int, dict]:
         return {o["id"]: o for o in db.list_odors()}
 
@@ -1490,7 +1494,7 @@ def _headspace(solvent: str, comps: list[dict]) -> dict:
     todo = {}
     for c in comps:
         o = table[c["odor_id"]]
-        if o["cid"] and (props := _to_look_up(o, _headspace_properties(o, solvent), now, HEADSPACE_RETRY_S)):
+        if o["cid"] and (props := _to_look_up(o, _headspace_properties(o, solvent, model), now, HEADSPACE_RETRY_S)):
             todo[o["cid"]] = (o["cid"], o["inchi"], props)
     if todo:
         _look_up_properties(sorted(todo.values()))
@@ -1499,28 +1503,76 @@ def _headspace(solvent: str, comps: list[dict]) -> dict:
     inputs, extra = [], []
     for c in comps:
         o = table[c["odor_id"]]
-        props = _headspace_properties(o, solvent)
+        props = _headspace_properties(o, solvent, model)
         values = {p: o[PROPERTY_COLUMNS[p]] for p in props}
+        known = {f"{p}_{k}": o[f"{p}_{k}"] for p in props for k in ("measured", "details")}
         failed = {p: " ".join(_props_failed[(o["cid"], p)][1].split())[:300] for p in props
                   if values[p] is None and (o["cid"], p) in _props_failed}
         notes = [] if o["cid"] else ["no CID in the odor table, so nothing about it could be looked up"]
         if o["cid"] and not o["inchi"]:
             notes.append("PubChem gave no InChI for its CID (or could not be reached), so nothing about it could be looked up")
-        inputs.append({"log10_conc": c["log10_conc"], **values})
+        inputs.append({"log10_conc": c["log10_conc"], **values, **known})
         extra.append({"odor_id": o["id"], "log10_conc": c["log10_conc"], "properties": values,
-                      "links": {p: odormeta.property_link(o, p) for p in props}, "failed": failed, "notes": notes})
-    result = headspace.calculate(inputs, solvent)
+                      "sources": {p: o[f"{p}_source"] for p in props}, "links": {p: odormeta.property_link(o, p) for p in props},
+                      "failed": failed, "notes": notes})
+    result = headspace.calculate(inputs, solvent, model or headspace.MODELS[0])
     for r, e in zip(result["components"], extra):
         r.update({**e, "notes": e["notes"] + r["notes"]})
-    return {**result, "solvent": solvent, "temperature_c": headspace.T_K - 273.15}
+    return {**result, "solvent": solvent, "model": model, "temperature_c": headspace.T_K - 273.15}
+
+
+def _headspace_panels() -> list[dict]:
+    """The panels of the datasets, as mixtures for the Headspace calculator: of each, the
+    odors presented in it (over every dataset with it, matched to the odor table as in
+    Browse) that are one of the odor table's with a CID, but solvents
+    (`headspace.SOLVENT_NAMES`), each at the highest concentration presented.
+
+    Returns:
+        By panel name: ``panel``, ``datasets`` (how many have it), ``components``
+        (``odor_id``, ``log10_conc``, ``concs``: every concentration presented, highest
+        first) and ``skipped`` (``odor``, as in the data, and ``why``).
+    """
+    index = odormeta.OdorIndex(db.list_odors())
+    panels: dict[str, dict] = {}
+    for ds_meta in db.list_datasets():
+        ds = db.get_dataset(ds_meta["id"])
+        rows = odormeta.dataset_odors(ds, db.get_trials(ds["id"]), index, odormeta.dataset_yaml_odors(ds, config.DATASETS_DIR))
+        for r in rows:
+            if r["panel"] is None:
+                continue
+            p = panels.setdefault(r["panel"], {"panel": r["panel"], "datasets": set(), "concs": {}, "skipped": {}})
+            p["datasets"].add(ds["id"])
+            o = index.by_id.get(r["odor_id"]) if r["odor_id"] is not None else None
+            names = {v.casefold() for v in ([o["name"], o.get("abbrev"), *o["aliases"]] if o else []) if v}
+            why = ("not in the odor table" if o is None else "a solvent" if names & headspace.SOLVENT_NAMES
+                   else "no CID in the odor table" if not o.get("cid") else "no concentration" if r["log10_conc"] is None else None)
+            if why:
+                p["skipped"].setdefault(r["label"], why)
+            else:
+                p["concs"].setdefault(o["id"], set()).add(r["log10_conc"])
+    out = []
+    for name in sorted(panels, key=str.casefold):
+        p = panels[name]
+        comps = [{"odor_id": i, "log10_conc": max(cs), "concs": sorted(cs, reverse=True)} for i, cs in p["concs"].items()]
+        out.append({"panel": name, "datasets": len(p["datasets"]), "components": comps,
+                    "skipped": [{"odor": k, "why": v} for k, v in p["skipped"].items()]})
+    return out
+
+
+async def headspace_panels(request: Request) -> Response:
+    """The panels of the datasets as mixtures (`_headspace_panels`)."""
+    return JSONResponse({"panels": await run_in_threadpool(_headspace_panels)})
 
 
 async def headspace_calc(request: Request) -> Response:
-    """The Headspace calculator's: {"solvent" (of `headspace.SOLVENTS`), "components": [{"odor_id",
-    "log10_conc"}, ...]} -> `_headspace`."""
+    """The Headspace calculator's: {"solvent" (of `headspace.SOLVENTS`), "model" (of
+    `headspace.MODELS`, for paraffin oil; optional), "components": [{"odor_id", "log10_conc"},
+    ...]} -> `_headspace`."""
     body = await request.json()
     if not isinstance(body, dict) or body.get("solvent") not in headspace.SOLVENTS or not isinstance(body.get("components"), list):
         return json_error(400, f'expected {{"solvent": one of {", ".join(headspace.SOLVENTS)}, "components": [{{"odor_id", "log10_conc"}}, ...]}}')
+    if body.get("model") is not None and body["model"] not in headspace.MODELS:
+        return json_error(400, f"the model is one of {', '.join(headspace.MODELS)}")
     comps = body["components"]
     if not 1 <= len(comps) <= HEADSPACE_MAX_ODORS:
         return json_error(400, f"a mixture needs from 1 to {HEADSPACE_MAX_ODORS} odors")
@@ -1534,7 +1586,7 @@ async def headspace_calc(request: Request) -> Response:
     if len({c["odor_id"] for c in comps}) < len(comps):
         return json_error(400, "an odor is in the mixture more than once")
     try:
-        return JSONResponse(await run_in_threadpool(_headspace, body["solvent"], comps))
+        return JSONResponse(await run_in_threadpool(_headspace, body["solvent"], comps, body.get("model")))
     except ValueError as e:
         return json_error(400, str(e))
 
@@ -2104,6 +2156,7 @@ routes = [
     Route("/api/odors/structure/{cid:int}", odor_structure),
     Route("/api/odors/template.csv", odor_template),
     Route("/api/headspace", headspace_calc, methods=["POST"]),
+    Route("/api/headspace/panels", headspace_panels),
     Route("/api/reference", reference_list),
     Route("/api/reference/{ref_id}", reference_get),
     Route("/api/admin", admin_get),

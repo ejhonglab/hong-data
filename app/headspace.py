@@ -3,44 +3,75 @@ calculator tab computes them: at equilibrium, at 25 °C, as partial pressures (t
 converts them to other units), from the properties of each looked up through chemutils
 (chemprops.py).
 
-- In paraffin oil (or any solvent but water), by Raoult's law for an ideal solution: the
-  partial pressure of each odor is its mole fraction in the liquid times its vapor
-  pressure. The moles of each are from its volume (v/v), density and molar mass, and those
-  of the oil as if it were n-hexadecane (a light paraffin oil's molecules are about as
-  large). Polar odors (alcohols, acids) are less soluble in oil than an ideal solution
-  would be, so their headspace is likely higher than this when dilute.
+- In paraffin oil, by Henry's law (`MODELS` 'henry', the default): the partial pressure of
+  each odor is its concentration in the oil over its Henry's law solubility constant
+  there, as chemutils estimates it (`inchi2k_henry_pfo`: its activity coefficient in
+  n-hexadecane by modified UNIFAC, and its vapor pressure; no measured solubilities in
+  oil). That is Raoult's law with the activity coefficient of the odor when dilute:
+  polar odors (alcohols, acids) are less soluble in oil than an ideal solution, so more
+  of them is in the headspace. With no constant estimated, or by choice ('raoult'), by
+  Raoult's law for an ideal solution: the partial pressure of each odor is its mole
+  fraction in the liquid times its vapor pressure. The moles of each are from its volume
+  (v/v), density and molar mass, and those of the oil as if it were n-hexadecane (a light
+  paraffin oil's molecules are about as large).
 - In water, by Henry's law: the partial pressure of each odor is its concentration in the
   water over its Henry's law solubility constant, else (with none found) by Raoult's law
-  as above, which is too low for odors not very soluble in water. Henry's law holds for
-  dilute solutions only: more than water dissolves of an odor has its vapor pressure.
+  as above, which is too low for odors not very soluble in water.
+- Henry's law holds for dilute solutions only: more than the solvent dissolves of an odor
+  has its vapor pressure.
 - An odor's vapor pressure is the one PubChem gives, else one estimated from its structure
-  (SIMPOL.1); its density, if none is found, is taken as `DEFAULT_DENSITY`.
+  (SIMPOL.1); in oil by Henry's law, the one chemutils estimated the constant with. Its
+  density, if none is found, is taken as `DEFAULT_DENSITY`.
 """
 from __future__ import annotations
 
+from typing import Optional
 
 T_K = 298.15
 # solvent -> (molar mass in g/mol, density in g/mL at 25 °C), with n-hexadecane for paraffin oil
 SOLVENTS = {"paraffin oil": (226.45, 0.770), "water": (18.015, 0.997)}
+# how the headspace over paraffin oil is computed (see the module's docstring), the default first
+MODELS = ("henry", "raoult")
+# the property with each solvent's Henry's law constants (`chemprops.PROPERTIES`), with Henry's law
+HENRY_PROPERTIES = {"paraffin oil": "k_henry_pfo", "water": "k_henry"}
 DEFAULT_DENSITY = 1.0  # g/mL, for an odor with none found
+# names (or abbreviations) of solvents in the odor table, left out of the mixtures of panels
+SOLVENT_NAMES = {"pfo", "paraffin oil", "mineral oil", "water", "h2o", "mineral oil (light)"}
 
 
-def calculate(components: list[dict], solvent: str) -> dict:
+def _vapor_pressure(c: dict, notes: list[str]) -> tuple[Optional[float], Optional[bool]]:
+    """An odor's vapor pressure (kPa), and whether it is from measurements: PubChem's, else
+    estimated from its structure (said so in `notes`)."""
+    if c.get("vapor_pressure") is not None:
+        return c["vapor_pressure"], c.get("vapor_pressure_measured")
+    if c.get("est_vapor_pressure") is not None:
+        notes.append("no vapor pressure found, so estimated from its structure (SIMPOL.1)")
+        return c["est_vapor_pressure"], False
+    return None, None
+
+
+def calculate(components: list[dict], solvent: str, model: str = MODELS[0]) -> dict:
     """The headspace of odors diluted together in a solvent (see the module's docstring).
 
     Args:
         components: each with ``log10_conc`` (log10 of its volume, pure, over that of the
             solution: v/v) and its properties as `chemprops.PROPERTIES` give them (None
             where none was found): ``vapor_pressure`` and ``est_vapor_pressure`` (kPa),
-            ``molar_mass`` (g/mol), ``density`` (g/mL) and ``k_henry`` (mol/m³/Pa).
+            ``molar_mass`` (g/mol), ``density`` (g/mL), ``k_henry`` and ``k_henry_pfo``
+            (mol/m³/Pa); with ``<property>_measured`` and ``k_henry_pfo_details`` as
+            `chemprops.look_up` gives them.
         solvent: of `SOLVENTS`.
+        model: of `MODELS`, for paraffin oil.
 
     Returns:
         dict with ``components``, one for each given, in order: ``pa`` (its partial
         pressure in the headspace, Pa; None if it cannot be computed), ``law`` ('raoult'
-        or 'henry'), ``mole_fraction`` (in the liquid, by Raoult's law), ``vapor_pressure``
-        (kPa, as used) and ``notes`` (what was assumed, or why it cannot be computed); and
-        ``total_pa`` (of those that can be computed).
+        or 'henry'), ``mole_fraction`` (in the liquid), ``vapor_pressure`` (kPa, as used),
+        ``vapor_pressure_measured`` (whether from measurements; None if not known),
+        ``vapor_pressure_source`` (if not of the odor table's: that of a Henry's law
+        constant estimated with it), ``k_henry`` (mol/m³/Pa, as used, by Henry's law),
+        ``k_henry_measured`` and ``notes`` (what was assumed, or why it cannot be
+        computed); and ``total_pa`` (of those that can be computed).
 
     Raises:
         ValueError: if the odors are more than the whole solution.
@@ -49,13 +80,10 @@ def calculate(components: list[dict], solvent: str) -> dict:
     if sum(fractions) > 1 + 1e-9:
         raise ValueError(f"the odors are more than the whole solution (their v/v sum to {sum(fractions):.3g})")
     m_solvent, rho_solvent = SOLVENTS[solvent]
+    henry = HENRY_PROPERTIES[solvent] if solvent == "water" or model == "henry" else None
     out, moles = [], []
     for c, f in zip(components, fractions):
         notes = []
-        p_sat = c.get("vapor_pressure")
-        if p_sat is None and c.get("est_vapor_pressure") is not None:
-            p_sat = c["est_vapor_pressure"]
-            notes.append("no vapor pressure found, so estimated from its structure (SIMPOL.1)")
         rho = c.get("density")
         if rho is None:
             rho = DEFAULT_DENSITY
@@ -64,7 +92,8 @@ def calculate(components: list[dict], solvent: str) -> dict:
         moles.append(f * rho / mass if mass else None)  # (per mL of solution)
         if not mass:
             notes.append("no molar mass, so its headspace cannot be computed")
-        out.append({"pa": None, "law": None, "mole_fraction": None, "vapor_pressure": p_sat, "notes": notes})
+        out.append({"pa": None, "law": None, "mole_fraction": None, "vapor_pressure": None, "vapor_pressure_measured": None,
+                    "vapor_pressure_source": None, "k_henry": None, "k_henry_measured": None, "notes": notes})
 
     n_total = (1 - sum(fractions)) * rho_solvent / m_solvent + sum(n for n in moles if n is not None)
     if any(n is None for n in moles):
@@ -75,17 +104,29 @@ def calculate(components: list[dict], solvent: str) -> dict:
         if n is None:
             continue
         r["mole_fraction"] = n / n_total
-        if solvent == "water" and c.get("k_henry"):
-            r["law"] = "henry"
-            r["pa"] = n * 1e6 / c["k_henry"]  # mol/mL as mol/m³, over mol/m³/Pa
+        details = (c.get(f"{henry}_details") or {}) if henry else {}
+        if henry and c.get(henry):
+            r.update(law="henry", k_henry=c[henry], k_henry_measured=c.get(f"{henry}_measured"))
+            if details.get("vapor_pressure_kpa") is not None:  # (the one the constant was estimated with)
+                r.update(vapor_pressure=details["vapor_pressure_kpa"], vapor_pressure_measured=details.get("vapor_pressure_measured"),
+                         vapor_pressure_source=details.get("vapor_pressure_source"))
+            else:
+                r["vapor_pressure"], r["vapor_pressure_measured"] = _vapor_pressure(c, r["notes"])
+            if details.get("notes"):
+                r["notes"].append(details["notes"])
+            r["pa"] = n * 1e6 / c[henry]  # mol/mL as mol/m³, over mol/m³/Pa
             if r["vapor_pressure"] is not None and r["pa"] > r["vapor_pressure"] * 1e3:
                 r["pa"] = r["vapor_pressure"] * 1e3
-                r["notes"].append("more than water dissolves by Henry's law, so at its vapor pressure")
+                r["notes"].append(f"more than {solvent} dissolves by Henry's law, so at its vapor pressure")
             continue
         r["law"] = "raoult"
         if solvent == "water":
             r["notes"].append("no Henry's law constant found, so as an ideal solution (Raoult's law): "
                               "likely too low, unless it is very soluble in water")
+        elif henry:
+            why = f" ({details['notes']})" if details.get("notes") else ""
+            r["notes"].append(f"no Henry's law constant could be estimated in oil{why}, so as an ideal solution (Raoult's law)")
+        r["vapor_pressure"], r["vapor_pressure_measured"] = _vapor_pressure(c, r["notes"])
         if r["vapor_pressure"] is None:
             r["notes"].append("no vapor pressure, so its headspace cannot be computed")
             continue

@@ -453,11 +453,26 @@ as in the data), at equilibrium at 25 °C, in paraffin oil or water. The physics
 `headspace.py`; the properties it needs of each odor are looked up through chemutils
 (`chemprops.py`) the first time a calculation needs them, and kept in the `pubchem` table
 with the odor's CID, so that a calculation needing nothing new does not start chemutils.
+(Constants in oil are computed by chemutils, not looked up: with `thermo` and `ugropy`,
+offline, a second or so each, the first time.)
 
-- **Paraffin oil**: Raoult's law for an ideal solution, p = x·p_sat. The moles of each
-  odor are from its volume, density and molar mass; those of the oil as if it were
-  n-hexadecane (226.45 g/mol, 0.770 g/mL), a light paraffin oil's molecules being about
-  as large. E.g. ethyl acetate at -3 (0.900 g/mL, 12.4 kPa): x = 0.0030, 37 Pa, 368 ppm.
+- **Paraffin oil, by Henry's law** (the default): p = c / H_cp, with c from the odor's
+  volume, density and molar mass, and H_cp estimated by chemutils (`inchi2k_henry_pfo`):
+  K_oil/air = c_hexadecane·R·T / (γ∞·p_sat), γ∞ the activity coefficient of the odor when
+  dilute in n-hexadecane by modified UNIFAC (from its functional groups), p_sat from
+  `thermo`'s fits to measurements where it has them (else PubChem's, else estimates).
+  That is Raoult's law times γ∞: e.g. ethyl acetate's is 2.8 (at -3, 105 Pa, 1030 ppm)
+  and ethanol's 30. No measured solubility in oil or alkanes is used (chemutils can take
+  one, but none is at hand), so each constant is an estimate, its vapor pressure
+  measured or not (both said in the table). Like Henry's law in water, it holds for
+  dilute solutions: alcohols and acids associate as they get more concentrated, which
+  lowers their headspace again (chemutils' note on them says so), and p is at most p_sat.
+  With no constant estimated (no UNIFAC groups or parameters for it), Raoult's law.
+- **Paraffin oil, by Raoult's law only** (if chosen): an ideal solution, p = x·p_sat. The
+  moles of each odor are from its volume, density and molar mass; those of the oil as if
+  it were n-hexadecane (226.45 g/mol, 0.770 g/mL), a light paraffin oil's molecules
+  being about as large. E.g. ethyl acetate at -3 (0.900 g/mL, 12.4 kPa): x = 0.0030,
+  37 Pa, 368 ppm.
 - **Water**: Henry's law, p = c / H_cp, with c from the odor's volume, density and molar
   mass, and H_cp (mol/m³/Pa) from henrys-law.org (Sander's compilation), else NIST, both
   at 25 °C. It holds for dilute solutions only, so p is at most the odor's vapor
@@ -466,7 +481,10 @@ with the odor's CID, so that a calculation needing nothing new does not start ch
 - **Vapor pressure**: PubChem's (the mean of its experimental values at or near 25 °C,
   else of those with no temperature given), else estimated from the structure by
   SIMPOL.1 (`chemutils.inchi2est_vapor_pressure`, often within 3×, but several times too
-  low for furans, tertiary alcohols and some phenols).
+  low for furans, tertiary alcohols and some phenols); in oil by Henry's law, the one its
+  constant was estimated with. Each is labelled measured or an estimate where chemutils
+  says (`pubchem.<property>_measured`): SIMPOL.1's always are estimates; PubChem's are
+  labelled once chemutils tells measured values from the estimates PubChem also lists.
 - **Density**: PubChem's (most of its values relative to water, taken as g/mL), or
   ChemSpider's, given a key; else 1 g/mL, for most odors between 0.8 and 1.1 g/mL, so
   off by at most ~20%.
@@ -474,16 +492,19 @@ with the odor's CID, so that a calculation needing nothing new does not start ch
   volume (p / 101325 Pa), log10 of that v/v, mol/L and molecules/cm³ by the ideal gas
   law, and µg/L (mg/m³) with the molar mass. These are computed in the browser, so that
   changing them asks the server nothing.
+- **Kept in the browser**: each calculation since the page was opened, by its mixture,
+  solvent and model, so that going back to one shows it at once (and asks nothing).
+- **Panels**: a mixture can start from a panel of the datasets: the odors presented in it
+  (over every dataset with it, matched to the odor table as in Browse) that are in the
+  odor table with a CID, but solvents (`headspace.SOLVENT_NAMES`), each at the highest
+  concentration presented, with what was left out said. E.g. kiwi: EtOH -2, IAol -3.6,
+  IaA -3.7, ea -4.2 and eb -3.5 (not pfo, nor the mixture kmix), as in its YAML.
 
-What is left out: polar odors (alcohols, acids) are less soluble in an alkane than in an
-ideal solution (ethanol's activity coefficient in hexadecane is in the tens when dilute),
-so their real headspace over oil is likely higher than shown; the self-association of
-acids and alcohols as they get more concentrated lowers it again. chemutils'
-`oil_headspace.py` predicts this with modified UNIFAC (activity coefficients from
-functional groups, and a closed-vial mass balance), and could replace Raoult's law here,
-but it is a script outside the chemutils package, needs `thermo`, and makes its own
-uncached PubChem requests. Nothing either way models air flowing over the vial (which
-depletes the headspace) or diluting it before it reaches the fly.
+What is left out: UNIFAC is within about 2× of measured oil/air partitioning for simple
+functional groups, less sure for acids (which dimerize); Raoult's law only leaves out
+that polar odors are less soluble in oil than an ideal solution, so it is too low for
+them. Neither models air flowing over the vial (which depletes the headspace) or
+diluting it before it reaches the fly.
 
 ## Code layout
 
@@ -527,8 +548,9 @@ tests/             pytest tests
 (one row per cell, for SQL queries), `matrices` (the same values as a float32 blob for
 fast serving), `users` (each user's folders on tensor), `odors` and `odor_syncs`,
 `pubchem` (each odor CID's InChI, and its properties looked up through chemutils: vapor pressure,
-estimated vapor pressure, molar mass, density and Henry's law constant, each with where it is from,
-when it was looked up and the chemutils commit that did), `settings` (site-wide settings from the Admin tab:
+estimated vapor pressure, molar mass, density and Henry's law constants in water and paraffin oil, each
+with where it is from, when it was looked up, the chemutils commit that did, whether measured, and for
+constants in oil what they were estimated with), `settings` (site-wide settings from the Admin tab:
 the odor sheet's link), `reference_datasets` (reference datasets added there) and
 `file_log` (the files the server has read or written in its own folders). Files:
 `data/datasets/<id>/` holds the original data file, `README.md`, `metadata.json`,
@@ -618,10 +640,12 @@ POST   /api/odors/preview                   the sheet (or multipart 'file', a CS
 POST   /api/odors/apply                     {"fingerprint", "changes", "deletions"}
 GET    /api/odors/structure/{cid}           its structure, drawn by RDKit (SVG)
 GET    /api/odors/template.csv              config/odor_sheet_template.csv
-POST   /api/headspace                       {"solvent": "paraffin oil" or "water", "components":
-                                            [{"odor_id", "log10_conc"}, ...]}: the partial
-                                            pressure (Pa) above the mixture of each odor, with
-                                            the properties used and where they are from
+POST   /api/headspace                       {"solvent": "paraffin oil" or "water", "model": "henry"
+                                            or "raoult" (oil only), "components": [{"odor_id",
+                                            "log10_conc"}, ...]}: the partial pressure (Pa) above
+                                            the mixture of each odor, with the properties used,
+                                            where they are from and whether measured
+GET    /api/headspace/panels                the panels of the datasets as mixtures
 GET    /api/reference                       every reference dataset: whether it can be read (why
                                             not), how many of its chemicals are identified
 GET    /api/reference/{id}                  one, for the viewer (its chemicals as in the odor table)

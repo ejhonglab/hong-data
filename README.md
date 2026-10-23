@@ -34,9 +34,9 @@ expected, and nothing secret is entered. If a download or the page is blocked, s
    with groups of datasets (by experimenter, rig or power) scaled to each other first.
 6. **Compare**: tick datasets to see them side by side, averaged, with how alike their
    odors are, and how that compares with chemical structure or reference data.
-7. **Headspace calculator**: search for odors of the odor table to put in a mixture, give
-   each a concentration (log10 v/v, as in your data), and calculate how much of each is
-   in the air above it (in ppm, µg/L and other units).
+7. **Headspace calculator**: search for odors of the odor table to put in a mixture (or
+   start from a panel's odors), give each a concentration (log10 v/v, as in your data),
+   and calculate how much of each is in the air above it (in ppm, µg/L and other units).
 
 ### Browser warnings
 
@@ -397,15 +397,22 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   values summed over them (those not removed; missing values left out), as one row or
   column.
 - **Headspace calculator**: odors are added by any part of a name, abbreviation, alias,
-  CID or CAS number; the solvent (paraffin oil or water) follows what the odor table
+  CID or CAS number, or a mixture starts from a panel of the datasets: its odors in the
+  odor table with a CID, but solvents, each at the highest concentration presented (what
+  was left out is said). The solvent (paraffin oil or water) follows what the odor table
   says of the odors, unless one is chosen. The headspace is at equilibrium in a closed
-  vial at 25 °C: over paraffin oil by Raoult's law for an ideal solution, over water by
-  Henry's law. What it needs of each odor (molar mass, density, vapor pressure, and in
-  water Henry's law constant) is looked up through chemutils the first time (a few
-  seconds an odor) and kept with the odor table; where something is missing, what was
-  assumed instead is noted by the odor (a vapor pressure estimated from the structure,
-  a density of 1 g/mL). The mixture, solvent and units are kept in this browser. How it
-  is computed, and what it leaves out:
+  vial at 25 °C: over paraffin oil by Henry's law with constants chemutils estimates
+  (`inchi2k_henry_pfo`, from activity coefficients in hexadecane by modified UNIFAC), or
+  by Raoult's law only (an ideal solution) if chosen; over water by Henry's law. What it
+  needs of each odor (molar mass, density, vapor pressure, Henry's law constant) is
+  looked up through chemutils the first time (a few seconds an odor) and kept with the
+  odor table; where something is missing, what was assumed instead is noted by the odor
+  (a vapor pressure estimated from the structure, a density of 1 g/mL). Vapor pressures
+  and Henry's law constants are labelled *measured* or *estimate* (where chemutils says:
+  every constant in oil is an estimate, with the vapor pressure it was estimated with
+  shown, labelled too). What was calculated since the page was opened is shown again at
+  once, for another solvent or model too. The mixture, solvent, model and units are kept
+  in this browser. How it is computed, and what it leaves out:
   [design.md](design.md#headspace-calculator).
 - **Admin** (to the right of Docs; it first asks whether you are Tom, Jon or Betty, or
   have asked one of them): settings for the whole site.
@@ -491,7 +498,8 @@ uvicorn app.main:app --reload --port 8080      # data goes to ./data
 
 pip does not replace chemutils when its pin in `requirements.txt` changes (the version
 number stays the same): `pip install --force-reinstall --no-deps "$(grep '^chemutils'
-requirements.txt)"`. Updating the pin takes a few more steps:
+requirements.txt)"`, then `pip install -r requirements.txt` again for any new
+dependencies of it. Updating the pin takes a few more steps:
 [DEPLOY.md](DEPLOY.md#updating-chemutils).
 
 Settings and upload lookups need tensor mounted (at `/local/tensor`, or wherever

@@ -293,11 +293,12 @@ already looked up until it is looked up again. Each time:
    keys, units).
 3. **In your venv**: pip does not replace chemutils by itself (its version number stays
    the same): `venv/bin/pip install --force-reinstall --no-deps "$(grep '^chemutils'
-   requirements.txt)"`. Run the tests, and commit.
+   requirements.txt)"`, then `venv/bin/pip install -r requirements.txt` for any new
+   dependencies of it. Run the tests, and commit.
 4. **On the server**, as for any new version: `cd /opt/olfdb && git pull && sudo systemctl
    restart olfdb`. The image is rebuilt from `requirements.txt` on, installing the new
    chemutils (from github.com, as on the first build). Without Docker (section 8):
-   `git pull`, the pip command of step 3, then `sudo systemctl restart olfdb`.
+   `git pull`, the pip commands of step 3, then `sudo systemctl restart olfdb`.
 5. **In the Admin tab**, *Odor properties from chemutils* shows the commit installed.
    If step 2 added to `CHANGES`, the values looked up with an older chemutils are
    counted there and ticked: *Look up again* (about a second each, with a progress bar).
