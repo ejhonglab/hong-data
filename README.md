@@ -17,8 +17,9 @@ expected, and nothing secret is entered. If a download or the page is blocked, s
    YAML folders on tensor, written from the top of tensor (e.g. `tom/raw_data`). Once
    all of them are found, they are saved under your name for any computer you use.
 2. **Upload**: drop your CSV or parquet file of responses (see
-   [Data file format](#data-file-format)). It is checked and shown as a heatmap before
-   anything is saved; if problems are listed, fix them all and drop the file again. Fill
+   [Data file format](#data-file-format)), or several with the same experiment details
+   (e.g. one per fly), whose ROIs become one dataset. It is checked and shown as a heatmap
+   before anything is saved; if problems are listed, fix them all and drop the file again. Fill
    in the experiment details (your name, indicator, driver and coding unit are
    required). Most are filled in for you from your settings, the file and your data on
    tensor, each colored by where it came from. If some of its odors are not in the odor
@@ -161,9 +162,14 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
 
 ## The tabs in detail
 
-- **Upload**: a file is refused if it was uploaded already, by anyone: the same file
-  (whatever its name), or the same data in another (the same flies, ROIs, trials and
-  values). Once your name and the coding unit are entered (when the README is made, and
+- **Upload**: several files dropped (or chosen) together are one dataset: each is
+  checked on its own (problems listed per file), then their ROIs are put together, in
+  order of file name, each with its values for the trials of any of them (trials being
+  the same by panel, odor and repeat; empty for those its file lacks, with a warning).
+  They must have the same column levels and other row levels, and no ROI may be in two of
+  them; every file is kept as uploaded. A file is refused if it was uploaded already, by
+  anyone: the same file (whatever its name, alone or among others), or the same data in
+  another (the same flies, ROIs, trials and values). Once your name and the coding unit are entered (when the README is made, and
   again when saving), it is refused too if its flies (each `date` and `fly_num`) are
   exactly those of a dataset of yours of that coding unit; one sharing only some flies
   with one is accepted with a warning saying which of the two may need to be deleted if

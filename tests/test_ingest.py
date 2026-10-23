@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from app.ingest import ValidationError, load_file
+from app.ingest import ValidationError, combine, load_file, unit_key
 from app.odors import OdorFormatError, format_mix_from_strs, parse_odor, validate_odor_levels
 from app.yamlcheck import check_subset, lint, parse_odor_yaml
 
@@ -320,6 +320,59 @@ def test_tnt3c_example(tmp_path):
     s = parsed.summary()
     assert s["n_units"] == len(left.units) + len(right.units) and s["n_flies"] == 1 and s["extra_levels"] == {"hemibrain": ["L", "R"]}
     assert len({(u["extra"]["hemibrain"], u["roi"]) for u in parsed.units}) == s["n_units"]
+
+
+def test_combine(tmp_path):
+    # files of other flies as one dataset's: trials the same by panel, odor and repeat in any of them
+    a = load_file(write_csv(make_wide(ROWS, COLS[:2], np.arange(12.0).reshape(6, 2)), tmp_path, "a.csv"))
+    # (without the mixtures, so its odor2 dropped as saying nothing; and a trial a lacks)
+    rows = ROWS[:4] + [("p1", False, "eb @ -3", "solvent", 0)]
+    b = load_file(write_csv(make_wide(rows, COLS[2:], np.ones((5, 2))), tmp_path, "b.csv"))
+    assert "odor2" in a.row_levels and "odor2" not in b.row_levels
+    c = combine([("a.csv", a), ("b.csv", b)])
+    assert [unit_key(u) for u in c.units] == [unit_key(u) for u in a.units + b.units]
+    assert c.row_levels == a.row_levels and {len(t["components"]) for t in c.trials} == {2}
+    assert [t["odor"] for t in c.trials] == [t["odor"] for t in a.trials] + ["eb @ -3"] and c.values.shape == (4, 7)
+    assert np.array_equal(c.values[:2, :6], a.values) and np.isnan(c.values[:2, 6]).all()
+    assert (c.values[2:, [0, 1, 2, 3, 6]] == 1).all() and np.isnan(c.values[2:, 4:6]).all()
+    assert c.summary()["n_flies"] == 3 and c.warnings[-1] == (
+        "3 of the 7 trials are not in every file, so missing (NaN) for the ROIs of the others: "
+        "'p1 ea @ -2 + va @ -3 repeat 0', 'p1 ea @ -2 + va @ -3 repeat 1', 'p1 eb @ -3 repeat 0'")
+    # each file's warnings: once if of all, else saying of which
+    assert any(w.startswith("b.csv: row levels that say nothing were dropped") for w in c.warnings)
+    a2 = load_file(write_csv(make_wide(ROWS, COLS[2:]), tmp_path, "a2.csv"))
+    assert combine([("a.csv", a), ("a2.csv", a2)]).warnings == a.warnings
+    # is_pair, where some files have it, taken as False in the others
+    pairs = load_file(write_csv(make_wide([(*r[:1], True, *r[2:]) for r in ROWS[4:]], COLS[:2]), tmp_path, "pairs.csv"))
+    c = combine([("pairs.csv", pairs), ("b.csv", b)])
+    assert "is_pair" in c.row_levels and [t["extra"]["is_pair"] for t in c.trials] == [True, True, False, False, False, False, False]
+
+    # refused: a ROI in two files, other column levels, other row levels (but for odor levels and is_pair)
+    with pytest.raises(ValidationError) as e:
+        combine([("a.csv", a), ("a3.csv", load_file(write_csv(make_wide(ROWS, COLS[1:3]), tmp_path, "a3.csv")))])
+    assert e.value.errors == ["a ROI can be in only one of the files, but a.csv and a3.csv both have 1: '2024-01-01 fly 1 DL5'"]
+    sides = load_file(write_csv(make_wide(ROWS, [("2024-05-01", 1, "L", "DM2")], col_names=("date", "fly_num", "hemibrain", "roi")),
+                                tmp_path, "sides.csv"))
+    more = load_file(write_csv(make_wide([(*r, "x") for r in ROWS], COLS[2:], row_names=("panel", "is_pair", "odor1", "odor2", "repeat", "day")),
+                               tmp_path, "more.csv"))
+    with pytest.raises(ValidationError) as e:
+        combine([("a.csv", a), ("sides.csv", sides), ("more.csv", more)])
+    assert e.value.errors == [
+        "the files' column levels must be the same, but are date, fly_num, roi (a.csv, more.csv); date, fly_num, hemibrain, roi (sides.csv)",
+        "the files' row levels (besides odor levels and is_pair) must be the same, but are panel, repeat (a.csv, sides.csv); "
+        "day, panel, repeat (more.csv)"]
+
+
+@pytest.mark.skipif(not (TNT3C / "TNT3c_20240710_2FLfun1_respbytrial.csv").exists(), reason="examples/yang_data not here")
+def test_tnt3c_combined():
+    # every file of the example (one side of a fly each), as one dataset
+    paths = sorted(TNT3C.glob("*.csv"))
+    parts = [(p.name, load_file(p)) for p in paths]
+    c = combine(parts)
+    s = c.summary()
+    assert len(paths) == 10 and s["n_units"] == sum(len(p.units) for _, p in parts) and s["n_trials"] == 51
+    assert s["n_flies"] == 7 and s["extra_levels"] == {"hemibrain": ["L", "R"]} and not np.isnan(c.values).any()
+    assert c.warnings[-1].endswith("hemibrain ('L', 'R')") and sum(w.startswith("17 odor string(s)") for w in c.warnings) == 1
 
 
 def test_bad_date_and_fly(tmp_path):

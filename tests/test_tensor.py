@@ -469,11 +469,12 @@ def test_kc_ids_by_coding_unit(main, tmp_path, monkeypatch):
     assert call(main.stage_readme, body={"metadata": {**md, "coding_unit": "PNs"}}, path_params=stage)[1]["ok"]
 
 
-def upload(main, path: Path) -> tuple[int, dict]:
-    """Status and JSON of uploading a file to the staging area, as the upload form does (multipart)."""
+def upload(main, *paths: Path) -> tuple[int, dict]:
+    """Status and JSON of uploading files to the staging area, as the upload form does (multipart)."""
     boundary = "olfdbtestboundary"
-    body = (f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{path.name}"\r\n'
-            "Content-Type: text/csv\r\n\r\n").encode() + path.read_bytes() + f"\r\n--{boundary}--\r\n".encode()
+    body = b"".join((f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{p.name}"\r\n'
+                     "Content-Type: text/csv\r\n\r\n").encode() + p.read_bytes() + b"\r\n" for p in paths)
+    body += f"--{boundary}--\r\n".encode()
     scope = {"type": "http", "method": "POST", "path": "/", "query_string": b"", "path_params": {},
              "headers": [(b"content-type", f"multipart/form-data; boundary={boundary}".encode())]}
 
@@ -555,6 +556,63 @@ def test_duplicates(main, tmp_path, monkeypatch):
         experiment_xml_info=None, summary=p.summary(), units=p.units, trials=p.trials, values=p.values + 1)
     status, r = call(main.stage_commit, body={"metadata": {**md, "uploader_name": "Jon"}, "readme": "#"}, path_params=stage)
     assert status == 422 and any("are exactly those of dataset #2 (t), uploaded by Jon on 2026-10-22" in e for e in r["errors"])
+
+
+def test_upload_several(main, tmp_path, monkeypatch):
+    # files with the same details, as one dataset: their ROIs combined, each file kept as uploaded
+    from app import config, odormeta
+
+    monkeypatch.setattr(config, "STAGING_DIR", tmp_path / "staging")
+    monkeypatch.setattr(config, "DATASETS_DIR", tmp_path / "datasets")
+    monkeypatch.setattr(config, "ODOR_SHEET_URL", "")
+    rows, _, _ = odormeta.parse_sheet("name,abbrev\nvaleric acid,va\nethyl acetate,ea\n")
+    main.db.apply_odor_sync(added=odormeta.diff(rows, [])["added"], changed=[], deleted=[], source="test",
+                            fingerprint="0" * 64, details={}, when="2026-10-19T10:00:00")
+    fly2 = write_csv(make_wide(ROWS, COLS[2:]), tmp_path, "fly2.csv")
+    fly1 = write_csv(make_wide(ROWS[:4], COLS[:2]), tmp_path, "fly1.csv")  # (without the mixture)
+    status, r = upload(main, fly2, fly1)
+    assert status == 200, r
+    assert [f["name"] for f in r["stage"]["data_files"]] == ["fly1.csv", "fly2.csv"]  # (in order of name)
+    s = r["data"]["summary"]
+    assert (s["n_units"], s["n_flies"], s["n_trials"]) == (4, 3, 6) and [u["roi"] for u in r["data"]["units"]] == ["DM2", "DL5", "DM2", "VA2"]
+    assert r["data"]["warnings"][-1].startswith("2 of the 6 trials are not in every file, so missing (NaN) for the ROIs of the others")
+    stage = {"stage_id": r["stage"]["stage_id"]}
+    md = {"uploader_name": "Ann", "indicator": "GCaMP6f", "driver": "GH146", "coding_unit": "glomeruli"}
+    readme = call(main.stage_readme, body={"metadata": md}, path_params=stage)[1]["readme"]
+    assert (f"- 2 files (wide-csv), their ROIs combined: `fly1.csv` (sha256 {main._sha256(fly1)[:12]}), "
+            f"`fly2.csv` (sha256 {main._sha256(fly2)[:12]})") in readme
+    status, r = call(main.stage_commit, body={"metadata": md, "readme": readme}, path_params=stage)
+    assert status == 200, r
+    ds_id = r["dataset_id"]
+    out = config.DATASETS_DIR / str(ds_id)
+    assert (out / "fly1.csv").read_bytes() == fly1.read_bytes() and (out / "fly2.csv").read_bytes() == fly2.read_bytes()
+    d = call(main.dataset_get, path_params={"ds_id": ds_id})[1]
+    assert d["files"] == ["fly1.csv", "fly2.csv", "README.md", "metadata.json"] and d["n_units"] == 4
+    assert [f["name"] for f in json.loads((out / "metadata.json").read_text())["data_files"]] == ["fly1.csv", "fly2.csv"]
+    assert [f["sha256"] for f in main.db.list_datasets()[0]["data_files"]] == [main._sha256(fly1), main._sha256(fly2)]
+
+    # any of its files again, alone or with others: refused, saying which
+    which = f"in dataset #{ds_id} (p1: GH146 > GCaMP6f (glomeruli)), uploaded by Ann on "
+    status, r = upload(main, fly2)
+    assert status == 422 and r["errors"][0].startswith(f"this file was uploaded already: {which}")
+    fly3 = write_csv(make_wide(ROWS, [("2024-03-01", 1, "DM2")]), tmp_path, "fly3.csv")
+    status, r = upload(main, fly1, fly3)
+    assert status == 422 and r["errors"][0].startswith(f"fly1.csv was uploaded already: {which}")
+
+    # refused: each file not accepted, with its problems; two of one name; the same file twice; a ROI in two
+    status, r = upload(main, fly3, write_csv(make_wide(ROWS, [("not-a-date", 1, "DM2")]), tmp_path, "bad.csv"))
+    assert status == 422 and r["n_files"] == 2 and [f["filename"] for f in r["files"]] == ["bad.csv"]
+    assert r["files"][0]["errors"] and r["errors"][0].startswith("bad.csv: ")
+    (tmp_path / "copy").mkdir()
+    same = tmp_path / "copy" / "fly3.csv"
+    same.write_bytes(fly3.read_bytes())
+    status, r = upload(main, fly3, same)
+    assert status == 422 and r["errors"] == ["the files must have different names, but more than one is named fly3.csv"]
+    status, r = upload(main, fly3, same.rename(same.with_name("fly3b.csv")))
+    assert status == 422 and r["errors"][0] == "fly3.csv, fly3b.csv are the same file (byte for byte)"
+    status, r = upload(main, fly3, write_csv(make_wide(ROWS, [("2024-03-01", 1, "DM2")], np.ones((len(ROWS), 1))), tmp_path, "again.csv"))
+    assert status == 422 and r["errors"] == ["a ROI can be in only one of the files, but again.csv and fly3.csv both have 1: '2024-03-01 fly 1 DM2'"]
+    assert list(config.STAGING_DIR.iterdir()) == []
 
 
 def test_duplicates_by_side(main, tmp_path, monkeypatch):

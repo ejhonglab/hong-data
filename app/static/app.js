@@ -1272,6 +1272,21 @@ function yamlFileCheck(f) {
 // the upload under way, kept in this browser to be continued (see UploadFlow.resume)
 const UPLOAD_KEY = 'olfdb.upload';
 
+// Data files as said of an upload: the name of one, else how many ('10 CSVs').
+function filesLabel(names) {
+  if (names.length === 1) return names[0];
+  return `${names.length} ${names.every((n) => /\.csv$/i.test(n)) ? 'CSVs' : 'files'}`;
+}
+
+// The stem of files saved from a preview of data files: of one, its name's; of several,
+// what their names start with, up to a separator ('TNT3c' of 'TNT3c_20240710_…'), else 'preview'.
+function filesStem(names) {
+  if (names.length === 1) return names[0].replace(/\.[^.]*$/, '') || 'preview';
+  let prefix = names[0];
+  for (const n of names) while (!n.startsWith(prefix)) prefix = prefix.slice(0, -1);
+  return prefix.replace(/[^-_. ]*$/, '').replace(/[-_. ]+$/, '') || 'preview';
+}
+
 // The ROI names of a data file not accepted (`rois` of a rejected upload: each with the
 // accepted glomerulus name it is but for case), and the glomerulus names accepted.
 function roiNamesBox({ not_accepted: bad, accepted }) {
@@ -1340,8 +1355,8 @@ class UploadFlow {
     dz.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fi.click(); } });
     dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('over'); });
     dz.addEventListener('dragleave', () => dz.classList.remove('over'));
-    dz.addEventListener('drop', (e) => { e.preventDefault(); dz.classList.remove('over'); if (e.dataTransfer.files[0]) this.stageFile(e.dataTransfer.files[0]); });
-    fi.addEventListener('change', () => { if (fi.files[0]) this.stageFile(fi.files[0]); fi.value = ''; });
+    dz.addEventListener('drop', (e) => { e.preventDefault(); dz.classList.remove('over'); if (e.dataTransfer.files.length) this.stageFiles([...e.dataTransfer.files]); });
+    fi.addEventListener('change', () => { if (fi.files.length) this.stageFiles([...fi.files]); fi.value = ''; });
     // the example file saved from GitHub (which allows that from any site), rather than shown
     // there: browsers ignore `download` on a link to another site
     const example = $('.example-file a');
@@ -1664,23 +1679,38 @@ class UploadFlow {
     window.scrollTo(0, 0);
   }
 
-  async stageFile(file) {
+  // One data file, or several (with the same metadata: their ROIs combined into one dataset).
+  async stageFiles(files) {
     this.reset();
     const result = $('#file-result');
-    result.replaceChildren(msgBox('info', `Reading <b>${esc(file.name)}</b> (${(file.size / 1e6).toFixed(1)} MB)…`));
+    const one = files.length === 1;
+    const mb = (files.reduce((n, f) => n + f.size, 0) / 1e6).toFixed(1);
+    result.replaceChildren(msgBox('info', `Reading <b>${one ? esc(files[0].name) : `${files.length} files`}</b> (${mb} MB)…`));
     const form = new FormData();
-    form.append('file', file, file.name);
+    for (const f of files) form.append('file', f, f.name);
     let res;
     try { res = await api('/api/stage', { method: 'POST', form }); } catch (e) { result.replaceChildren(msgBox('error', `Upload failed: ${esc(e.message)}`)); return; }
+    if (!res.ok && res.files) { // (of several, those not accepted, each with its problems)
+      const n = res.files.length;
+      result.replaceChildren(msgBox('error', `<b>${n === res.n_files ? `None of the ${n} files was accepted`
+        : `${n} of the ${res.n_files} files ${n === 1 ? 'was' : 'were'} not accepted`}.</b> Fix these and choose all ${res.n_files} files again:`));
+      for (const f of res.files) {
+        result.appendChild(msgBox('error', `<b>${esc(f.filename)}</b>:${listHtml(f.errors)}`));
+        if (f.rois) result.appendChild(roiNamesBox(f.rois));
+        if (f.warnings?.length) result.appendChild(msgBox('warn', `Also, of ${esc(f.filename)}:${listHtml(f.warnings)}`));
+      }
+      return;
+    }
     if (!res.ok) {
-      result.replaceChildren(msgBox('error', `<b>${esc(file.name)} was not accepted.</b> Fix these and choose the file again:${listHtml(res.errors || [res.error])}`));
+      result.replaceChildren(msgBox('error', `<b>${one ? `${esc(files[0].name)} was` : `The ${files.length} files were`} not accepted.</b>
+        Fix these and choose ${one ? 'the file' : 'them'} again:${listHtml(res.errors || [res.error])}`));
       if (res.rois) result.appendChild(roiNamesBox(res.rois));
       if (res.warnings?.length) result.appendChild(msgBox('warn', `Also:${listHtml(res.warnings)}`));
       return;
     }
     this.stage = res.stage;
     this.data = res.data;
-    this.fileName = file.name;
+    this.fileName = filesLabel(res.stage.data_files.map((f) => f.name));
     this._showStaged();
     this._autofill();
     this.lookup();
@@ -1689,13 +1719,15 @@ class UploadFlow {
     $('#step-meta').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
-  // the data file staged: its summary and preview, then the form
+  // the data file(s) staged: a summary and preview, then the form
   _showStaged() {
     const result = $('#file-result'), name = this.fileName;
     const s = this.data.summary;
     const warn = this.data.warnings || [];
+    const names = (this.stage.data_files || [{ name }]).map((f) => f.name);
     result.innerHTML = '';
-    const okBox = msgBox('ok', `<b>${esc(name)}</b> passed validation (${esc(s.source_format)}).`);
+    const okBox = msgBox('ok', names.length === 1 ? `<b>${esc(name)}</b> passed validation (${esc(s.source_format)}).`
+      : `<b>All ${esc(name)}</b> passed validation (${esc(s.source_format)}), their ROIs combined into one dataset.`);
     okBox.insertAdjacentHTML('beforeend', `<div class="summary-grid">
       <div><span>flies</span>${s.n_flies ? `${s.n_flies} (${esc(s.first_date)}${s.first_date !== s.last_date ? ' to ' + esc(s.last_date) : ''})` : 'not given'}</div>
       <div><span>ROI columns</span>${s.n_units.toLocaleString()} (${esc(s.roi_kind)})</div>
@@ -1705,13 +1737,17 @@ class UploadFlow {
       <div><span>missing cells</span>${(s.nan_fraction * 100).toFixed(1)}%</div>
       <div><span>value range</span>${fmtNum(s.vmin)} to ${fmtNum(s.vmax)}</div>
     </div>`);
+    if (names.length > 1) {
+      okBox.insertAdjacentHTML('beforeend', `<details class="data-files"><summary>The ${names.length} files</summary>
+        <ul>${names.map((n) => `<li><code>${esc(n)}</code></li>`).join('')}</ul></details>`);
+    }
     result.appendChild(okBox);
     if (warn.length) result.appendChild(msgBox('warn', `Worth a look:${listHtml(warn)}`));
 
     $('#preview').hidden = false;
     $('#preview-caption').textContent = 'This is exactly what will be shown after saving. Hover a cell for its value.';
     if (!this.viewer) this.viewer = new MatrixViewer($('#preview-viewer'), { asUploaded: true });
-    this.viewer.setNeuralData(this.data, { title: name, fileStem: name.replace(/\.[^.]*$/, '') || 'preview', kc: this._kc() });
+    this.viewer.setNeuralData(this.data, { title: name, fileStem: filesStem(names), kc: this._kc() });
     $('#step-meta').hidden = false;
   }
 

@@ -109,9 +109,10 @@ def dataset_title(m: Metadata, summary: dict) -> str:
 def generate_readme(m: Metadata, summary: dict, files: dict[str, Any], *, created_at: Optional[dt.datetime] = None) -> str:
     """Concise README.md for a dataset.
 
-    ``files`` keys: data (original file name), odor_yamls (list of names),
-    experiment_xml (name or None), sha256 (hex of the data file), and optionally
-    sources (file name -> the path on tensor it was copied from).
+    ``files`` keys: data_files (the data files: [{name, sha256 (hex)}], their data
+    combined if several), or data and sha256 (of one); odor_yamls (list of names),
+    experiment_xml (name or None), and optionally sources (file name -> the path on tensor
+    it was copied from).
     """
     created_at = created_at or dt.datetime.now()
     flies = summary.get("flies", [])
@@ -158,7 +159,13 @@ def generate_readme(m: Metadata, summary: dict, files: dict[str, Any], *, create
     lines.append("")
 
     lines.append("## Data")
-    lines.append(f"- `{files.get('data')}` ({summary.get('source_format', 'matrix')}; sha256 {str(files.get('sha256', ''))[:12]})")
+    data = files.get("data_files") or [{"name": files.get("data"), "sha256": files.get("sha256", "")}]
+    fmt = summary.get("source_format", "matrix")
+    if len(data) == 1:
+        lines.append(f"- `{data[0]['name']}` ({fmt}; sha256 {str(data[0]['sha256'])[:12]})")
+    else:
+        lines.append(f"- {len(data)} files ({fmt}), their ROIs combined: "
+                     + ", ".join(f"`{f['name']}` (sha256 {f['sha256'][:12]})" for f in data))
     lines.append(
         f"- columns: {' / '.join(summary.get('col_levels', []))}; rows: {' / '.join(summary.get('row_levels', []))}"
     )

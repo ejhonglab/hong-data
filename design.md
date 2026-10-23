@@ -24,7 +24,12 @@ between the frontend and the server. Using the app is described in
   deleted. A deleted dataset's folder is moved to `data/deleted/<id>/` in the same
   transaction that deletes its rows, rather than erased, as no one has to log in to do it.
 - **Uploads are staged.** A dropped file is parsed and validated into
-  `data/staging/<id>/` and shown before anything is stored. Odor YAMLs, the
+  `data/staging/<id>/` and shown before anything is stored. Several dropped together are
+  one dataset (`ingest.combine`): each validated on its own, then their ROIs side by side
+  over the union of their trials (NaN where a file lacks one; odor levels and `is_pair`
+  a file dropped as saying nothing taken as solvent and False), each file kept; a ROI in
+  two of them, or other column or row levels, are refused, as a fly of one person's in two
+  datasets would be. Odor YAMLs, the
   `Experiment.xml`, tensor lookups and README generation all act on the staged upload,
   and only the final commit writes to the database and `data/datasets/<id>/`. Stages
   never saved are deleted after `OLFDB_STAGE_TTL_HOURS`. Validation collects every
@@ -130,7 +135,7 @@ between the frontend and the server. Using the app is described in
   so storage, the viewer and downloads keep handling them, and files of ROIs alone are
   still read far enough to say what they lack.
 - **Duplicates are the same data, or the same flies of one person and coding unit.** A
-  file is refused if it is a stored dataset's byte for byte (`data_sha256`), or its data
+  file is refused if it is any of a stored dataset's files byte for byte (`data_files`), or its data
   is (the same flies, ROIs, trials and values: `main._same_data`), whoever uploaded it,
   as soon as it is read. Its flies, (date, fly_num), are only compared with datasets of
   the same uploader and coding unit (names and units matched in any case; every way of
@@ -580,7 +585,9 @@ with where it is from, when it was looked up, the chemutils commit that did, whe
 constants in oil what they were estimated with), `settings` (site-wide settings from the Admin tab:
 the odor sheet's link, panels shown renamed), `reference_datasets` (reference datasets added there) and
 `file_log` (the files the server has read or written in its own folders). Files:
-`data/datasets/<id>/` holds the original data file, `README.md`, `metadata.json`,
+`data/datasets/<id>/` holds the original data file (or files, if several were combined:
+`datasets.data_files`, with each one's sha256; `data_file` and `data_sha256` are the first's),
+`README.md`, `metadata.json`,
 `odor_yaml/*.yaml` and the `Experiment.xml`. Also
 under `data/`: `admin.json` (the folders set in the Admin tab), `deleted/<id>/` (the
 folders of datasets deleted in the Admin tab), `references/<id>/` (reference datasets
@@ -602,9 +609,11 @@ GET    /api/user?name=                      a user's folders on tensor ("user": 
 POST   /api/user                            {"name", "raw_dirs", "mocorr_dirs", "odor_dirs"} → each
                                             folder checked on tensor; saved if all are there
 POST   /api/tensor/check                    {"path"} → a dataset's data folder checked on tensor
-POST   /api/stage                           multipart 'file' → validation + matrix payload (422 with
-                                            ``rois`` when ROI names are not accepted: each, and the
-                                            accepted glomerulus names)
+POST   /api/stage                           multipart 'file' (repeatable: their data one dataset's) →
+                                            validation + matrix payload (422 with ``rois`` when ROI
+                                            names are not accepted: each, and the accepted glomerulus
+                                            names; of several, ``files``: each not accepted, with its
+                                            problems)
 GET    /api/stage/{id}                      a staged upload and its matrix payload, with its odor
                                             YAMLs' checks (to continue it)
 GET    /api/stage/{id}/odors                its odors matched to the odor table, as for a dataset

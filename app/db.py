@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS datasets (
     data_file TEXT NOT NULL,
     data_format TEXT NOT NULL,
     data_sha256 TEXT NOT NULL,
+    data_files TEXT,
     odor_yaml_files TEXT,
     experiment_xml_file TEXT,
     experiment_xml_info TEXT,
@@ -209,7 +210,7 @@ CREATE TABLE IF NOT EXISTS file_log (  -- files the server has read or written i
 PROPERTY_COLUMNS = {"vapor_pressure": "vapor_pressure_kpa", "est_vapor_pressure": "est_vapor_pressure_kpa",
                     "molar_mass": "molar_mass_g_mol", "density": "density_g_ml", "k_henry": "k_henry_mol_m3_pa",
                     "k_henry_pfo": "k_henry_pfo_mol_m3_pa"}
-ADDED_COLUMNS = [("datasets", "mocorr_data_path", "TEXT"), ("reference_datasets", "fields", "TEXT"), ("units", "bad", "INTEGER"),
+ADDED_COLUMNS = [("datasets", "mocorr_data_path", "TEXT"), ("datasets", "data_files", "TEXT"), ("reference_datasets", "fields", "TEXT"), ("units", "bad", "INTEGER"),
                  ("units", "extra_json", "TEXT"),
                  *(c for p, col in PROPERTY_COLUMNS.items()
                    for c in (("pubchem", col, "REAL"), ("pubchem", f"{p}_source", "TEXT"), ("pubchem", f"{p}_at", "TEXT"),
@@ -227,6 +228,13 @@ DATASET_TABLES = ("dataset_panels", "units", "trials", "responses", "matrices")
 
 
 PANEL_RENAMES = "panel_renames"  # the setting of panels shown under other names: JSON {name in the data: name shown}
+
+
+def _with_data_files(d: dict) -> dict:
+    """A dataset's row with ``data_files``: [{name, sha256}] of each of its data files (its
+    one, ``data_file``, if not several)."""
+    files = json.loads(d["data_files"]) if d.get("data_files") else [{"name": d["data_file"], "sha256": d["data_sha256"]}]
+    return {**d, "data_files": files}
 
 
 def rename_panel(name: Optional[str], renames: dict[str, str]) -> Optional[str]:
@@ -330,7 +338,10 @@ class Database:
         units: list[dict],
         trials: list[dict],
         values: np.ndarray,
+        data_files: Optional[list[dict]] = None,
     ) -> int:
+        """Store a dataset; its id. ``data_file`` and ``data_sha256`` are of its (first) data
+        file, and ``data_files`` of each, if several were combined into it: [{name, sha256}]."""
         panels_form = metadata.get("panel_names") or []
         panels_file = summary.get("panel_names") or []
         with self.connect() as con:
@@ -338,10 +349,10 @@ class Database:
                 """INSERT INTO datasets (created_at, title, uploader_name, indicator, driver, coding_unit,
                     genotype, age_min_days, age_max_days, power_mw, power_tolerance_mw, power_measured_same_day,
                     wavelength_nm, source_code_url, raw_data_path, mocorr_data_path, panel_names, recording_system,
-                    notes, readme_md, readme_edited, data_file, data_format, data_sha256, odor_yaml_files,
+                    notes, readme_md, readme_edited, data_file, data_format, data_sha256, data_files, odor_yaml_files,
                     experiment_xml_file, experiment_xml_info, n_flies, n_units, n_trials, n_odors,
                     repeats_min, repeats_max, first_fly_date, last_fly_date, roi_kind, metadata_json, summary_json)
-                VALUES (?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?,?,?)""",
+                VALUES (?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?,?,?, ?,?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?,?,?)""",
                 (
                     created_at, title, metadata["uploader_name"], metadata["indicator"], metadata["driver"],
                     metadata["coding_unit"], metadata.get("genotype"), metadata.get("age_min_days"),
@@ -350,7 +361,7 @@ class Database:
                     metadata.get("wavelength_nm"), metadata.get("source_code_url"), metadata.get("raw_data_path"),
                     metadata.get("mocorr_data_path"), ", ".join(panels_form) if panels_form else None, metadata.get("recording_system"),
                     metadata.get("notes"), readme_md, int(readme_edited), data_file, data_format, data_sha256,
-                    json.dumps(odor_yaml_files), experiment_xml_file,
+                    json.dumps(data_files) if data_files else None, json.dumps(odor_yaml_files), experiment_xml_file,
                     json.dumps(experiment_xml_info) if experiment_xml_info else None,
                     summary["n_flies"], summary["n_units"], summary["n_trials"], summary["n_odors"],
                     summary.get("repeats_min"), summary.get("repeats_max"), summary.get("first_date"),
@@ -400,7 +411,7 @@ class Database:
             rows = con.execute(
                 """SELECT id, created_at, title, uploader_name, indicator, driver, coding_unit, panel_names,
                           recording_system, n_flies, n_units, n_trials, n_odors, repeats_min, repeats_max,
-                          first_fly_date, last_fly_date, roi_kind, data_file, data_sha256
+                          first_fly_date, last_fly_date, roi_kind, data_file, data_sha256, data_files
                    FROM datasets ORDER BY last_fly_date DESC, id DESC"""
             ).fetchall()
             panels = con.execute("SELECT dataset_id, panel, source FROM dataset_panels ORDER BY rowid").fetchall()
@@ -408,7 +419,7 @@ class Database:
         by_ds: dict[int, list[dict]] = {}
         for p in panels:
             by_ds.setdefault(p["dataset_id"], []).append({"panel": p["panel"], "source": p["source"]})
-        return [self._renamed({**dict(r), "panels": by_ds.get(r["id"], [])}, renames) for r in rows]
+        return [self._renamed({**_with_data_files(dict(r)), "panels": by_ds.get(r["id"], [])}, renames) for r in rows]
 
     def panel_renames(self) -> dict[str, str]:
         """Panels shown under other names (the setting `PANEL_RENAMES`): {name in the data: name shown}."""
@@ -470,6 +481,7 @@ class Database:
         d = dict(r)
         d["metadata"] = json.loads(d.pop("metadata_json"))
         d["summary"] = json.loads(d.pop("summary_json"))
+        d = _with_data_files(d)
         d["odor_yaml_files"] = json.loads(d.get("odor_yaml_files") or "[]")
         d["experiment_xml_info"] = json.loads(d["experiment_xml_info"]) if d.get("experiment_xml_info") else None
         d["panels"] = [dict(p) for p in panels]

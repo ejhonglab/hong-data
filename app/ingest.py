@@ -50,6 +50,9 @@ nothing but one of missing / 'solvent' / 'pfo' / 'water' / 'pfo @ 0' / 'water @ 
 
 Validation collects *all* problems it can find and raises :class:`ValidationError`
 with the full list, so a user can fix a file in one go.
+
+Several files uploaded together are one dataset: each read and validated on its own,
+then their ROIs put side by side over all of their trials (`combine`).
 """
 from __future__ import annotations
 
@@ -104,6 +107,9 @@ _PAREN_ODOR = re.compile(r"(?P<name>[^@]*?\S)\s*\((?P<conc>[-+]?(?:\d+\.?\d*|\.\
 SOLVENT_NAMES = ("pfo", "water")  # a solvent alone (as 'PFO'), read as at 0 ('pfo @ 0')
 LONG_VALUE_COLUMNS = ("value", "response", "resp", "df_over_f", "dff", "mean_dff", "delta_f", "mean_df_over_f")
 MAX_EXAMPLES = 15
+MAX_FILES_NAMED = 3  # files named in a warning about some of those combined
+EXTRA_LEVELS_WARNING = ("column levels besides date, fly_num and roi are kept with each ROI (ROIs differing in them are "
+                        "different ROIs): ")
 ROI_SUFFIX = re.compile(r"_t\d+$")  # removed from ROI names ('DA1_t0' -> 'DA1')
 # odor<n> values meaning that nothing was presented on that manifold (as is a missing one);
 # the '@ 0' ones however the 0 is written ('pfo @ 0.0', ...)
@@ -242,6 +248,123 @@ def load_file(path: Path, *, original_name: Optional[str] = None) -> ParsedData:
     if head == b"PAR1":
         return _load_parquet(path)
     return _load_csv(path)
+
+
+def files_text(names: list[str]) -> str:
+    """Files named in a message: the first few, then how many more."""
+    more = len(names) - MAX_FILES_NAMED
+    return ", ".join(names[:MAX_FILES_NAMED]) + (f" and {more} more" if more > 0 else "")
+
+
+def _unit_text(u: dict) -> str:
+    """A ROI as said in a message, e.g. '2024-07-10 fly 2 (hemibrain L) 3'."""
+    extra = f" ({extra_text(u['extra'])})" if u.get("extra") else ""
+    return f"{u['date']} fly {u['fly_num']}{extra} {u['roi']}"
+
+
+def _trial_key(t: dict) -> tuple:
+    return (t["panel"], t["odor"], t["repeat"], tuple(sorted(t["extra"].items())))
+
+
+def combine(parts: list[tuple[str, ParsedData]]) -> ParsedData:
+    """The data of several files (each read by `load_file`) as one dataset's: the ROIs of
+    each, in order, with their values for every trial of any of them (trials being the
+    same by panel, odor, repeat and other row levels; NaN for those not in its file). The
+    last odor levels of a file that has fewer than another (as dropped when all solvent)
+    are taken as solvent, and ``is_pair``, if it lacks it, as False.
+
+    Args:
+        parts: (file name, its data) of each file.
+
+    Returns:
+        their data, with the warnings of each: once, if the same of all (but for their
+        other column levels, said of them all), else saying of which files.
+
+    Raises:
+        ValidationError: if their column levels differ, their other row levels do (but
+            for odor levels and ``is_pair``), or a ROI is in more than one of them.
+    """
+    if len(parts) == 1:
+        return parts[0][1]
+    errors = []
+    by_levels: dict[tuple, list[str]] = {}
+    for name, p in parts:
+        by_levels.setdefault(tuple(p.col_levels), []).append(name)
+    if len(by_levels) > 1:
+        errors.append("the files' column levels must be the same, but are "
+                      + "; ".join(f"{', '.join(lvls)} ({files_text(ns)})" for lvls, ns in by_levels.items()))
+    other = lambda p: [lvl for lvl in p.row_levels if not is_odor_level(lvl) and lvl != "is_pair"]
+    by_rows: dict[tuple, list[str]] = {}
+    for name, p in parts:
+        by_rows.setdefault(tuple(sorted(other(p))), []).append(name)
+    if len(by_rows) > 1:
+        errors.append("the files' row levels (besides odor levels and is_pair) must be the same, but are "
+                      + "; ".join(f"{', '.join(lvls) or 'none'} ({files_text(ns)})" for lvls, ns in by_rows.items()))
+    first: dict[tuple, str] = {}
+    shared: dict[tuple[str, str], list[dict]] = {}
+    for name, p in parts:
+        for u in p.units:
+            k = unit_key(u)
+            if k in first:
+                shared.setdefault((first[k], name), []).append(u)
+            else:
+                first[k] = name
+    for (a, b), units in shared.items():
+        errors.append(f"a ROI can be in only one of the files, but {a} and {b} both have {len(units)}: "
+                      + _examples([_unit_text(u) for u in units], 8))
+    if errors:
+        raise ValidationError(errors)
+
+    # the row levels of the file with the most odor levels, with is_pair if any has it
+    n_odors = max(len(t["components"]) for _, p in parts for t in p.trials)
+    row_levels = list(next(p for _, p in parts if any(len(t["components"]) == n_odors for t in p.trials)).row_levels)
+    pair = any("is_pair" in p.row_levels for _, p in parts)
+    if pair and "is_pair" not in row_levels:
+        row_levels.insert(next((i for i, lvl in enumerate(row_levels) if is_odor_level(lvl)), len(row_levels)), "is_pair")
+    trials: list[dict] = []
+    index: dict[tuple, int] = {}
+    columns = []
+    for _, p in parts:
+        cols = []
+        for t in p.trials:
+            if len(t["components"]) < n_odors or (pair and "is_pair" not in t["extra"]):
+                comps = t["components"] + [SOLVENT_STR] * (n_odors - len(t["components"]))
+                t = {**t, "components": comps, "odor": format_mix_from_strs(comps),
+                     "extra": {**t["extra"], **({"is_pair": t["extra"].get("is_pair", False)} if pair else {})}}
+            k = _trial_key(t)
+            if k not in index:
+                index[k] = len(trials)
+                trials.append(t)
+            cols.append(index[k])
+        columns.append(cols)
+    units = [u for _, p in parts for u in p.units]
+    values = np.full((len(units), len(trials)), np.nan, dtype=np.float32)
+    start = 0
+    for (_, p), cols in zip(parts, columns):
+        values[np.ix_(range(start, start + len(p.units)), cols)] = p.values
+        start += len(p.units)
+
+    said: dict[str, list[str]] = {}
+    for name, p in parts:
+        for w in p.warnings:
+            if not w.startswith(EXTRA_LEVELS_WARNING):
+                said.setdefault(w, []).append(name)
+    warnings = [w if len(ns) == len(parts) else f"{files_text(ns)}: {w}" for w, ns in said.items()]
+    extra_levels = list(dict.fromkeys(k for u in units for k in u["extra"]))
+    if extra_levels:
+        warnings.append(_extra_levels_warning(extra_levels, [u["extra"] for u in units]))
+    n_files = np.zeros(len(trials), dtype=int)
+    for cols in columns:
+        n_files[cols] += 1
+    partial = [t for t, n in zip(trials, n_files) if n < len(parts)]
+    if partial:
+        warnings.append(f"{len(partial)} of the {len(trials)} trials are not in every file, so missing (NaN) for the ROIs of "
+                        "the others: " + _examples([f"{t['panel'] or ''} {t['odor']} repeat {t['repeat']}".strip() for t in partial], 8))
+    out = ParsedData(units=units, trials=trials, values=values, row_levels=row_levels, col_levels=parts[0][1].col_levels,
+                     source_format=", ".join(dict.fromkeys(p.source_format for _, p in parts)), warnings=warnings)
+    if CELLS in out.col_levels and (problem := kc_id_problems(units)):
+        raise ValidationError([problem], warnings)
+    return out
 
 
 def _read_parquet(path: Path) -> pd.DataFrame:
@@ -875,9 +998,7 @@ def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
         if empty:
             errors.append(f"{empty} column(s) have no '{lvl}' (each ROI's, as for the other column levels)")
     if extra_levels:
-        warnings.append("column levels besides date, fly_num and roi are kept with each ROI (ROIs differing in them are "
-                        "different ROIs): " + "; ".join(f"{lvl} ({_examples(sorted({e[lvl] for e in extras}), 8)})"
-                                                         for lvl in extra_levels))
+        warnings.append(_extra_levels_warning(extra_levels, extras))
 
     units_found = [{"date": d, "fly_num": f, "roi": r, "extra": e} for d, f, r, e in zip(date_strs, fly_nums, rois, extras)]
     if cells and not bad_rois and not bad_dates and not bad_fly:
@@ -1051,6 +1172,13 @@ def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
         source_format=source_format,
         warnings=warnings,
     )
+
+
+def _extra_levels_warning(levels: list[str], extras: list[dict]) -> str:
+    """The warning that ROIs have other column levels (``levels``), with the values of each
+    in ``extras`` (each ROI's `extra`)."""
+    return EXTRA_LEVELS_WARNING + "; ".join(f"{lvl} ({_examples(sorted({e[lvl] for e in extras if lvl in e}), 8)})"
+                                            for lvl in levels)
 
 
 def _jsonable(v):

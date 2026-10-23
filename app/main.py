@@ -39,8 +39,8 @@ from starlette.staticfiles import StaticFiles
 from . import backup, chemprops, compare, config, export, filelog, headspace, merge, movies, odormeta, reference, sandbox, tensor, thorimage, yamlcheck
 from .db import PANEL_RENAMES, PROPERTY_COLUMNS, Database, rename_panel
 from .glomeruli import load_glomeruli
-from .ingest import (ParsedData, ValidationError, extra_text, fly_key, kc_id_problems, load_file, load_parsed, save_parsed,
-                     unit_key)
+from .ingest import (ParsedData, ValidationError, combine, extra_text, files_text, fly_key, kc_id_problems, load_file,
+                     load_parsed, save_parsed, unit_key)
 from .metadata import (
     DEFAULT_CODING_UNITS,
     is_kc,
@@ -181,47 +181,74 @@ async def options(request: Request) -> Response:
 
 
 async def stage_create(request: Request) -> Response:
-    """Upload a CSV/parquet to a staging area, validate it and return the matrix."""
+    """Upload one or more CSV/parquet files (fields 'file') to a staging area, validate each
+    and return their matrix: of several, their data as one dataset's (`ingest.combine`)."""
     form = await request.form()
-    upload = form.get("file")
-    if not isinstance(upload, UploadFile):
+    uploads = [up for up in form.getlist("file") if isinstance(up, UploadFile)]
+    if not uploads:
         return json_error(400, "no file in the request (field name 'file')")
+    names = [safe_filename(up.filename, "data.csv") for up in uploads]
+    same = sorted({n for n in names if names.count(n) > 1})
+    if same:
+        return JSONResponse({"ok": False, "errors": [f"the files must have different names, but more than one is named "
+                                                     f"{', '.join(same)}"], "warnings": []}, status_code=422)
+    uploads, names = zip(*sorted(zip(uploads, names), key=lambda x: x[1]))  # (their ROIs in that order)
     cleanup_stages()
     stage_id = secrets.token_urlsafe(12)
     d = config.STAGING_DIR / stage_id
     d.mkdir(parents=True)
-    fname = safe_filename(upload.filename, "data.csv")
-    dest = d / fname
-    try:
-        size = await _save_upload(upload, dest, max_bytes=int(config.MAX_UPLOAD_MB * 1024 * 1024))
-    except HTTPException as e:
+    files, parts, failed = [], [], []
+    for upload, fname in zip(uploads, names):
+        dest = d / fname
+        try:
+            size = await _save_upload(upload, dest, max_bytes=int(config.MAX_UPLOAD_MB * 1024 * 1024))
+        except HTTPException as e:
+            shutil.rmtree(d, ignore_errors=True)
+            return json_error(e.status_code, e.detail if len(uploads) == 1 else f"{fname}: {e.detail}")
+        try:
+            parts.append((fname, await run_in_threadpool(load_file, dest, original_name=upload.filename)))
+        except ValidationError as e:
+            failed.append({"filename": fname, "errors": e.errors, "warnings": e.warnings, **e.details})
+            continue
+        except Exception as e:  # unexpected
+            failed.append({"filename": fname, "errors": [f"unexpected error while reading the file: {e}"], "warnings": []})
+            continue
+        files.append({"name": fname, "original_filename": upload.filename, "size_bytes": size,
+                      "sha256": await run_in_threadpool(_sha256, dest)})
+    if failed:
         shutil.rmtree(d, ignore_errors=True)
-        return json_error(e.status_code, e.detail)
+        if len(uploads) == 1:
+            return JSONResponse({"ok": False, **failed[0]}, status_code=422)
+        # (each file's problems, and all of them as one list)
+        return JSONResponse({"ok": False, "errors": [f"{f['filename']}: {e}" for f in failed for e in f["errors"]], "warnings": [],
+                             "files": failed, "n_files": len(uploads)}, status_code=422)
 
+    by_hash: dict[str, list[str]] = {}
+    for f in files:
+        by_hash.setdefault(f["sha256"], []).append(f["name"])
+    errors = [f"{', '.join(ns)} are the same file (byte for byte)" for ns in by_hash.values() if len(ns) > 1]
     try:
-        parsed: ParsedData = await run_in_threadpool(load_file, dest, original_name=upload.filename)
+        parsed: ParsedData = await run_in_threadpool(combine, parts)
     except ValidationError as e:
-        shutil.rmtree(d, ignore_errors=True)
-        return JSONResponse({"ok": False, "errors": e.errors, "warnings": e.warnings, **e.details, "filename": fname},
-                            status_code=422)
-    except Exception as e:  # unexpected
-        shutil.rmtree(d, ignore_errors=True)
-        return JSONResponse({"ok": False, "errors": [f"unexpected error while reading the file: {e}"], "warnings": []}, status_code=422)
-
-    sha256 = await run_in_threadpool(_sha256, dest)
-    errors, _ = await run_in_threadpool(_duplicates, parsed, sha256)  # (its flies, once whose they are is entered)
+        errors += e.errors
+        parsed = None
+    if not errors:
+        errors, _ = await run_in_threadpool(_duplicates, parsed, files)  # (its flies, once whose they are is entered)
     if errors:
         shutil.rmtree(d, ignore_errors=True)
-        return JSONResponse({"ok": False, "errors": errors, "warnings": parsed.warnings, "filename": fname}, status_code=422)
+        return JSONResponse({"ok": False, "errors": errors, "warnings": parsed.warnings if parsed else [],
+                             **({"filename": names[0]} if len(names) == 1 else {"n_files": len(names)})}, status_code=422)
     await run_in_threadpool(save_parsed, parsed, d / "parsed")
     payload = await run_in_threadpool(parsed.to_payload)
     meta = {
         "stage_id": stage_id,
         "created_at": dt.datetime.now().isoformat(timespec="seconds"),
-        "data_file": fname,
-        "original_filename": upload.filename,
-        "size_bytes": size,
-        "sha256": sha256,
+        # (of the first file; `data_files`: of each)
+        "data_file": files[0]["name"],
+        "original_filename": files[0]["original_filename"],
+        "size_bytes": sum(f["size_bytes"] for f in files),
+        "sha256": files[0]["sha256"],
+        "data_files": files,
         "source_format": parsed.source_format,
         "odor_yamls": [],
         "experiment_xml": None,
@@ -229,6 +256,13 @@ async def stage_create(request: Request) -> Response:
     }
     _write_stage_meta(d, meta)
     return JSONResponse({"ok": True, "stage": _public_stage(meta), "data": payload})
+
+
+def _stage_files(meta: dict) -> list[dict]:
+    """A staged upload's data files: [{name, original_filename, size_bytes, sha256}] (of
+    one staged before several could be)."""
+    return meta.get("data_files") or [{"name": meta["data_file"], "original_filename": meta.get("original_filename"),
+                                       "size_bytes": meta["size_bytes"], "sha256": meta["sha256"]}]
 
 
 MAX_FLIES_NAMED = 6  # flies listed in a message of datasets overlapping
@@ -266,10 +300,11 @@ def _same_unit(a: Optional[str], b: Optional[str]) -> bool:
     return (is_kc(a) and is_kc(b)) or _same_name(a, b)
 
 
-def _duplicates(parsed: ParsedData, sha256: str, uploader: Optional[str] = None,
+def _duplicates(parsed: ParsedData, files: list[dict], uploader: Optional[str] = None,
                 coding_unit: Optional[str] = None) -> tuple[list[str], list[str]]:
-    """An upload against the datasets stored: errors (refusing it) if its file is one of
-    theirs (byte for byte), or its data is (the same flies, ROIs, trials and values),
+    """An upload (its data, and its files: [{name, sha256}]) against the datasets stored:
+    errors (refusing it) if any of its files is one of theirs (byte for byte), or its data
+    is (the same flies, ROIs, trials and values),
     whoever uploaded it. With its uploader and coding unit (once entered), errors too if its
     flies (date, fly_num, and their ROIs' other levels: `ingest.fly_key`) are all and only
     those of a dataset of theirs of that coding unit, and warnings if it shares only some
@@ -285,8 +320,11 @@ def _duplicates(parsed: ParsedData, sha256: str, uploader: Optional[str] = None,
         theirs = stored.get(d["id"], set())
         same_flies = bool(flies) and theirs == flies
         mine = uploader is not None and _same_name(d["uploader_name"], uploader) and _same_unit(d["coding_unit"], coding_unit)
-        if d["data_sha256"] == sha256:
-            errors.append(f"this file was uploaded already: it is {which}. {delete}")
+        again = [f["name"] for f in files if f["sha256"] in {g["sha256"] for g in d["data_files"]}]
+        if again:
+            what = "this file" if len(files) == 1 else files_text(again)
+            where = f"it is {which}" if len(again) == 1 and len(d["data_files"]) == 1 else f"in {which}"
+            errors.append(f"{what} {'was' if len(again) == 1 else 'were'} uploaded already: {where}. {delete}")
         elif same_flies and (m := db.get_matrix_arrays(d["id"])) is not None and _same_data(parsed, m, db.panel_renames()):
             errors.append(f"this is the data of {which}, already (the same ROIs, trials and values, in another file). {delete}")
         elif mine and same_flies:
@@ -313,6 +351,7 @@ def _public_stage(meta: dict) -> dict:
     return {
         "stage_id": meta["stage_id"],
         "data_file": meta["data_file"],
+        "data_files": [{k: f[k] for k in ("name", "size_bytes", "sha256")} for f in _stage_files(meta)],
         "size_bytes": meta["size_bytes"],
         "sha256": meta["sha256"],
         "source_format": meta["source_format"],
@@ -656,7 +695,7 @@ async def stage_readme(request: Request) -> Response:
     kc = _kc_problem(parsed, m.coding_unit)
     if kc:
         return JSONResponse({"ok": False, "errors": [kc]}, status_code=422)
-    errors, warnings = await run_in_threadpool(_duplicates, parsed, meta["sha256"], m.uploader_name, m.coding_unit)
+    errors, warnings = await run_in_threadpool(_duplicates, parsed, _stage_files(meta), m.uploader_name, m.coding_unit)
     if errors:
         return JSONResponse({"ok": False, "errors": errors}, status_code=422)
     summary = parsed.summary()
@@ -664,8 +703,7 @@ async def stage_readme(request: Request) -> Response:
         m,
         summary,
         {
-            "data": meta["data_file"],
-            "sha256": meta["sha256"],
+            "data_files": _stage_files(meta),
             "odor_yamls": [y["name"] for y in meta["odor_yamls"]],
             "experiment_xml": meta.get("experiment_xml"),
             "sources": _tensor_sources(meta),
@@ -688,7 +726,8 @@ def _commit(d: Path, meta: dict, m: Metadata, readme: str, readme_edited: bool) 
     summary = parsed.summary()
     # consistency checks that must pass before anything is written
     problems = [p for p in [_kc_problem(parsed, m.coding_unit)] if p]
-    problems += _duplicates(parsed, meta["sha256"], m.uploader_name, m.coding_unit)[0]
+    files = _stage_files(meta)
+    problems += _duplicates(parsed, files, m.uploader_name, m.coding_unit)[0]
     if meta["odor_yamls"]:
         check = _run_yaml_check(d, meta)
         if not check["ok"]:
@@ -719,6 +758,7 @@ def _commit(d: Path, meta: dict, m: Metadata, readme: str, readme_edited: bool) 
         data_file=meta["data_file"],
         data_format=parsed.source_format,
         data_sha256=meta["sha256"],
+        data_files=[{"name": f["name"], "sha256": f["sha256"]} for f in files],
         odor_yaml_files=[y["name"] for y in meta["odor_yamls"]],
         experiment_xml_file=meta.get("experiment_xml"),
         experiment_xml_info=meta.get("experiment_xml_info"),
@@ -730,7 +770,8 @@ def _commit(d: Path, meta: dict, m: Metadata, readme: str, readme_edited: bool) 
     # move files into the dataset directory
     out = config.DATASETS_DIR / str(ds_id)
     out.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(d / meta["data_file"]), out / meta["data_file"])
+    for f in files:
+        shutil.move(str(d / f["name"]), out / f["name"])
     if meta["odor_yamls"]:
         (out / "odor_yaml").mkdir(exist_ok=True)
         for y in meta["odor_yamls"]:
@@ -749,6 +790,7 @@ def _commit(d: Path, meta: dict, m: Metadata, readme: str, readme_edited: bool) 
                 "data_file": meta["data_file"],
                 "original_filename": meta.get("original_filename"),
                 "data_sha256": meta["sha256"],
+                "data_files": files,
                 "odor_yaml_files": [y["name"] for y in meta["odor_yamls"]],
                 "experiment_xml_file": meta.get("experiment_xml"),
                 "tensor_sources": _tensor_sources(meta),
@@ -803,7 +845,7 @@ async def dataset_get(request: Request) -> Response:
     d["created_at"] = _aware(d["created_at"])
     d["readme_html"] = _readme_html(d["readme_md"])
     d["readme_path"] = str(_readme_path(ds_id))
-    files = [d["data_file"], "README.md", "metadata.json"]
+    files = [*(f["name"] for f in d["data_files"]), "README.md", "metadata.json"]
     files += [f"odor_yaml/{y}" for y in d["odor_yaml_files"]]
     if d.get("experiment_xml_file"):
         files.append(d["experiment_xml_file"])

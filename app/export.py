@@ -272,6 +272,9 @@ def datasets_frame(datasets: list[dict]) -> pd.DataFrame:
         row = {"dataset_id": d["id"], "title": d["title"], "created_at": d["created_at"]}
         row.update({k: ", ".join(v) if isinstance(v, list) else v for k, v in md.items() if k != "notes"})
         row.update({k: d.get(k) for k in SUMMARY_COLUMNS})
+        if len(d.get("data_files") or []) > 1:  # (several combined)
+            row.update(data_file="; ".join(f["name"] for f in d["data_files"]),
+                       data_sha256="; ".join(f["sha256"] for f in d["data_files"]))
         row["notes"] = md.get("notes")
         rows.append(row)
     return pd.DataFrame(rows)

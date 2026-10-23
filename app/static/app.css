@@ -105,6 +105,9 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .msg b { font-weight: 600; }
 .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 16px; margin-top: 6px; }
 .summary-grid div span { display: block; color: var(--ink-muted); font-size: 12px; }
+.data-files { margin-top: 8px; font-size: 13px; }
+.data-files summary { cursor: pointer; color: var(--ink-muted); }
+.data-files ul { margin: 4px 0 0; padding-left: 18px; columns: 2 260px; }
 
 .preview { margin-top: 16px; }
 .preview-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 8px; }

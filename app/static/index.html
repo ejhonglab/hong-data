@@ -35,16 +35,16 @@
   <section id="tab-upload" class="tab" hidden>
     <div class="page-head">
       <h1>Upload a response matrix</h1>
-      <p class="lede">Pick a CSV or parquet file of mean responses (date / fly_num / ROI columns × odor rows). It is checked and shown here first; nothing is recorded until you save at the end.</p>
+      <p class="lede">Pick a CSV or parquet file of mean responses (date / fly_num / ROI columns × odor rows), or several with the same details (e.g. one per fly): their ROIs are combined into one dataset. It is checked and shown here first; nothing is recorded until you save at the end.</p>
     </div>
 
     <div class="step" id="step-file">
       <div class="step-head"><span class="step-num">1</span><h2>Data file</h2></div>
-      <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Choose a data file">
-        <input type="file" id="file-input" accept=".csv,.parquet,.pq,.tsv,.txt" hidden>
+      <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Choose data files">
+        <input type="file" id="file-input" accept=".csv,.parquet,.pq,.tsv,.txt" multiple hidden>
         <div class="dropzone-inner">
           <strong>Drop a .csv or .parquet file here</strong>
-          <span>or click to choose one</span>
+          <span>or click to choose one, or several to combine into one dataset</span>
         </div>
       </div>
       <p class="muted small example-file">An example of the antennal lobe data format (ORN responses, by glomerulus):
@@ -174,7 +174,7 @@
       <p id="done-text"></p>
       <div class="actions">
         <a class="btn primary" id="done-link" href="#browse">Open in Browse</a>
-        <button type="button" class="btn" id="done-another">Upload another file</button>
+        <button type="button" class="btn" id="done-another">Upload another dataset</button>
       </div>
     </div>
   </section>
