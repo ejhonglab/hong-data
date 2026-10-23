@@ -1990,7 +1990,7 @@ class Browse {
     if (this.selected !== id) return;
     $('#ds-title').textContent = d.title;
     const md = d.metadata;
-    const bits = [`uploaded by ${d.uploader_name} on ${d.created_at.slice(0, 10)}`];
+    const bits = [`uploaded by ${d.uploader_name} on ${fmtDay(d.created_at)}`];
     if (md.genotype) bits.push(md.genotype);
     if (md.wavelength_nm) bits.push(`${md.wavelength_nm} nm`);
     if (md.power_mw) bits.push(`${md.power_mw} mW${md.power_tolerance_mw != null ? ' ±' + md.power_tolerance_mw : ''}`);
@@ -2237,6 +2237,8 @@ const fmtWhen = (iso) => {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? iso.replace('T', ' ').slice(0, 16) : fmtDate(d);
 };
+// the day of a time from the server, as fmtWhen gives it
+const fmtDay = (iso) => fmtWhen(iso).slice(0, 10);
 // a time in seconds since 1970 as fmtWhen gives one, in the browser's time zone
 const fmtEpoch = (s) => fmtDate(new Date(s * 1000));
 const usedBy = (n) => (n ? `used by ${n} dataset${n === 1 ? '' : 's'}` : 'not used by any dataset');
@@ -3453,7 +3455,7 @@ class AdminPage {
     if (!shown.length) { box.innerHTML = '<p class="muted">No dataset matches.</p>'; return; }
     box.innerHTML = `<table class="odor-table"><thead><tr><th>#</th><th>Dataset</th><th>Uploaded</th><th>Last fly</th><th>Flies</th><th>ROIs</th><th>Odors</th><th></th></tr></thead><tbody>
       ${shown.map((d) => `<tr><td class="num">${d.id}</td><td><a href="#browse/${d.id}">${esc(d.title)}</a></td>
-        <td>${esc(d.uploader_name)}, ${esc(d.created_at.slice(0, 10))}</td><td>${esc(d.last_fly_date || '')}</td>
+        <td>${esc(d.uploader_name)}, ${esc(fmtDay(d.created_at))}</td><td>${esc(d.last_fly_date || '')}</td>
         <td class="num">${d.n_flies}</td><td class="num">${d.n_units.toLocaleString()}</td><td class="num">${d.n_odors}</td>
         <td><button type="button" class="btn small" data-delete="${d.id}">Delete…</button></td></tr>`).join('')}</tbody></table>`;
   }
@@ -3463,7 +3465,7 @@ class AdminPage {
     if (!d) return;
     const where = `${this.state?.deleted_dir ?? 'data/deleted'}/${id}`;
     $('#delete-confirm-q').textContent = `Delete dataset #${id}, “${d.title}”?`;
-    $('#delete-confirm-detail').innerHTML = `Uploaded by ${esc(d.uploader_name)} on ${esc(d.created_at.slice(0, 10))}: ${d.n_flies} flies, `
+    $('#delete-confirm-detail').innerHTML = `Uploaded by ${esc(d.uploader_name)} on ${esc(fmtDay(d.created_at))}: ${d.n_flies} flies, `
       + `${d.n_units.toLocaleString()} ROIs, ${d.n_odors} odors. It is gone from the site at once; its files are moved to <code>${esc(where)}</code> on the server.`;
     if (await askDialog($('#delete-confirm')) !== 'delete') return;
     let res;

@@ -280,8 +280,10 @@ def test_landlock(tmp_path):
                  "write allowed": False, "write data": True, "temporary file": True}
 
 
-def test_sync_times_aware(main):  # noqa: F811
+def test_times_aware(main, tmp_path, monkeypatch):  # noqa: F811
     import time
+
+    from tests.test_compare import insert
 
     # times the server wrote as its own (UTC in Docker) go out with its offset, for browsers to show in theirs
     old_tz = os.environ.get("TZ")
@@ -296,6 +298,14 @@ def test_sync_times_aware(main):  # noqa: F811
                                 when="2026-10-22T21:55:00")
         assert call(main.odors_list)[1]["syncs"][0]["applied_at"] == "2026-10-22T21:55:00-07:00"
         assert call(main.odors_status)[1]["last_sync"]["applied_at"] == "2026-10-22T21:55:00-07:00"
+        # a dataset's upload, listed and on its own
+        ds_id, _ = insert(main.db, tmp_path)  # created at 2026-10-21T10:00:00
+        assert call(main.datasets_list)[1]["datasets"][0]["created_at"] == "2026-10-21T10:00:00-07:00"
+        assert call(main.dataset_get, path_params={"ds_id": ds_id})[1]["created_at"] == "2026-10-21T10:00:00-07:00"
+        # when the server started: the same from both (as a restart is told by), to the millisecond
+        monkeypatch.setitem(sandbox.STATUS, "started_at", "2026-10-22T21:55:00.123")
+        started = "2026-10-22T21:55:00.123-07:00"
+        assert call(main.health)[1]["started"] == started and call(main.admin_get)[1]["started_at"] == started
     finally:
         if old_tz is None:
             os.environ.pop("TZ", None)

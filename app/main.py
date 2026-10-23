@@ -143,8 +143,8 @@ async def index(request: Request) -> Response:
 
 
 async def health(request: Request) -> Response:
-    return JSONResponse({"ok": True, "time": dt.datetime.now().isoformat(timespec="seconds"),
-                         "started": sandbox.STATUS["started_at"]})
+    return JSONResponse({"ok": True, "time": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+                         "started": _aware(sandbox.STATUS["started_at"])})
 
 
 async def options(request: Request) -> Response:
@@ -684,7 +684,7 @@ def _readme_html(md: str) -> str:
 
 async def datasets_list(request: Request) -> Response:
     rows = await run_in_threadpool(db.list_datasets)
-    return JSONResponse({"datasets": rows})
+    return JSONResponse({"datasets": [{**d, "created_at": _aware(d["created_at"])} for d in rows]})
 
 
 def _readme_path(ds_id: int) -> Path:
@@ -696,6 +696,7 @@ async def dataset_get(request: Request) -> Response:
     d = await run_in_threadpool(db.get_dataset, ds_id)
     if d is None:
         return json_error(404, "dataset not found")
+    d["created_at"] = _aware(d["created_at"])
     d["readme_html"] = _readme_html(d["readme_md"])
     d["readme_path"] = str(_readme_path(ds_id))
     files = [d["data_file"], "README.md", "metadata.json"]
@@ -1088,7 +1089,8 @@ def _aware(when: Optional[str]) -> Optional[str]:
     if not when:
         return when
     t = dt.datetime.fromisoformat(when)
-    return (t.astimezone() if t.tzinfo is None else t).isoformat(timespec="seconds")
+    t = t.astimezone() if t.tzinfo is None else t
+    return t.isoformat(timespec="milliseconds" if t.microsecond else "seconds")
 
 
 def _syncs(syncs: list[dict]) -> list[dict]:
@@ -1394,7 +1396,9 @@ def _odor_index() -> odormeta.OdorIndex:
 
 async def reference_list(request: Request) -> Response:
     """Every reference dataset, with whether it can be shown (and why not) and whether its chemicals are identified."""
-    return JSONResponse({"datasets": await run_in_threadpool(lambda: reference.listing(db, _odor_index()))})
+    refs = await run_in_threadpool(lambda: reference.listing(db, _odor_index()))
+    return JSONResponse({"datasets": [{**r, "created_at": _aware(r.get("created_at")), "imported_at": _aware(r.get("imported_at"))}
+                                      for r in refs]})
 
 
 async def reference_get(request: Request) -> Response:
@@ -1402,6 +1406,7 @@ async def reference_get(request: Request) -> Response:
     data = await run_in_threadpool(lambda: reference.load(db, request.path_params["ref_id"], _odor_index()))
     if data is None:
         return json_error(404, "reference dataset not found")
+    data["imported_at"] = _aware(data.get("imported_at"))
     body = await run_in_threadpool(lambda: json.dumps(data, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode())
     if len(body) > 1_000_000 and "gzip" in request.headers.get("accept-encoding", ""):
         body = await run_in_threadpool(gzip.compress, body, 6)
@@ -1431,7 +1436,7 @@ def _admin_state() -> dict:
     by = _supervisor()
     to_server, note = filelog.server_paths()
     return {
-        "saved": saved,
+        "saved": {**saved, "updated_at": _aware(saved.get("updated_at"))},
         "active": {k: active[k] for k in sandbox.KINDS} if active else None,
         "pending": active is not None and any(saved[k] != active[k] for k in sandbox.KINDS),
         "checks": sandbox.check_folders(saved, _supervisor())[0],
@@ -1441,7 +1446,7 @@ def _admin_state() -> dict:
         "deleted_dir": to_server(str(config.DELETED_DIR)),
         "in_container": note is not None,  # these paths, which are on the server otherwise
         "tensor_root": str(config.TENSOR_ROOT),
-        "started_at": sandbox.STATUS["started_at"],
+        "started_at": _aware(sandbox.STATUS["started_at"]),
         "kernel": sandbox.STATUS["kernel"],
         "restart": {"possible": by is not None, "by": by},
     }
@@ -1463,14 +1468,23 @@ async def admin_files(request: Request) -> Response:
         settings = [sandbox.load(), sandbox.STATUS["settings"] or {}]
         listed = [d for s in settings for k in sandbox.KINDS for d in s.get(k, [])]
         listed += [str(config.REFERENCE_DIR), *(r["path"] for r in db.list_references())]
-        return filelog.listing(db, exclude=listed)
+        out = filelog.listing(db, exclude=listed)
+        return {**out, "since": _aware(out.get("since")), "files": [{**f, "first_at": _aware(f.get("first_at"))} for f in out["files"]]}
 
     return JSONResponse(await run_in_threadpool(run))
 
 
+def _backup_status() -> dict:
+    """`backup.status`, its times `_aware`."""
+    s = backup.status(db)
+    folders = [{**f, "backups": [{**b, "created_at": _aware(b.get("created_at"))} for b in f["backups"]]} for f in s["folders"]]
+    last = s["last"] and {**s["last"], "created_at": _aware(s["last"].get("created_at"))}
+    return {**s, "folders": folders, "last": last, "job": {**s["job"], "started_at": _aware(s["job"].get("started_at"))}}
+
+
 async def admin_backups(request: Request) -> Response:
     """The backups, in the folders the server may write, and whether the last one is current (see `backup.status`)."""
-    return JSONResponse(await run_in_threadpool(backup.status, db))
+    return JSONResponse(await run_in_threadpool(_backup_status))
 
 
 async def admin_backup_start(request: Request) -> Response:
@@ -1481,7 +1495,7 @@ async def admin_backup_start(request: Request) -> Response:
     if error:
         return json_error(409, error)
     log.info("backup into %s started from the Admin tab", body["folder"])
-    return JSONResponse(await run_in_threadpool(backup.status, db))
+    return JSONResponse(await run_in_threadpool(_backup_status))
 
 
 async def admin_check(request: Request) -> Response:
@@ -1665,7 +1679,7 @@ async def admin_restart(request: Request) -> Response:
         return json_error(409, "the server cannot restart itself here: it is not run by Docker or systemd, which would "
                                "start it again (DEPLOY.md). Restart it by hand.")
     log.info("restart requested from the Admin tab")
-    return JSONResponse({"ok": True, "by": supervisor, "started_at": sandbox.STATUS["started_at"]},
+    return JSONResponse({"ok": True, "by": supervisor, "started_at": _aware(sandbox.STATUS["started_at"])},
                         background=BackgroundTask(_restart))
 
 
