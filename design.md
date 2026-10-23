@@ -129,14 +129,16 @@ between the frontend and the server. Using the app is described in
   again (`ingest.FLIES_NEEDED`, `TRIALS_NEEDED`), but those stored then are still shown,
   so storage, the viewer and downloads keep handling them, and files of ROIs alone are
   still read far enough to say what they lack.
-- **A dataset's flies are its identity for duplicates.** A file is refused if it is a
-  stored dataset's byte for byte (`data_sha256`), or if its flies, (date, fly_num), are
-  all and only one's (`main._duplicates`, when the file is read and again on saving):
-  the same data in another file has the same flies, so this catches it too, and the
-  message says whether its ROIs, trials and values are that dataset's (`_same_data`).
-  Flies shared only in part are a warning, naming the dataset that may need deleting,
-  as a fuller upload may replace an earlier one. Flies are matched across uploaders:
-  (date, fly_num) is taken to name one fly in the lab.
+- **Duplicates are the same data, or the same flies of one person and coding unit.** A
+  file is refused if it is a stored dataset's byte for byte (`data_sha256`), or its data
+  is (the same flies, ROIs, trials and values: `main._same_data`), whoever uploaded it,
+  as soon as it is read. Its flies, (date, fly_num), are only compared with datasets of
+  the same uploader and coding unit (names and units matched in any case; every way of
+  writing KCs one), once those are entered (at the README step, and again on saving):
+  all and only the same flies are refused, some of them warned of, naming the dataset
+  that may need deleting, as a fuller upload may replace an earlier one. Another
+  person's fly numbers of a day are their own, and one fly may be recorded in two
+  places (coding units).
 - **ROIs marked bad are kept, and left out where used.** KC datasets must have every KC
   of each fly (ids from 0 or 1 to the highest, `ingest.kc_id_problems`), so that a
   dataset says which KCs were segmented and not used rather than leaving gaps: those

@@ -499,43 +499,61 @@ def test_duplicates(main, tmp_path, monkeypatch):
         data_format=parsed.source_format, data_sha256=main._sha256(first), odor_yaml_files=[], experiment_xml_file=None,
         experiment_xml_info=None, summary=parsed.summary(), units=parsed.units, trials=parsed.trials, values=parsed.values)
     which = "dataset #1 (p1: GH146 > GCaMP6f (glomeruli)), uploaded by Betty on 2026-10-21"
-    # the same file, under another name: refused
+    # whoever uploads it: the same file, under another name, refused when it is read
     renamed = tmp_path / "renamed.csv"
     renamed.write_bytes(first.read_bytes())
     status, r = upload(main, renamed)
     assert status == 422 and r["errors"] == [f"this file was uploaded already: it is {which}. If this replaces it, delete #1 first (Admin tab)."]
-    # the same data in another file (its ROIs in another order)
+    # ... and the same data in another file (its ROIs in another order)
     status, r = upload(main, write_csv(make_wide(ROWS, COLS[::-1], values[:, ::-1]), tmp_path, "reordered.csv"))
     assert status == 422 and r["errors"][0].startswith(f"this is the data of {which}, already (the same ROIs, trials and values")
-    # other data of the same flies
+
+    # other data of the same flies: refused for the same uploader and coding unit (however written), once they are entered
     status, r = upload(main, write_csv(make_wide(ROWS, COLS, values + 1), tmp_path, "same_flies.csv"))
-    assert status == 422 and r["errors"][0] == (
-        f"its flies (2024-01-01 fly 1, 2024-01-02 fly 1, 2024-01-02 fly 2) are exactly those of {which}, and two datasets "
-        "cannot have the same flies. If this replaces it, delete #1 first (Admin tab).")
-    # some flies of it: allowed, with a warning saying which dataset may need to be deleted, and whose
-    more = COLS + [("2024-01-03", 1, "DM2")]
-    status, r = upload(main, write_csv(make_wide(ROWS, more), tmp_path, "more.csv"))
-    assert status == 200 and (f"possible duplicate: 3 of its 4 flies (2024-01-01 fly 1, 2024-01-02 fly 1, 2024-01-02 fly 2) are "
-                              f"also in {which}, all of whose flies are here, with 1 more: if this replaces it, #1 may need "
-                              "to be deleted (Admin tab)") in r["data"]["warnings"]
+    assert status == 200
     stage = {"stage_id": r["stage"]["stage_id"]}
+    md = {"uploader_name": " betty ", "indicator": "GCaMP6f", "driver": "GH146", "coding_unit": "Glomeruli"}
+    readme = lambda **kw: call(main.stage_readme, body={"metadata": {**md, **kw}}, path_params=stage)
+    status, r = readme()
+    assert status == 422 and r["errors"] == [
+        f"its flies (2024-01-01 fly 1, 2024-01-02 fly 1, 2024-01-02 fly 2) are exactly those of {which}, also of glomeruli: "
+        "one person's datasets of a coding unit cannot have the same flies. If this replaces it, delete #1 first (Admin tab)."]
+    status, r = call(main.stage_commit, body={"metadata": md, "readme": "#"}, path_params=stage)
+    assert status == 422 and any("are exactly those of dataset #1" in e for e in r["errors"])
+    # another's flies (one's fly 1 of a day is not another's), or of another coding unit (one fly recorded in two places)
+    assert readme(uploader_name="Ann")[1]["ok"] and readme(coding_unit="PNs")[1]["ok"]
+
+    # some flies of one of theirs: a warning, saying which dataset may need to be deleted
+    status, r = upload(main, write_csv(make_wide(ROWS, COLS + [("2024-01-03", 1, "DM2")]), tmp_path, "more.csv"))
+    stage = {"stage_id": r["stage"]["stage_id"]}
+    assert status == 200 and not any("duplicate" in w for w in r["data"]["warnings"])  # (whose, not yet known)
+    r = readme()[1]
+    assert r["ok"] and r["warnings"] == [
+        f"possible duplicate: 3 of its 4 flies (2024-01-01 fly 1, 2024-01-02 fly 1, 2024-01-02 fly 2) are also in {which}, "
+        "all of whose flies are here, with 1 more: if this replaces it, #1 may need to be deleted (Admin tab)"]
+    assert readme(uploader_name="Ann")[1]["warnings"] == []
     status, r = upload(main, write_csv(make_wide(ROWS, COLS[:3]), tmp_path, "fewer.csv"))  # (2 of its 3 flies)
-    assert status == 200 and any(w.startswith("possible duplicate: 2 of its 2 flies") and "which has 1 more: if these are the same "
-                                 "recordings, this repeats part of #1" in w for w in r["data"]["warnings"])
+    stage = {"stage_id": r["stage"]["stage_id"]}
+    w = readme()[1]["warnings"]
+    assert len(w) == 1 and w[0].startswith("possible duplicate: 2 of its 2 flies") and "which has 1 more: if these are the same recordings, this repeats part of #1" in w[0]
     status, r = upload(main, write_csv(make_wide(ROWS, [COLS[0], ("2024-01-03", 1, "DM2")]), tmp_path, "some.csv"))
-    assert status == 200 and any(w.startswith("possible duplicate: 1 of its 2 flies (2024-01-01 fly 1) is also in") and "which has 2 others" in w
-                                 for w in r["data"]["warnings"])
+    stage = {"stage_id": r["stage"]["stage_id"]}
+    w = readme()[1]["warnings"]
+    assert len(w) == 1 and w[0].startswith("possible duplicate: 1 of its 2 flies (2024-01-01 fly 1) is also in") and "which has 2 others" in w[0]
     status, r = upload(main, write_csv(make_wide(ROWS, [("2024-02-01", 1, "DM2")]), tmp_path, "other.csv"))
-    assert status == 200 and not any("duplicate" in w for w in r["data"]["warnings"])
-    # and refused when saving, if a dataset with its flies was saved since
-    p = load_file(tmp_path / "more.csv")
+    stage = {"stage_id": r["stage"]["stage_id"]}
+    assert readme()[1]["warnings"] == []
+
+    # and refused when saving, if a dataset of the uploader's with its flies was saved since
+    status, r = upload(main, write_csv(make_wide(ROWS, [("2024-04-01", 1, "DM2")]), tmp_path, "later.csv"))
+    stage = {"stage_id": r["stage"]["stage_id"]}
+    p = load_file(tmp_path / "later.csv")
     main.db.insert_dataset(
         created_at="2026-10-22T10:00:00", title="t", readme_md="#", readme_edited=False, data_file="x.csv",
         metadata={"uploader_name": "Jon", "indicator": "GCaMP6f", "driver": "GH146", "coding_unit": "glomeruli"},
         data_format=p.source_format, data_sha256="1" * 64, odor_yaml_files=[], experiment_xml_file=None,
         experiment_xml_info=None, summary=p.summary(), units=p.units, trials=p.trials, values=p.values + 1)
-    md = {"uploader_name": "Ann", "indicator": "GCaMP6f", "driver": "GH146", "coding_unit": "glomeruli"}
-    status, r = call(main.stage_commit, body={"metadata": md, "readme": "#"}, path_params=stage)
+    status, r = call(main.stage_commit, body={"metadata": {**md, "uploader_name": "Jon"}, "readme": "#"}, path_params=stage)
     assert status == 422 and any("are exactly those of dataset #2 (t), uploaded by Jon on 2026-10-22" in e for e in r["errors"])
 
 

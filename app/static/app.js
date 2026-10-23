@@ -1863,6 +1863,7 @@ class UploadFlow {
     let res;
     try { res = await api(`/api/stage/${this.stage.stage_id}/readme`, { method: 'POST', json: { metadata: meta } }); } catch (e) { box.appendChild(msgBox('error', esc(e.message))); return; }
     if (!res.ok) { box.appendChild(msgBox('error', `The server rejected the details:${listHtml(res.errors)}`)); return; }
+    if (res.warnings?.length) box.appendChild(msgBox('warn', `Worth a look:${listHtml(res.warnings)}`));
     this.generatedReadme = res.readme;
     $('#readme-text').value = res.readme;
     $('#readme-preview').innerHTML = renderMarkdown(res.readme);

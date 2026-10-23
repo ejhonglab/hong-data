@@ -206,11 +206,10 @@ async def stage_create(request: Request) -> Response:
         return JSONResponse({"ok": False, "errors": [f"unexpected error while reading the file: {e}"], "warnings": []}, status_code=422)
 
     sha256 = await run_in_threadpool(_sha256, dest)
-    errors, warnings = await run_in_threadpool(_duplicates, parsed, sha256)
+    errors, _ = await run_in_threadpool(_duplicates, parsed, sha256)  # (its flies, once whose they are is entered)
     if errors:
         shutil.rmtree(d, ignore_errors=True)
         return JSONResponse({"ok": False, "errors": errors, "warnings": parsed.warnings, "filename": fname}, status_code=422)
-    parsed.warnings += warnings
     await run_in_threadpool(save_parsed, parsed, d / "parsed")
     payload = await run_in_threadpool(parsed.to_payload)
     meta = {
@@ -252,11 +251,25 @@ def _same_data(parsed: ParsedData, m: dict) -> bool:
     return bool(np.allclose(a, b, rtol=1e-5, atol=1e-7, equal_nan=True))
 
 
-def _duplicates(parsed: ParsedData, sha256: str) -> tuple[list[str], list[str]]:
+def _same_name(a: Optional[str], b: Optional[str]) -> bool:
+    """Whether two names (of uploaders) are one, whatever their case and spacing."""
+    return " ".join((a or "").split()).casefold() == " ".join((b or "").split()).casefold()
+
+
+def _same_unit(a: Optional[str], b: Optional[str]) -> bool:
+    """Whether two coding units are one: KCs however written, else whatever their case and spacing."""
+    return (is_kc(a) and is_kc(b)) or _same_name(a, b)
+
+
+def _duplicates(parsed: ParsedData, sha256: str, uploader: Optional[str] = None,
+                coding_unit: Optional[str] = None) -> tuple[list[str], list[str]]:
     """An upload against the datasets stored: errors (refusing it) if its file is one of
-    theirs (byte for byte), or its flies (date, fly_num) are all of one's and only those
-    (saying if its data is that dataset's too); warnings if it shares only some flies with
-    one, saying which dataset may need to be deleted, and whose it is."""
+    theirs (byte for byte), or its data is (the same flies, ROIs, trials and values),
+    whoever uploaded it. With its uploader and coding unit (once entered), errors too if its
+    flies (date, fly_num) are all and only those of a dataset of theirs of that coding
+    unit, and warnings if it shares only some with one, saying which dataset may need to
+    be deleted. Datasets of other uploaders or coding units may have the same flies: one
+    person's fly 1 of a day is not another's, and a fly may be recorded in two places."""
     flies = {(u["date"], u["fly_num"]) for u in parsed.units if u["date"] is not None}
     stored = db.dataset_flies()
     errors, warnings = [], []
@@ -264,15 +277,16 @@ def _duplicates(parsed: ParsedData, sha256: str) -> tuple[list[str], list[str]]:
         which = f"dataset #{d['id']} ({d['title']}), uploaded by {d['uploader_name']} on {d['created_at'][:10]}"
         delete = f"If this replaces it, delete #{d['id']} first (Admin tab)."
         theirs = stored.get(d["id"], set())
+        same_flies = bool(flies) and theirs == flies
+        mine = uploader is not None and _same_name(d["uploader_name"], uploader) and _same_unit(d["coding_unit"], coding_unit)
         if d["data_sha256"] == sha256:
             errors.append(f"this file was uploaded already: it is {which}. {delete}")
-        elif flies and theirs == flies:
-            m = db.get_matrix_arrays(d["id"])
-            errors.append(f"this is the data of {which}, already (the same ROIs, trials and values, in another file). {delete}"
-                          if m is not None and _same_data(parsed, m) else
-                          f"its flies ({_flies_text(flies)}) are exactly those of {which}, and two datasets cannot have the "
-                          f"same flies. {delete}")
-        elif flies & theirs:
+        elif same_flies and (m := db.get_matrix_arrays(d["id"])) is not None and _same_data(parsed, m):
+            errors.append(f"this is the data of {which}, already (the same ROIs, trials and values, in another file). {delete}")
+        elif mine and same_flies:
+            errors.append(f"its flies ({_flies_text(flies)}) are exactly those of {which}, also of {d['coding_unit']}: "
+                          f"one person's datasets of a coding unit cannot have the same flies. {delete}")
+        elif mine and flies & theirs:
             shared = flies & theirs
             if theirs < flies:
                 tail = (f"all of whose flies are here, with {len(flies - theirs)} more: if this replaces it, #{d['id']} "
@@ -636,6 +650,9 @@ async def stage_readme(request: Request) -> Response:
     kc = _kc_problem(parsed, m.coding_unit)
     if kc:
         return JSONResponse({"ok": False, "errors": [kc]}, status_code=422)
+    errors, warnings = await run_in_threadpool(_duplicates, parsed, meta["sha256"], m.uploader_name, m.coding_unit)
+    if errors:
+        return JSONResponse({"ok": False, "errors": errors}, status_code=422)
     summary = parsed.summary()
     readme = generate_readme(
         m,
@@ -648,7 +665,7 @@ async def stage_readme(request: Request) -> Response:
             "sources": _tensor_sources(meta),
         },
     )
-    return JSONResponse({"ok": True, "readme": readme, "title": dataset_title(m, summary)})
+    return JSONResponse({"ok": True, "readme": readme, "title": dataset_title(m, summary), "warnings": warnings})
 
 
 def _kc_problem(parsed: ParsedData, coding_unit: str) -> Optional[str]:
@@ -664,7 +681,8 @@ def _commit(d: Path, meta: dict, m: Metadata, readme: str, readme_edited: bool) 
     parsed = load_parsed(d / "parsed")
     summary = parsed.summary()
     # consistency checks that must pass before anything is written
-    problems = [p for p in [_kc_problem(parsed, m.coding_unit)] if p] + _duplicates(parsed, meta["sha256"])[0]
+    problems = [p for p in [_kc_problem(parsed, m.coding_unit)] if p]
+    problems += _duplicates(parsed, meta["sha256"], m.uploader_name, m.coding_unit)[0]
     if meta["odor_yamls"]:
         check = _run_yaml_check(d, meta)
         if not check["ok"]:

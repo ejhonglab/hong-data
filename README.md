@@ -140,12 +140,16 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
 
 ## The tabs in detail
 
-- **Upload**: a file is refused if it was uploaded already (the same file, whatever its
-  name), or if its flies (each `date` and `fly_num`) are exactly those of a dataset
-  uploaded already (saying if its data is that dataset's too), naming that dataset and who
-  uploaded it: to replace one, delete it first (Admin tab). A file sharing only some of
-  its flies with a dataset is accepted with a warning naming that dataset and its
-  uploader, and which of the two may need to be deleted if they are the same recordings.
+- **Upload**: a file is refused if it was uploaded already, by anyone: the same file
+  (whatever its name), or the same data in another (the same flies, ROIs, trials and
+  values). Once your name and the coding unit are entered (when the README is made, and
+  again when saving), it is refused too if its flies (each `date` and `fly_num`) are
+  exactly those of a dataset of yours of that coding unit; one sharing only some flies
+  with one is accepted with a warning saying which of the two may need to be deleted if
+  they are the same recordings. Each names that dataset and who uploaded it: to replace
+  one, delete it first (Admin tab). Other uploaders' datasets, or other coding units',
+  may have the same flies (one person's fly 1 of a day is not another's, and one fly may
+  be recorded in two places).
   An optional odor YAML must have every odor in the matrix, with the same
   abbreviation and concentration. Each YAML added is also checked on its own, as a
   warning only: its odors against the odor table (missing, or named, abbreviated or with
