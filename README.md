@@ -167,7 +167,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   and in every download but of the original files. Names that differ from another
   shown (or downloaded) with them only in case stay as they are, so that no two odors
   become one. The upload form shows a file's odors as they are in it.
-- **Browse**: each dataset has a thesis-style odor table (with each odor's CID and InChI),
+- **Browse**: each dataset has a thesis-style odor table (with each odor's CID, InChI and
+  vapor pressure),
   its odors matched to the Odors tab through its odor YAML when it has one, otherwise by
   abbreviation. Those not in the odor table, or that more than one odor there could be,
   are listed above it and highlighted in it; a button copies rows for the odor sheet for
@@ -284,7 +285,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     p-values).
 - **Odors**: the app's own table of odor metadata, one row per chemical, with links and
   structures (drawn as vector graphics by RDKit, from the InChI PubChem gives for each
-  CID). It is synced one way from a Google sheet (its link set in
+  CID) and vapor pressures (in kPa: the mean of the experimental values on the odor's
+  PubChem page, at the temperatures given there, looked up through
+  [chemutils](https://github.com/ejhonglab/chemutils) once an odor with a CID is added;
+  blank where PubChem has none). It is synced one way from a Google sheet (its link set in
   the Admin tab) or a CSV imported in the Admin tab, with the columns of
   `config/odor_sheet_template.csv` (downloadable there), which starts it off with
   the odors from the thesis tables: the tab shows what a sync would do, adds new odors,
@@ -391,7 +395,7 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
 
 Downloads: `/api/download?ids=1,2&format=files|wide|long` (as from the Browse tab).
 Datasets: `/api/datasets`, and each one's matrix at `/api/datasets/{id}/matrix`; the
-odor table, with each odor's InChI: `/api/odors`. Every endpoint is listed in
+odor table, with each odor's InChI and vapor pressure: `/api/odors`. Every endpoint is listed in
 [design.md](design.md#http-api). On the server, `manage.py` lists, shows, exports and
 deletes datasets ([DEPLOY.md](DEPLOY.md), section 7).
 
@@ -399,7 +403,7 @@ deletes datasets ([DEPLOY.md](DEPLOY.md), section 7).
 
 ```bash
 python3 -m venv venv && . venv/bin/activate
-pip install -r requirements-dev.txt
+pip install -r requirements-dev.txt               # needs git (chemutils is installed from GitHub)
 uvicorn app.main:app --reload --port 8080      # data goes to ./data
 ```
 

@@ -110,7 +110,8 @@ To set the sheet up:
 The server needs outbound HTTPS to docs.google.com for the sheet, and to
 pubchem.ncbi.nlm.nih.gov for the InChIs of the odors' CIDs (fetched once per CID, a
 hundred per request, and kept in the database), from which their structures are drawn
-on the server.
+on the server, and for their vapor pressures (looked up through chemutils once per odor
+added, about a second each, and kept in the database too).
 Without a sheet, the Admin tab can still import a CSV in the same format.
 
 ### Tensor
@@ -274,7 +275,7 @@ Logs: `journalctl -u olfdb` (with the systemd unit) or `docker compose logs`.
 ## 8. Without Docker (plain virtualenv + systemd)
 
 ```bash
-sudo apt install python3-venv
+sudo apt install python3-venv git    # git to install chemutils from GitHub
 sudo useradd --system --home /opt/olfdb --shell /usr/sbin/nologin olfdb
 cd /opt/olfdb
 python3 -m venv venv && venv/bin/pip install -r requirements.txt

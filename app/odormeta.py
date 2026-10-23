@@ -344,6 +344,9 @@ def links(odor: dict) -> dict[str, Optional[str]]:
         q = urllib.parse.quote(cat)
         catalog = f"https://www.sigmaaldrich.com/US/en/search/{q}?focus=products&term={q}&type=product_number"
     cid, cas, metacyc, lotus = (odor.get(k) for k in ("cid", "cas", "metacyc", "lotus"))
+    vapor = odor.get("vapor_pressure_source") if odor.get("vapor_pressure_kpa") is not None else None
+    if vapor and vapor.startswith("https://pubchem.ncbi.nlm.nih.gov/compound/"):
+        vapor += "#section=Vapor-Pressure"
     return {
         "pubchem": f"https://pubchem.ncbi.nlm.nih.gov/compound/{cid}" if cid else None,
         "cas": f"https://commonchemistry.cas.org/detail?cas_rn={cas}" if cas else None,
@@ -351,6 +354,7 @@ def links(odor: dict) -> dict[str, Optional[str]]:
         "metacyc": f"https://biocyc.org/compound?orgid=META&id={urllib.parse.quote(metacyc)}" if metacyc else None,
         "lotus": f"https://lotus.naturalproducts.net/compound/lotus_id/{lotus}" if lotus else None,
         "structure": f"/api/odors/structure/{cid}" if cid else None,
+        "vapor_pressure": vapor,
     }
 
 
@@ -690,9 +694,9 @@ def table_rows(rows: list[dict], index: OdorIndex) -> list[dict]:
             "glomerulus": y.get("glomerulus"), "cid": o.get("cid"), "inchi": o.get("inchi"), "cas": o.get("cas"),
             "supplier": o.get("supplier"),
             "catalog_no": o.get("catalog_no"), "metacyc": o.get("metacyc"), "lotus": o.get("lotus"),
-            "inventory": y.get("inventory") or o.get("inventory"),
+            "inventory": y.get("inventory") or o.get("inventory"), "vapor_pressure_kpa": o.get("vapor_pressure_kpa"),
             "pubchem_url": lk.get("pubchem"), "cas_url": lk.get("cas"), "catalog_url": lk.get("catalog"),
-            "metacyc_url": lk.get("metacyc"), "lotus_url": lk.get("lotus"),
+            "metacyc_url": lk.get("metacyc"), "lotus_url": lk.get("lotus"), "vapor_pressure_url": lk.get("vapor_pressure"),
             "matched_by": r["match"] if r["odor_id"] is not None else None,
         })
     return out

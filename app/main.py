@@ -33,7 +33,7 @@ from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, R
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import backup, compare, config, export, filelog, merge, movies, odormeta, reference, sandbox, tensor, thorimage, yamlcheck
+from . import backup, compare, config, export, filelog, merge, movies, odormeta, reference, sandbox, tensor, thorimage, vapor, yamlcheck
 from .db import Database
 from .glomeruli import load_glomeruli
 from .ingest import ParsedData, ValidationError, load_file, load_parsed, save_parsed
@@ -1238,6 +1238,45 @@ def _fetch_inchis(wait: bool = False) -> None:
         _inchi_lock.release()
 
 
+_vapor_lock = threading.Lock()
+_vapor_tried: dict[int, float] = {}  # CID -> when its vapor pressure last could not be looked up (tried again after an hour)
+
+
+def _fetch_vapor_pressures() -> None:
+    """Look up through chemutils (`vapor.look_up`) the vapor pressure of every odor with an
+    InChI that has not been looked up yet (but those that could not be in the last hour),
+    once the InChIs missing are fetched (`_fetch_inchis`), and then of those added since:
+    skipped while another call is at it."""
+    if not _vapor_lock.acquire(blocking=False):
+        return
+    save = lambda cid, found: db.save_vapor_pressure(cid, found, when=dt.datetime.now().isoformat(timespec="seconds"))
+    seen: set[int] = set()
+    try:
+        while True:
+            _fetch_inchis(wait=True)
+            now = time.time()
+            todo = sorted({(o["cid"], o["inchi"]) for o in db.list_odors() if o["inchi"] and not o["vapor_pressure_at"]
+                           and o["cid"] not in seen and now - _vapor_tried.get(o["cid"], 0) > 3600})
+            if not todo:
+                break
+            seen.update(cid for cid, _ in todo)
+            failed = vapor.look_up(todo, save)
+            _vapor_tried.update(dict.fromkeys(failed, now))
+            if failed:
+                log.warning("could not look up the vapor pressure of %d odors (CIDs %s), e.g.: %s", len(failed),
+                            ", ".join(map(str, sorted(failed))), next(iter(failed.values())))
+    except Exception:
+        log.exception("could not look up vapor pressures")
+    finally:
+        _vapor_lock.release()
+
+
+def _look_up_odors() -> None:
+    """`_fetch_vapor_pressures` (and so `_fetch_inchis`) in a thread of its own, as each
+    lookup takes about a second."""
+    threading.Thread(target=_fetch_vapor_pressures, name="vapor-pressures", daemon=True).start()
+
+
 def _apply(fp: str, change_ids: set[int], delete_ids: set[int]) -> dict:
     path = config.ODOR_PREVIEWS_DIR / f"{fp}.json"
     if not path.exists():
@@ -1282,7 +1321,7 @@ async def odors_apply(request: Request) -> Response:
         return json_error(400, "changes and deletions must be lists of odor ids")
     result = await run_in_threadpool(_apply, fp, change_ids, delete_ids)
     return JSONResponse(result, status_code=200 if result["ok"] else 422,
-                        background=BackgroundTask(_fetch_inchis) if result["ok"] else None)
+                        background=BackgroundTask(_look_up_odors) if result["ok"] else None)
 
 
 async def odor_structure(request: Request) -> Response:
@@ -1766,6 +1805,7 @@ async def lifespan(app: Starlette):
     filelog.start(db)  # first, to see what it reads as it starts
     # before the first request, so before any worker thread starts (see sandbox.start)
     sandbox.start()
+    _look_up_odors()  # (those added, or that could not be looked up, while it was not running)
     saving = asyncio.create_task(_save_file_log())
     yield
     saving.cancel()

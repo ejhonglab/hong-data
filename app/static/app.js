@@ -2224,6 +2224,23 @@ const ODOR_FIELDS = {
 const extLink = (url, text) => (url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(text)}</a>` : esc(text ?? ''));
 const structureImg = (o) => (o.links?.structure
   ? `<img class="structure" src="${esc(o.links.structure)}" alt="structure of ${esc(o.name)}" loading="lazy" onerror="this.remove()">` : '');
+// an odor's vapor pressure (kPa, looked up through chemutils), linked to where it is from: to 3
+// significant figures, but whole from 100, and as a power of ten under 0.001 (as in .tex downloads)
+function vaporHtml(o) {
+  const v = o?.vapor_pressure_kpa;
+  if (v == null) return '';
+  let text;
+  if (v >= 100 || v === 0) text = String(Math.round(v));
+  else if (v >= 0.001) text = v.toPrecision(3);
+  else {
+    const [m, e] = v.toExponential(2).split('e');
+    text = `${m} × 10<sup>${String(+e).replace('-', '−')}</sup>`;
+  }
+  const url = o.links?.vapor_pressure;
+  return url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${text}</a>` : text;
+}
+const VAPOR_TH = `<th title="The mean of the experimental values on the odor's PubChem page (at the temperatures given there),
+  looked up through chemutils once the odor is added; blank if PubChem has none.">Vapor pressure (kPa)</th>`;
 const fmtValue = (v) => (Array.isArray(v) ? v.join('; ') : String(v ?? ''));
 // a time as 'YYYY-MM-DD HH:MM' in the browser's time zone
 const fmtDate = (d) => {
@@ -2299,7 +2316,7 @@ function datasetOdorTable(data) {
   const { rows, odors } = data;
   const showOdor = odorShower(rows.map((r) => r.odor));
   const hasGlom = rows.some((r) => r.yaml?.glomerulus);
-  const nCols = hasGlom ? 12 : 11;
+  const nCols = hasGlom ? 13 : 12;
   const body = runsOf(rows, (r) => r.panel).map((g) => {
     const title = g.key != null ? `<tr class="group"><td colspan="${nCols}">${esc(g.key)}</td></tr>` : '';
     return title + rows.slice(g.start, g.end).map((r) => {
@@ -2311,7 +2328,7 @@ function datasetOdorTable(data) {
       else name = `<span class="muted">${r.yaml?.name ? `${esc(r.yaml.name)}, ` : ''}not in the odor table</span>`;
       const cls = o ? '' : r.match === 'ambiguous' ? ' class="ambiguous"' : ' class="missing"';
       return `<tr${cls}><td><code>${esc(showOdor(r.odor))}</code></td><td>${name}</td><td>${r.log10_conc ?? ''}</td><td>${c.cid || ''}</td>
-        <td class="inchi">${esc(o?.inchi || '')}</td><td>${esc(r.yaml?.solvent || o?.solvent || '')}</td>
+        <td class="inchi">${esc(o?.inchi || '')}</td><td>${esc(r.yaml?.solvent || o?.solvent || '')}</td><td class="num">${vaporHtml(o)}</td>
         ${hasGlom ? `<td>${esc(r.yaml?.glomerulus || '')}</td>` : ''}<td>${c.catalog || ''}</td><td>${c.metacyc || ''}</td><td>${c.lotus || ''}</td>
         <td class="structure-cell">${o ? structureImg(o) : ''}</td><td>${c.cas || ''}</td></tr>`;
     }).join('');
@@ -2324,10 +2341,10 @@ function datasetOdorTable(data) {
       <div class="menu-list">
         <button type="button" data-odor-format="csv">CSV</button>
         <button type="button" data-odor-format="tex">LaTeX (.tex)</button>
-        <p class="menu-note">CSV: every odor with what the odor table has on it (IDs, InChI, supplier, links), as in downloads of several datasets.<br><br>LaTeX: a booktabs longtable to <code>\\input</code>, by panel, linked as here; InChI and structures left out.</p>
+        <p class="menu-note">CSV: every odor with what the odor table has on it (IDs, InChI, supplier, vapor pressure, links), as in downloads of several datasets.<br><br>LaTeX: a booktabs longtable to <code>\\input</code>, by panel, linked as here; InChI and structures left out.</p>
       </div>
     </details></div>
-    ${missingOdorsHtml(data)}<table class="odor-table"><thead><tr><th>Odor</th><th>Name</th><th>log<sub>10</sub> conc.</th><th>CID</th><th>InChI</th><th>Solvent</th>
+    ${missingOdorsHtml(data)}<table class="odor-table"><thead><tr><th>Odor</th><th>Name</th><th>log<sub>10</sub> conc.</th><th>CID</th><th>InChI</th><th>Solvent</th>${VAPOR_TH}
     ${hasGlom ? '<th>Target glomerulus</th>' : ''}<th>Catalog no.</th><th>MetaCyc</th><th>LOTUS</th><th>Structure</th><th>CAS</th></tr></thead><tbody>${body}</tbody></table>`;
 }
 
@@ -2474,12 +2491,12 @@ class OdorsPage {
     }
     const showAbbrev = abbrevShower(all.map((o) => o.abbrev));
     $('#odor-table').innerHTML = `<table class="odor-table"><thead><tr><th>Structure</th><th>Name</th><th>Abbrev.</th><th>CID</th><th>CAS</th><th>Solvent</th>
-      <th>Catalog no.</th><th>MetaCyc</th><th>LOTUS</th><th>Inventory</th><th>Datasets</th><th>Notes</th></tr></thead><tbody>
+      ${VAPOR_TH}<th>Catalog no.</th><th>MetaCyc</th><th>LOTUS</th><th>Inventory</th><th>Datasets</th><th>Notes</th></tr></thead><tbody>
       ${shown.map((o) => {
         const c = idCells(o);
         return `<tr id="odor-${o.id}"><td class="structure-cell">${structureImg(o)}</td>
           <td><b>${esc(o.name)}</b>${o.aliases.length ? `<div class="muted small">${esc(o.aliases.join('; '))}</div>` : ''}</td>
-          <td>${esc(showAbbrev(o.abbrev) || '')}</td><td>${c.cid}</td><td>${c.cas}</td><td>${esc(o.solvent || '')}</td><td>${c.catalog}</td>
+          <td>${esc(showAbbrev(o.abbrev) || '')}</td><td>${c.cid}</td><td>${c.cas}</td><td>${esc(o.solvent || '')}</td><td class="num">${vaporHtml(o)}</td><td>${c.catalog}</td>
           <td>${c.metacyc}</td><td>${c.lotus}</td><td>${esc(o.inventory || '')}</td>
           <td>${o.datasets.map((i) => `<a href="#browse/${i}">#${i}</a>`).join(' ')}</td><td class="notes">${esc(o.notes || '')}</td></tr>`;
       }).join('')}</tbody></table>`;

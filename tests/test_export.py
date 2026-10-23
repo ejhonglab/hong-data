@@ -207,19 +207,23 @@ def test_lowercase(store, tmp_path):
 
 
 def test_odors_tex():
-    row = dict.fromkeys(["cid", "solvent", "glomerulus", "supplier", "catalog_no", "metacyc", "lotus", "cas", "pubchem_url",
-                         "catalog_url", "metacyc_url", "lotus_url", "cas_url"])
-    rows = [{**row, "panel": "diag_1", "name": "(-)-α-pinene & β", "abbrev": "a_p", "log10_conc": "-1.5", "solvent": "pfo"},
-            {**row, "panel": "diag_1", "name": "100% {x}", "abbrev": "x", "log10_conc": None},
-            {**row, "panel": "megamat", "name": "b", "abbrev": "b", "log10_conc": "-3", "cas": "1-2-3", "cas_url": "https://c/?a=1&b=2"}]
+    row = dict.fromkeys(["cid", "solvent", "glomerulus", "supplier", "catalog_no", "metacyc", "lotus", "cas", "vapor_pressure_kpa",
+                         "pubchem_url", "catalog_url", "metacyc_url", "lotus_url", "cas_url", "vapor_pressure_url"])
+    vapor_url = "https://pubchem.ncbi.nlm.nih.gov/compound/1#section=Vapor-Pressure"
+    rows = [{**row, "panel": "diag_1", "name": "(-)-α-pinene & β", "abbrev": "a_p", "log10_conc": "-1.5", "solvent": "pfo",
+             "vapor_pressure_kpa": 11.274},
+            {**row, "panel": "diag_1", "name": "100% {x}", "abbrev": "x", "log10_conc": None, "vapor_pressure_kpa": 3417.8},
+            {**row, "panel": "megamat", "name": "b", "abbrev": "b", "log10_conc": "-3", "cas": "1-2-3", "cas_url": "https://c/?a=1&b=2",
+             "vapor_pressure_kpa": 5.25e-6, "vapor_pressure_url": vapor_url}]
     lines = odors_tex(rows, "Odors of #3: 50% done", "tab:x").splitlines()
     assert r"\caption{Odors of \#3: 50\% done}\label{tab:x} \\" in lines
-    assert r"(-)-$\alpha$-pinene \& $\beta$ & a\_p & $-1.5$ & pfo &  \\" in lines
-    assert r"100\% \{x\} & x &  &  &  \\" in lines
-    assert r"b & b & $-3$ &  & \href{https://c/?a=1\&b=2}{1-2-3} \\" in lines
+    assert r"(-)-$\alpha$-pinene \& $\beta$ & a\_p & $-1.5$ & pfo &  & 11.3 \\" in lines
+    assert r"100\% \{x\} & x &  &  &  & 3418 \\" in lines
+    assert (r"b & b & $-3$ &  & \href{https://c/?a=1\&b=2}{1-2-3} & "
+            r"\href{https://pubchem.ncbi.nlm.nih.gov/compound/1\#section=Vapor-Pressure}{$5.25 \times 10^{-6}$} \\") in lines
     # a rule between the panels, each titled
-    i = lines.index(r"\multicolumn{5}{l}{\textit{megamat}} \\")
-    assert lines[i - 1] == r"\midrule" and lines[lines.index(r"\multicolumn{5}{l}{\textit{diag\_1}} \\") - 1] == r"\endlastfoot"
+    i = lines.index(r"\multicolumn{6}{l}{\textit{megamat}} \\")
+    assert lines[i - 1] == r"\midrule" and lines[lines.index(r"\multicolumn{6}{l}{\textit{diag\_1}} \\") - 1] == r"\endlastfoot"
 
 
 def test_dataset_odors_api(main, store, tmp_path, two, monkeypatch):  # noqa: F811

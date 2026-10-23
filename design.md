@@ -146,7 +146,17 @@ between the frontend and the server. Using the app is described in
   RDKit, as SVG (`odormeta.structure_svg`, kept in memory), from the InChI of each CID:
   fetched from PubChem once (a hundred CIDs per request, the first time a structure is
   wanted without one) and kept in the `pubchem` table. PubChem is asked again about a CID
-  it had no InChI for only after an hour.
+  it had no InChI for only after an hour. Vapor pressures come from PubChem too, through
+  chemutils (`chemutils.inchi2vapor_pressure`), looked up in a thread after each sync and
+  when the server starts (once the InChIs missing are fetched), one odor with an InChI at
+  a time, each saved in the `pubchem` table as it comes (none found is saved as looked
+  up, and not looked up again; one that could not be is tried again after an hour), and
+  then those added meanwhile.
+  chemutils runs in a process of its own (`vapor.py`), as importing it changes the
+  logging of the process that imports it (a root handler printing stack traces with
+  warnings, warnings sent to logging, a log file beside its code), with its cache in the
+  data folder and a ChemSpider API key set, so that it reads nothing in the home folder,
+  which Landlock denies the server.
 - **The heatmap is a virtualised canvas**: only the visible cells are drawn, so 10k+
   rows scroll smoothly. The default colormap is built in Oklab so that lightness is
   linear in |value|, with white at 0 and blue and red poles of equal lightness: "twice
@@ -392,6 +402,7 @@ app/export.py      downloads: zips of dataset files, concatenated wide/long matr
 app/merge.py       merged downloads of a coding unit: grouping datasets, scaling groups to each other
 app/compare.py     datasets averaged for the Compare tab (odors × glomeruli or ROIs); ECFP fingerprints (RDKit)
 app/odormeta.py    odor table: sheet parsing / validation, sync diff, links, dataset matching
+app/vapor.py       odors' vapor pressures, looked up through chemutils in a process of its own
 app/tensor.py      users' folders on tensor: path checks, finding a dataset's flies, recordings, YAMLs
 app/sandbox.py     folders the server may read and write (Admin tab): settings, path checks, Landlock
 app/filelog.py     the files the server has read and written in its own folders (Admin tab), paths on the server
@@ -413,7 +424,7 @@ tests/             pytest tests
 `units` (date, fly_num, roi), `trials` (panel, odor, components, repeat), `responses`
 (one row per cell, for SQL queries), `matrices` (the same values as a float32 blob for
 fast serving), `users` (each user's folders on tensor), `odors` and `odor_syncs`,
-`pubchem` (each odor CID's InChI), `settings` (site-wide settings from the Admin tab:
+`pubchem` (each odor CID's InChI and vapor pressure), `settings` (site-wide settings from the Admin tab:
 the odor sheet's link), `reference_datasets` (reference datasets added there) and
 `file_log` (the files the server has read or written in its own folders). Files:
 `data/datasets/<id>/` holds the original data file, `README.md`, `metadata.json`,
@@ -421,8 +432,9 @@ the odor sheet's link), `reference_datasets` (reference datasets added there) an
 under `data/`: `admin.json` (the folders set in the Admin tab), `deleted/<id>/` (the
 folders of datasets deleted in the Admin tab), `references/<id>/` (reference datasets
 added there, as read), `staging/`, `exports/`,
-`odor_previews/` (parsed sheets awaiting confirmation) and `tmp/`
-(temporary files, such as uploads being received). An `odor_structures/` folder, of
+`odor_previews/` (parsed sheets awaiting confirmation), `tmp/`
+(temporary files, such as uploads being received) and `chemutils_cache.sqlite`
+(chemutils' cache of what it looked up; not backed up). An `odor_structures/` folder, of
 PubChem's images, is left from before structures were drawn here, and can be deleted.
 
 ## HTTP API
@@ -493,13 +505,14 @@ GET    /api/merge/download?coding_unit=&format=wide|long&mode=&by=a,b&target=&to
                                             (&lower=1 too)
 GET    /api/merge/scales?(the same, without format)
                                             each dataset's group and scale factor (scaling.csv)
-GET    /api/odors                           the odor table (with each odor's `inchi`)
+GET    /api/odors                           the odor table (with each odor's `inchi` and
+                                            `vapor_pressure_kpa`)
 GET    /api/odors/status                    the odor sheet, when it was last read, whether it
                                             changed since the last sync
 POST   /api/odors/preview                   the sheet (or multipart 'file', a CSV) validated and
                                             diffed against the odor table
 POST   /api/odors/apply                     {"fingerprint", "changes", "deletions"}
-GET    /api/odors/structure/{cid}           PubChem structure image (cached)
+GET    /api/odors/structure/{cid}           its structure, drawn by RDKit (SVG)
 GET    /api/odors/template.csv              config/odor_sheet_template.csv
 GET    /api/reference                       every reference dataset: whether it can be read (why
                                             not), how many of its chemicals are identified

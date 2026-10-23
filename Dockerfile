@@ -6,7 +6,10 @@ RUN useradd --system --uid 10001 --create-home olfdb
 WORKDIR /srv/olfdb
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# git only to install chemutils (and its pubchemprops) from GitHub
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+ && pip install --no-cache-dir -r requirements.txt \
+ && apt-get purge -y --auto-remove git && rm -rf /var/lib/apt/lists/*
 
 COPY app ./app
 COPY config ./config

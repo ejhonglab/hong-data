@@ -320,6 +320,7 @@ _TEX_COLUMNS = [
     ("CID", "r", "cid", "pubchem_url"), ("Solvent", "l", "solvent", None), ("Target glomerulus", "l", "glomerulus", None),
     ("Supplier", "l", "supplier", None), ("Catalog no.", "l", "catalog_no", "catalog_url"),
     ("MetaCyc ID", "l", "metacyc", "metacyc_url"), ("LOTUS ID", "l", "lotus", "lotus_url"), ("CAS", "l", "cas", "cas_url"),
+    ("Vapor pressure (kPa)", "r", "vapor_pressure_kpa", "vapor_pressure_url"),
 ]
 
 
@@ -327,6 +328,21 @@ def _tex(value) -> str:
     """Text for LaTeX: its special characters escaped, Greek letters as math."""
     out = "".join(_TEX_ESCAPES.get(c, c) for c in str(value))
     return re.sub("[" + "".join(_GREEK) + "]", lambda m: f"$\\{_GREEK[m[0]]}$", out)
+
+
+def _tex_pressure(kpa: float) -> str:
+    """A vapor pressure (kPa) as the site shows it: to 3 significant figures, but whole from
+    100, and as a power of ten under 0.001."""
+    if kpa >= 100 or kpa == 0:
+        return f"{kpa:.0f}"
+    if kpa >= 0.001:
+        return f"{kpa:#.3g}".rstrip(".")
+    m, e = f"{kpa:.2e}".split("e")
+    return f"${m} \\times 10^{{{int(e)}}}$"
+
+
+# how odors_tex writes values other than as text
+_TEX_FORMATS = {"vapor_pressure_kpa": _tex_pressure}
 
 
 def _tex_link(url: Optional[str], text: str) -> str:
@@ -342,7 +358,7 @@ def odors_tex(rows: list[dict], caption: str, label: str) -> str:
     as many pages as it needs), footnote-sized, a row per odor, grouped by panel: its name
     (from the odor table, else from its odor YAML), abbreviation and concentration as in the
     data, then CID, solvent, target glomerulus, supplier, catalog number, MetaCyc and LOTUS
-    IDs and CAS number (linked as on the site), each only if an odor has one. InChI and
+    IDs, CAS number and vapor pressure (linked as on the site), each only if an odor has one. InChI and
     structures are left out (too long to typeset; the CSV has InChI).
 
     Args:
@@ -376,7 +392,8 @@ def odors_tex(rows: list[dict], caption: str, label: str) -> str:
                 out.append(f"\\multicolumn{{{n}}}{{l}}{{\\textit{{{_tex(panel)}}}}} \\\\")
         cells = [_tex(r["name"]) if r["name"] else r"\textit{not in the odor table}", _tex(r["abbrev"] or ""),
                  f"${r['log10_conc']}$" if r["log10_conc"] not in (None, "") else ""]
-        cells += [_tex_link(r.get(url), _tex(r[key])) if r.get(key) not in (None, "") else "" for _, _, key, url in cols]
+        cells += [_tex_link(r.get(url), _TEX_FORMATS.get(key, _tex)(r[key])) if r.get(key) not in (None, "") else ""
+                  for _, _, key, url in cols]
         out.append(" & ".join(cells) + r" \\")
     out += [r"\end{longtable}", r"\endgroup", ""]
     return "\n".join(out)

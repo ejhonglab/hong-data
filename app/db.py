@@ -11,7 +11,8 @@ matrices        the same values as a float32 blob (units x trials) for fast serv
 odors           one row per chemical: names, IDs, supplier (synced from the odor sheet)
 odor_syncs      log of odor syncs (what was added / changed / deleted, by whom)
 users           each user's data folders on tensor (relative to its top), by name
-pubchem         what was fetched from PubChem for an odor CID (its InChI)
+pubchem         what was fetched from PubChem for an odor CID (its InChI, and its vapor pressure
+                through chemutils: see vapor.py)
 settings        site-wide settings from the Admin tab (the odor sheet's link), by key
 """
 from __future__ import annotations
@@ -184,7 +185,10 @@ CREATE TABLE IF NOT EXISTS file_log (  -- files the server has read or written i
 );
 """
 # columns added since the first release: (table, column, type)
-ADDED_COLUMNS = [("datasets", "mocorr_data_path", "TEXT"), ("reference_datasets", "fields", "TEXT")]
+ADDED_COLUMNS = [("datasets", "mocorr_data_path", "TEXT"), ("reference_datasets", "fields", "TEXT"),
+                 # vapor pressure, and the URL of where it is from; when looked up (with both null if none was found)
+                 ("pubchem", "vapor_pressure_kpa", "REAL"), ("pubchem", "vapor_pressure_source", "TEXT"),
+                 ("pubchem", "vapor_pressure_at", "TEXT")]
 USER_DIR_COLUMNS = ("raw_dirs", "mocorr_dirs", "odor_dirs")
 ODOR_COLUMNS = ("name", "abbrev", "aliases", "cid", "cas", "solvent", "supplier", "catalog_no", "catalog_url",
                 "metacyc", "lotus", "inventory", "notes")
@@ -468,10 +472,12 @@ class Database:
 
     # ------------------------------------------------------------------- odors
     def list_odors(self) -> list[dict]:
-        """Every odor, with the InChI of its CID (None until fetched from PubChem)."""
+        """Every odor, with the InChI of its CID (None until fetched from PubChem), and its
+        vapor pressure (``vapor_pressure_kpa``, ``_source`` and ``_at``: see `save_vapor_pressure`)."""
         with self.connect() as con:
             rows = con.execute(
-                "SELECT odors.*, pubchem.inchi FROM odors LEFT JOIN pubchem USING (cid) ORDER BY name_key"
+                "SELECT odors.*, pubchem.inchi, pubchem.vapor_pressure_kpa, pubchem.vapor_pressure_source, "
+                "pubchem.vapor_pressure_at FROM odors LEFT JOIN pubchem USING (cid) ORDER BY name_key"
             ).fetchall()
         out = []
         for r in rows:
@@ -522,6 +528,19 @@ class Database:
                 "INSERT INTO pubchem (cid, inchi, fetched_at) VALUES (?,?,?) "
                 "ON CONFLICT (cid) DO UPDATE SET inchi = excluded.inchi, fetched_at = excluded.fetched_at",
                 [(cid, inchi, when) for cid, inchi in inchis.items()],
+            )
+
+    def save_vapor_pressure(self, cid: int, found: Optional[dict], when: str) -> None:
+        """Save the vapor pressure looked up for a CID with an InChI (`vapor.look_up`).
+
+        Args:
+            found: ``{"kpa", "source"}``, or None if there is none (kept, with when it was
+                looked up, so that it is not looked up again).
+        """
+        with self.connect() as con:
+            con.execute(
+                "UPDATE pubchem SET vapor_pressure_kpa = ?, vapor_pressure_source = ?, vapor_pressure_at = ? WHERE cid = ?",
+                (found and found["kpa"], found and found["source"], when, cid),
             )
 
     def odor_syncs(self, limit: int = 50, source: Optional[str] = None) -> list[dict]:
