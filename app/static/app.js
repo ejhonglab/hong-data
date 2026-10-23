@@ -32,12 +32,27 @@ function lowercaseMap(names) {
 // the names in an odor string ('A @ -3 + b @ -2': A and b), but solvent
 const odorNames = (s) => String(s).split(' + ').filter((p) => p !== 'solvent').map((p) => p.split(' @ ')[0]);
 
+// a log10 concentration as shown: to at most 3 significant digits (2 after a leading '0.'),
+// trailing zeros dropped ('-2.69897' as '-2.7', '-0.30103' as '-0.3', '-0.0123' as '-0.012');
+// as it is if it is not a number
+function shortConc(c) {
+  const v = Number(c);
+  if (c == null || String(c).trim() === '' || !Number.isFinite(v)) return c == null ? '' : String(c);
+  return String(+(Math.abs(v) < 1 ? v.toPrecision(2) : Math.abs(v) >= 100 ? v.toFixed(0) : v.toPrecision(3)));
+}
+
+// an odor string with each of its concentrations as shown (shortConc): 'a @ -2.69897' as 'a @ -2.7'
+const shortConcs = (s) => (s == null ? s : String(s).replace(/ @ ([-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?)(?= \+ |$)/gi, (m, c) => ` @ ${shortConc(c)}`));
+
 // shows odor strings (one odor, or a mixture) of `odorStrs`, all shown together, as
-// Settings say: each odor's name lowercased (lowercaseMap, over them all), or as it is
+// Settings say: each odor's name lowercased (lowercaseMap, over them all), or as it is;
+// concentrations shortened (shortConcs)
 function odorShower(odorStrs) {
   let map = null;
   return (s) => {
-    if (!display.lowerOdors || s == null) return s;
+    if (s == null) return s;
+    s = shortConcs(s);
+    if (!display.lowerOdors) return s;
     map ??= lowercaseMap(odorStrs.flatMap(odorNames));
     return String(s).split(' + ').map((p) => {
       const at = p.indexOf(' @ '), name = at < 0 ? p : p.slice(0, at);
@@ -812,7 +827,7 @@ class MatrixViewer {
       this.source = payload;
       this.hideBad = payload.units.some((u) => u.bad);
       this.data = { units: payload.units, trials: payload.trials, values: decodeValues(payload.values_b64),
-        showOdor: this.asUploaded ? (s) => s : odorShower(payload.trials.map((t) => t.odor)) };
+        showOdor: this.asUploaded ? shortConcs : odorShower(payload.trials.map((t) => t.odor)) };
       this._editsFor(payload);
       this.clusterCache.clear();
     }
@@ -2604,7 +2619,7 @@ function datasetOdorTable(data) {
       else if (r.match === 'ambiguous') name = `<span class="muted">ambiguous: ${r.candidates.map((i) => `<a href="#odors/${i}">${esc(odors[i].name)}</a>`).join(' or ')}</span>`;
       else name = `<span class="muted">${r.yaml?.name ? `${esc(r.yaml.name)}, ` : ''}not in the odor table</span>`;
       const cls = o ? '' : r.match === 'ambiguous' ? ' class="ambiguous"' : ' class="missing"';
-      return `<tr${cls}><td><code>${esc(showOdor(r.odor))}</code></td><td>${name}</td><td>${r.log10_conc ?? ''}</td><td>${c.cid || ''}</td>
+      return `<tr${cls}><td><code>${esc(showOdor(r.odor))}</code></td><td>${name}</td><td>${esc(shortConc(r.log10_conc))}</td><td>${c.cid || ''}</td>
         <td class="inchi">${esc(o?.inchi || '')}</td><td>${esc(r.yaml?.solvent || o?.solvent || '')}</td><td class="num">${vaporHtml(o)}</td>
         <td class="num">${molarMassHtml(o)}</td>
         ${hasGlom ? `<td>${esc(r.yaml?.glomerulus || '')}</td>` : ''}<td>${c.catalog || ''}</td><td>${c.metacyc || ''}</td><td>${c.lotus || ''}</td>
@@ -5086,7 +5101,7 @@ class HeadspacePage {
     note.hidden = false;
     note.textContent = `The ${p.panel} panel's odors (of ${p.datasets} dataset${p.datasets === 1 ? '' : 's'}): ${comps.length}.`
       + (p.skipped.length ? ` Left out: ${p.skipped.map((x) => `${x.odor} (${x.why})`).join(', ')}.` : '')
-      + (several.length ? ` Presented at several concentrations, so at the highest: ${several.map((c) => `${label(c.odor_id)} (${c.concs.join(', ')})`).join(', ')}.` : '');
+      + (several.length ? ` Presented at several concentrations, so at the highest: ${several.map((c) => `${label(c.odor_id)} (${c.concs.map(shortConc).join(', ')})`).join(', ')}.` : '');
     this.changed();
   }
 
@@ -5270,7 +5285,7 @@ class HeadspacePage {
       const notes = [...c.notes.map(esc), ...Object.entries(c.failed || {}).map(([p, e]) => `${esc(HS_PROPS[p] || p)} could not be looked up:
         <span class="muted" title="${esc(e)}">${esc(e.length > 90 ? `${e.slice(0, 90)}…` : e)}</span>`)];
       return `<tr><td><a href="#odors/${c.odor_id}">${esc(o.name)}</a>${o.abbrev ? ` <span class="muted">${esc(showAbbrev(o.abbrev))}</span>` : ''}</td>
-        <td class="num">${c.log10_conc}</td><td class="num">${mw != null ? link(c, 'molar_mass', mw.toFixed(2)) : ''}</td><td class="num">${dens}</td>
+        <td class="num">${esc(shortConc(c.log10_conc))}</td><td class="num">${mw != null ? link(c, 'molar_mass', mw.toFixed(2)) : ''}</td><td class="num">${dens}</td>
         <td class="num">${vp}</td>${henry ? `<td class="num">${k}</td>` : ''}
         <td class="num">${sigHtml(c.mole_fraction)}</td><td class="num hs-amount">${hs}</td>
         <td class="notes">${notes.length ? `<ul>${notes.map((t) => `<li>${t}</li>`).join('')}</ul>` : ''}</td></tr>`;

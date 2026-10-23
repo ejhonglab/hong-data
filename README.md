@@ -134,7 +134,9 @@ glomeruli_diagnostics,False,3mtp @ -5,solvent,0,-0.0377,0.13,...
 - **Odor strings**: `<abbrev> @ <log10_conc>` with single spaces, concentration 0 or
   negative; `solvent` for an unused component. Odors written `<abbrev>(<log10_conc>)`
   (`1-5ol(-3)`) are read as `1-5ol @ -3`, and a solvent alone (`PFO`, `water`) as at 0
-  (`pfo @ 0`), with a warning listing them.
+  (`pfo @ 0`), with a warning listing them. Concentrations are shown to at most 3
+  significant digits, or 2 after a leading `0.` (`ea @ -2.69897` as `ea @ -2.7`,
+  `va @ -0.30103` as `va @ -0.3`); downloads keep them as uploaded.
 - Row levels that say nothing are dropped on upload: `is_pair` if it is False on every
   row, and `odor<n>` (from `odor2` on) together with every odor level after it, if all
   their values are the same one of: empty, `solvent`, `pfo`, `water`, `pfo @ 0`,
