@@ -467,8 +467,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     needs), how many odors have it, and how many were looked up with a chemutils older
     than the last change to how it is looked up (from the server's first version with
     this list: those then in the database count as older). Those are ticked, to look
-    them up again (in the background, about a second each, not from chemutils' cache,
-    each kept as it comes) after a newer chemutils is installed (DEPLOY.md, section 4).
+    them up again (in the background, about a second each, with a progress bar; not
+    from chemutils' cache, each kept as it comes) after a newer chemutils is installed
+    (DEPLOY.md, section 4).
   - *This server*: its name, and its IP addresses (in Docker, those the network's DNS
     gives its name).
 

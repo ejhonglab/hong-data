@@ -572,6 +572,18 @@ dialog.player::backdrop { background: rgba(29,31,34,.55); }
 .compare-options .overlap { font-size: 12px; color: var(--ink-muted); padding-left: 20px; }
 .compare-options .overlap.few { color: var(--warn); }
 
+/* a progress bar (e.g. of values looked up again in the Admin tab), striped while how far is unknown */
+.progress { appearance: none; width: 220px; height: 8px; border: 0; border-radius: 4px; background: var(--surface-2); overflow: hidden; flex: none; }
+.progress[hidden] { display: none; }
+.progress::-webkit-progress-bar { background: var(--surface-2); border-radius: 4px; }
+.progress::-webkit-progress-value { background: var(--accent); border-radius: 4px; transition: width .3s; }
+.progress::-moz-progress-bar { background: var(--accent); border-radius: 4px; }
+.progress:indeterminate { background: repeating-linear-gradient(-45deg, var(--accent-soft) 0 8px,
+  color-mix(in srgb, var(--accent) 45%, var(--accent-soft)) 8px 16px) 0 0 / 22.6px 100%;
+  animation: progress-stripes 1s linear infinite; }
+.progress:indeterminate::-moz-progress-bar { background: transparent; }
+@keyframes progress-stripes { to { background-position: 22.6px 0; } }
+
 /* Headspace calculator */
 .hs-add { position: relative; max-width: 480px; margin-bottom: 12px; }
 .hs-suggestions { position: absolute; z-index: 20; left: 0; right: 0; top: 100%; margin: 2px 0 0; padding: 4px 0; list-style: none;
@@ -602,4 +614,4 @@ dialog.player::backdrop { background: rgba(29,31,34,.55); }
   .sidebar { width: auto; max-height: 40vh; border-right: 0; border-bottom: 1px solid var(--rule); }
   .topbar { gap: 12px; padding: 0 12px; }
 }
-@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } .progress:indeterminate { animation: none; } }

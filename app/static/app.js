@@ -3664,6 +3664,10 @@ class AdminPage {
       }).join('')}</tbody></table>`;
     this._job = job;
     this._syncRelookup();
+    // how far it got, of what it looks up (unknown while waiting for lookups under way)
+    const bar = $('#admin-chemutils-progress');
+    bar.hidden = !job.running;
+    if (job.running && job.total) { bar.max = job.total; bar.value = job.done; } else bar.removeAttribute('value');
     const out = $('#admin-chemutils-msg');
     if (job.running) {
       setStatus(out, job.total == null ? 'Waiting for lookups under way…'
