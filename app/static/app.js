@@ -1,7 +1,7 @@
 // Odor response database — frontend (no build step, no dependencies).
 import { Heatmap } from './heatmap.js';
 import { COLORMAPS, colormapsOfKind, makeNorm, drawColorbar, fmtNum } from './colormaps.js';
-import { MAX_CLUSTER_ITEMS, ClusterPool, layoutDendrogram } from './cluster.js';
+import { MAX_CLUSTER_ITEMS, CLUSTER_VERSION, ClusterPool, layoutDendrogram } from './cluster.js';
 import { exportFigure } from './figure.js';
 import { MoviePlayer } from './player.js';
 import { SIMILARITIES, similarityMatrix, tanimoto, correlateSimilarities, sharedSimilarities, holm } from './similarity.js';
@@ -85,6 +85,38 @@ async function api(path, { method = 'GET', json, form } = {}) {
   }
   if (!res.ok && body && body.error && !body.errors) throw new Error(body.error);
   return body;
+}
+
+// bytes as base64, and back (typed arrays, little-endian as the server's)
+function bytesB64(arr) {
+  const bytes = new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+function b64Bytes(b64) {
+  const bin = atob(b64), bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+// clusterings of a stored dataset kept on the server, for any browser to use again (and
+// after the server restarts): get(keys) -> {key: {order, merges}} of those there are, put
+// stores one (both quietly doing nothing if the server cannot be reached)
+function serverClusterCache(dsId) {
+  return {
+    async get(keys) {
+      try {
+        const { found } = await api(`/api/datasets/${dsId}/clusterings/lookup`, { method: 'POST', json: { keys } });
+        return Object.fromEntries(Object.entries(found).map(([k, c]) => [k, {
+          order: new Int32Array(b64Bytes(c.order).buffer), merges: new Float64Array(b64Bytes(c.merges).buffer) }]));
+      } catch { return {}; }
+    },
+    put(key, { order, merges }) {
+      api(`/api/datasets/${dsId}/clusterings`, { method: 'POST', json: { key, order: bytesB64(order), merges: bytesB64(merges) } }).catch(() => {});
+    },
+  };
 }
 
 function decodeValues(b64) {
@@ -383,7 +415,9 @@ function meanOver(values, nT, unitIdx, colTrials) {
 // from; odors within each panel, by their responses across all ROIs.
 // input: {unitIdx, conds} (those not removed, in CLUSTER_INPUT_ORDER)
 // -> {unitIdx, conds (each null unless clustered), rowTrees, colTrees, notes}
-async function clusterNeural(pool, data, input, o, onProgress) {
+// kept: {cache (as serverClusterCache's), what: what the input is (of a stored dataset, the
+// ROIs and odors left out)}, for clusterings to be looked for there first, and those made kept
+async function clusterNeural(pool, data, input, o, onProgress, kept = null) {
   const { conds, unitIdx } = input;
   const nU = unitIdx.length, nC = conds.length;
   const means = meanOver(data.values, data.trials.length, unitIdx, conds.map((c) => c.trials));
@@ -391,7 +425,8 @@ async function clusterNeural(pool, data, input, o, onProgress) {
   const add = (plan, n, d, vectors) => {
     if (n < 2) return;
     if (n > MAX_CLUSTER_ITEMS) { notes.push(`${plan.what} not clustered (${n.toLocaleString()} is over the limit of ${MAX_CLUSTER_ITEMS.toLocaleString()})`); return; }
-    jobs.push({ data: vectors(), n, d, metric: o.metric });
+    const key = kept && JSON.stringify({ v: CLUSTER_VERSION, metric: o.metric, ...kept.what, axis: plan.kind, panel: plan.group.key ?? null, n });
+    jobs.push({ vectors, n, d, key });
     plans.push(plan);
   };
   if (o.clusterRows) add({ kind: 'rows', group: { start: 0, end: nU }, what: 'ROIs' }, nU, nC, () => means);
@@ -405,7 +440,13 @@ async function clusterNeural(pool, data, input, o, onProgress) {
       });
     }
   }
-  const results = jobs.length ? await pool.run(jobs, onProgress) : [];
+  const found = kept && jobs.length ? await kept.cache.get(jobs.map((j) => j.key)) : {};
+  const results = jobs.map((j) => (kept ? found[j.key] : null));
+  const todo = jobs.map((_, k) => k).filter((k) => !results[k]);
+  if (todo.length) {
+    const made = await pool.run(todo.map((k) => ({ data: jobs[k].vectors(), n: jobs[k].n, d: jobs[k].d, metric: o.metric })), onProgress);
+    todo.forEach((k, t) => { results[k] = made[t]; kept?.cache.put(jobs[k].key, made[t]); });
+  }
   const out = { unitIdx: o.clusterRows ? unitIdx.slice() : null, conds: o.clusterCols ? conds.slice() : null, rowTrees: [], colTrees: [], notes };
   results.forEach((res, k) => {
     const plan = plans[k];
@@ -740,10 +781,12 @@ class MatrixViewer {
     $('[data-role=rows-label]', tb).textContent = o.transpose ? 'Columns' : 'Rows';
   }
 
-  // title: for the exported figure's metadata; fileStem: its file name; kc: whether it is of KCs
-  setNeuralData(payload, { title = '', fileStem = 'heatmap', kc = false } = {}) {
+  // title: for the exported figure's metadata; fileStem: its file name; kc: whether it is of KCs;
+  // serverCache: where its clusterings are kept (as serverClusterCache's: of a stored dataset)
+  setNeuralData(payload, { title = '', fileStem = 'heatmap', kc = false, serverCache = null } = {}) {
     this._setKind('neural');
     this.kc = kc;
+    this.serverCache = serverCache;
     if (payload !== this.source) {
       this.source = payload;
       this.hideBad = payload.units.some((u) => u.bad);
@@ -908,10 +951,13 @@ class MatrixViewer {
         try {
           // from the same order whatever is shown, as that decides ties
           const input = neuralOrder(this.data, CLUSTER_INPUT_ORDER);
+          // (of a stored dataset, looked for on the server first, and kept there once made)
+          const kept = this.serverCache && { cache: this.serverCache,
+            what: { units: [...rows.removed].sort((a, b) => a - b), conds: [...cols.removed].sort() } };
           clustering = await clusterNeural(this.clusterPool, this.data, {
             unitIdx: arrange(input.unitIdx, (u) => u, { removed: rows.removed, order: null }),
             conds: arrange(input.conds, (c) => c.key, { removed: cols.removed, order: null }),
-          }, o, onProgress);
+          }, o, onProgress, kept);
           this.clusterCache.set(key, clustering);
         } catch (e) {
           if (e.cancelled) return;
@@ -2184,7 +2230,8 @@ class Browse {
     this._showReadme(id);
     $('#ds-files').innerHTML = d.files.map((f) => `<a href="/api/datasets/${id}/files/${encodeURI(f)}" download>${esc(f)}</a>`).join('');
     if (!this.viewer) this.viewer = new MatrixViewer($('#dataset-viewer'));
-    this.viewer.setNeuralData(m, { title: d.title, fileStem: `olfdb_dataset-${id}`, kc: isKcData(md.coding_unit, d.summary?.col_levels) });
+    this.viewer.setNeuralData(m, { title: d.title, fileStem: `olfdb_dataset-${id}`, kc: isKcData(md.coding_unit, d.summary?.col_levels),
+      serverCache: serverClusterCache(id) });
     if (!$('#ds-odors').hidden) this.showOdors(id);
     this.showDataPaths(id);
   }

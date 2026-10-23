@@ -491,3 +491,46 @@ def test_delete_dataset(main, store, tmp_path, two, monkeypatch):  # noqa: F811
     status, r = delete(ib)
     assert status == 200 and r["files"].startswith(str(deleted / f"{ib}_")) and (Path(r["files"]) / "README.md").exists()
     assert not list((deleted / str(ib)).iterdir()) and db.list_datasets() == []
+
+
+def test_clusterings_kept(main, store, tmp_path, two):  # noqa: F811
+    import base64
+    import json as jsonlib
+
+    from app.db import content_fingerprint
+    (ia, _), (ib, _) = two
+    db = store[0]  # (main's)
+    order, merges = np.array([2, 0, 1], dtype="<i4"), np.array([[0, 1, 0.5], [2, 3, 0.9]], dtype="<f8")
+    with db.connect() as con:
+        before = content_fingerprint(con)
+    assert db.save_clustering(ia, "k1", order.tobytes(), merges.tobytes(), "2026-10-23T10:00:00")
+    with db.connect() as con:
+        assert content_fingerprint(con) == before  # (a cache: backups stay current)
+    assert db.get_clusterings(ia, ["k1", "k2"], "2026-10-23T10:01:00") == {"k1": (order.tobytes(), merges.tobytes())}
+    assert not db.save_clustering(99, "k1", b"", b"", "2026-10-23T10:00:00")
+    # the most recently used kept, others dropped
+    for k, t in [("k2", "11"), ("k3", "12")]:
+        db.save_clustering(ia, k, order.tobytes(), merges.tobytes(), f"2026-10-23T10:{t}:00", keep=2)
+    assert set(db.get_clusterings(ia, ["k1", "k2", "k3"], "2026-10-23T10:13:00")) == {"k2", "k3"}
+
+    # through the API: what each is of, described by the viewer (with n), found again
+    key = jsonlib.dumps({"v": 1, "metric": "correlation", "units": [], "conds": [], "axis": "rows", "panel": None, "n": 3})
+    b64 = lambda a: base64.b64encode(a.tobytes()).decode()
+    status, r = call(main.dataset_clusterings_save, body={"key": key, "order": b64(order), "merges": b64(merges)}, path_params={"ds_id": ib})
+    assert status == 200 and r["ok"]
+    status, r = call(main.dataset_clusterings, body={"keys": [key, "other"]}, path_params={"ds_id": ib})
+    assert status == 200 and list(r["found"]) == [key]
+    assert np.array_equal(np.frombuffer(base64.b64decode(r["found"][key]["order"]), "<i4"), order)
+    assert call(main.dataset_clusterings, body={"keys": [key]}, path_params={"ds_id": ia})[1]["found"] == {}  # (another dataset's)
+    # refused unless a clustering of n items
+    bad = [{"key": key, "order": b64(np.array([0, 0, 1], dtype="<i4")), "merges": b64(merges)},  # not a permutation
+           {"key": key, "order": b64(order), "merges": b64(merges[:1])},  # too few merges
+           {"key": key, "order": b64(order), "merges": b64(np.array([[0, 7, 0.5], [2, 3, 0.9]], dtype="<f8"))},  # no such cluster
+           {"key": key.replace('"n": 3', '"n": 4'), "order": b64(order), "merges": b64(merges)}]
+    assert [call(main.dataset_clusterings_save, body=b, path_params={"ds_id": ib})[0] for b in bad] == [422] * 4
+    assert call(main.dataset_clusterings_save, body={"key": "not json", "order": "", "merges": ""}, path_params={"ds_id": ib})[0] == 400
+    assert call(main.dataset_clusterings_save, body={"key": key, "order": b64(order), "merges": b64(merges)}, path_params={"ds_id": 99})[0] == 404
+    # gone with their dataset
+    db.delete_dataset(ib)
+    with db.connect() as con:
+        assert con.execute("SELECT count(*) FROM clusterings WHERE dataset_id = ?", (ib,)).fetchone()[0] == 0

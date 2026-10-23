@@ -204,7 +204,14 @@ between the frontend and the server. Using the app is described in
   buffer; blocks are transferred between workers, as they cannot share memory. Memory
   limits it to 30,000 rows (a KC dataset's): their distances, as float32, take 1.8 GB,
   all in the linkage's worker; about 45 s of distances (spread over the workers) and
-  25 s of linkage, measured in SpiderMonkey.
+  25 s of linkage, measured in SpiderMonkey. So a stored dataset's clusterings are kept
+  on the server once a browser has made them (`clusterings`, deleted with the dataset,
+  the 24 most recently used of each, left out of backups' fingerprint as a cache): each of
+  ROIs, or of a panel's odors, under what it is of (`CLUSTER_VERSION`, metric, the ROIs and
+  odors left out, axis, panel and number of items), looked for before clustering (so
+  clustering odors too does not cluster the ROIs again). The server checks that one is a
+  clustering of that many items (a permutation, merges of clusters there are), not that
+  it is right: anyone on the network can keep one, as anyone can upload.
 - **Rows and columns moved or removed in the viewer are edits of the data's axes**, not
   of the screen: keys (units, odors) removed and the order they were dragged into,
   applied to the order chosen in the toolbar, so they hold when the matrix is transposed

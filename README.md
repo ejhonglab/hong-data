@@ -371,7 +371,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     order (up to 30,000 ROIs, e.g. a KC dataset's: 30,000 need ~1.8 GB in the browser,
     and about a minute). Odors are clustered
     within each panel, by their responses across all ROIs. Only what is not removed is
-    clustered, and the result is the same whatever order it was shown in.
+    clustered, and the result is the same whatever order it was shown in. A stored
+    dataset's clusterings are kept on the server (its 24 most recently used, by what was
+    clustered: the metric, and the ROIs and odors removed or hidden), so the next to
+    cluster it the same way, in any browser and after restarts, gets them at once.
   - *Export figure*: SVG, PDF or PNG of the whole matrix as shown (order, colors,
     cell size, dendrograms) with a colorbar; cells are an embedded image, labels and
     lines stay vector in SVG/PDF.

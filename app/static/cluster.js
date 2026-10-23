@@ -14,6 +14,9 @@
 
 // (30,000 items' distances take 1.8 GB, in one worker for their linkage: ~1 min in all)
 export const MAX_CLUSTER_ITEMS = 30000;
+// of the clustering (its algorithm, and what it is given): clusterings kept on the server
+// under another are not used (a change to either needs a new one)
+export const CLUSTER_VERSION = 1;
 
 // Everything in the calling thread (small inputs, tests).
 // data: Float32Array of n vectors of length d (row-major)

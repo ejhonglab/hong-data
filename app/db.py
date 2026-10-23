@@ -15,6 +15,8 @@ users           each user's data folders on tensor (relative to its top), by nam
 pubchem         what was fetched from PubChem for an odor CID (its InChI, and its vapor pressure
                 through chemutils: see vapor.py)
 settings        site-wide settings from the Admin tab (the odor sheet's link), by key
+clusterings     clusterings of a dataset's ROIs or odors, as a browser computed them, for any to
+                use again (a cache, the most recently used kept: see `save_clustering`)
 """
 from __future__ import annotations
 
@@ -179,6 +181,15 @@ CREATE TABLE IF NOT EXISTS users (
     odor_dirs TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS clusterings (
+    dataset_id INTEGER NOT NULL REFERENCES datasets(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,          -- sha256 of what it is of (see main.dataset_clusterings_save)
+    order_blob BLOB NOT NULL,   -- int32 leaf order
+    merges_blob BLOB NOT NULL,  -- float64 merges, (a, b, height) each, in scipy's convention
+    created_at TEXT NOT NULL,
+    used_at TEXT NOT NULL,
+    PRIMARY KEY (dataset_id, key)
+);
 CREATE TABLE IF NOT EXISTS file_log (  -- files the server has read or written in its own folders (see filelog.py)
     path TEXT PRIMARY KEY,             -- as the server sees it (in Docker, in the container)
     read INTEGER NOT NULL DEFAULT 0,
@@ -204,11 +215,11 @@ DATASET_TABLES = ("dataset_panels", "units", "trials", "responses", "matrices")
 
 def content_fingerprint(con: sqlite3.Connection) -> str:
     """A fingerprint of what a database holds (to tell whether a backup is current): every
-    row of its tables but the record of files read and written (`file_log`), and the
-    number of rows of `DATASET_TABLES`."""
+    row of its tables but the record of files read and written (`file_log`) and the
+    clusterings kept (`clusterings`, a cache), and the number of rows of `DATASET_TABLES`."""
     h = hashlib.sha256()
     tables = [r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' "
-                                        "AND name != 'file_log' ORDER BY name")]
+                                        "AND name NOT IN ('file_log', 'clusterings') ORDER BY name")]
     for t in tables:
         h.update(f"\0{t}\0".encode())
         if t in DATASET_TABLES:
@@ -504,6 +515,31 @@ class Database:
             if cur.rowcount and before_commit:
                 before_commit()
             return cur.rowcount > 0
+
+    # -------------------------------------------------------------- clusterings
+    def get_clusterings(self, ds_id: int, keys: list[str], when: str) -> dict[str, tuple[bytes, bytes]]:
+        """Those of `keys` kept for a dataset: key -> (order, merges) blobs; each found used `when`."""
+        out = {}
+        with self.connect() as con:
+            for k in dict.fromkeys(keys):
+                r = con.execute("SELECT order_blob, merges_blob FROM clusterings WHERE dataset_id = ? AND key = ?", (ds_id, k)).fetchone()
+                if r is not None:
+                    out[k] = (bytes(r["order_blob"]), bytes(r["merges_blob"]))
+                    con.execute("UPDATE clusterings SET used_at = ? WHERE dataset_id = ? AND key = ?", (when, ds_id, k))
+        return out
+
+    def save_clustering(self, ds_id: int, key: str, order: bytes, merges: bytes, when: str, keep: int = 24) -> bool:
+        """Keep a clustering of a dataset (replacing one of the same key), and only its `keep`
+        most recently used; False if there is no such dataset."""
+        with self.connect() as con:
+            if con.execute("SELECT 1 FROM datasets WHERE id = ?", (ds_id,)).fetchone() is None:
+                return False
+            con.execute("INSERT INTO clusterings (dataset_id, key, order_blob, merges_blob, created_at, used_at) VALUES (?,?,?,?,?,?) "
+                        "ON CONFLICT (dataset_id, key) DO UPDATE SET order_blob = excluded.order_blob, "
+                        "merges_blob = excluded.merges_blob, used_at = excluded.used_at", (ds_id, key, order, merges, when, when))
+            con.execute("DELETE FROM clusterings WHERE dataset_id = ? AND key NOT IN (SELECT key FROM clusterings "
+                        "WHERE dataset_id = ? ORDER BY used_at DESC, rowid DESC LIMIT ?)", (ds_id, ds_id, keep))
+        return True
 
     # ------------------------------------------------------------------- odors
     def list_odors(self) -> list[dict]:

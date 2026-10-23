@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import contextlib
 import datetime as dt
 import gzip
@@ -1527,6 +1529,52 @@ async def dataset_odors_file(request: Request) -> Response:
     return Response(text, media_type=media_type, headers={"content-disposition": f'attachment; filename="{name}"'})
 
 
+MAX_CLUSTER_ITEMS = 30000  # as cluster.js clusters at most (in the browser)
+
+
+def _clustering_key(key: str) -> str:
+    return hashlib.sha256(key.encode()).hexdigest()
+
+
+async def dataset_clusterings(request: Request) -> Response:
+    """Clusterings kept for a dataset ({"keys": [what each is of, as the viewer describes it]}):
+    {"found": {key: {"order": base64 int32, "merges": base64 float64}}} for those there are."""
+    ds_id = int(request.path_params["ds_id"])
+    body = await request.json()
+    keys = body.get("keys") if isinstance(body, dict) else None
+    if not isinstance(keys, list) or not all(isinstance(k, str) for k in keys) or len(keys) > 100:
+        return json_error(400, 'expected {"keys": [...]}')
+    when = dt.datetime.now().isoformat(timespec="seconds")
+    found = await run_in_threadpool(db.get_clusterings, ds_id, [_clustering_key(k) for k in keys], when)
+    by_hash = {_clustering_key(k): k for k in keys}
+    return JSONResponse({"found": {by_hash[h]: {"order": base64.b64encode(o).decode("ascii"), "merges": base64.b64encode(m).decode("ascii")}
+                                   for h, (o, m) in found.items()}})
+
+
+async def dataset_clusterings_save(request: Request) -> Response:
+    """Keep a clustering of a dataset, as a browser computed it, for any to use again:
+    {"key" (what it is of, as the viewer describes it: JSON with its number of items, n, among
+    the rest), "order" (base64 int32: the leaf order, a permutation of 0..n-1), "merges" (base64
+    float64: n-1 merges (a, b, height), scipy's convention)}. Refused unless it is one of n items."""
+    ds_id = int(request.path_params["ds_id"])
+    body = await request.json()
+    try:
+        key = body["key"]
+        n = json.loads(key)["n"]
+        order = np.frombuffer(base64.b64decode(body["order"], validate=True), dtype="<i4")
+        merges = np.frombuffer(base64.b64decode(body["merges"], validate=True), dtype="<f8").reshape(-1, 3)
+    except (KeyError, TypeError, ValueError, binascii.Error):
+        return json_error(400, 'expected {"key", "order", "merges"}')
+    ab = merges[:, :2]
+    if not (isinstance(n, int) and 2 <= n <= MAX_CLUSTER_ITEMS and len(key) <= 2_000_000 and len(order) == n and len(merges) == n - 1
+            and np.array_equal(np.sort(order), np.arange(n)) and np.all(np.isfinite(merges))
+            and np.all(ab == np.round(ab)) and np.all(ab >= 0) and np.all(ab < 2 * n - 1)):
+        return json_error(422, "not a clustering of the items its key says")
+    when = dt.datetime.now().isoformat(timespec="seconds")
+    ok = await run_in_threadpool(db.save_clustering, ds_id, _clustering_key(key), order.tobytes(), merges.tobytes(), when)
+    return JSONResponse({"ok": True}) if ok else json_error(404, "dataset not found")
+
+
 def _odor_index() -> odormeta.OdorIndex:
     return odormeta.OdorIndex(db.list_odors())
 
@@ -1848,6 +1896,8 @@ routes = [
     Route("/api/datasets/{ds_id:int}/files/{path:path}", dataset_file),
     Route("/api/datasets/{ds_id:int}/odors", dataset_odor_table),
     Route("/api/datasets/{ds_id:int}/odors.{fmt}", dataset_odors_file),
+    Route("/api/datasets/{ds_id:int}/clusterings/lookup", dataset_clusterings, methods=["POST"]),
+    Route("/api/datasets/{ds_id:int}/clusterings", dataset_clusterings_save, methods=["POST"]),
     Route("/api/compare/datasets/{ds_id:int}", compare_dataset),
     Route("/api/compare/ecfp", compare_ecfp),
     Route("/api/datasets/{ds_id:int}/data_paths", dataset_data_paths),
