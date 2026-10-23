@@ -469,7 +469,7 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     this list: those then in the database count as older). Those are ticked, to look
     them up again (in the background, about a second each, with a progress bar; not
     from chemutils' cache, each kept as it comes) after a newer chemutils is installed
-    (DEPLOY.md, section 4).
+    ([DEPLOY.md](DEPLOY.md#updating-chemutils)).
   - *This server*: its name, and its IP addresses (in Docker, those the network's DNS
     gives its name).
 
@@ -491,7 +491,8 @@ uvicorn app.main:app --reload --port 8080      # data goes to ./data
 
 pip does not replace chemutils when its pin in `requirements.txt` changes (the version
 number stays the same): `pip install --force-reinstall --no-deps "$(grep '^chemutils'
-requirements.txt)"`.
+requirements.txt)"`. Updating the pin takes a few more steps:
+[DEPLOY.md](DEPLOY.md#updating-chemutils).
 
 Settings and upload lookups need tensor mounted (at `/local/tensor`, or wherever
 `OLFDB_TENSOR_ROOT` points), and syncing the odor table from a sheet needs its link (in

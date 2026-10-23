@@ -195,13 +195,8 @@ sudo systemctl restart olfdb     # rebuilds the image and recreates the containe
 
 If you installed the unit, do not also run `docker compose up -d` by hand; use
 `systemctl start/stop/restart olfdb`. A restart from the Admin tab restarts the
-container as it is, without picking up new code.
-
-A new version that pins a newer chemutils (in `requirements.txt`) needs nothing more:
-the image is rebuilt from that line on, installing it. What was looked up through the
-older one is kept, though (in the database, and chemutils' cache in `data/`): where
-chemutils changed how it looks something up, the Admin tab (*Odor properties from
-chemutils*) counts those looked up before, to look them up again.
+container as it is, without picking up new code. For a new version with a newer
+chemutils, see "Updating chemutils" in section 7.
 
 ## 5. Backups
 
@@ -278,6 +273,35 @@ sqlite3 data/olfdb.sqlite3 '.tables'                       # direct SQL access (
 
 Logs: `journalctl -u olfdb` (with the systemd unit) or `docker compose logs`.
 
+### Updating chemutils
+
+chemutils (vapor pressures, molar masses and what the Headspace calculator needs) is
+installed from GitHub at the commit pinned in `requirements.txt`. What it looked up is
+kept, in the database and in its own cache in `data/`, so a newer one changes nothing
+already looked up until it is looked up again. Each time:
+
+1. **In the repository**: push the chemutils commit to GitHub, and pin it (in full) in
+   the `chemutils @ git+https://github.com/ejhonglab/chemutils@<commit>` line of
+   `requirements.txt`.
+2. **In `app/chemprops.py`**: append it to `COMMITS` (abbreviated, as there; a test
+   fails until it is the last). If any chemutils commit since the one pinned before
+   changed what a lookup gives for a property the app keeps (`git log -p <old>..<new> --
+   chemutils.py` in chemutils: the functions `chemprops._property` calls, and what they
+   call), add it to `CHANGES` (with those properties, and how), and to `COMMITS` before
+   the new one: that is what has the Admin tab count values to look up again. Check
+   too that those functions still take and return what `_property` expects (names,
+   keys, units).
+3. **In your venv**: pip does not replace chemutils by itself (its version number stays
+   the same): `venv/bin/pip install --force-reinstall --no-deps "$(grep '^chemutils'
+   requirements.txt)"`. Run the tests, and commit.
+4. **On the server**, as for any new version: `cd /opt/olfdb && git pull && sudo systemctl
+   restart olfdb`. The image is rebuilt from `requirements.txt` on, installing the new
+   chemutils (from github.com, as on the first build). Without Docker (section 8):
+   `git pull`, the pip command of step 3, then `sudo systemctl restart olfdb`.
+5. **In the Admin tab**, *Odor properties from chemutils* shows the commit installed.
+   If step 2 added to `CHANGES`, the values looked up with an older chemutils are
+   counted there and ticked: *Look up again* (about a second each, with a progress bar).
+
 ## 8. Without Docker (plain virtualenv + systemd)
 
 ```bash
@@ -297,10 +321,8 @@ systemctl status olfdb     # "active (running)", and still a minute later
 ```
 
 To deploy a new version: `git pull`, `venv/bin/pip install -r requirements.txt`, then
-`sudo systemctl restart olfdb`. pip does not install a newer chemutils pinned in
-`requirements.txt` over the one installed (they have the same version number), so after
-one: `venv/bin/pip install --force-reinstall --no-deps "$(grep '^chemutils' requirements.txt)"`
-(then see the end of section 4).
+`sudo systemctl restart olfdb`; with a newer chemutils, see "Updating chemutils" in
+section 7 (pip does not install it by itself).
 
 Same behaviour (boot start, restart on crash or from the Admin tab; giving up after 5
 starts in 2 minutes, restarts from the Admin tab included, as in section 4). Instead of a

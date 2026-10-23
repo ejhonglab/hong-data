@@ -53,7 +53,8 @@ LABELS = {"vapor_pressure": "Vapor pressure", "est_vapor_pressure": "Vapor press
           "molar_mass": "Molar mass", "density": "Density", "k_henry": "Henry's law constant"}
 
 REPO = "https://github.com/ejhonglab/chemutils"
-# chemutils' commits from the first this app was pinned to, oldest first (abbreviated)
+# chemutils' commits from the first this app was pinned to, oldest first (abbreviated), the
+# last the one pinned in requirements.txt (DEPLOY.md, "Updating chemutils")
 COMMITS = ("53e658bd70ad", "209e47f1eee9", "5bfa72506efe", "95a66c6566cd", "a6bcb4a3aa6f", "713f950668e8", "9196a0c9df65")
 # those of them that changed what a lookup gives, oldest first: (commit, the properties, how)
 CHANGES = [

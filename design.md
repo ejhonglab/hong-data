@@ -206,7 +206,8 @@ between the frontend and the server. Using the app is described in
   water read), which the Admin tab compares them with, to look those up again with
   chemutils' `ignore_cache` (which also replaces what its cache keeps). Values from
   before commits were kept count as older than every change. A chemutils commit that
-  changes a lookup needs adding there (with the commits before it, `chemprops.COMMITS`).
+  changes a lookup needs adding there, and each one pinned to `chemprops.COMMITS`
+  (DEPLOY.md, "Updating chemutils").
 - **The heatmap is a virtualised canvas**: only the visible cells are drawn, so 10k+
   rows scroll smoothly. The default colormap is built in Oklab so that lightness is
   linear in |value|, with white at 0 and blue and red poles of equal lightness: "twice
