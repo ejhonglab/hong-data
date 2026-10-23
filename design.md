@@ -205,10 +205,11 @@ between the frontend and the server. Using the app is described in
   the Headspace calculator needs is looked up and kept the same way, when it is first
   needed (see [Headspace calculator](#headspace-calculator)).
   chemutils runs in a process of its own (`chemprops.py`), as importing it changes the
-  logging of the process that imports it (a root handler printing stack traces with
-  warnings, warnings sent to logging, a log file beside its code), with its cache in the
-  data folder and a ChemSpider API key set, so that it reads nothing in the home folder,
-  which Landlock denies the server. chemutils keeps what it looked up in that cache; it
+  logging of the process that imports it (a handler printing stack traces with
+  warnings, and a log file in the home folder, or in older versions on the root logger,
+  beside its code), with its cache and its log of warnings (`CHEMUTILS_LOG`, read on
+  import) in the data folder, its warnings not printed, and a ChemSpider API key set, so
+  that it reads and writes nothing in the home folder, which Landlock denies the server. chemutils keeps what it looked up in that cache; it
   does not keep failures, so the server remembers those itself (in memory) to not ask
   again at once, and tries again, after a few seconds, a lookup a server was too busy
   for (PubChem answers 429 to more than 5 requests a second, as the first lookup of
@@ -218,7 +219,9 @@ between the frontend and the server. Using the app is described in
   keeps the commit that looked it up (`pubchem.<property>_chemutils`), and
   `chemprops.CHANGES` lists the commits that changed what a lookup gives (95a66c6:
   vapor pressures only from PubChem's values near 25 °C; 9196a0c: densities relative to
-  water read), which the Admin tab compares them with, to look those up again with
+  water read; fda8e3b: PubChem's estimated vapor pressures used only without measured
+  ones, and each said to be measured or not, and Henry's law constants of rows given as
+  inequalities left out), which the Admin tab compares them with, to look those up again with
   chemutils' `ignore_cache` (which also replaces what its cache keeps). Values from
   before commits were kept count as older than every change. A chemutils commit that
   changes a lookup needs adding there, and each one pinned to `chemprops.COMMITS`
@@ -493,13 +496,14 @@ offline, a second or so each, the first time.)
   at 25 °C. It holds for dilute solutions only, so p is at most the odor's vapor
   pressure. With no constant found, Raoult's law for an ideal solution in water, which is
   too low for most odors (esters' activity coefficients in water are from tens to thousands).
-- **Vapor pressure**: PubChem's (the mean of its experimental values at or near 25 °C,
-  else of those with no temperature given), else estimated from the structure by
-  SIMPOL.1 (`chemutils.inchi2est_vapor_pressure`, often within 3×, but several times too
-  low for furans, tertiary alcohols and some phenols); in oil by Henry's law, the one its
-  constant was estimated with. Each is labelled measured or an estimate where chemutils
+- **Vapor pressure**: PubChem's (the mean of its measured values at or near 25 °C, else
+  of those with no temperature given, else of the estimates it lists), else estimated
+  from the structure by SIMPOL.1 (`chemutils.inchi2est_vapor_pressure`, often within 3×,
+  but several times too low for furans, tertiary alcohols and some phenols); in oil by
+  Henry's law, the one its constant was estimated with. Each is labelled measured or an estimate as chemutils
   says (`pubchem.<property>_measured`): SIMPOL.1's always are estimates; PubChem's are
-  labelled once chemutils tells measured values from the estimates PubChem also lists.
+  measured unless it lists only estimates (those looked up with chemutils before
+  fda8e3b are not labelled until looked up again in the Admin tab).
 - **Density**: PubChem's (most of its values relative to water, taken as g/mL), or
   ChemSpider's, given a key; else 1 g/mL, for most odors between 0.8 and 1.1 g/mL, so
   off by at most ~20%.

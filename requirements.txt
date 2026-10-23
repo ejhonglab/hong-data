@@ -13,4 +13,4 @@ rdkit>=2024.3  # ECFP fingerprints and structure drawings of odors
 xarray>=2024.1  # reference data as DataArrays (netCDF)
 netCDF4>=1.6
 # vapor pressures, molar masses, densities and Henry's law constants of odors (chemprops.py); installed with git (and its pubchemprops, from GitHub too)
-chemutils @ git+https://github.com/ejhonglab/chemutils@caf3c6bde452111f06fa97329de3e82eb9e84b87
+chemutils @ git+https://github.com/ejhonglab/chemutils@7ec249c64cc99f0cf0ea30ad4f02c56c5e8d5ec0

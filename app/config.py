@@ -20,6 +20,7 @@ REFERENCE_CACHE_DIR = DATA_DIR / "references"  # reference datasets added in the
 TMP_DIR = DATA_DIR / "tmp"  # the server's temporary files (uploads being received), so it writes nothing outside DATA_DIR
 ADMIN_FILE = DATA_DIR / "admin.json"  # folders the server may read and write (Admin tab, see sandbox.py)
 CHEMUTILS_CACHE = DATA_DIR / "chemutils_cache.sqlite"  # chemutils' cache of what it looked up (chemprops.py)
+CHEMUTILS_LOG = DATA_DIR / "chemutils.log"  # chemutils' warnings, as it looks things up (chemprops.py)
 
 MAX_UPLOAD_MB = float(os.environ.get("OLFDB_MAX_UPLOAD_MB", "1024"))
 STAGE_TTL_HOURS = float(os.environ.get("OLFDB_STAGE_TTL_HOURS", "48"))

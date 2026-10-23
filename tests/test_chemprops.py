@@ -150,14 +150,17 @@ def test_look_up(fake_chemutils, tmp_path, monkeypatch):
 
 def test_outdated(monkeypatch):
     # looked up before chemutils' commit was kept, or with one before a change to how a property is looked up
-    vapor, density = chemprops.CHANGES
-    assert chemprops.outdated("vapor_pressure", None) == vapor and chemprops.outdated("density", None) == density
-    assert chemprops.outdated("vapor_pressure", "5bfa72506efec0decb91cb62b26f0daa01e169de") == vapor
+    vapor, density, measured = chemprops.CHANGES
+    assert chemprops.outdated("vapor_pressure", None) == measured and chemprops.outdated("density", None) == density
+    assert chemprops.outdated("vapor_pressure", "5bfa72506efec0decb91cb62b26f0daa01e169de") == measured
     assert chemprops.outdated("density", "95a66c6566cdfc8897249f057c9f92031023e146") == density
-    assert chemprops.outdated("vapor_pressure", "95a66c6566cdfc8897249f057c9f92031023e146") is None
+    assert chemprops.outdated("k_henry_pfo", "caf3c6bde452111f06fa97329de3e82eb9e84b87") == measured
+    assert chemprops.outdated("vapor_pressure", "fda8e3b346b8c1e226fa208fdc6beb0f65f4b13f") is None
+    assert vapor[1] == ("vapor_pressure",) and "near 25" in vapor[2]
     # unchanged, or with a newer one (or one not from git)
     assert chemprops.outdated("molar_mass", None) is None
     assert chemprops.outdated("density", "9196a0c9df65a4f12980fa5d42074846821d4a5d") is None
+    assert chemprops.outdated("k_henry", "7ec249c64cc99f0cf0ea30ad4f02c56c5e8d5ec0") is None
     assert chemprops.outdated("density", "0.1.0") is None and chemprops.outdated("density", "f" * 40) is None
     # every change one of the commits, in order
     assert [chemprops.COMMITS.index(c) for c, _, _ in chemprops.CHANGES] == sorted(chemprops.COMMITS.index(c) for c, _, _ in chemprops.CHANGES)

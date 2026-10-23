@@ -7,7 +7,8 @@ chemutils runs in a process of its own (`look_up` starts ``python -m app.chempro
 importing it changes the logging of the process that imports it (a handler on the root
 logger printing stack traces with warnings, warnings sent to logging, and a log file
 beside its code). Its cache is kept in the data folder, the only one the server may
-write, and it is given a ChemSpider API key (empty but for the server's own: then
+write, as is its log of warnings (`config.CHEMUTILS_LOG`, read when it is imported; they
+are not printed), and it is given a ChemSpider API key (empty but for the server's own: then
 ChemSpider, where it looks for densities PubChem has none of, is not asked), else it
 reads one from the home folder, which the server may not read (sandbox.py). Lookups a
 server was too busy for (PubChem allows 5 requests a second) are tried again after a
@@ -64,13 +65,17 @@ REPO = "https://github.com/ejhonglab/chemutils"
 # chemutils' commits from the first this app was pinned to, oldest first (abbreviated), the
 # last the one pinned in requirements.txt (DEPLOY.md, "Updating chemutils")
 COMMITS = ("53e658bd70ad", "209e47f1eee9", "5bfa72506efe", "95a66c6566cd", "a6bcb4a3aa6f", "713f950668e8", "9196a0c9df65",
-           "caf3c6bde452")
+           "caf3c6bde452", "fda8e3b346b8", "7ec249c64cc9")
 # those of them that changed what a lookup gives, oldest first: (commit, the properties, how)
 CHANGES = [
     ("95a66c6566cd", ("vapor_pressure",), "PubChem's vapor pressures only from its values at or near 25 °C (they "
                                          "were the mean of its values at any temperature)"),
     ("9196a0c9df65", ("density",), "PubChem's densities relative to water read (most of its values, which were "
                                   "left out), and pages that could not be read parsed"),
+    ("fda8e3b346b8", ("vapor_pressure", "k_henry", "k_henry_pfo"),
+     "PubChem's vapor pressures that are estimates used only without measured ones, and said to be measured or not "
+     "(as are those constants in oil were estimated with); Henry's law constants of rows given as inequalities (or "
+     "wrong) left out rather than leaving none"),
 ]
 
 
@@ -131,7 +136,7 @@ def look_up(odors: Iterable[tuple[int, str, Sequence[str]]], save: Callable[[int
     odors = [o for o in odors if o[2]]
     if not odors:
         return {}
-    env = {**os.environ, "CHEMUTILS_CACHE": str(config.CHEMUTILS_CACHE),
+    env = {**os.environ, "CHEMUTILS_CACHE": str(config.CHEMUTILS_CACHE), "CHEMUTILS_LOG": str(config.CHEMUTILS_LOG),
            "CHEMSPIDER_API_KEY": os.environ.get("CHEMSPIDER_API_KEY", "")}
     failed, done, error = {}, set(), None
     every = [(cid, p) for cid, _, props in odors for p in props]
@@ -207,7 +212,7 @@ def _main() -> None:
     ``cid`` and ``prop`` with `_property`'s (``value`` None if there is none), or with the
     ``error`` its lookup raised. Only an ``error`` if chemutils cannot be imported."""
     out, sys.stdout = sys.stdout, sys.stderr  # (chemutils prints)
-    # a handler on the root logger first, so that chemutils' logging.basicConfig writes no log file
+    # a handler on the root logger first, so that an older chemutils' logging.basicConfig writes no log file
     logging.basicConfig(level=logging.ERROR, format="chemutils: %(levelname)s %(message)s")
     socket.setdefaulttimeout(TIMEOUT_S)
     given = json.load(sys.stdin)
@@ -218,7 +223,10 @@ def _main() -> None:
         return
     for logger in (logging.getLogger(), getattr(chemutils, "logger", None)):  # (on either, by version)
         if logger is not None and getattr(chemutils, "sh", None) in logger.handlers:
-            logger.removeHandler(chemutils.sh)
+            logger.removeHandler(chemutils.sh)  # (printing stack traces with warnings)
+    if getattr(chemutils, "logger", None) is not None:  # (its warnings to its log file alone)
+        chemutils.logger.setLevel(logging.WARNING)
+        chemutils.logger.propagate = False
     if not getattr(chemutils, "chemspipy_api_key", None):
         chemutils.chemspipy_api_key = None  # (none to give: not asked, rather than refused)
     for cid, inchi, props in given["odors"]:
