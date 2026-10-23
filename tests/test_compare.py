@@ -18,10 +18,10 @@ VA = "InChI=1S/C5H10O2/c1-2-3-4-5(6)7/h2-4H2,1H3,(H,6,7)"
 EA = "InChI=1S/C4H8O2/c1-3-6-4(2)5/h3H2,1-2H3"
 
 
-def insert(db: Database, tmp_path: Path, cols=COLS, values=None) -> tuple[int, np.ndarray]:
+def insert(db: Database, tmp_path: Path, cols=COLS, values=None, col_names=("date", "fly_num", "roi")) -> tuple[int, np.ndarray]:
     """A dataset of ROWS (va, ea and their mixture, twice each) by `cols`; its id and values (trials × units)."""
     values = np.arange(len(ROWS) * len(cols), dtype=float).reshape(len(ROWS), len(cols)) if values is None else values
-    parsed = load_file(write_csv(make_wide(ROWS, cols, values), tmp_path))
+    parsed = load_file(write_csv(make_wide(ROWS, cols, values, col_names=col_names), tmp_path))
     ds_id = db.insert_dataset(
         created_at="2026-10-21T10:00:00", title="t", readme_md="#", readme_edited=False, data_file="x.csv",
         metadata={"uploader_name": "me", "indicator": "GCaMP6f", "driver": "GH146", "coding_unit": "glomeruli"},
@@ -56,6 +56,21 @@ def test_dataset(tmp_path):
     m = np.frombuffer(base64.b64decode(d["values_b64"]), "<f4").reshape(3, 3)
     np.testing.assert_allclose(m[0], v[0:2].mean(axis=0))
     assert compare.dataset(db, ds_id + 1, tmp_path) is None
+
+
+def test_bad_rois(tmp_path):
+    db = Database(tmp_path / "db.sqlite3")
+    # glomeruli: each the mean of its ROIs not marked bad (none left: no column)
+    cols = [("2024-01-01", 1, "DM2", False), ("2024-01-01", 1, "DL5", True), ("2024-01-02", 1, "DM2", True)]
+    ds_id, v = insert(db, tmp_path, cols=cols, col_names=("date", "fly_num", "roi", "bad"))
+    d = compare.dataset(db, ds_id, tmp_path)
+    assert [(c["label"], c["n_flies"]) for c in d["cols"]] == [("DM2", 1)]
+    m = np.frombuffer(base64.b64decode(d["values_b64"]), "<f4").reshape(3, 1)
+    np.testing.assert_allclose(m[:, 0], [np.nanmean(v[k:k + 2, 0]) for k in (0, 2, 4)], rtol=1e-6)
+    # other ROIs: each its own column, saying whether it is bad
+    cols = [("2024-01-01", 1, 0, False), ("2024-01-01", 1, 1, True), ("2024-01-01", 1, 2, False)]
+    ds_id, _ = insert(db, tmp_path, cols=cols, col_names=("date", "fly_num", "cells", "bad"))
+    assert [c["bad"] for c in compare.dataset(db, ds_id, tmp_path)["cols"]] == [False, True, False]
 
 
 def test_fingerprints():

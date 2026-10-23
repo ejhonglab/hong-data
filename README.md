@@ -99,6 +99,13 @@ glomeruli_diagnostics,False,3mtp @ -5,solvent,0,-0.0377,0.13,...
   each is but for upper and lower case), along with the accepted names. The level may
   be called `cells` instead (in a long file too): its values are then KC ids, so must be
   non-negative integers, and the upload form takes the coding unit to be KCs.
+- **KCs**: every KC of each fly, their ids running from 0 (or 1) to the highest with
+  none missing; a file with gaps is refused, saying which ids each fly lacks (KCs by a
+  `cells` level when the file is read, else numbered ROIs once the coding unit is KCs).
+  Those not to be used are marked in one more column level, `bad` (True or False): a
+  header row after the ROIs' in a wide CSV (`date, fly_num, cells, bad`), a column in a
+  long file. Any ROIs may be marked so. Downloads keep the level (False for the ROIs of
+  datasets without it, among others).
 - **Rows**: at least `odor1` (or `odor`); optionally `panel`, `is_pair`, `odor2`, ...,
   `repeat`. Several `odor<n>` levels are mixture components presented together and
   are displayed joined with ` + ` (solvent components dropped), as in `hong2p.olf`. A
@@ -334,6 +341,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     remove a glomerulus from every fly. Choosing another order in the toolbar replaces the dragged one. The orange
     *Reset rows & columns* brings back everything removed, in the toolbar's order.
     Edits are kept for each dataset while you look at others.
+  - *Hide bad ROIs* (KC data only): KCs marked bad are hidden from the matrix, its
+    clustering and exports, by default whenever a dataset has any; untick to show them.
+    In Compare they are also left out of everything computed (similarities, their
+    correlations), and in Merge of the means datasets are scaled by.
   - *Clustering*: ROIs and/or odors ordered by hierarchical clustering (average
     linkage, correlation or Euclidean distance on trial-averaged responses, missing
     values skipped pairwise), with dendrograms. ROIs are always clustered all

@@ -323,18 +323,59 @@ def test_rois_alone_errors(tmp_path):
 
 def test_cells_are_kc_ids(tmp_path):
     # 'cells' for 'roi': KC ids, integers
-    cols = [("2024-01-01", 1, 0), ("2024-01-01", 1, 7), ("2024-01-02", 1, 0)]
+    cols = [("2024-01-01", 1, 0), ("2024-01-01", 1, 1), ("2024-01-02", 1, 1)]
     p = load_file(write_csv(make_wide(ROWS, cols, col_names=("date", "fly_num", "cells")), tmp_path))
-    assert p.col_levels == ["date", "fly_num", "cells"] and [u["roi"] for u in p.units] == ["0", "7", "0"]
+    assert p.col_levels == ["date", "fly_num", "cells"] and [u["roi"] for u in p.units] == ["0", "1", "1"]
     assert {u["roi_kind"] for u in p.units} == {"int"} and p.summary()["roi_kind"] == "integers"
+    assert {u["bad"] for u in p.units} == {None}  # (no level saying)
     # long, too
     long = make_wide(ROWS, cols, col_names=("date", "fly_num", "cells")).stack(list(range(3)), future_stack=True).rename("value").reset_index()
     long.to_csv(tmp_path / "long.csv", index=False)
     q = load_file(tmp_path / "long.csv")
-    assert q.col_levels == ["date", "fly_num", "cells"] and sorted(u["roi"] for u in q.units) == ["0", "0", "7"]
+    assert q.col_levels == ["date", "fly_num", "cells"] and sorted(u["roi"] for u in q.units) == ["0", "1", "1"]
     # glomeruli are not KC ids
     e = errors_for(make_wide(ROWS, [("2024-01-01", 1, "DM2"), ("2024-01-01", 1, 3)], col_names=("date", "fly_num", "cells")), tmp_path)
     assert "'cells' values are KC ids, so must be non-negative integers; not: 'DM2'" in e
+
+
+def test_kc_ids_all_there(tmp_path):
+    # every KC of each fly, from 0 or 1 to the highest: else refused, with what is missing
+    cols = [("2024-01-01", 1, i) for i in (0, 1, 2, 5, 9)] + [("2024-01-02", 1, i) for i in (2, 3)] + [("2024-01-03", 1, 1)]
+    e = errors_for(make_wide(ROWS, cols, col_names=("date", "fly_num", "cells")), tmp_path)
+    assert ("KC data must have every KC of each fly, their ids running from 0 (or 1) to the highest, none missing: "
+            "2024-01-01 fly 1 has no 3–4, 6–8; 2024-01-02 fly 1 has no 1. Upload all of each fly's KCs, with one more column "
+            "level 'bad' (True or False) marking those not to be used") in e
+    # ROIs named otherwise than 'cells' are not taken to be KCs here (the coding unit says so, at upload)
+    load_file(write_csv(make_wide(ROWS, cols), tmp_path))
+
+
+def test_bad_level(tmp_path):
+    # a 'bad' level, of any ROIs: True or False (as written), wherever it is
+    cols = [("2024-01-01", 1, 0, False), ("2024-01-01", 1, 1, True), ("2024-01-01", 1, 2, "false"), ("2024-01-02", 1, 1, 1)]
+    df = make_wide(ROWS, cols, col_names=("date", "fly_num", "cells", "bad"))
+    p = load_file(write_csv(df, tmp_path))
+    assert p.col_levels == ["date", "fly_num", "cells", "bad"] and [u["bad"] for u in p.units] == [False, True, False, True]
+    assert p.summary()["n_bad"] == 2
+    q = load_file(write_csv(df.reorder_levels([3, 0, 1, 2], axis=1), tmp_path, "first.csv"))
+    assert [u["bad"] for u in q.units] == [False, True, False, True] and any("reordered" in w for w in q.warnings)
+    long = df.stack(list(range(4)), future_stack=True).rename("value").reset_index()
+    long.to_csv(tmp_path / "long.csv", index=False)
+    r = load_file(tmp_path / "long.csv")
+    assert r.col_levels == ["date", "fly_num", "cells", "bad"] and not r.warnings[1:] and sum(u["bad"] for u in r.units) == 2
+    make_wide(ROWS, [c[:3] + (bool(i % 2),) for i, c in enumerate(cols)], col_names=("date", "fly_num", "cells", "bad")).to_parquet(
+        tmp_path / "x.parquet")
+    assert [u["bad"] for u in load_file(tmp_path / "x.parquet").units] == [False, True, False, True]
+    # glomeruli too, and without flies
+    g = load_file(write_csv(make_wide(ROWS, [("2024-01-01", 1, "DM2", True), ("2024-01-01", 1, "DL5", False)],
+                                      col_names=("date", "fly_num", "roi", "bad")), tmp_path, "g.csv"))
+    assert [u["bad"] for u in g.units] == [True, False]
+    nf = make_wide(ROWS, [(0, False), (1, True)], col_names=("cells", "bad"))
+    nf.to_parquet(tmp_path / "nf.parquet")
+    n = load_file(tmp_path / "nf.parquet")
+    assert n.col_levels == ["cells", "bad"] and [(u["roi"], u["bad"], u["date"]) for u in n.units] == [("0", False, None), ("1", True, None)]
+    # True or False only, and one such level
+    bad = make_wide(ROWS, [("2024-01-01", 1, 0, "maybe"), ("2024-01-01", 1, 1, "")], col_names=("date", "fly_num", "cells", "bad"))
+    assert "'bad' values must be True or False: '', 'maybe'" in errors_for(bad, tmp_path)
 
 
 def test_mixture_in_one_level(tmp_path):

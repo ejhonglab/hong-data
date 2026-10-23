@@ -149,8 +149,10 @@ def odor_key(components: list[str]) -> Optional[tuple]:
 
 def dataset_means(matrix: dict, by_roi: bool) -> dict[tuple, dict[Optional[str], float]]:
     """A dataset's mean response to each odor (`odor_key`), over its repeats: per ROI name
-    (over flies) with `by_roi`, else over all ROIs (under the ROI None)."""
-    values, units = matrix["values"], matrix["units"]
+    (over flies) with `by_roi`, else over all ROIs (under the ROI None); ROIs marked not to
+    be used (bad) left out."""
+    good = [i for i, u in enumerate(matrix["units"]) if not u.get("bad")]
+    values, units = matrix["values"][good], [matrix["units"][i] for i in good]
     cols: dict[tuple, list[int]] = {}
     for j, t in enumerate(matrix["trials"]):
         k = odor_key(t["components"])

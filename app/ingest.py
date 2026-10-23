@@ -10,7 +10,11 @@ rows and columns):
              (``odor`` alone is accepted in place of ``odor1``)
 
 The ROI level may be called ``cells`` instead of ``roi``: its values are then KC ids,
-which must be non-negative integers.
+which must be non-negative integers, every one of each fly's from 0 or 1 to its highest
+(`kc_id_problems`): all of a fly's KCs, those not to be used marked so in a level ``bad``.
+
+Any of these may have one more column level, ``bad`` (True or False): whether each ROI
+is one not to be used (hidden by default where KCs are shown, left out of comparisons).
 
 Or, without flies (for now, with a warning), columns of ROIs alone: in a CSV, a single
 header line of the row levels' names then the ROIs' (as ``to_csv`` writes a frame with
@@ -18,7 +22,7 @@ plain columns).
 
 *long* (one row per value):
 
-    columns: date, fly_num, roi (or cells), [panel,] odor1[, odor2, ...][, repeat], value
+    columns: date, fly_num, roi (or cells)[, bad], [panel,] odor1[, odor2, ...][, repeat], value
 
 (``date`` and ``fly_num`` both left out, without flies.)
 
@@ -63,6 +67,8 @@ from .odors import (
 
 COL_LEVELS = ("date", "fly_num", "roi")
 CELLS = "cells"  # the roi level, by another name: its values KC ids (integers)
+BAD = "bad"  # a column level that may be added: whether each ROI is not to be used (True/False)
+MAX_KC_PROBLEMS = 5  # flies whose KC ids have gaps, named in that error
 KNOWN_ROW_LEVELS = {"panel", "is_pair", "repeat"}
 LONG_VALUE_COLUMNS = ("value", "response", "resp", "df_over_f", "dff", "mean_dff", "delta_f", "mean_df_over_f")
 MAX_EXAMPLES = 15
@@ -147,6 +153,7 @@ class ParsedData:
             "has_repeat_level": "repeat" in self.row_levels,
             "n_glomerulus_rois": n_glom,
             "n_int_rois": n_int,
+            "n_bad": sum(1 for u in self.units if u.get("bad")),
             "roi_kind": roi_kind,
             "nan_fraction": float(1 - finite.mean()) if self.values.size else 0.0,
             "vmin": vmin,
@@ -202,9 +209,28 @@ def load_file(path: Path, *, original_name: Optional[str] = None) -> ParsedData:
     return _load_csv(path)
 
 
+def _read_parquet(path: Path) -> pd.DataFrame:
+    """A parquet file as pandas wrote it, but for column levels of True and False (a `BAD`
+    level), which pandas writes as text and cannot read back ('False' would be True): they
+    are read as the text they are."""
+    import json
+
+    import pyarrow.parquet as pq
+
+    table = pq.read_table(path)
+    meta = table.schema.metadata or {}
+    if b"pandas" in meta:
+        pandas_meta = json.loads(meta[b"pandas"])
+        for level in pandas_meta.get("column_indexes") or []:
+            if level.get("pandas_type") == "bool":
+                level.update(pandas_type="unicode", numpy_type="object")
+        table = table.replace_schema_metadata({**meta, b"pandas": json.dumps(pandas_meta).encode()})
+    return table.to_pandas()
+
+
 def _load_parquet(path: Path) -> ParsedData:
     try:
-        df = pd.read_parquet(path)
+        df = _read_parquet(path)
     except ImportError as e:  # pragma: no cover - depends on environment
         raise ValidationError([f"parquet support is not installed on the server ({e}); install pyarrow"])
     except Exception as e:
@@ -236,11 +262,12 @@ def _sniff_csv(path: Path) -> tuple[str, int, int, bool, str]:
     MultiIndex columns), 'wide-rois' (one header row: the row levels' names, then the
     ROIs', as pandas writes a frame with plain columns) or 'long'.
     """
-    rows, delim = _read_head(path, 8)
-    while len(rows) < 8:
+    rows, delim = _read_head(path, 9)
+    while len(rows) < 9:
         rows.append([])
-    first_cells = [_col_level(r[0].strip()) if r else "" for r in rows[:3]]
-    if set(first_cells) != set(COL_LEVELS):
+    first_cells = [_col_level(r[0].strip()) if r else "" for r in rows[:4]]
+    head = first_cells if BAD in first_cells else first_cells[:3]  # (a 'bad' level among the first)
+    if set(head) != {*COL_LEVELS, *([BAD] if BAD in head else [])}:
         # a single header line, of the row levels' names then the ROIs' (no flies)
         header = [c.strip() for c in rows[0]]
         lead = list(itertools.takewhile(_is_row_level, header))
@@ -255,9 +282,8 @@ def _sniff_csv(path: Path) -> tuple[str, int, int, bool, str]:
                     break
                 levels.append(r[0].strip())
             if 1 <= len(levels) <= 6 and all(not _is_number(x) for x in levels):
-                raise ValidationError(
-                    [f"column header levels must be exactly {list(COL_LEVELS)} ('{CELLS}' for 'roi' too); found {levels}"]
-                )
+                raise ValidationError([f"column header levels must be exactly {list(COL_LEVELS)} ('{CELLS}' for 'roi' too), "
+                                       f"and '{BAD}' if any; found {levels}"])
         return "long", 0, 0, False, delim
     n_index = 1 + sum(1 for _ in itertools.takewhile(lambda c: c.strip() == "", rows[0][1:]))
 
@@ -265,14 +291,16 @@ def _sniff_csv(path: Path) -> tuple[str, int, int, bool, str]:
         return len(r) >= n_index and all(c.strip() == "" for c in r[n_index:]) and any(c.strip() for c in r[:n_index])
 
     # header rows run until the row naming the index levels (empty after the index columns)
-    n_header, has_names_row = 3, False
-    for k in range(3, 8):
+    n_header, has_names_row = len(head), False
+    for k in range(len(head), 9):
         if is_names_row(rows[k]):
             n_header, has_names_row = k, True
             break
     levels = [r[0].strip() for r in rows[:n_header]]
-    if set(map(_col_level, levels)) != set(COL_LEVELS) or len(levels) != len(COL_LEVELS):
-        raise ValidationError([f"column header levels must be exactly {list(COL_LEVELS)} ('{CELLS}' for 'roi' too); found {levels}"])
+    core = [_col_level(n) for n in levels if n != BAD]
+    if set(core) != set(COL_LEVELS) or len(core) != len(COL_LEVELS) or len(levels) - len(core) > 1:
+        raise ValidationError([f"column header levels must be exactly {list(COL_LEVELS)} ('{CELLS}' for 'roi' too), "
+                               f"and '{BAD}' if any; found {levels}"])
     return "wide", n_index, n_header, has_names_row, delim
 
 
@@ -361,14 +389,14 @@ def _long_to_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
             f"Found columns: {cols[:12]}{'...' if len(cols) > 12 else ''}"
         )
         raise ValidationError(errors)
-    col_levels = [c for c in levels if c in cols]  # (roi alone: no flies)
+    col_levels = [c for c in (*levels, BAD) if c in cols]  # (roi alone: no flies)
     odor_cols = [c for c in cols if is_odor_level(c)]
     if not odor_cols:
         raise ValidationError(["long-format file has no 'odor1' (or 'odor') column"])
     value_col = next((c for c in LONG_VALUE_COLUMNS if c in cols), None)
     row_cols = [c for c in cols if c in KNOWN_ROW_LEVELS or is_odor_level(c)]
     if value_col is None:
-        leftover = [c for c in cols if c not in levels and c not in row_cols]
+        leftover = [c for c in cols if c not in col_levels and c not in levels and c not in row_cols]
         if len(leftover) == 1:
             value_col = leftover[0]
         else:
@@ -376,7 +404,7 @@ def _long_to_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
                 [f"long-format file needs a value column named one of {list(LONG_VALUE_COLUMNS)}; "
                  f"ambiguous leftover columns: {leftover}"]
             )
-    extra = [c for c in cols if c not in levels and c not in row_cols and c != value_col]
+    extra = [c for c in cols if c not in col_levels and c not in levels and c not in row_cols and c != value_col]
     warnings = []
     if extra:
         warnings.append(f"ignoring extra columns in long-format file: {extra}")
@@ -407,7 +435,7 @@ def _long_to_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
     wide = pd.DataFrame(
         values,
         index=pd.MultiIndex.from_tuples(list(row_index), names=ordered_rows),
-        columns=(pd.MultiIndex.from_tuples(list(col_index), names=col_levels) if len(col_levels) == 3
+        columns=(pd.MultiIndex.from_tuples(list(col_index), names=col_levels) if len(col_levels) > 1
                  else pd.Index([k[0] for k in col_index], name=roi)),
     )
     pd_ = _validate_wide(wide, source_format=source_format)
@@ -511,6 +539,50 @@ def _to_int_like(v) -> Optional[int]:
     return int(f) if f.is_integer() else None
 
 
+def _bool_like(v) -> Optional[bool]:
+    """True or False as a file may write it (True, 'true', 1, '1'...), else None."""
+    if isinstance(v, (bool, np.bool_)):
+        return bool(v)
+    s = str(v).strip().lower()
+    if s in ("true", "1", "1.0"):
+        return True
+    if s in ("false", "0", "0.0"):
+        return False
+    return None
+
+
+def _id_ranges(ids: list[int]) -> str:
+    """Integers (sorted) as runs: [3, 7, 8, 9] -> '3, 7–9'; the first few, then how many more."""
+    runs: list[list[int]] = []
+    for i in ids:
+        if runs and i == runs[-1][1] + 1:
+            runs[-1][1] = i
+        else:
+            runs.append([i, i])
+    text = [str(a) if a == b else f"{a}–{b}" for a, b in runs]
+    return ", ".join(text[:6]) + (f" and {len(text) - 6} more" if len(text) > 6 else "")
+
+
+def kc_id_problems(units: list[tuple]) -> Optional[str]:
+    """Why KCs' ids are not as they must be, or None: each fly's (``(date, fly_num, id)``,
+    ids as integer strings) every one from 0 or 1 (as the lowest is) to the highest, so
+    that every KC segmented is there, those not to be used marked `BAD`."""
+    by_fly: dict[tuple, set[int]] = {}
+    for d, f, r in units:
+        by_fly.setdefault((d, f), set()).add(int(r))
+    problems = []
+    for (d, f), ids in sorted(by_fly.items(), key=lambda kv: (kv[0][0] or "", kv[0][1] or 0)):
+        missing = sorted(set(range(0 if min(ids) == 0 else 1, max(ids) + 1)) - ids)
+        if missing:
+            problems.append(f"{f'{d} fly {f}' if d is not None else 'the KCs'} has no {_id_ranges(missing)}")
+    if not problems:
+        return None
+    return (f"KC data must have every KC of each fly, their ids running from 0 (or 1) to the highest, none missing: "
+            f"{'; '.join(problems[:MAX_KC_PROBLEMS])}{f'; and {len(problems) - MAX_KC_PROBLEMS} more flies' if len(problems) > MAX_KC_PROBLEMS else ''}. "
+            f"Upload all of each fly's KCs, with one more column level '{BAD}' (True or False) marking those not to be used: "
+            f"a header row after the ids in a wide file (date, fly_num, {CELLS}, {BAD}), or a column in a long one")
+
+
 def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
     errors: list[str] = []
     warnings: list[str] = []
@@ -521,21 +593,21 @@ def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
     # roi level called 'cells' (KC ids) as it may be
     file_levels = [str(n) if n is not None else "" for n in df.columns.names]
     cells = CELLS in file_levels
-    flies = isinstance(df.columns, pd.MultiIndex) and list(map(_col_level, file_levels)) != ["roi"]
+    has_bad = BAD in file_levels
+    core = [_col_level(n) for n in file_levels if n != BAD]
+    flies = isinstance(df.columns, pd.MultiIndex) and core != ["roi"]
     if cells:
         df = df.copy()
         df.columns = df.columns.set_names([_col_level(n) for n in file_levels])
-    if flies:
-        col_names = [_col_level(n) for n in file_levels]
-        if set(col_names) != set(COL_LEVELS) or len(col_names) != len(COL_LEVELS):
-            errors.append(
-                f"column header levels must be exactly {list(COL_LEVELS)} ('{CELLS}' for 'roi' too, or either alone); found {file_levels}"
-            )
-            raise ValidationError(errors)
-        if col_names != list(COL_LEVELS):
-            df = df.reorder_levels(list(COL_LEVELS), axis=1)
-            warnings.append(f"column levels were reordered from {file_levels} to {[l for l in ('date', 'fly_num', CELLS if cells else 'roi')]}")
-    else:
+    if file_levels.count(BAD) > 1 or (flies and (set(core) != set(COL_LEVELS) or len(core) != len(COL_LEVELS))):
+        errors.append(f"column header levels must be exactly {list(COL_LEVELS)} ('{CELLS}' for 'roi' too, or either alone), "
+                      f"and '{BAD}' if any; found {file_levels}")
+        raise ValidationError(errors)
+    want = [*(COL_LEVELS if flies else ["roi"]), *([BAD] if has_bad else [])]
+    if isinstance(df.columns, pd.MultiIndex) and [_col_level(n) for n in file_levels] != want:
+        df = df.reorder_levels(want, axis=1)
+        warnings.append(f"column levels were reordered from {file_levels} to {[CELLS if cells and l == 'roi' else l for l in want]}")
+    if not flies:
         warnings.append("no flies: the columns are ROIs alone, without 'date' or 'fly_num'. This is allowed for now, "
                         "but nothing is known of the flies (how many, when, their raw data and movies)")
 
@@ -574,8 +646,14 @@ def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
     # ---- column values: date / fly_num / roi ---------------------------------
     cols_frame = df.columns.to_frame(index=False)
     if not flies:
-        cols_frame.columns = ["roi"]
+        cols_frame.columns = want
         cols_frame["date"] = cols_frame["fly_num"] = None
+    bads: list[Optional[bool]] = [None] * len(cols_frame)
+    if has_bad:
+        bads = [_bool_like(v) for v in cols_frame[BAD].tolist()]
+        not_bool = sorted({str(v) for v, b in zip(cols_frame[BAD].tolist(), bads) if b is None})
+        if not_bool:
+            errors.append(f"'{BAD}' values must be True or False: {_examples(not_bool)}")
     dates_raw = cols_frame["date"].tolist()
     with warnings_module.catch_warnings():
         warnings_module.simplefilter("ignore")
@@ -653,6 +731,10 @@ def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
                         + _examples(sorted(set(merged), key=glom.roi_sort_key)))
 
     unit_keys = list(zip(date_strs, fly_nums, rois))
+    if cells and not bad_rois and not bad_dates and not bad_fly:
+        problem = kc_id_problems(unit_keys)
+        if problem:
+            errors.append(problem)
     seen = {}
     dup_units = []
     for k in unit_keys:
@@ -775,8 +857,8 @@ def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
         warnings.append(f"{all_nan_trials} trial row(s) contain only NaN")
 
     units = [
-        {"date": d, "fly_num": f, "roi": r, "roi_kind": k}
-        for (d, f, r), k in zip(unit_keys, roi_kinds)
+        {"date": d, "fly_num": f, "roi": r, "roi_kind": k, "bad": b}
+        for (d, f, r), k, b in zip(unit_keys, roi_kinds, bads)
     ]
     trials = []
     for i in range(len(idx_frame)):
@@ -814,7 +896,7 @@ def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
         trials=trials,
         values=values.astype(np.float32),
         row_levels=row_names,
-        col_levels=[l if l != "roi" or not cells else CELLS for l in (COL_LEVELS if flies else ["roi"])],
+        col_levels=[CELLS if cells and l == "roi" else l for l in want],
         source_format=source_format,
         warnings=warnings,
     )

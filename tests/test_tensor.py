@@ -447,6 +447,26 @@ def test_lowercase_only(main, tmp_path, monkeypatch):
     assert "Va" in main._known_odor_names() and main._case_check([{"components": ["Va @ -1", "New @ -1"]}])["uppercase"] == ["New"]
 
 
+def test_kc_ids_by_coding_unit(main, tmp_path, monkeypatch):
+    from app import config
+
+    # numbered ROIs (not 'cells') are refused with gaps once the coding unit says they are KCs
+    monkeypatch.setattr(config, "STAGING_DIR", tmp_path / "staging")
+    d = config.STAGING_DIR / "stage9999"
+    d.mkdir(parents=True)
+    save_parsed(load_file(write_csv(make_wide(ROWS, [("2024-01-01", 1, 1), ("2024-01-01", 1, 3)]), tmp_path)), d / "parsed")
+    (d / "stage.json").write_text(json.dumps({"stage_id": "stage9999", "data_file": "x.csv", "size_bytes": 1, "sha256": "0" * 64,
+                                              "source_format": "wide-csv", "odor_yamls": [], "experiment_xml": None,
+                                              "experiment_xml_info": None}))
+    stage = {"stage_id": "stage9999"}
+    md = {"uploader_name": "Ann", "indicator": "GCaMP6f", "driver": "MB247", "coding_unit": "Kenyon cells"}
+    status, r = call(main.stage_readme, body={"metadata": md}, path_params=stage)
+    assert status == 422 and r["errors"][0].startswith("KC data must have every KC of each fly") and "2024-01-01 fly 1 has no 2" in r["errors"][0]
+    status, r = call(main.stage_commit, body={"metadata": md, "readme": "#"}, path_params=stage)
+    assert status == 422 and r["errors"][0].startswith("KC data must have every KC")
+    assert call(main.stage_readme, body={"metadata": {**md, "coding_unit": "PNs"}}, path_params=stage)[1]["ok"]
+
+
 def test_check_data_path(root, tmp_path):
     assert tensor.check_data_path("tom//raw/", root) == {"input": "tom//raw/", "path": "tom/raw", "ok": True, "error": None,
                                                           "warning": None}

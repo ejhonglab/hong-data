@@ -217,7 +217,7 @@ def test_dataset_without_flies(store, tmp_path, monkeypatch):
     db, datasets_dir = store
     ds_id = add(store, parsed)
     m = db.get_matrix_arrays(ds_id)
-    assert m["units"][0] == {"date": None, "fly_num": None, "roi": "D", "roi_kind": "glomerulus"}
+    assert m["units"][0] == {"date": None, "fly_num": None, "roi": "D", "roi_kind": "glomerulus", "bad": None}
     d = db.get_dataset(ds_id)
     assert d["n_flies"] == 0 and d["last_fly_date"] is None
     # downloaded as uploaded (a single header line; long without date or fly_num), so it uploads again
@@ -253,6 +253,36 @@ def test_dataset_without_flies(store, tmp_path, monkeypatch):
     with sqlite3.connect(old) as con:
         assert con.execute("SELECT count(*) FROM units WHERE dataset_id = ?", (with_flies,)).fetchone()[0] == 0
         assert con.execute("SELECT count(*) FROM responses WHERE dataset_id = ?", (with_flies,)).fetchone()[0] == 0
+
+
+def test_bad_rois(store, tmp_path):
+    db, datasets_dir = store
+    # KCs (a 'cells' level) with a 'bad' level: downloaded as uploaded, and uploaded again the same
+    cols = [("2024-01-01", 1, 0, False), ("2024-01-01", 1, 1, True), ("2024-01-02", 1, 1, False)]
+    parsed = parse(tmp_path, ROWS, [c[:3] for c in cols], name="kc.csv")
+    for u, c in zip(parsed.units, cols):
+        u["bad"] = c[3]
+    parsed.col_levels = ["date", "fly_num", "cells", "bad"]
+    ia = add(store, parsed)
+    assert [u["bad"] for u in db.get_matrix_arrays(ia)["units"]] == [False, True, False]
+    out = tmp_path / "kc_down.csv"
+    write_download(db, [ia], "wide", out, datasets_dir)
+    again = load_file(out)
+    assert again.col_levels == ["date", "fly_num", "cells", "bad"] and [u["bad"] for u in again.units] == [False, True, False]
+    write_download(db, [ia], "long", out, datasets_dir)
+    assert list(pd.read_csv(out)["bad"].drop_duplicates()) == [False, True]
+    # with another that does not say: its ROIs False
+    ib = add(store, parse(tmp_path, ROWS, COLS[:1], name="g.csv"))
+    zip_path = tmp_path / "both.zip"
+    name, _ = write_download(db, [ia, ib], "wide", zip_path, datasets_dir)
+    with zipfile.ZipFile(zip_path) as zf, zf.open(f"{name[:-4]}/responses_wide.csv") as f:
+        wide = pd.read_csv(f, header=list(range(5)), index_col=list(range(4)))  # (panel, odor1, odor2, repeat)
+        readme = zf.read(f"{name[:-4]}/README.md").decode()
+    assert list(wide.columns.names) == ["dataset_id", "date", "fly_num", "roi", "bad"]
+    assert [b for _, _, _, _, b in wide.columns] == ["False", "True", "False", "False"]
+    assert "Header rows: dataset_id, date, fly_num, roi, bad" in readme and "`bad`: whether each ROI was marked" in readme
+    name, _ = write_download(db, [ia, ib], "long", zip_path, datasets_dir)
+    assert read_member(zip_path, f"{name[:-4]}/responses_long.csv").groupby("dataset_id")["bad"].any().to_dict() == {ia: True, ib: False}
 
 
 def test_odors_tex():

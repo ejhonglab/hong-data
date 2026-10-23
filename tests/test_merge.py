@@ -54,6 +54,15 @@ def groups(p):
     return {g["key"]: (g["ids"], g["scale"]) for g in p["groups"]}
 
 
+def test_means_without_bad_rois():
+    # ROIs marked bad are left out of a dataset's means (as merges scale datasets by them)
+    m = {"values": np.array([[1.0, 2.0], [100.0, 100.0], [3.0, 4.0]], dtype=np.float32),
+         "units": [{"roi": "0", "bad": False}, {"roi": "1", "bad": True}, {"roi": "2", "bad": None}],
+         "trials": [{"components": ["va @ -3"]}, {"components": ["va @ -3"]}]}
+    assert merge.dataset_means(m, by_roi=False) == {merge.odor_key(["va @ -3"]): {None: 2.5}}
+    assert merge.dataset_means(m, by_roi=True) == {merge.odor_key(["va @ -3"]): {"0": 1.5, "2": 3.5}}
+
+
 def test_match():
     avail = {(("va", -3.5),), (("va", -4.0),), (("ea", -2.0), ("va", -3.0))}
     assert merge.match(avail, (("va", -3.0),), 1) == (("va", -3.5),)

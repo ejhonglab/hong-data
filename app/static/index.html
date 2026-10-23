@@ -735,6 +735,9 @@
     <div class="vt-group" data-role="chem" title="How the chemicals matched to the Odors tab are labelled">
       <label>Chemicals <select data-opt="chemLabels"><option value="name">names (Odors tab)</option><option value="abbrev">abbreviations</option><option value="file">as in the file</option></select></label>
     </div>
+    <div class="vt-group" data-role="bad" title="KCs marked not to be used (True in a 'bad' level of the data): hidden from the matrix, its clustering and exports">
+      <label class="check"><input type="checkbox" data-bad> Hide bad ROIs <span class="muted" data-out="bad"></span></label>
+    </div>
     <div class="vt-group" data-role="kc" title="Of a table of glomeruli by something other than odors, that other axis is taken to be KCs: summed, each glomerulus's values over the KCs not removed (missing values left out)">
       <label class="check"><input type="checkbox" data-opt="sumKCs"> Sum over KCs</label>
     </div>

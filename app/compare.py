@@ -32,11 +32,12 @@ def dataset(db, ds_id: int, datasets_dir: Path) -> Optional[dict]:
 
     Returns:
         dict with ``id``, ``title``, ``coding_unit``, ``driver``, ``kind`` ('glomeruli': a column per
-        glomerulus, the mean of the flies that have it; 'rois': a column per ROI of each
-        fly), ``rows`` (each odor, in the order shown in Browse: ``panel``, ``odor``,
+        glomerulus, the mean of the flies that have it, but ROIs marked bad; 'rois': a column per
+        ROI of each fly), ``rows`` (each odor, in the order shown in Browse: ``panel``, ``odor``,
         ``odor_id`` and ``chem`` (``name``, ``abbrev``, ``cid``) if it is one chemical of
-        the odor table, ``log10_conc``), ``cols`` (``label``, and for glomeruli
-        ``n_flies``) and ``values_b64`` (float32, rows × cols, NaN where nothing is).
+        the odor table, ``log10_conc``), ``cols`` (``label``; for glomeruli ``n_flies``, for
+        ROIs ``bad``: whether marked not to be used, None if the file did not say) and
+        ``values_b64`` (float32, rows × cols, NaN where nothing is).
     """
     ds = db.get_dataset(ds_id)
     arrays = db.get_matrix_arrays(ds_id)
@@ -75,14 +76,18 @@ def dataset(db, ds_id: int, datasets_dir: Path) -> Optional[dict]:
         order = [g for g in glomeruli.GLOMERULUS_NAMES if g in names] + [g for g in names if g not in glomeruli.GLOMERULI]
         cols, columns = [], []
         for g in order:
-            mine = [i for i, u in enumerate(units) if u["roi"] == g]
+            mine = [i for i, u in enumerate(units) if u["roi"] == g and not u.get("bad")]
+            if not mine:
+                continue
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", RuntimeWarning)
                 columns.append(np.nanmean(means[mine], axis=0))
             cols.append({"label": g, "n_flies": len({(units[i]["date"], units[i]["fly_num"]) for i in mine if units[i]["date"] is not None})})
-        matrix, kind = np.stack(columns, axis=1), "glomeruli"  # odors × glomeruli
+        matrix = np.stack(columns, axis=1) if columns else np.empty((len(keys), 0))  # odors × glomeruli (none: all bad)
+        kind = "glomeruli"
     else:
-        cols = [{"label": f"{u['date']} fly {u['fly_num']}: {u['roi']}" if u["date"] is not None else u["roi"]} for u in units]
+        cols = [{"label": f"{u['date']} fly {u['fly_num']}: {u['roi']}" if u["date"] is not None else u["roi"], "bad": u.get("bad")}
+                for u in units]
         matrix, kind = means.T, "rois"  # odors × ROIs
     return {
         "id": ds_id, "title": ds["title"], "coding_unit": ds["metadata"].get("coding_unit"), "driver": ds["metadata"].get("driver"),

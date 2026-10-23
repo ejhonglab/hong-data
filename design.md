@@ -126,6 +126,15 @@ between the frontend and the server. Using the app is described in
   before, to allow it: `db._units_nullable`), so it counts no flies, is grouped in the
   viewer as "fly not given", has nothing looked for on tensor, and downloads as it came
   (one header line). It is allowed with a warning for now, as is a file without trials.
+- **ROIs marked bad are kept, and left out where used.** KC datasets must have every KC
+  of each fly (ids from 0 or 1 to the highest, `ingest.kc_id_problems`), so that a
+  dataset says which KCs were segmented and not used rather than leaving gaps: those
+  are marked in a `bad` column level, stored with each unit (`units.bad`, NULL where a
+  file did not say). Viewers of KCs hide them by default (as rows or columns removed,
+  but not among the user's own removals); Compare's computations and Merge's scale
+  factors leave them out; downloads keep them, with the level. Pandas cannot read back
+  a parquet file with a column level of True and False (it writes them as text), so
+  `ingest._read_parquet` reads such a level as its text.
 - **Odor names are lowercased only where shown or downloaded, never where stored.**
   Lowercase odor names are a choice of each viewer (Settings, kept in the browser,
   sent to the server as `lower=1` with downloads), so datasets, the odor table and the

@@ -536,6 +536,8 @@ class MatrixViewer {
     this.container = container;
     this.kind = kind;
     this.asUploaded = asUploaded;
+    this.kc = false; // whether it shows KCs: then its ROIs marked bad can be hidden
+    this.hideBad = false; // whether they are (for each new matrix, if it has any)
     container.classList.add('viewer');
     container.innerHTML = '';
     container.appendChild($('#viewer-toolbar').content.cloneNode(true));
@@ -619,6 +621,7 @@ class MatrixViewer {
       if (cb.dataset.opt === 'transpose') this.linked?.other._setLinkedOpts({ transpose: cb.checked });
     }));
     $('[data-role=reset]', tb).addEventListener('click', () => { Object.assign(this.edits, newEdits()); this._rebuild(); this._linkEdits(); });
+    $('[data-bad]', tb).addEventListener('change', (e) => { this.hideBad = e.target.checked; this._rebuild(); });
     wireMenu($('[data-role=export]', tb), ({ export: format }) => this.exportFigure(format));
   }
 
@@ -644,6 +647,11 @@ class MatrixViewer {
     for (const role of ['mode', 'rows', 'cols', 'cluster']) $(`[data-role=${role}]`, tb).hidden = !neural;
     $('[data-role=chem]', tb).hidden = neural || !this.data?.chemAxis;
     $('[data-role=kc]', tb).hidden = neural || !this.data?.kcAxis;
+    const nBad = this._nBad(), bad = $('[data-bad]', tb);
+    $('[data-role=bad]', tb).hidden = !this.kc;
+    bad.checked = this.hideBad && nBad > 0;
+    bad.disabled = !nBad;
+    $('[data-out=bad]', tb).textContent = nBad ? `(${nBad.toLocaleString()})` : '(none marked)';
     const mapKind = this._valueKind();
     const cmSel = $('select[data-opt=colormap]', tb);
     const maps = colormapsOfKind(mapKind);
@@ -673,11 +681,13 @@ class MatrixViewer {
     $('[data-role=rows-label]', tb).textContent = o.transpose ? 'Columns' : 'Rows';
   }
 
-  // title: for the exported figure's metadata; fileStem: its file name
-  setNeuralData(payload, { title = '', fileStem = 'heatmap' } = {}) {
+  // title: for the exported figure's metadata; fileStem: its file name; kc: whether it is of KCs
+  setNeuralData(payload, { title = '', fileStem = 'heatmap', kc = false } = {}) {
     this._setKind('neural');
+    this.kc = kc;
     if (payload !== this.source) {
       this.source = payload;
+      this.hideBad = payload.units.some((u) => u.bad);
       this.data = { units: payload.units, trials: payload.trials, values: decodeValues(payload.values_b64),
         showOdor: this.asUploaded ? (s) => s : odorShower(payload.trials.map((t) => t.odor)) };
       this._editsFor(payload);
@@ -692,12 +702,14 @@ class MatrixViewer {
 
   // ref: a reference dataset (as from /api/reference/<id>), or a matrix like one with its
   // `values` (Float32Array) given; kind: of the viewer, for its transposing kept apart
-  setGenericData(ref, { title = '', fileStem = 'heatmap', kind: viewerKind = 'generic' } = {}) {
+  setGenericData(ref, { title = '', fileStem = 'heatmap', kind: viewerKind = 'generic', kc = false } = {}) {
     this._setKind(viewerKind);
     this.title = title;
     this.fileStem = fileStem;
+    this.kc = kc;
     if (ref !== this.source) {
       this.source = ref;
+      this.hideBad = ref.cols.some((c) => c.bad);
       this._editsFor(ref);
       const values = ref.values || decodeValues(ref.values_b64);
       const hasGroups = ref.rows.some((r) => r.group != null);
@@ -717,7 +729,7 @@ class MatrixViewer {
         kcAxis: 'kcAxis' in ref ? ref.kcAxis : kcAxisOf(ref),
         model: {
           rows: rows.map((r) => ({ label: r.label, group: r.group, key: r.i, file: r.label, chem: r.chem, detail: r.detail })),
-          cols: ref.cols.map((c, j) => ({ label: c.label, group: null, sub: null, key: j, file: c.label, chem: c.chem, detail: c.detail })),
+          cols: ref.cols.map((c, j) => ({ label: c.label, group: null, sub: null, key: j, file: c.label, chem: c.chem, detail: c.detail, bad: c.bad })),
           values: vals,
           cellText: ref.cellText, // (row, col) of the matrix as given: text to write in that cell
           rowTitle: ref.meta.row_label || 'row',
@@ -730,6 +742,35 @@ class MatrixViewer {
     this._genericColormap();
     this._syncToolbar();
     this._rebuild();
+  }
+
+  // what the status line says of the ROIs marked bad, while they are hidden
+  _badNote() {
+    const n = this.kc && this.hideBad ? this._nBad() : 0;
+    return n ? `${n.toLocaleString()} ROI${n === 1 ? '' : 's'} marked bad hidden` : '';
+  }
+
+  // whether it is of KCs, now known otherwise (the upload form's coding unit)
+  setKc(kc) {
+    if (kc === this.kc) return;
+    this.kc = kc;
+    this._syncToolbar();
+    this._rebuild();
+  }
+
+  // the ROIs marked bad (of neural data, its units; else its columns)
+  _nBad() {
+    if (!this.data) return 0;
+    return (this.kind === 'neural' ? this.data.units : this.data.model.cols).filter((x) => x.bad).length;
+  }
+
+  // the edits of the rows, with the units marked bad removed too while they are hidden
+  _rowEdits() {
+    const { rows } = this.edits;
+    if (!(this.kc && this.hideBad) || this.kind !== 'neural') return rows;
+    const removed = new Set(rows.removed);
+    this.data.units.forEach((u, i) => { if (u.bad) removed.add(i); });
+    return { removed, order: rows.order };
   }
 
   // whether KCs are summed over (as chosen, if there are any)
@@ -759,7 +800,7 @@ class MatrixViewer {
   _genericModel() {
     const b = this.data.model, nC = b.cols.length;
     const rows = arrange(b.rows.map((_, i) => i), (i) => b.rows[i].key, this.edits.rows);
-    const cols = arrange(b.cols.map((_, j) => j), (j) => b.cols[j].key, this.edits.cols);
+    const cols = arrange(b.cols.map((_, j) => j), (j) => b.cols[j].key, this.edits.cols).filter((j) => !(this.kc && this.hideBad && b.cols[j].bad));
     const values = new Float32Array(rows.length * cols.length);
     rows.forEach((i, r) => { cols.forEach((j, c) => { values[r * cols.length + c] = b.values[i * nC + j]; }); });
     const showAbbrev = abbrevShower([...b.rows, ...b.cols].map((it) => it.chem?.abbrev));
@@ -777,16 +818,16 @@ class MatrixViewer {
     const o = this.opts.clusterRows ? { ...this.opts, rowOrder: 'none' } : this.opts;
     if (this.kind !== 'neural') {
       if (COLORMAPS[o.colormap]?.kind === 'sequential') { this.opts.colormapSeq = o.colormap; this._save(); }
-      this._show(this._genericModel());
+      this._show(this._genericModel(), this._badNote());
       return;
     }
-    const { rows, cols } = this.edits;
+    const { cols } = this.edits, rows = this._rowEdits();
     // an order dragged into is not used while its axis is clustered, but comes back after
     const order = neuralOrder(this.data, o);
     order.unitIdx = arrange(order.unitIdx, (u) => u, { removed: rows.removed, order: o.clusterRows ? null : rows.order });
     order.conds = arrange(order.conds, (c) => c.key, { removed: cols.removed, order: o.clusterCols ? null : cols.order });
     let clustering = null;
-    const notes = [];
+    const notes = [this._badNote()].filter(Boolean);
     if (o.clusterRows || o.clusterCols) {
       const removed = (e) => [...e.removed].sort().join('\u0001');
       const key = [o.clusterRows, o.clusterCols, o.metric, removed(rows), removed(cols)].join('|');
@@ -1174,6 +1215,7 @@ class UploadFlow {
     form.addEventListener('input', (e) => this._changedByUser(e.target), true);
     form.addEventListener('change', (e) => this._changedByUser(e.target), true);
     form.uploader_name.addEventListener('change', () => { if (this.stage) this.lookup(); });
+    for (const el of COMBOS.coding_unit) $(el).addEventListener('change', () => this.viewer?.setKc(this._kc()));
     // checked on the server when left, as folders are in the Settings tab
     for (const key of DATASET_FIELDS) {
       form[key].addEventListener('change', async () => {
@@ -1234,6 +1276,7 @@ class UploadFlow {
       $('#step-meta')[key].value = v;
     }
     if (key === 'power_mw') this._syncPower();
+    if (key === 'coding_unit') this.viewer?.setKc(this._kc());
     if (DATASET_FIELDS.includes(key)) showPathCheck($('#step-meta')[key], $(`[data-msg-for=${key}]`), null);
   }
 
@@ -1516,7 +1559,7 @@ class UploadFlow {
     $('#preview').hidden = false;
     $('#preview-caption').textContent = 'This is exactly what will be shown after saving. Hover a cell for its value.';
     if (!this.viewer) this.viewer = new MatrixViewer($('#preview-viewer'), { asUploaded: true });
-    this.viewer.setNeuralData(this.data, { title: name, fileStem: name.replace(/\.[^.]*$/, '') || 'preview' });
+    this.viewer.setNeuralData(this.data, { title: name, fileStem: name.replace(/\.[^.]*$/, '') || 'preview', kc: this._kc() });
     $('#step-meta').hidden = false;
   }
 
@@ -1593,6 +1636,12 @@ class UploadFlow {
     if (seq !== this._odorSeq || this.stage?.stage_id !== stageId) return;
     this.odorCheck = res;
     this._renderOdorCheck();
+  }
+
+  // whether its data is of KCs: its coding unit in the form, or its ROI level 'cells'
+  _kc() {
+    const s = $('#coding-unit-select'), unit = s.value === '__other__' ? $('#coding-unit-other').value : s.value;
+    return isKcData(unit, this.data?.summary?.col_levels);
   }
 
   // the odors of the data not one odor in the odor table (as in the data)
@@ -1851,6 +1900,10 @@ class UploadFlow {
 // a coding unit matched as the Merge tab matches it: in any case, spaces collapsed
 const unitKey = (u) => (u || '').trim().replace(/\s+/g, ' ').toLowerCase();
 
+// whether data is of KCs: by its coding unit (as metadata.is_kc), or its ROI level being 'cells' (KC ids)
+const KC_UNITS = ['kc', 'kcs', 'kenyon cell', 'kenyon cells'];
+const isKcData = (codingUnit, colLevels) => KC_UNITS.includes(unitKey(codingUnit)) || (colLevels || []).includes('cells');
+
 // The coding unit menu `sel` (each unit spelled as first uploaded, the most common first,
 // as in the Merge tab), with `unit` (a unitKey, '' for all) chosen; returns the datasets to
 // list: all of them if that unit is no longer uploaded.
@@ -2063,7 +2116,7 @@ class Browse {
     this._showReadme(id);
     $('#ds-files').innerHTML = d.files.map((f) => `<a href="/api/datasets/${id}/files/${encodeURI(f)}" download>${esc(f)}</a>`).join('');
     if (!this.viewer) this.viewer = new MatrixViewer($('#dataset-viewer'));
-    this.viewer.setNeuralData(m, { title: d.title, fileStem: `olfdb_dataset-${id}` });
+    this.viewer.setNeuralData(m, { title: d.title, fileStem: `olfdb_dataset-${id}`, kc: isKcData(md.coding_unit, d.summary?.col_levels) });
     if (!$('#ds-odors').hidden) this.showOdors(id);
     this.showDataPaths(id);
   }
@@ -3825,6 +3878,9 @@ function levelViewers(x, y) {
   fitViewer(y.el, y.viewer);
 }
 
+// a Compare dataset's ROIs used (its columns), and how many more were marked bad and left out
+const roisLeft = (d) => `${d.cols.length.toLocaleString()} ROIs${d.nBad ? ` (${d.nBad.toLocaleString()} more marked bad, left out)` : ''}`;
+
 // a viewer's height fitted to what it shows, up to most of the window's
 function fitViewer(el, v) {
   if (!v.model) return;
@@ -4215,7 +4271,7 @@ class ComparePage {
   // a viewer of the page, kept while it is shown again (by key): on its own (fitted to what
   // it shows) until linked again. cells: its own cell size to start with, table: the CSV its
   // export menu offers (else the matrix as shown), onCellClick: as the heatmap's
-  _viewer(key, payload, title, fileStem, { cells = null, table = null, onCellClick = null } = {}) {
+  _viewer(key, payload, title, fileStem, { cells = null, table = null, onCellClick = null, kc = false } = {}) {
     let b = this.blocks.get(key);
     if (!b) {
       const el = document.createElement('div');
@@ -4233,7 +4289,7 @@ class ComparePage {
     v.heatmap.options.minHeaderH = 0;
     v.toolbar.style.minHeight = '';
     v.onShow = () => fitViewer(b.el, v);
-    return { el: b.el, viewer: v, show: () => v.setGenericData(payload, { title, fileStem, kind: 'compare' }) };
+    return { el: b.el, viewer: v, show: () => v.setGenericData(payload, { title, fileStem, kind: 'compare', kc }) };
   }
 
   // a block of the page: a viewer under its title
@@ -4251,8 +4307,11 @@ class ComparePage {
     $('#compare-empty').hidden = !!this.o.picked.length;
     await Promise.all(this.o.picked.filter((id) => !this.data.has(id)).map(async (id) => {
       try {
-        const d = await api(`/api/compare/datasets/${id}`);
-        this.data.set(id, { ...d, values: decodeValues(d.values_b64) });
+        const d = await api(`/api/compare/datasets/${id}`), values = decodeValues(d.values_b64);
+        // every column as its data is shown (`all`); for everything else, those of ROIs marked bad left out
+        const nR = d.rows.length, nC = d.cols.length, good = d.cols.map((_, j) => j).filter((j) => !d.cols[j].bad);
+        const kept = good.length === nC ? values : Float32Array.from({ length: nR * good.length }, (_, k) => values[Math.floor(k / good.length) * nC + good[k % good.length]]);
+        this.data.set(id, { ...d, all: { cols: d.cols, values }, nBad: nC - good.length, cols: good.map((j) => d.cols[j]), values: kept });
       } catch (e) { this.data.set(id, { id, error: e.message }); }
     }));
     const on = this.o.on, N = ON[on];
@@ -4332,7 +4391,7 @@ class ComparePage {
         }
         // the panel's odors it has (rows) by its glomeruli or ROIs, or their similarities
         const s = all.find((x) => x.key === `ds:${d.id}`), ids = s.space.ids, stem = pname.replace(/\W+/g, '_');
-        const across = d.kind === 'glomeruli' ? `${d.cols.length} glomeruli, each the mean of the flies with it` : `${d.cols.length.toLocaleString()} ROIs`;
+        const across = d.kind === 'glomeruli' ? `${d.cols.length} glomeruli, each the mean of the flies with it` : roisLeft(d);
         if (show !== 'sim') {
           block(`dsp:${d.id}`, `#${d.id} ${d.title}`, `${esc(d.coding_unit || '')}: the ${ids.length} odors of ${esc(pname)} it has × ${across}; every trial averaged`,
             this._memo(`panelvals:${d.id}:${state}`, () => spaceData(s, ids, rowOf, 'odor', false)), `dataset_${d.id}_${stem}_mean`);
@@ -4357,14 +4416,17 @@ class ComparePage {
         }
         continue;
       }
-      const what = d.kind === 'glomeruli' ? `${d.cols.length} glomeruli, each the mean of the flies with it` : `${d.cols.length.toLocaleString()} ROIs`;
+      const what = d.kind === 'glomeruli' ? `${d.cols.length} glomeruli, each the mean of the flies with it` : roisLeft(d);
       const sub = `${esc(d.coding_unit || '')}: ${d.rows.length} odors × ${what}; every trial averaged`;
       const showOdor = odorShower(d.rows.map((r) => r.odor));
       if (show !== 'sim') {
-        block(`ds:${d.id}`, `#${d.id} ${d.title}`, sub, this._memo(`data:${d.id}:${display.lowerOdors}`, () => ({
+        const shownSub = d.nBad ? `${esc(d.coding_unit || '')}: ${d.rows.length} odors × ${d.all.cols.length.toLocaleString()} ROIs, ${d.nBad.toLocaleString()}
+          of them marked bad (left out of every comparison); every trial averaged` : sub;
+        block(`ds:${d.id}`, `#${d.id} ${d.title}`, shownSub, this._memo(`data:${d.id}:${display.lowerOdors}`, () => ({
           meta: { kind: 'diverging', row_label: 'odor', col_label: d.kind === 'glomeruli' ? 'glomerulus' : 'ROI' },
-          rows: d.rows.map((r) => ({ label: showOdor(r.odor), group: r.panel })), cols: d.cols.map((c) => ({ label: c.label })), values: d.values,
-        })), `dataset_${d.id}_mean`);
+          rows: d.rows.map((r) => ({ label: showOdor(r.odor), group: r.panel })), cols: d.all.cols.map((c) => ({ label: c.label, bad: c.bad })),
+          values: d.all.values,
+        })), `dataset_${d.id}_mean`, { kc: d.kind === 'rois' && isKcData(d.coding_unit) });
       }
       if (show !== 'data') {
         block(`sim:${d.id}`, `#${d.id} ${d.title}: odor–odor similarity`, `${metric} of their responses across its ${d.kind === 'glomeruli' ? 'glomeruli' : 'ROIs'}`,

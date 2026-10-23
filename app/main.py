@@ -36,9 +36,10 @@ from starlette.staticfiles import StaticFiles
 from . import backup, compare, config, export, filelog, merge, movies, odormeta, reference, sandbox, tensor, thorimage, vapor, yamlcheck
 from .db import Database
 from .glomeruli import load_glomeruli
-from .ingest import ParsedData, ValidationError, load_file, load_parsed, save_parsed
+from .ingest import ParsedData, ValidationError, kc_id_problems, load_file, load_parsed, save_parsed
 from .metadata import (
     DEFAULT_CODING_UNITS,
+    is_kc,
     DEFAULT_INDICATORS,
     DEFAULT_RECORDING_SYSTEMS,
     DEFAULT_WAVELENGTH_NM,
@@ -565,6 +566,9 @@ async def stage_readme(request: Request) -> Response:
     if errors:
         return JSONResponse({"ok": False, "errors": errors}, status_code=422)
     parsed = await run_in_threadpool(load_parsed, d / "parsed")
+    kc = _kc_problem(parsed, m.coding_unit)
+    if kc:
+        return JSONResponse({"ok": False, "errors": [kc]}, status_code=422)
     summary = parsed.summary()
     readme = generate_readme(
         m,
@@ -580,11 +584,20 @@ async def stage_readme(request: Request) -> Response:
     return JSONResponse({"ok": True, "readme": readme, "title": dataset_title(m, summary)})
 
 
+def _kc_problem(parsed: ParsedData, coding_unit: str) -> Optional[str]:
+    """Why an upload of KCs (its coding unit) with ROIs numbered is refused, if it is: each
+    fly's ids not every one from 0 or 1 to the highest (`ingest.kc_id_problems`; as for a
+    ``cells`` level whatever the coding unit, when the file was read)."""
+    if not is_kc(coding_unit) or not parsed.units or any(u["roi_kind"] != "int" for u in parsed.units):
+        return None
+    return kc_id_problems([(u["date"], u["fly_num"], u["roi"]) for u in parsed.units])
+
+
 def _commit(d: Path, meta: dict, m: Metadata, readme: str, readme_edited: bool) -> dict:
     parsed = load_parsed(d / "parsed")
     summary = parsed.summary()
     # consistency checks that must pass before anything is written
-    problems = []
+    problems = [p for p in [_kc_problem(parsed, m.coding_unit)] if p]
     if meta["odor_yamls"]:
         check = _run_yaml_check(d, meta)
         if not check["ok"]:

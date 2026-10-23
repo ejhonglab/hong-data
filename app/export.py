@@ -42,7 +42,7 @@ import pandas as pd
 
 from . import merge, odormeta
 from .db import Database
-from .ingest import COL_LEVELS
+from .ingest import BAD, CELLS, COL_LEVELS
 from .odors import SOLVENT_STR, is_odor_level, lowercase_map, lowercase_odor, odor_level_sort_key, odor_names
 
 FORMATS = ("files", "wide", "long")
@@ -153,6 +153,17 @@ def dataset_stem(d: dict, trials: list[dict]) -> str:
 # -------------------------------------------------------------------- matrices
 
 
+def _has_bad(matrices: Iterable[dict]) -> bool:
+    """Whether any of the datasets says which of its ROIs are not to be used (a `BAD` level)."""
+    return any(u.get("bad") is not None for m in matrices for u in m["units"])
+
+
+def unit_levels(matrices: Iterable[dict]) -> list[str]:
+    """The column levels of a download of several datasets: ``UNIT_LEVELS``, and `BAD` if
+    any says (False for the ROIs of those that do not)."""
+    return [*UNIT_LEVELS, *([BAD] if _has_bad(matrices) else [])]
+
+
 def wide_frame(matrices: list[tuple[int, dict]]) -> pd.DataFrame:
     """Trials x ROIs of several datasets, outer-joined on the trial key.
 
@@ -161,7 +172,7 @@ def wide_frame(matrices: list[tuple[int, dict]]) -> pd.DataFrame:
 
     Returns:
         float32 DataFrame; rows are a MultiIndex of `trial_keys` levels (in order of
-        first appearance), columns a MultiIndex of ``UNIT_LEVELS``. Cells for trials a
+        first appearance), columns a MultiIndex of `unit_levels`. Cells for trials a
         dataset does not have are NaN.
     """
     levels, keys = trial_keys([m for _, m in matrices])
@@ -169,37 +180,44 @@ def wide_frame(matrices: list[tuple[int, dict]]) -> pd.DataFrame:
     rows = [np.array([row_index.setdefault(k, len(row_index)) for k in ks], dtype=np.intp) for ks in keys]
     values = np.full((len(row_index), sum(len(m["units"]) for _, m in matrices)), np.nan, dtype=np.float32)
     cols = []
+    names = unit_levels(m for _, m in matrices)
     for (ds_id, m), r in zip(matrices, rows):
         values[r, len(cols):len(cols) + len(m["units"])] = m["values"].T
-        cols += [(ds_id, u["date"], u["fly_num"], u["roi"]) for u in m["units"]]
+        cols += [(ds_id, u["date"], u["fly_num"], u["roi"], *([bool(u.get("bad"))] if BAD in names else [])) for u in m["units"]]
     return pd.DataFrame(
         values,
         index=pd.MultiIndex.from_tuples(list(row_index), names=levels),
-        columns=pd.MultiIndex.from_tuples(cols, names=list(UNIT_LEVELS)),
+        columns=pd.MultiIndex.from_tuples(cols, names=names),
     )
 
 
-def dataset_frame(m: dict, levels: list[str], keys: list[tuple]) -> pd.DataFrame:
+def dataset_frame(m: dict, levels: list[str], keys: list[tuple], cells: bool = False) -> pd.DataFrame:
     """One dataset's trials x ROIs as uploaded: rows indexed by `levels`, columns by date /
-    fly_num / roi (by roi alone, for a dataset without flies, so a CSV of it has one header line).
+    fly_num / roi (by roi alone, for a dataset without flies, so a CSV of it has one header
+    line), and `BAD` if it says which ROIs are not to be used.
 
     Args:
         m: as returned by `Database.get_matrix_arrays`.
         levels, keys: from `dataset_trial_keys`.
+        cells: whether its ROI level was ``cells`` (KC ids), as it is named then.
     """
     flies = any(u["date"] is not None for u in m["units"])
+    bad = _has_bad([m])
+    names = [*(COL_LEVELS if flies else ["roi"]), *([BAD] if bad else [])]
+    names = [CELLS if cells and n == "roi" else n for n in names]
+    cols = [(*((u["date"], u["fly_num"]) if flies else ()), u["roi"], *([bool(u["bad"])] if bad else [])) for u in m["units"]]
     return pd.DataFrame(
         m["values"].T,
         index=pd.MultiIndex.from_tuples(keys, names=levels),
-        columns=(pd.MultiIndex.from_tuples([(u["date"], u["fly_num"], u["roi"]) for u in m["units"]], names=list(COL_LEVELS))
-                 if flies else pd.Index([u["roi"] for u in m["units"]], name="roi")),
+        columns=pd.MultiIndex.from_tuples(cols, names=names) if len(names) > 1 else pd.Index([c[0] for c in cols], name=names[0]),
     )
 
 
 def write_long(f: TextIO, matrices: list[tuple[int, dict]], levels: list[str], keys: list[list[tuple]], *,
                dataset_id: bool = True) -> None:
-    """Write one CSV row per non-missing value: [dataset_id,] date, fly_num, roi, trial levels, value
-    (date and fly_num left out for a dataset alone without flies; empty for one among others).
+    """Write one CSV row per non-missing value: [dataset_id,] date, fly_num, roi, [bad,] trial
+    levels, value (date and fly_num left out for a dataset alone without flies; empty for one
+    among others; bad if any dataset says which ROIs are not to be used, False for others').
 
     Args:
         matrices: (dataset id, `Database.get_matrix_arrays` dict) pairs.
@@ -209,6 +227,7 @@ def write_long(f: TextIO, matrices: list[tuple[int, dict]], levels: list[str], k
     """
     header = True
     flies = dataset_id or any(u["date"] is not None for _, m in matrices for u in m["units"])
+    bad = _has_bad(m for _, m in matrices)
     for (ds_id, m), ks in zip(matrices, keys):
         trial_cols = [np.array(col, dtype=object) for col in zip(*ks)]
         for start in range(0, len(m["units"]), LONG_CHUNK_UNITS):
@@ -220,6 +239,7 @@ def write_long(f: TextIO, matrices: list[tuple[int, dict]], levels: list[str], k
                 **({"date": np.array([u["date"] for u in units], dtype=object)[ui],
                     "fly_num": np.array([u["fly_num"] for u in units], dtype=object)[ui]} if flies else {}),
                 "roi": np.array([u["roi"] for u in units], dtype=object)[ui],
+                **({BAD: np.array([bool(u.get("bad")) for u in units])[ui]} if bad else {}),
                 **{lvl: col[ti] for lvl, col in zip(levels, trial_cols)},
                 "value": block[ui, ti],
             })
@@ -421,7 +441,7 @@ def _stem(ids: list[int], fmt: str) -> str:
     return f"olfdb_{len(ids)}-datasets_{fmt}"
 
 
-def _readme(datasets: list[dict], fmt: str, levels: list[str], shape: tuple[int, int]) -> str:
+def _readme(datasets: list[dict], fmt: str, levels: list[str], shape: tuple[int, int], units: list[str]) -> str:
     lines = [
         "# Odor response database export",
         "",
@@ -437,15 +457,15 @@ def _readme(datasets: list[dict], fmt: str, levels: list[str], shape: tuple[int,
     if fmt == "wide":
         lines += [
             f"- `responses_wide.csv`: {shape[0]} trials (rows) x {shape[1]} ROIs (columns). Header rows: "
-            f"{', '.join(UNIT_LEVELS)}; row index: {', '.join(levels)}. Empty cells are trials a "
+            f"{', '.join(units)}; row index: {', '.join(levels)}. Empty cells are trials a "
             "dataset does not have, or missing values. With pandas:",
-            f"  `pd.read_csv('responses_wide.csv', header={list(range(len(UNIT_LEVELS)))}, "
+            f"  `pd.read_csv('responses_wide.csv', header={list(range(len(units)))}, "
             f"index_col={list(range(len(levels)))})`",
         ]
     elif fmt == "long":
         lines.append(
             f"- `responses_long.csv`: one row per non-missing value; columns "
-            f"{', '.join([*UNIT_LEVELS, *levels, 'value'])}."
+            f"{', '.join([*units, *levels, 'value'])}."
         )
     if fmt != "files":
         lines.append(
@@ -500,7 +520,7 @@ def write_download(db: Database, ds_ids: Iterable[int], fmt: str, dest: Path, da
         levels, keys = dataset_trial_keys(m["trials"], d["summary"].get("row_levels") or trial_keys([m])[0])
         with open(dest, "w", encoding="utf-8", newline="") as f:
             if fmt == "wide":
-                dataset_frame(m, levels, keys).to_csv(f)
+                dataset_frame(m, levels, keys, CELLS in (d["summary"].get("col_levels") or [])).to_csv(f)
             else:
                 write_long(f, [(ids[0], m)], levels, [keys], dataset_id=False)
         return f"{dataset_stem(d, m['trials'])}{'_long' if fmt == 'long' else ''}.csv", "text/csv"
@@ -517,7 +537,11 @@ def write_download(db: Database, ds_ids: Iterable[int], fmt: str, dest: Path, da
     shape = (len({k for ks in keys for k in ks}), sum(len(m["units"]) for _, m in matrices))
 
     with zipfile.ZipFile(dest, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
-        readme = _readme(datasets, fmt, levels, shape)
+        units = unit_levels(m for _, m in matrices)
+        readme = _readme(datasets, fmt, levels, shape, units)
+        if BAD in units:
+            readme += (f"\n`{BAD}`: whether each ROI was marked not to be used, as uploaded (False for those of datasets that "
+                       "did not say).\n")
         if names is not None:
             readme += ("\nOdor names (abbreviations) are in lowercase, as chosen in Settings, but for any that differ from "
                        "another here only in case, which are as written.\n")

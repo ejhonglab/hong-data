@@ -85,7 +85,8 @@ CREATE TABLE IF NOT EXISTS units (
     date TEXT,
     fly_num INTEGER,
     roi TEXT NOT NULL,
-    roi_kind TEXT NOT NULL
+    roi_kind TEXT NOT NULL,
+    bad INTEGER  -- 1 for a ROI marked not to be used, 0 not; NULL when the file did not say
 );
 CREATE INDEX IF NOT EXISTS units_dataset ON units(dataset_id, idx);
 CREATE TABLE IF NOT EXISTS trials (
@@ -186,7 +187,7 @@ CREATE TABLE IF NOT EXISTS file_log (  -- files the server has read or written i
 );
 """
 # columns added since the first release: (table, column, type)
-ADDED_COLUMNS = [("datasets", "mocorr_data_path", "TEXT"), ("reference_datasets", "fields", "TEXT"),
+ADDED_COLUMNS = [("datasets", "mocorr_data_path", "TEXT"), ("reference_datasets", "fields", "TEXT"), ("units", "bad", "INTEGER"),
                  # vapor pressure, and the URL of where it is from; when looked up (with both null if none was found)
                  ("pubchem", "vapor_pressure_kpa", "REAL"), ("pubchem", "vapor_pressure_source", "TEXT"),
                  ("pubchem", "vapor_pressure_at", "TEXT")]
@@ -323,8 +324,8 @@ class Database:
             unit_ids = []
             for i, u in enumerate(units):
                 c = con.execute(
-                    "INSERT INTO units (dataset_id, idx, date, fly_num, roi, roi_kind) VALUES (?,?,?,?,?,?)",
-                    (ds_id, i, u["date"], u["fly_num"], u["roi"], u["roi_kind"]),
+                    "INSERT INTO units (dataset_id, idx, date, fly_num, roi, roi_kind, bad) VALUES (?,?,?,?,?,?,?)",
+                    (ds_id, i, u["date"], u["fly_num"], u["roi"], u["roi_kind"], u.get("bad")),
                 )
                 unit_ids.append(c.lastrowid)
             trial_ids = []
@@ -398,7 +399,7 @@ class Database:
             if m is None:
                 return None
             units = con.execute(
-                "SELECT date, fly_num, roi, roi_kind FROM units WHERE dataset_id = ? ORDER BY idx", (ds_id,)
+                "SELECT date, fly_num, roi, roi_kind, bad FROM units WHERE dataset_id = ? ORDER BY idx", (ds_id,)
             ).fetchall()
             trials = con.execute(
                 "SELECT panel, odor, components_json, repeat, extra_json FROM trials WHERE dataset_id = ? ORDER BY idx",
@@ -406,7 +407,7 @@ class Database:
             ).fetchall()
         values = np.frombuffer(bytes(m["values_blob"]), dtype="<f4").reshape(m["n_units"], m["n_trials"])
         return {
-            "units": [dict(u) for u in units],
+            "units": [{**dict(u), "bad": None if u["bad"] is None else bool(u["bad"])} for u in units],
             "trials": drop_uninformative([
                 {
                     "panel": t["panel"],

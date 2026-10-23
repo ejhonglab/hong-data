@@ -11,6 +11,12 @@ DEFAULT_CODING_UNITS = ["glomeruli", "KCs"]
 DEFAULT_RECORDING_SYSTEMS = ["upstairs-left 2p", "upstairs-right 2p", "downstairs 2p"]
 DEFAULT_WAVELENGTH_NM = 925.0
 REQUIRED_FIELDS = ("uploader_name", "indicator", "driver", "coding_unit")
+KC_UNITS = ("kc", "kcs", "kenyon cell", "kenyon cells")  # coding units (in any case) of KCs
+
+
+def is_kc(coding_unit: Optional[str]) -> bool:
+    """Whether a coding unit is KCs (as `KC_UNITS`, in any case and spacing)."""
+    return " ".join((coding_unit or "").split()).lower() in KC_UNITS
 
 
 def _clean(v):
