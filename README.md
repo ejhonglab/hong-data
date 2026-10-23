@@ -242,7 +242,15 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   in the viewer of reference data (colors, cell size, transpose, moving and removing
   rows and columns, figure export), without trials, ROI ordering or clustering. On the
   right:
-  - *Compare on* odors (the default) or glomeruli. On glomeruli, everything below is of
+  - *Compare on* odors (the default: those of the odor table, alone, at the
+    concentration chosen), a panel's odors, or glomeruli. On a panel's odors, datasets
+    are compared with each other only, on the panel chosen of those of the datasets
+    shown (by its name in the file, else the one in the upload form, but for case; by
+    default the one most of them have): each over the panel's odors as presented,
+    concentrations and mixtures as they are, an odor of the odor table alone matched by
+    it and its concentration, anything else by how the data names it (but for case).
+    Everything below (similarities, their correlations and p-values, the two side by
+    side) is then of those odors. On glomeruli, everything below is of
     glomeruli instead of odors: only datasets of glomeruli are compared (as glomeruli
     by odors, every fly averaged), to reference datasets of glomeruli (found by their
     labels: see [reference_data/README.md](reference_data/README.md)), by

@@ -328,14 +328,14 @@
     </div>
     <aside class="compare-options" aria-label="What to compare">
       <h2>Show</h2>
-      <label class="opt">Compare on <select id="cmp-on"><option value="odors">odors</option><option value="glomeruli">glomeruli</option></select></label>
+      <label class="opt">Compare on <select id="cmp-on"><option value="odors">odors</option><option value="panel">a panel's odors</option><option value="glomeruli">glomeruli</option></select></label>
       <label class="opt">Each space as <select id="cmp-show"><option value="data">its data</option>
         <option value="sim">its odor–odor similarity</option></select></label>
       <p class="muted small" id="cmp-show-note"></p>
 
       <h2 id="cmp-sim-head">Odor–odor similarity</h2>
       <label class="opt">Within datasets, by <select id="cmp-metric"></select></label>
-      <label class="opt">Within reference data, by <select id="cmp-ref-metric"><option value="pearson">Pearson correlation</option>
+      <label class="opt" id="cmp-ref-metric-opt">Within reference data, by <select id="cmp-ref-metric"><option value="pearson">Pearson correlation</option>
         <option value="cosine">cosine similarity</option></select></label>
       <p class="muted small" id="cmp-sim-note"></p>
 

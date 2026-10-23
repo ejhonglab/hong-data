@@ -107,7 +107,12 @@ between the frontend and the server. Using the app is described in
   responses to its odors; a reference dataset's whose labels on one axis are mostly
   glomerulus names, `reference.glomeruli`, by its values along the other), and all the
   rest (similarities, their correlations and p-values, the two side by side) is the
-  same, of glomeruli; no odor–odor similarity is shown then. That other axis, when it is
+  same, of glomeruli; no odor–odor similarity is shown then. Or on a panel's odors, for
+  datasets with a panel in common (whose odors need not be in the odor table, nor be
+  alone): then only datasets are spaces, each keyed by the panel's odors as presented
+  (an odor of the odor table alone by its id and concentration, anything else by its
+  string from the data, but for case; `_datasetPanelSpace`), so that mixtures and every
+  concentration count, which keying by the odor table's ids cannot. That other axis, when it is
   not chemicals, is taken to be KCs (`kcAxisOf`, in the browser: no reference dataset
   yet is of glomeruli by anything else), which the viewer can sum over (only to show:
   similarities are always of the KCs). Two spaces side
