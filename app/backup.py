@@ -5,7 +5,7 @@ Each backup is a folder ``olfdb-backup-<date>_<time>`` laid out like the data fo
 consistent copy of the database (SQLite's backup API), and the files the site keeps
 (`data_files`: data files as uploaded, odor YAMLs, Experiment.xml, READMEs and
 metadata.json of every dataset, reference data as imported, datasets deleted in the Admin
-tab, odor structure images, the folders set in the Admin tab). Not what only passes
+tab, the folders set in the Admin tab). Not what only passes
 through the data folder (uploads under way, downloads being sent, temporary files), nor
 raw and motion-corrected data, which stay on tensor. A file unchanged since the last
 backup in the same folder (by size and time) is a hard link to its copy there, so each
@@ -46,7 +46,7 @@ _lock = threading.Lock()
 def _kept() -> list[Path]:
     """The folders and files of the data folder a backup copies, besides the database."""
     return [config.DATA_DIR / p.name for p in (config.DATASETS_DIR, config.REFERENCE_CACHE_DIR, config.DELETED_DIR,
-                                               config.STRUCTURES_DIR, config.ADMIN_FILE)]
+                                               config.ADMIN_FILE)]
 
 
 def data_files() -> dict[str, list[int]]:

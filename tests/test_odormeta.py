@@ -256,6 +256,7 @@ def test_inchis_in_database(pubchem, tmp_path, monkeypatch):
 
     db = Database(tmp_path / "db.sqlite3")
     monkeypatch.setattr(main, "db", db)
+    monkeypatch.setattr(main, "_inchi_tried", {})
     apply_all(db, rows_of(HEADER + "valeric acid,va,,7991,,water,,,,,,,\n" "ethanol,EtOH,,702,,,,,,,,,\n"
                                    "no such cid,x,,1,,,,,,,,,\n" "no cid,y,,,,,,,,,,,\n"))
     assert {o["name"]: o["inchi"] for o in db.list_odors()} == dict.fromkeys(["valeric acid", "ethanol", "no such cid", "no cid"])
@@ -263,14 +264,51 @@ def test_inchis_in_database(pubchem, tmp_path, monkeypatch):
     assert {o["name"]: o["inchi"] for o in db.list_odors()} == {
         "valeric acid": pubchem.inchis[7991], "ethanol": pubchem.inchis[702], "no such cid": None, "no cid": None}
     assert db.inchis() == {7991: pubchem.inchis[7991], 702: pubchem.inchis[702]}
-    # only CIDs still without an InChI are asked for again
+    # only CIDs still without an InChI are asked for again, and those PubChem had none for only after an hour
     pubchem.urls.clear()
     monkeypatch.setattr(odormeta, "_failed", {})
+    main._fetch_inchis()
+    assert pubchem.urls == []
+    main._inchi_tried[1] -= 3601
     main._fetch_inchis()
     assert [u.split("/cid/")[1].split("/")[0] for u in pubchem.urls] == ["1"]
     # the InChI belongs to the CID, so it stays with an odor through a sync that changes other fields
     apply_all(db, rows_of(HEADER + "valeric acid,va,pentanoic acid,7991,,water,,,,,,,\n"), changes={o["id"] for o in db.list_odors()})
     assert next(o for o in db.list_odors() if o["name"] == "valeric acid")["inchi"] == pubchem.inchis[7991]
+
+
+def test_structures(pubchem, tmp_path, monkeypatch):
+    import asyncio
+    import re
+
+    from starlette.requests import Request
+
+    from app import main
+
+    # drawn by RDKit, as wide and high as the molecule, but a lone atom no smaller than the least
+    size = lambda svg: tuple(float(x) for x in re.search(r"width='([\d.]+)px' height='([\d.]+)px'", svg).groups())
+    svg = odormeta.structure_svg(pubchem.inchis[7991])
+    assert svg.lstrip().startswith("<?xml") and "<svg" in svg and "<path" in svg and size(svg)[0] > size(svg)[1]
+    assert size(odormeta.structure_svg("InChI=1S/ClH/h1H")) == (odormeta.STRUCTURE_MIN_PX, odormeta.STRUCTURE_MIN_PX)
+    assert odormeta.structure_svg("InChI=1S/not one") is None
+
+    db = Database(tmp_path / "db.sqlite3")
+    monkeypatch.setattr(main, "db", db)
+    monkeypatch.setattr(main, "_inchi_tried", {})
+    apply_all(db, rows_of(HEADER + "valeric acid,va,,7991,,water,,,,,,,\n" "no such cid,x,,1,,,,,,,,,\n"))
+
+    def get(cid):
+        scope = {"type": "http", "method": "GET", "path": "/", "headers": [], "query_string": b"", "path_params": {"cid": cid}}
+        return asyncio.run(main.odor_structure(Request(scope)))
+
+    # its InChI fetched first, once, with the others missing
+    r = get(7991)
+    assert r.status_code == 200 and r.headers["content-type"] == "image/svg+xml" and r.body.decode() == svg
+    assert db.inchis() == {7991: pubchem.inchis[7991]} and len(pubchem.urls) == 1
+    assert get(7991).status_code == 200 and len(pubchem.urls) == 1
+    # none, without asking PubChem again for a while; nor for a CID no odor has
+    assert get(1).status_code == 404 and get(1).status_code == 404 and len(pubchem.urls) == 1
+    assert get(5).status_code == 404
 
 
 def test_case():

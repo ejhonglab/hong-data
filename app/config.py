@@ -14,7 +14,6 @@ DB_PATH = DATA_DIR / "olfdb.sqlite3"
 STAGING_DIR = DATA_DIR / "staging"
 DATASETS_DIR = DATA_DIR / "datasets"
 EXPORTS_DIR = DATA_DIR / "exports"  # downloads being sent (deleted once sent)
-STRUCTURES_DIR = DATA_DIR / "odor_structures"  # PubChem structure images, by CID
 ODOR_PREVIEWS_DIR = DATA_DIR / "odor_previews"  # parsed sheets awaiting confirmation, by fingerprint
 DELETED_DIR = DATA_DIR / "deleted"  # the files of datasets deleted in the Admin tab, by id
 REFERENCE_CACHE_DIR = DATA_DIR / "references"  # reference datasets added in the Admin tab, as imported, by id
@@ -41,5 +40,5 @@ LANDLOCK = os.environ.get("OLFDB_LANDLOCK", "1").strip().lower() not in ("0", "f
 
 
 def ensure_dirs() -> None:
-    for d in (DATA_DIR, STAGING_DIR, DATASETS_DIR, EXPORTS_DIR, STRUCTURES_DIR, ODOR_PREVIEWS_DIR, TMP_DIR):
+    for d in (DATA_DIR, STAGING_DIR, DATASETS_DIR, EXPORTS_DIR, ODOR_PREVIEWS_DIR, TMP_DIR):
         d.mkdir(parents=True, exist_ok=True)

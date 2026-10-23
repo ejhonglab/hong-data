@@ -1199,25 +1199,24 @@ async def odors_preview(request: Request) -> Response:
 _inchi_lock = threading.Lock()
 
 
-def _fetch_inchis() -> None:
+_inchi_tried: dict[int, float] = {}  # CID -> when PubChem last gave it no InChI (asked again after an hour)
+
+
+def _fetch_inchis(wait: bool = False) -> None:
     """Fetch from PubChem the InChI of every odor CID that has none in the database yet
-    (in one request per 100 CIDs; skipped while another call is at it)."""
-    if not _inchi_lock.acquire(blocking=False):
+    (in one request per 100 CIDs, but those it had none for in the last hour): skipped
+    while another call is at it, or with `wait`, once that one is done."""
+    if not _inchi_lock.acquire(blocking=wait):
         return
     try:
-        missing = sorted({o["cid"] for o in db.list_odors() if o["cid"] and not o["inchi"]})
+        now = time.time()
+        missing = sorted({o["cid"] for o in db.list_odors() if o["cid"] and not o["inchi"] and now - _inchi_tried.get(o["cid"], 0) > 3600})
         if missing:
-            db.save_inchis(odormeta.fetch_inchis(missing), when=dt.datetime.now().isoformat(timespec="seconds"))
+            found = odormeta.fetch_inchis(missing)
+            db.save_inchis(found, when=dt.datetime.now().isoformat(timespec="seconds"))
+            _inchi_tried.update({c: now for c in missing if c not in found})
     finally:
         _inchi_lock.release()
-
-
-def _prefetch_pubchem() -> None:
-    """Structure images and InChIs of every odor's CID."""
-    for o in db.list_odors():
-        if o["cid"]:
-            odormeta.structure_png(o["cid"])
-    _fetch_inchis()
 
 
 def _apply(fp: str, change_ids: set[int], delete_ids: set[int]) -> dict:
@@ -1264,22 +1263,31 @@ async def odors_apply(request: Request) -> Response:
         return json_error(400, "changes and deletions must be lists of odor ids")
     result = await run_in_threadpool(_apply, fp, change_ids, delete_ids)
     return JSONResponse(result, status_code=200 if result["ok"] else 422,
-                        background=BackgroundTask(_prefetch_pubchem) if result["ok"] else None)
+                        background=BackgroundTask(_fetch_inchis) if result["ok"] else None)
 
 
 async def odor_structure(request: Request) -> Response:
-    """PubChem structure image of an odor in the table (cached on the server). The InChIs
-    of odors without one are fetched afterwards, if this one has none."""
+    """The structure of an odor in the table, drawn by RDKit from the InChI of its CID, as
+    SVG (`odormeta.structure_svg`). An InChI not in the database yet is fetched from
+    PubChem first, with every other one missing."""
     cid = int(request.path_params["cid"])
-    odor = next((o for o in await run_in_threadpool(db.list_odors) if o["cid"] == cid), None)
-    if odor is None:
+
+    def find() -> Optional[dict]:
+        return next((o for o in db.list_odors() if o["cid"] == cid), None)
+
+    def draw() -> Optional[str]:
+        odor = find()
+        if odor and not odor["inchi"]:
+            _fetch_inchis(wait=True)
+            odor = find()
+        return odormeta.structure_svg(odor["inchi"]) if odor and odor["inchi"] else None
+
+    if await run_in_threadpool(find) is None:
         return json_error(404, "no odor with this CID")
-    background = BackgroundTask(_fetch_inchis) if not odor["inchi"] else None
-    path = await run_in_threadpool(odormeta.structure_png, cid)
-    if path is None:
-        return JSONResponse({"error": "structure image not available"}, status_code=404, background=background)
-    return FileResponse(path, media_type="image/png", headers={"cache-control": "public, max-age=604800"},
-                        background=background)
+    svg = await run_in_threadpool(draw)
+    if svg is None:
+        return json_error(404, "no structure: PubChem has no InChI for this CID (or could not be reached), or RDKit cannot read it")
+    return Response(svg, media_type="image/svg+xml", headers={"cache-control": "public, max-age=604800"})
 
 
 async def odor_template(request: Request) -> Response:

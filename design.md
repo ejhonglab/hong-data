@@ -142,9 +142,11 @@ between the frontend and the server. Using the app is described in
   the new odors from the sheet itself (the apply above, with no changes or deletions), as
   only a person can add one there. An upload waiting on that is kept: in the browser
   (`localStorage`), and on the server for `OLFDB_STAGE_TTL_HOURS` after it was last used
-  (each request to it touches its folder). PubChem structure images are fetched
-  once per CID and cached in `data/odor_structures/`, InChIs in the `pubchem` table (a
-  hundred CIDs per request).
+  (each request to it touches its folder). Odor structures are drawn on the server by
+  RDKit, as SVG (`odormeta.structure_svg`, kept in memory), from the InChI of each CID:
+  fetched from PubChem once (a hundred CIDs per request, the first time a structure is
+  wanted without one) and kept in the `pubchem` table. PubChem is asked again about a CID
+  it had no InChI for only after an hour.
 - **The heatmap is a virtualised canvas**: only the visible cells are drawn, so 10k+
   rows scroll smoothly. The default colormap is built in Oklab so that lightness is
   linear in |value|, with white at 0 and blue and red poles of equal lightness: "twice
@@ -419,8 +421,9 @@ the odor sheet's link), `reference_datasets` (reference datasets added there) an
 under `data/`: `admin.json` (the folders set in the Admin tab), `deleted/<id>/` (the
 folders of datasets deleted in the Admin tab), `references/<id>/` (reference datasets
 added there, as read), `staging/`, `exports/`,
-`odor_structures/`, `odor_previews/` (parsed sheets awaiting confirmation) and `tmp/`
-(temporary files, such as uploads being received).
+`odor_previews/` (parsed sheets awaiting confirmation) and `tmp/`
+(temporary files, such as uploads being received). An `odor_structures/` folder, of
+PubChem's images, is left from before structures were drawn here, and can be deleted.
 
 ## HTTP API
 

@@ -283,7 +283,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     enough) or a table (CSV: for these, each two spaces once with r, odors, pairs and both
     p-values).
 - **Odors**: the app's own table of odor metadata, one row per chemical, with links and
-  PubChem structure images. It is synced one way from a Google sheet (its link set in
+  structures (drawn as vector graphics by RDKit, from the InChI PubChem gives for each
+  CID). It is synced one way from a Google sheet (its link set in
   the Admin tab) or a CSV imported in the Admin tab, with the columns of
   `config/odor_sheet_template.csv` (downloadable there), which starts it off with
   the odors from the thesis tables: the tab shows what a sync would do, adds new odors,
@@ -341,7 +342,7 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   - *Backups*: a button copying everything the site keeps into one of the folders it may
     write: the SQLite database (a consistent copy), and every dataset's files as uploaded,
     odor YAMLs, `Experiment.xml`, README and `metadata.json`, with reference data as read
-    in, datasets deleted there and odor structure images (not raw or motion-corrected
+    in, and datasets deleted there (not raw or motion-corrected
     data, nor uploads under way). Each backup is a folder `olfdb-backup-<date>_<time>`
     laid out like `data/`; files unchanged since the backup before it there are hard
     links to it, so each takes the space of what changed only. Listed with when each was

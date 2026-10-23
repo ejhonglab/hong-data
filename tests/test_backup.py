@@ -43,13 +43,14 @@ def test_backup(site):
     first = backup.make(db, into)
     b = into / first["name"]
     kept = sorted(p.relative_to(b).as_posix() for p in b.rglob("*") if p.is_file())
+    # (not odor_structures/: PubChem's images, as they were once, now drawn as wanted)
     assert kept == ["admin.json", "backup.json", "datasets/1/README.md", "datasets/1/data.csv", "datasets/1/odor_yaml/a.yaml",
-                    "deleted/2/data.csv", "odor_structures/176.png", "olfdb.sqlite3", "references/r1/table.csv"]
+                    "deleted/2/data.csv", "olfdb.sqlite3", "references/r1/table.csv"]
     assert (b / "datasets/1/README.md").read_text() == "datasets/1/README.md"
     with sqlite3.connect(b / "olfdb.sqlite3") as con:  # the database as it was, whole
         assert con.execute("SELECT name FROM users").fetchall() == [("Ann",)]
         assert content_fingerprint(con) == db.fingerprint() == first["database"]["fingerprint"]
-    assert first["n_files"] == 8 and first["linked"] == 0 and first["linked_to"] is None
+    assert first["n_files"] == 7 and first["linked"] == 0 and first["linked_to"] is None
     s = backup.status(db)
     assert s["last"]["name"] == first["name"] and s["last"]["folder"] == str(into) and "files" not in s["last"]
     assert s["current"] == {"ok": True, "database": False, "added": 0, "changed": 0, "removed": 0}
@@ -72,7 +73,7 @@ def test_backup(site):
     assert os.stat(c / "datasets/1/data.csv").st_ino == os.stat(b / "datasets/1/data.csv").st_ino
     assert os.stat(c / "datasets/1/README.md").st_ino != os.stat(b / "datasets/1/README.md").st_ino
     assert (c / "datasets/1/README.md").read_text() == "edited" and not (c / "deleted/2/data.csv").exists()
-    assert second["linked"] == 5 and second["linked_to"] == first["name"]  # all but README.md and the new file
+    assert second["linked"] == 4 and second["linked_to"] == first["name"]  # all but README.md and the new file
     assert second["copied_bytes"] == second["database"]["bytes"] + len("edited") + len("new")
     s = backup.status(db)
     assert [x["name"] for x in s["folders"][0]["backups"]] == [second["name"], first["name"]] and s["current"]["ok"]
@@ -98,7 +99,7 @@ def test_backup_api(site, main, monkeypatch):  # noqa: F811
         time.sleep(0.05)
     r = call(main.admin_backups)[1]
     assert r["job"]["error"] is None and r["last"]["name"] == r["job"]["name"] and r["current"]["ok"]
-    assert r["job"]["done"] == r["job"]["total"] == 7
+    assert r["job"]["done"] == r["job"]["total"] == 6
 
     # a folder saved, but not in effect until the server restarts
     sandbox.save({"read_dirs": [], "write_dirs": [str(into), str(data / "later")]})

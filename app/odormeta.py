@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import csv
 import datetime as dt
+import functools
 import hashlib
 import io
 import json
@@ -383,22 +384,40 @@ def _pubchem_get(url: str, check: Callable[[bytes], bool]) -> Optional[bytes]:
         return data
 
 
-def structure_png(cid: int) -> Optional[Path]:
-    """Path of the cached PubChem structure image for `cid`, fetching it if needed."""
-    path = config.STRUCTURES_DIR / f"{cid}.png"
-    if path.exists():
-        return path
-    with _pubchem_lock:  # so that an image several requests want is fetched once
-        if path.exists():
-            return path
-        data = _pubchem_get(f"{PUBCHEM_REST}/{cid}/PNG?image_size=300x300", lambda d: d.startswith(b"\x89PNG"))
-        if data is None:
-            return None
-        config.STRUCTURES_DIR.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_bytes(data)
-        tmp.replace(path)
-        return path
+STRUCTURE_BOND_PX = 24  # a bond's length in a structure drawing (px, as drawn: shown scaled)
+STRUCTURE_MIN_PX = 48  # a drawing's least width and height, so that a lone atom is not drawn huge
+
+
+@functools.lru_cache(maxsize=1024)
+def structure_svg(inchi: str) -> Optional[str]:
+    """A chemical's 2D structure drawn by RDKit from its InChI, as SVG (None if RDKit cannot
+    read it): as wide and high as the molecule (at `STRUCTURE_BOND_PX` per bond), with no
+    background, heteroatoms in color and stereo bonds wedged."""
+    from rdkit import Chem, RDLogger
+    from rdkit.Chem import rdDepictor
+    from rdkit.Chem.Draw import rdMolDraw2D
+
+    RDLogger.DisableLog("rdApp.*")
+    mol = Chem.MolFromInchi(inchi)
+    if mol is None:
+        return None
+    rdDepictor.SetPreferCoordGen(True)
+
+    def draw(width: int, height: int):
+        d = rdMolDraw2D.MolDraw2DSVG(width, height)  # -1, -1: sized to the molecule
+        o = d.drawOptions()
+        o.clearBackground = False
+        o.fixedBondLength = STRUCTURE_BOND_PX
+        o.bondLineWidth = 2
+        o.padding = 0.06
+        rdMolDraw2D.PrepareAndDrawMolecule(d, mol)
+        d.FinishDrawing()
+        return d
+
+    d = draw(-1, -1)
+    if min(d.Width(), d.Height()) < STRUCTURE_MIN_PX:
+        d = draw(max(d.Width(), STRUCTURE_MIN_PX), max(d.Height(), STRUCTURE_MIN_PX))
+    return d.GetDrawingText()
 
 
 def fetch_inchis(cids: list[int]) -> dict[int, str]:

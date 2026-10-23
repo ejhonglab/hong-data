@@ -52,10 +52,9 @@ sudo chown -R 10001:10001 data        # the container runs as uid 10001 ("olfdb"
 uploaded file (`data/datasets/<id>/...`; those of datasets deleted in the Admin tab in
 `data/deleted/<id>/`), the odor table and its sync history, the
 folders set in the Admin tab (`data/admin.json`), the short-lived staging area,
-downloads being sent (`data/exports/`, deleted once sent), cached odor structure images
-(`data/odor_structures/`), copies of the reference datasets added in the Admin tab
-(`data/references/`; their files stay where they are, to be backed up there) and
-temporary files (`data/tmp/`).
+downloads being sent (`data/exports/`, deleted once sent), copies of the reference
+datasets added in the Admin tab (`data/references/`; their files stay where they are, to
+be backed up there) and temporary files (`data/tmp/`).
 
 Before the first start, have a look at:
 
@@ -109,8 +108,9 @@ To set the sheet up:
    the server also works, while no link is saved in the Admin tab.)
 
 The server needs outbound HTTPS to docs.google.com for the sheet, and to
-pubchem.ncbi.nlm.nih.gov for structure images and InChIs (fetched once per CID, then
-cached; InChIs in the database, a hundred CIDs per request).
+pubchem.ncbi.nlm.nih.gov for the InChIs of the odors' CIDs (fetched once per CID, a
+hundred per request, and kept in the database), from which their structures are drawn
+on the server.
 Without a sheet, the Admin tab can still import a CSV in the same format.
 
 ### Tensor
