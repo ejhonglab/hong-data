@@ -289,7 +289,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   the odors from the thesis tables: the tab shows what a sync would do, adds new odors,
   and applies changes to existing ones and deletions only where ticked, warning about
   renames that would unlink datasets. A badge on the tab shows when the sheet changed
-  since its last sync.
+  since its last sync. An odor's *aliases* (in one cell, separated by `;`) are its other
+  abbreviations and names alike: data, odor YAMLs and reference data naming it by any of
+  them are matched to it, e.g. `IaA` with aliases `IAA; isopentyl acetate`.
 - **Viewer** (datasets and the upload preview): odor labels stay at the
   top and fly/ROI labels at the left while scrolling, with hover tooltips. Average over
   repeats or show individual trials; rows by fly→ROI, ROI→fly or ungrouped; odors as in
