@@ -12,7 +12,8 @@
 // merges use scipy's linkage convention: merge k joins clusters a and b (ids < n are
 // the input vectors, n + j is the cluster made by merge j) at height h, sorted by h.
 
-export const MAX_CLUSTER_ITEMS = 15000;
+// (30,000 items' distances take 1.8 GB, in one worker for their linkage: ~1 min in all)
+export const MAX_CLUSTER_ITEMS = 30000;
 
 // Everything in the calling thread (small inputs, tests).
 // data: Float32Array of n vectors of length d (row-major)

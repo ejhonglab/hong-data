@@ -353,6 +353,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     remove a glomerulus from every fly. Choosing another order in the toolbar replaces the dragged one. The orange
     *Reset rows & columns* brings back everything removed, in the toolbar's order.
     Edits are kept for each dataset while you look at others.
+  - *Sum over KCs* (KC data): each fly's KCs (those not removed or hidden) summed into
+    one row per odor or trial, missing values left out; ROIs are then neither clustered
+    nor reordered.
   - *Hide bad ROIs* (KC data only): KCs marked bad are hidden from the matrix, its
     clustering and exports, by default whenever a dataset has any; untick to show them.
     In Compare they are also left out of everything computed (similarities, their
@@ -361,7 +364,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     linkage, correlation or Euclidean distance on trial-averaged responses, missing
     values skipped pairwise), with dendrograms. ROIs are always clustered all
     together, whichever fly they come from, and shown ungrouped in the clustered
-    order (up to 15,000 ROIs; 15,000 need ~450 MB in the browser). Odors are clustered
+    order (up to 30,000 ROIs, e.g. a KC dataset's: 30,000 need ~1.8 GB in the browser,
+    and about a minute). Odors are clustered
     within each panel, by their responses across all ROIs. Only what is not removed is
     clustered, and the result is the same whatever order it was shown in.
   - *Export figure*: SVG, PDF or PNG of the whole matrix as shown (order, colors,

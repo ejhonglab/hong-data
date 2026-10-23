@@ -500,6 +500,22 @@ function sumOverAxis(m, axis) {
   return { ...m, [axis]: [item], values, cellText: null, summed: n, [onRows ? 'rowGroupTitle' : 'colGroupTitle']: null };
 }
 
+// a neural model with each fly's ROIs (KCs) shown summed into one row, missing values left out
+function sumOverFlies(m, units) {
+  const nC = m.cols.length, flies = new Map();
+  m.rows.forEach((r, i) => { const k = flyKey(units[r.key]); flies.set(k, [...(flies.get(k) || []), i]); });
+  const values = new Float32Array(flies.size * nC), rows = [];
+  [...flies].forEach(([fly, idx], f) => {
+    for (let c = 0; c < nC; c++) {
+      let sum = 0, any = false;
+      for (const i of idx) { const v = m.values[i * nC + c]; if (v === v) { sum += v; any = true; } }
+      values[f * nC + c] = any ? sum : NaN;
+    }
+    rows.push({ label: `sum of ${idx.length.toLocaleString()} KC${idx.length === 1 ? '' : 's'}`, group: fly, key: -1 - f });
+  });
+  return { ...m, rows, values, rowDendro: null, rowTitle: 'KCs', rowGroupTitle: 'fly', summed: m.rows.length };
+}
+
 // rows as columns and columns as rows, with their labels, titles and dendrograms
 function transposeModel(m) {
   const nR = m.rows.length, nC = m.cols.length;
@@ -646,7 +662,10 @@ class MatrixViewer {
     const neural = this.kind === 'neural';
     for (const role of ['mode', 'rows', 'cols', 'cluster']) $(`[data-role=${role}]`, tb).hidden = !neural;
     $('[data-role=chem]', tb).hidden = neural || !this.data?.chemAxis;
-    $('[data-role=kc]', tb).hidden = neural || !this.data?.kcAxis;
+    $('[data-role=kc]', tb).hidden = neural ? !this.kc : !this.data?.kcAxis;
+    $('[data-role=kc]', tb).title = neural ? "Each fly's KCs summed into one row (those not removed or hidden; missing values left out)"
+      : 'Of a table of glomeruli by something other than odors, that other axis is taken to be KCs: summed, each glomerulus\'s '
+        + 'values over the KCs not removed (missing values left out)';
     const nBad = this._nBad(), bad = $('[data-bad]', tb);
     $('[data-role=bad]', tb).hidden = !this.kc;
     bad.checked = this.hideBad && nBad > 0;
@@ -672,10 +691,14 @@ class MatrixViewer {
   _syncEnabled() {
     const tb = this.toolbar, o = this.opts;
     const rows = $('select[data-opt=rowOrder]', tb), roi = $('select[data-opt=roiSort]', tb), odor = $('select[data-opt=odorOrder]', tb);
-    rows.disabled = roi.disabled = o.clusterRows;
-    rows.value = o.clusterRows ? 'none' : o.rowOrder;
+    const summing = this.kind === 'neural' && this._summing();
+    rows.disabled = roi.disabled = o.clusterRows || summing;
+    rows.value = o.clusterRows && !summing ? 'none' : summing ? 'fly' : o.rowOrder;
     odor.disabled = o.clusterCols;
-    rows.title = roi.title = o.clusterRows ? 'ROIs are ordered by the clustering, across all flies' : '';
+    rows.title = roi.title = summing ? "Each fly's KCs are summed" : o.clusterRows ? 'ROIs are ordered by the clustering, across all flies' : '';
+    const clusterRows = $('input[data-opt=clusterRows]', tb);
+    clusterRows.disabled = summing;
+    clusterRows.parentElement.title = summing ? "Each fly's KCs are summed" : '';
     odor.title = o.clusterCols ? 'odors are ordered by the clustering' : '';
     $('select[data-opt=metric]', tb).disabled = !(o.clusterRows || o.clusterCols);
     $('[data-role=rows-label]', tb).textContent = o.transpose ? 'Columns' : 'Rows';
@@ -774,7 +797,7 @@ class MatrixViewer {
   }
 
   // whether KCs are summed over (as chosen, if there are any)
-  _summing() { return !!(this.opts.sumKCs && this.data?.kcAxis); }
+  _summing() { return !!(this.opts.sumKCs && (this.kind === 'neural' ? this.kc : this.data?.kcAxis)); }
 
   // the kind of values shown, as colormaps are of: KCs' binary values summed are counts
   _valueKind() {
@@ -815,7 +838,9 @@ class MatrixViewer {
     const seq = ++this._seq;
     this._syncEdits();
     // ROI clustering pools the ROIs of every fly, so the rows are then not grouped
-    const o = this.opts.clusterRows ? { ...this.opts, rowOrder: 'none' } : this.opts;
+    const summing = this.kind === 'neural' && this._summing();
+    const o = summing ? { ...this.opts, clusterRows: false, rowOrder: 'fly' } : this.opts.clusterRows ? { ...this.opts, rowOrder: 'none' } : this.opts;
+    const build = (cl) => { const m = buildNeuralModel(this.data, order, o, cl); return summing ? sumOverFlies(m, this.data.units) : m; };
     if (this.kind !== 'neural') {
       if (COLORMAPS[o.colormap]?.kind === 'sequential') { this.opts.colormapSeq = o.colormap; this._save(); }
       this._show(this._genericModel(), this._badNote());
@@ -838,7 +863,7 @@ class MatrixViewer {
         const timer = setTimeout(() => {
           if (seq !== this._seq) return;
           shown = true;
-          this._show(buildNeuralModel(this.data, order, o, null), progress);
+          this._show(build(null), progress);
         }, 150);
         const onProgress = ({ distances, linkage }) => {
           progress = distances < 1 ? `clustering… distances ${Math.floor(distances * 100)}%` : `clustering… linkage ${Math.floor(linkage * 100)}%`;
@@ -865,7 +890,7 @@ class MatrixViewer {
         if (clustering.rowTrees.length || clustering.colTrees.length) notes.unshift(`clustered by ${o.metric === 'euclidean' ? 'Euclidean distance' : 'correlation'}`);
       }
     }
-    this._show(buildNeuralModel(this.data, order, o, clustering), notes.join(' · '));
+    this._show(build(clustering), notes.join(' · '));
   }
 
   _show(model, note = '') {
@@ -879,10 +904,11 @@ class MatrixViewer {
     else if (cm.kind === 'binary') norm = makeNorm('linear', 0, 1);
     else norm = makeNorm('linear', vmin, vmax);
     const dims = neural
-      ? [`${model.rows.length.toLocaleString()} ROIs`, `${model.cols.length} ${o.mode === 'trials' ? 'trials' : 'odors'}`]
+      ? [`${model.rows.length.toLocaleString()} ${model.summed ? (model.rows.length === 1 ? 'fly' : 'flies') : 'ROIs'}`,
+        `${model.cols.length} ${o.mode === 'trials' ? 'trials' : 'odors'}`]
       : [model.rows.length, model.cols.length];
-    // labels can be dragged along axes not clustered
-    const drag = { rows: !(neural && o.clusterRows), cols: !(neural && o.clusterCols) };
+    // labels can be dragged along axes not clustered (nor summed)
+    const drag = { rows: !(neural && (o.clusterRows || model.summed)), cols: !(neural && o.clusterCols) };
     if (o.transpose) {
       model = transposeModel(model);
       dims.reverse();
@@ -943,7 +969,7 @@ class MatrixViewer {
 
   // removes keys of the heatmap's axis, unless none would be left (ctrl-click on a label)
   _remove(axis, keys) {
-    if (keys.length >= this._nShown(axis)) return;
+    if (keys.length >= this._nShown(axis) || (this.kind === 'neural' && this.model?.summed && this._editAxis(axis) === 'rows')) return;
     const { removed } = this.edits[this._editAxis(axis)];
     keys.forEach((k) => removed.add(k));
     this._rebuild();
@@ -993,7 +1019,8 @@ class MatrixViewer {
   // right-click on a label: remove what it labels (a glomerulus also from every fly)
   _labelMenu({ axis, level, items, keys, x, y }) {
     const ax = this._editAxis(axis);
-    const [one, many] = { neural: { rows: ['ROI', 'ROIs'], cols: ['odor', 'odors'] }, generic: { rows: ['row', 'rows'], cols: ['column', 'columns'] } }[this.kind][ax];
+    if (this.kind === 'neural' && this.model?.summed && ax === 'rows') return; // (each fly's KCs summed)
+    const [one, many] = { neural: { rows: ['ROI', 'ROIs'], cols: ['odor', 'odors'] }, generic: { rows: ['row', 'rows'], cols: ['column', 'columns'] } }[this.kind === 'neural' ? 'neural' : 'generic'][ax];
     const shown = this._nShown(axis);
     const it = items[0];
     const muted = (s) => ` <span class="muted">${esc(s)}</span>`;

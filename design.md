@@ -202,7 +202,9 @@ between the frontend and the server. Using the app is described in
   blocks of rows spread over the workers, and average linkage (UPGMA, merges in scipy's
   convention) then runs in one worker directly on those blocks, never copied into one
   buffer; blocks are transferred between workers, as they cannot share memory. Memory
-  limits it to 15,000 rows.
+  limits it to 30,000 rows (a KC dataset's): their distances, as float32, take 1.8 GB,
+  all in the linkage's worker; about 45 s of distances (spread over the workers) and
+  25 s of linkage, measured in SpiderMonkey.
 - **Rows and columns moved or removed in the viewer are edits of the data's axes**, not
   of the screen: keys (units, odors) removed and the order they were dragged into,
   applied to the order chosen in the toolbar, so they hold when the matrix is transposed
