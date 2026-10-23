@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import sqlite3
 import zipfile
 from pathlib import Path
 
@@ -204,6 +205,54 @@ def test_lowercase(store, tmp_path):
     # the original files as they are
     name, _ = write_download(db, [ia, ib2], "files", zip_path, datasets_dir, lower=True)
     assert set(read_member(zip_path, f"{name[:-4]}/odors.csv")["abbrev"]) == {"IaA", "AA", "aa", "HCl"}
+
+
+
+def test_dataset_without_flies(store, tmp_path, monkeypatch):
+    from app import db as dbmod
+    from tests.test_ingest import ROIS_ALONE
+
+    (tmp_path / "rois.csv").write_text(ROIS_ALONE)
+    parsed = load_file(tmp_path / "rois.csv")
+    db, datasets_dir = store
+    ds_id = add(store, parsed)
+    m = db.get_matrix_arrays(ds_id)
+    assert m["units"][0] == {"date": None, "fly_num": None, "roi": "D", "roi_kind": "glomerulus"}
+    d = db.get_dataset(ds_id)
+    assert d["n_flies"] == 0 and d["last_fly_date"] is None
+    # downloaded as uploaded (a single header line; long without date or fly_num), so it uploads again
+    out = tmp_path / "out"
+    name, _ = write_download(db, [ds_id], "wide", out, datasets_dir)
+    assert out.read_text().splitlines()[0] == "odor1,D,DA1,VA1d/VA1v,V,DM2"
+    again = load_file(out.rename(tmp_path / "again.csv"))
+    assert again.units == parsed.units and [t["odor"] for t in again.trials] == [t["odor"] for t in parsed.trials]
+    np.testing.assert_allclose(again.values, parsed.values, rtol=1e-6)
+    write_download(db, [ds_id], "long", out, datasets_dir)
+    assert out.read_text().splitlines()[0] == "roi,odor1,value"
+    np.testing.assert_allclose(load_file(out.rename(tmp_path / "again_long.csv")).values, parsed.values, rtol=1e-6)
+
+    # a database from before: its units remade so that they may have no fly, nothing else changed
+    old = tmp_path / "old.sqlite3"
+    with monkeypatch.context() as mp:
+        mp.setattr(dbmod, "SCHEMA", dbmod.SCHEMA.replace("    date TEXT,\n    fly_num INTEGER,", "    date TEXT NOT NULL,\n    fly_num INTEGER NOT NULL,"))
+        olddb = Database(old)
+    with_flies = add((olddb, tmp_path / "old_datasets"), load_file(write_csv(make_wide(ROWS, COLS), tmp_path, "a.csv")))
+    notnull = lambda: {r[1]: r[3] for r in sqlite3.connect(old).execute("PRAGMA table_info(units)")}
+    n_responses = lambda: sqlite3.connect(old).execute("SELECT count(*) FROM responses").fetchone()[0]
+    assert notnull()["date"] == 1
+    before, responses = olddb.get_matrix_arrays(with_flies), n_responses()
+    newdb = Database(old)
+    assert notnull()["date"] == 0 and notnull()["fly_num"] == 0
+    after = newdb.get_matrix_arrays(with_flies)
+    assert after["units"] == before["units"] and np.array_equal(after["values"], before["values"], equal_nan=True)
+    assert n_responses() == responses > 0 and sqlite3.connect(old).execute("PRAGMA foreign_key_check").fetchall() == []
+    rois_alone = add((newdb, tmp_path / "old_datasets2"), parsed)
+    assert newdb.get_matrix_arrays(rois_alone)["units"][0]["date"] is None
+    # deleting a dataset still deletes its units and their responses
+    newdb.delete_dataset(with_flies)
+    with sqlite3.connect(old) as con:
+        assert con.execute("SELECT count(*) FROM units WHERE dataset_id = ?", (with_flies,)).fetchone()[0] == 0
+        assert con.execute("SELECT count(*) FROM responses WHERE dataset_id = ?", (with_flies,)).fetchone()[0] == 0
 
 
 def test_odors_tex():

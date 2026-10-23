@@ -57,6 +57,11 @@
             <li><strong>Odor strings</strong> look like <code>va @ -3</code>: abbreviation, a space, <code>@</code>, a space, log<sub>10</sub> concentration (0 or negative). <code>solvent</code> marks an unused component.</li>
           </ul>
           <p>A long layout (one row per value, with columns <code>date, fly_num, roi, [panel,] odor1, …, [repeat,] value</code>) is also accepted; parquet files with integer <code>fly_num</code> usually need this layout.</p>
+          <p>For now, with a warning: <strong>no flies</strong>, columns of ROIs alone (in a CSV, a single header line of the row levels' names then
+            the ROIs', as <code>DataFrame.to_csv</code> writes a frame with plain columns; in a long file, neither <code>date</code> nor <code>fly_num</code>),
+            and <strong>no trials</strong> (no <code>repeat</code> level: each row is taken as one trial, as when already averaged over them).
+            A <code>_t0</code>, <code>_t1</code>, … suffix is removed from ROI names (<code>DA1_t0</code> → <code>DA1</code>), and an ROI of glomeruli
+            that could not be told apart may be named by them joined with <code>/</code> (<code>VA1d/VA1v</code>).</p>
         </div>
       </details>
       <div id="file-result"></div>

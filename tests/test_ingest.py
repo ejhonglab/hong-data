@@ -255,6 +255,71 @@ def test_parquet_roundtrip(tmp_path):
     assert parsed.summary()["n_units"] == 4 and parsed.source_format == "wide-parquet"
 
 
+
+# ------------------------------------------------------------------ without flies or trials
+# as tables of mean responses are often written: a single header line, of the row levels
+# then the ROIs (some with a suffix), and no repeats
+ROIS_ALONE = ("odor1,D,DA1_t0,VA1d/VA1v_t0,V_t1,DM2\n"
+              "IaA @ -5,0.1,0.2,0.3,0.4,0.5\n"
+              "IaA @ -4,0.2,0.3,0.4,0.5,0.6\n"
+              "ban @ -0,0.3,0.4,0.5,0.6,0.7\n")
+
+
+def test_rois_alone(tmp_path):
+    p = tmp_path / "x.csv"
+    p.write_text(ROIS_ALONE)
+    parsed = load_file(p)
+    # no flies, suffixes removed, glomeruli that could not be told apart kept as one ROI
+    assert [u["roi"] for u in parsed.units] == ["D", "DA1", "VA1d/VA1v", "V", "DM2"]
+    assert all(u["date"] is None and u["fly_num"] is None and u["roi_kind"] == "glomerulus" for u in parsed.units)
+    assert parsed.col_levels == ["roi"] and parsed.values.shape == (5, 3) and parsed.values[3, 1] == pytest.approx(0.5)
+    assert [t["odor"] for t in parsed.trials] == ["IaA @ -5", "IaA @ -4", "ban @ -0"] and all(t["repeat"] == 0 for t in parsed.trials)
+    s = parsed.summary()
+    assert s["n_flies"] == 0 and s["flies"] == [] and s["first_date"] is None and s["roi_kind"] == "glomeruli"
+    assert not s["has_repeat_level"]
+    # allowed, but each said
+    w = "\n".join(parsed.warnings)
+    assert "no flies" in w and "no trials" in w and "'DA1_t0 → DA1'" in w and "'V_t1 → V'" in w and "'VA1d/VA1v'" in w
+
+
+def test_rois_alone_layouts(tmp_path):
+    # with panels and repeats, as pandas writes a frame with plain columns, and long, and parquet
+    rows = [r for r in ROWS if r[3] == "solvent"]
+    wide = make_wide(rows, [("DM2",), ("DL5_t1",), ("VA2",)], col_names=("roi",))
+    wide.columns = wide.columns.get_level_values(0).rename("roi")
+    a = load_file(write_csv(wide, tmp_path))
+    assert [u["roi"] for u in a.units] == ["DM2", "DL5", "VA2"] and a.summary()["repeats_max"] == 2
+    assert a.source_format == "wide-csv" and not any("no trials" in w for w in a.warnings)
+    long = wide.stack(future_stack=True).rename("value").reset_index()
+    assert list(long.columns[-2:]) == ["roi", "value"] and "date" not in long
+    long.to_csv(tmp_path / "long.csv", index=False)
+    b = load_file(tmp_path / "long.csv")
+    assert b.source_format == "long-csv" and b.col_levels == ["roi"] and [u["roi"] for u in b.units] == ["DM2", "DL5", "VA2"]
+    np.testing.assert_allclose(b.values, a.values)
+    if importlib.util.find_spec("pyarrow"):
+        wide.to_parquet(tmp_path / "x.parquet")
+        c = load_file(tmp_path / "x.parquet")
+        assert c.source_format == "wide-parquet" and c.summary()["n_flies"] == 0
+        np.testing.assert_allclose(c.values, a.values)
+
+
+def test_rois_alone_errors(tmp_path):
+    def errors(text, name="x.csv"):
+        (tmp_path / name).write_text(text)
+        with pytest.raises(ValidationError) as ei:
+            load_file(tmp_path / name)
+        return "\n".join(ei.value.errors)
+
+    # the same ROI twice, once their suffixes are removed: nothing tells them apart
+    e = errors("odor1,DA1_t0,DA1_t1,DM2\nva @ -3,1,2,3\n")
+    assert "ROIs must be unique" in e and "'DA1'" in e and "after removing their suffixes" in e
+    # only glomeruli may be joined
+    assert "'VA1d/XX'" in errors("odor1,VA1d/XX,DM2\nva @ -3,1,2\n")
+    # a long file without its flies has neither date nor fly_num
+    e = errors("fly_num,roi,odor1,value\n1,DM2,va @ -3,0.5\n", "long.csv")
+    assert "'date' and 'fly_num' may both be left out" in e
+
+
 # ------------------------------------------------------------------ YAML check
 def test_yaml_check():
     text = """

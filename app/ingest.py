@@ -9,9 +9,19 @@ rows and columns):
     rows:    MultiIndex with levels  [panel, is_pair,] odor1[, odor2, ...][, repeat]
              (``odor`` alone is accepted in place of ``odor1``)
 
+or, without flies (for now, with a warning), columns of ROIs alone: in a CSV, a single
+header line of the row levels' names then the ROIs' (as ``to_csv`` writes a frame with
+plain columns).
+
 *long* (one row per value):
 
     columns: date, fly_num, roi, [panel,] odor1[, odor2, ...][, repeat], value
+
+(``date`` and ``fly_num`` both left out, without flies.)
+
+Without a ``repeat`` level, each row is one trial (perhaps already averaged over trials),
+with a warning. ROI names lose a ``_t<n>`` suffix (``DA1_t0`` -> ``DA1``), and may name
+several glomeruli that could not be told apart (``VA1d/VA1v``: `glomeruli.merged`).
 
 Row levels that say nothing are dropped before anything else (`uninformative_levels`):
 ``is_pair`` when it is False on every row, and the last ``odor<n>`` levels when they hold
@@ -50,6 +60,7 @@ COL_LEVELS = ("date", "fly_num", "roi")
 KNOWN_ROW_LEVELS = {"panel", "is_pair", "repeat"}
 LONG_VALUE_COLUMNS = ("value", "response", "resp", "df_over_f", "dff", "mean_dff", "delta_f", "mean_df_over_f")
 MAX_EXAMPLES = 15
+ROI_SUFFIX = re.compile(r"_t\d+$")  # removed from ROI names ('DA1_t0' -> 'DA1')
 # odor<n> values meaning that nothing was presented on that manifold (as is a missing one);
 # the '@ 0' ones however the 0 is written ('pfo @ 0.0', ...)
 EMPTY_ODOR_VALUES = (SOLVENT_STR, "pfo", "water", "pfo @ 0", "water @ 0")
@@ -83,8 +94,9 @@ class ParsedData:
         n_glom = n_int = 0
         for u in self.units:
             k = (u["date"], u["fly_num"])
-            flies.setdefault(k, {"date": u["date"], "fly_num": u["fly_num"], "n_rois": 0})
-            flies[k]["n_rois"] += 1
+            if u["date"] is not None:  # (none, without flies)
+                flies.setdefault(k, {"date": u["date"], "fly_num": u["fly_num"], "n_rois": 0})
+                flies[k]["n_rois"] += 1
             if u["roi_kind"] == "glomerulus":
                 n_glom += 1
             else:
@@ -191,8 +203,8 @@ def _load_parquet(path: Path) -> ParsedData:
         raise ValidationError([f"parquet support is not installed on the server ({e}); install pyarrow"])
     except Exception as e:
         raise ValidationError([f"could not read parquet file: {e}"])
-    if isinstance(df.columns, pd.MultiIndex):
-        return _validate_wide(df, source_format="wide-parquet")
+    if isinstance(df.columns, pd.MultiIndex) or any(n is not None and _is_row_level(str(n)) for n in df.index.names):
+        return _validate_wide(df, source_format="wide-parquet")  # (plain columns: ROIs alone, no flies)
     return _long_to_wide(df, source_format="long-parquet")
 
 
@@ -215,13 +227,19 @@ def _sniff_csv(path: Path) -> tuple[str, int, int, bool, str]:
     """Return (layout, n_index_cols, n_header_rows, has_names_row, delimiter).
 
     layout is 'wide' (3 header rows date/fly_num/roi, as pandas writes a frame with
-    MultiIndex columns) or 'long'.
+    MultiIndex columns), 'wide-rois' (one header row: the row levels' names, then the
+    ROIs', as pandas writes a frame with plain columns) or 'long'.
     """
     rows, delim = _read_head(path, 8)
     while len(rows) < 8:
         rows.append([])
     first_cells = [r[0].strip() if r else "" for r in rows[:3]]
     if set(first_cells) != set(COL_LEVELS):
+        # a single header line, of the row levels' names then the ROIs' (no flies)
+        header = [c.strip() for c in rows[0]]
+        lead = list(itertools.takewhile(_is_row_level, header))
+        if lead and len(header) > len(lead) and not ({"date", "fly_num", "roi", *LONG_VALUE_COLUMNS} & set(header)):
+            return "wide-rois", len(lead), 1, False, delim
         # maybe a wide file with the wrong header levels: report them if it looks like one
         n_index = 1 + sum(1 for _ in itertools.takewhile(lambda c: c.strip() == "", rows[0][1:]))
         if n_index > 1 and len(rows[0]) > n_index:
@@ -253,6 +271,10 @@ def _sniff_csv(path: Path) -> tuple[str, int, int, bool, str]:
     return "wide", n_index, n_header, has_names_row, delim
 
 
+def _is_row_level(name: str) -> bool:
+    return name in KNOWN_ROW_LEVELS or is_odor_level(name)
+
+
 def _is_number(x: str) -> bool:
     try:
         float(x)
@@ -263,6 +285,18 @@ def _is_number(x: str) -> bool:
 
 def _load_csv(path: Path) -> ParsedData:
     layout, n_index, n_header, has_names_row, delim = _sniff_csv(path)
+    if layout == "wide-rois":
+        names = [c.strip() for c in _read_head(path, 1, delim)[0][0]]
+        try:
+            df = pd.read_csv(path, sep=delim, encoding="utf-8-sig", header=None, skiprows=1,
+                             index_col=list(range(n_index)), keep_default_na=True)
+        except Exception as e:
+            raise ValidationError([f"could not parse wide-format CSV: {e}"])
+        if df.shape[1] != len(names) - n_index:
+            raise ValidationError([f"the header line lists {len(names) - n_index} ROIs but data rows have {df.shape[1]}"])
+        df.columns = pd.Index(names[n_index:], name="roi")  # (as written: pandas would rename a repeated one)
+        df.index = df.index.set_names(names[:n_index]) if isinstance(df.index, pd.MultiIndex) else df.index.rename(names[0])
+        return _validate_wide(df, source_format="wide-csv")
     if layout == "long":
         try:
             df = pd.read_csv(path, sep=delim, encoding="utf-8-sig")
@@ -306,14 +340,16 @@ def _long_to_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
     df.columns = cols
     errors = []
     missing = [c for c in COL_LEVELS if c not in cols]
-    if missing:
+    if missing and missing != ["date", "fly_num"]:
         errors.append(
             f"this does not look like the expected format. For a wide (matrix) file the "
-            f"first three header rows must start with 'date', 'fly_num', 'roi'; for a long "
-            f"file the columns must include {list(COL_LEVELS)} (missing {missing}). "
+            f"first three header rows must start with 'date', 'fly_num', 'roi' (or a single header "
+            f"line name the row levels, then the ROIs); for a long file the columns must include "
+            f"{list(COL_LEVELS)} ('date' and 'fly_num' may both be left out; missing {missing}). "
             f"Found columns: {cols[:12]}{'...' if len(cols) > 12 else ''}"
         )
         raise ValidationError(errors)
+    col_levels = [c for c in COL_LEVELS if c in cols]  # (roi alone: no flies)
     odor_cols = [c for c in cols if is_odor_level(c)]
     if not odor_cols:
         raise ValidationError(["long-format file has no 'odor1' (or 'odor') column"])
@@ -337,15 +373,15 @@ def _long_to_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
     ordered_rows += sorted(odor_cols, key=lambda c: (len(c), c))
     if "repeat" in row_cols:
         ordered_rows.append("repeat")
-    dup = df.duplicated(subset=ordered_rows + list(COL_LEVELS), keep=False)
+    dup = df.duplicated(subset=ordered_rows + col_levels, keep=False)
     if dup.any():
         raise ValidationError(
-            [f"{int(dup.sum())} rows in the long-format file share the same (row index, date, fly_num, roi) key"]
+            [f"{int(dup.sum())} rows in the long-format file share the same (row index, {', '.join(col_levels)}) key"]
         )
     # build the matrix by hand so that row/column order follows first appearance and no
     # cartesian product of index levels is created
     row_keys = list(df[ordered_rows].itertuples(index=False, name=None))
-    col_keys = list(df[list(COL_LEVELS)].itertuples(index=False, name=None))
+    col_keys = list(df[col_levels].itertuples(index=False, name=None))
     row_index: dict[tuple, int] = {}
     col_index: dict[tuple, int] = {}
     for k in row_keys:
@@ -359,7 +395,8 @@ def _long_to_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
     wide = pd.DataFrame(
         values,
         index=pd.MultiIndex.from_tuples(list(row_index), names=ordered_rows),
-        columns=pd.MultiIndex.from_tuples(list(col_index), names=list(COL_LEVELS)),
+        columns=(pd.MultiIndex.from_tuples(list(col_index), names=list(COL_LEVELS)) if len(col_levels) == 3
+                 else pd.Index([k[0] for k in col_index], name="roi")),
     )
     pd_ = _validate_wide(wide, source_format=source_format)
     pd_.warnings = warnings + pd_.warnings
@@ -468,19 +505,21 @@ def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
     details: dict = {}
 
     # ---- column levels -----------------------------------------------------
-    if not isinstance(df.columns, pd.MultiIndex):
-        raise ValidationError(
-            ["columns are not a 3-level header (date / fly_num / roi): is this file in the expected format?"]
-        )
-    col_names = [str(n) if n is not None else "" for n in df.columns.names]
-    if set(col_names) != set(COL_LEVELS) or len(col_names) != len(COL_LEVELS):
-        errors.append(
-            f"column header levels must be exactly {list(COL_LEVELS)}; found {col_names}"
-        )
-        raise ValidationError(errors)
-    if col_names != list(COL_LEVELS):
-        df = df.reorder_levels(list(COL_LEVELS), axis=1)
-        warnings.append(f"column levels were reordered from {col_names} to {list(COL_LEVELS)}")
+    # with flies (date / fly_num / roi), or ROIs alone (plain columns, or a level 'roi')
+    flies = isinstance(df.columns, pd.MultiIndex) and list(df.columns.names) != ["roi"]
+    if flies:
+        col_names = [str(n) if n is not None else "" for n in df.columns.names]
+        if set(col_names) != set(COL_LEVELS) or len(col_names) != len(COL_LEVELS):
+            errors.append(
+                f"column header levels must be exactly {list(COL_LEVELS)} (or 'roi' alone); found {col_names}"
+            )
+            raise ValidationError(errors)
+        if col_names != list(COL_LEVELS):
+            df = df.reorder_levels(list(COL_LEVELS), axis=1)
+            warnings.append(f"column levels were reordered from {col_names} to {list(COL_LEVELS)}")
+    else:
+        warnings.append("no flies: the columns are ROIs alone, without 'date' or 'fly_num'. This is allowed for now, "
+                        "but nothing is known of the flies (how many, when, their raw data and movies)")
 
     # ---- row levels ---------------------------------------------------------
     row_names = list(df.index.names)
@@ -511,18 +550,22 @@ def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
             f"odor1..odorN, repeat); they are kept as trial metadata but ignored for display"
         )
     if "repeat" not in row_names:
-        warnings.append("no 'repeat' level in the row index: every row is treated as a single trial")
+        warnings.append("no trials: no 'repeat' level in the row index, so each row is taken as one trial "
+                        "(as when already averaged over trials)")
 
     # ---- column values: date / fly_num / roi ---------------------------------
     cols_frame = df.columns.to_frame(index=False)
+    if not flies:
+        cols_frame.columns = ["roi"]
+        cols_frame["date"] = cols_frame["fly_num"] = None
     dates_raw = cols_frame["date"].tolist()
     with warnings_module.catch_warnings():
         warnings_module.simplefilter("ignore")
         parsed_dates = pd.to_datetime(pd.Series(dates_raw, dtype=object), errors="coerce")
-    bad_dates = sorted({str(d) for d, p in zip(dates_raw, parsed_dates) if pd.isna(p)})
+    bad_dates = sorted({str(d) for d, p in zip(dates_raw, parsed_dates) if pd.isna(p)}) if flies else []
     if bad_dates:
         errors.append(f"unparseable 'date' values in column header: {_examples(bad_dates)}")
-    else:
+    elif flies:
         if any(ts.time() != pd.Timestamp(0).time() for ts in parsed_dates):
             warnings.append("'date' values carry a time-of-day; only the date is kept")
     date_strs = [None if pd.isna(p) else p.strftime("%Y-%m-%d") for p in parsed_dates]
@@ -531,7 +574,9 @@ def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
     bad_fly = []
     for v in cols_frame["fly_num"].tolist():
         i = _to_int_like(v)
-        if i is None or i <= 0:
+        if not flies:
+            fly_nums.append(None)
+        elif i is None or i <= 0:
             bad_fly.append(v)
             fly_nums.append(None)
         else:
@@ -542,6 +587,8 @@ def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
     rois = []
     roi_kinds = []
     bad_rois = []
+    suffixed: dict[str, str] = {}  # ROI names with a suffix removed -> without it
+    merged = []
     for v in cols_frame["roi"].tolist():
         if isinstance(v, (int, np.integer)) and not isinstance(v, (bool, np.bool_)):
             s = str(int(v))
@@ -549,9 +596,14 @@ def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
             s = str(int(v))
         else:
             s = str(v).strip() if v is not None else ""
+        if ROI_SUFFIX.search(s):
+            suffixed[s] = s = ROI_SUFFIX.sub("", s)
         rois.append(s)
         if glom.is_glomerulus(s):
             roi_kinds.append("glomerulus")
+        elif glom.merged(s):
+            roi_kinds.append("glomerulus")
+            merged.append(s)
         elif glom.is_int_roi(s):
             roi_kinds.append("int")
         else:
@@ -569,6 +621,12 @@ def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
                            "accepted": list(glom.GLOMERULUS_NAMES)}
     if "" in rois:
         errors.append("some column headers have an empty 'roi'")
+    if suffixed:
+        warnings.append(f"suffixes ('_t0', '_t1', ...) were removed from {len(suffixed)} ROI names: "
+                        + _examples([f"{a} → {b}" for a, b in suffixed.items()]))
+    if merged:
+        warnings.append(f"{len(set(merged))} ROI name(s) are of glomeruli that could not be told apart, each kept as one ROI: "
+                        + _examples(sorted(set(merged), key=glom.roi_sort_key)))
 
     unit_keys = list(zip(date_strs, fly_nums, rois))
     seen = {}
@@ -578,9 +636,10 @@ def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
             dup_units.append(k)
         seen[k] = True
     if dup_units:
+        after = " (after removing their suffixes)" if any(r in suffixed.values() for _, _, r in dup_units) else ""
         errors.append(
-            "columns must be unique (date, fly_num, roi); duplicated: "
-            + _examples(sorted({f"{d} fly{f} {r}" for d, f, r in dup_units}))
+            ("columns must be unique (date, fly_num, roi); duplicated: " if flies else "ROIs must be unique (there are no flies to tell them apart); duplicated: ")
+            + _examples(sorted({f"{d} fly{f} {r}" if flies else r for d, f, r in dup_units})) + after
         )
 
     # ---- row values: odors / repeat / panel ----------------------------------
@@ -717,7 +776,7 @@ def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
         trials=trials,
         values=values.astype(np.float32),
         row_levels=row_names,
-        col_levels=list(COL_LEVELS),
+        col_levels=list(COL_LEVELS) if flies else ["roi"],
         source_format=source_format,
         warnings=warnings,
     )

@@ -111,6 +111,16 @@ glomeruli_diagnostics,False,3mtp @ -5,solvent,0,-0.0377,0.13,...
 - A long layout (`date, fly_num, roi, [panel,] odor1, ..., [repeat,] value`) is also
   accepted for CSV and parquet (parquet with integer `fly_num` column labels cannot be
   written in the wide layout by pandas, so use long there).
+- For now, with a warning: no flies, columns of ROIs alone (in a CSV, a single header
+  line of the row levels' names then the ROIs', as `DataFrame.to_csv` writes a frame
+  with plain columns, e.g. `odor1,D,DA1,...`; in a long file, neither `date` nor
+  `fly_num`), and no trials (no `repeat` level: each row is one trial, as when already
+  averaged over them). Such a dataset says "flies not given", has no fly folders, raw
+  data or movies to find, and downloads without `date` or `fly_num` (in the wide layout,
+  with one header line).
+- A `_t0`, `_t1`, ... suffix is removed from ROI names (`DA1_t0` becomes `DA1`), and an
+  ROI of glomeruli that could not be told apart may be named by them joined with `/`
+  (`VA1d/VA1v`), kept as one ROI (each said in a warning).
 
 Validation reports every problem it finds at once (bad odor strings with the exact
 reason, unknown ROI names, duplicate columns, non-numeric cells, ...).

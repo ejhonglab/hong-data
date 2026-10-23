@@ -115,16 +115,18 @@ def generate_readme(m: Metadata, summary: dict, files: dict[str, Any], *, create
         dates = first if first == last else f"{first} to {last}"
     else:
         dates = "unknown dates"
+    flies_part = f"in {n_flies} {'fly' if n_flies == 1 else 'flies'} ({dates})" if flies else "(flies not given)"
     rep_min, rep_max = summary.get("repeats_min"), summary.get("repeats_max")
     rep = f"{rep_min}" if rep_min == rep_max else f"{rep_min}–{rep_max}"
+    trials_part = f"{rep} trial(s) per odor" if summary.get("has_repeat_level", True) else "one row per odor (trials not given)"
     roi_kind = summary.get("roi_kind", "")
     roi_word = {"glomeruli": "glomerulus ROIs", "integers": "numbered ROIs", "mixed": "ROIs"}.get(roi_kind, "ROIs")
 
     lines = [f"# {dataset_title(m, summary)}", ""]
     lines.append(
         f"Mean responses of {m.coding_unit} ({roi_word}) to {summary.get('n_odors', '?')} odors "
-        f"in {n_flies} {'fly' if n_flies == 1 else 'flies'} ({dates}); "
-        f"{summary.get('n_units', '?')} ROI columns, {rep} trial(s) per odor. "
+        f"{flies_part}; "
+        f"{summary.get('n_units', '?')} ROI columns, {trials_part}. "
         f"{m.driver} driving {m.indicator}."
     )
     lines.append("")
@@ -157,6 +159,8 @@ def generate_readme(m: Metadata, summary: dict, files: dict[str, Any], *, create
     fly_strs = [f"{f['date']} fly {f['fly_num']} ({f['n_rois']} ROIs)" for f in flies]
     if fly_strs:
         lines.append("- flies: " + "; ".join(fly_strs))
+    else:
+        lines.append("- flies: not given (the columns are ROIs alone)")
     nan = summary.get("nan_fraction", 0.0) or 0.0
     if nan > 0:
         lines.append(f"- missing cells: {nan:.1%}")

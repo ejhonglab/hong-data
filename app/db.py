@@ -4,7 +4,8 @@ Tables
 ------
 datasets        one row per upload (metadata, README, file names, summary numbers)
 dataset_panels  normalised panel names per dataset (for "browse by panel")
-units           one row per (date, fly_num, roi) column of a dataset
+units           one row per (date, fly_num, roi) column of a dataset (date and fly_num null
+                without flies: ROIs alone)
 trials          one row per trial (panel, odor, repeat, ...) of a dataset
 responses       long table: one row per cell (unit_id, trial_id, value) -- queryable
 matrices        the same values as a float32 blob (units x trials) for fast serving
@@ -81,8 +82,8 @@ CREATE TABLE IF NOT EXISTS units (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     dataset_id INTEGER NOT NULL REFERENCES datasets(id) ON DELETE CASCADE,
     idx INTEGER NOT NULL,
-    date TEXT NOT NULL,
-    fly_num INTEGER NOT NULL,
+    date TEXT,
+    fly_num INTEGER,
     roi TEXT NOT NULL,
     roi_kind TEXT NOT NULL
 );
@@ -217,6 +218,28 @@ def content_fingerprint(con: sqlite3.Connection) -> str:
     return h.hexdigest()
 
 
+def _units_nullable(con: sqlite3.Connection) -> None:
+    """The units table of a database from before files without flies, remade with its date
+    and fly_num nullable (SQLite cannot drop a NOT NULL: the steps of its documentation for
+    other changes to a table, the ids, so the responses of each unit, kept)."""
+    create = SCHEMA[SCHEMA.index("CREATE TABLE IF NOT EXISTS units ("):]
+    create = create[:create.index(");") + 2].replace("IF NOT EXISTS units (", "units_new (")
+    con.commit()
+    con.executescript(f"""PRAGMA foreign_keys = OFF;
+        BEGIN;
+        {create}
+        INSERT INTO units_new (id, dataset_id, idx, date, fly_num, roi, roi_kind)
+            SELECT id, dataset_id, idx, date, fly_num, roi, roi_kind FROM units;
+        DROP TABLE units;
+        ALTER TABLE units_new RENAME TO units;
+        CREATE INDEX IF NOT EXISTS units_dataset ON units(dataset_id, idx);
+        COMMIT;
+        PRAGMA foreign_keys = ON;""")
+    bad = con.execute("PRAGMA foreign_key_check").fetchall()
+    if bad:
+        raise sqlite3.IntegrityError(f"remaking the units table left {len(bad)} rows referring to nothing")
+
+
 class Database:
     def __init__(self, path: Path):
         self.path = Path(path)
@@ -226,6 +249,8 @@ class Database:
             for table, column, kind in ADDED_COLUMNS:
                 if column not in {r["name"] for r in con.execute(f"PRAGMA table_info({table})")}:
                     con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
+            if any(r["notnull"] for r in con.execute("PRAGMA table_info(units)") if r["name"] in ("date", "fly_num")):
+                _units_nullable(con)
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:

@@ -121,6 +121,11 @@ between the frontend and the server. Using the app is described in
   an edit of either's rows is copied to the other (rows keyed by their place in that
   shared order), as are cell sizes, transposing, chemical labels and scrolling, and their
   headers and toolbars are made as high as each other's so the rows stay level.
+- **Data without flies is stored with none, not made one up.** A file of ROIs alone (no
+  `date` or `fly_num`) has units with both null (`units` remade once, in a database from
+  before, to allow it: `db._units_nullable`), so it counts no flies, is grouped in the
+  viewer as "fly not given", has nothing looked for on tensor, and downloads as it came
+  (one header line). It is allowed with a warning for now, as is a file without trials.
 - **Odor names are lowercased only where shown or downloaded, never where stored.**
   Lowercase odor names are a choice of each viewer (Settings, kept in the browser,
   sent to the server as `lower=1` with downloads), so datasets, the odor table and the

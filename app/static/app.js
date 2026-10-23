@@ -304,7 +304,10 @@ function cmpOdor(a, b) {
 
 // --------------------------------------------------------- neural data model
 // data: {units, trials, values: Float32Array (units x trials)}
-const flyKey = (u) => `${u.date} fly ${u.fly_num}`;
+const flyKey = (u) => (u.date == null ? 'fly not given' : `${u.date} fly ${u.fly_num}`);
+// a dataset's flies as a list of them says it (none: a file of ROIs alone), and its last one's date
+const fliesText = (d) => (d.n_flies ? `${d.n_flies} ${d.n_flies === 1 ? 'fly' : 'flies'}` : 'flies not given');
+const lastFlyText = (d) => (d.last_fly_date ? `; last fly ${esc(d.last_fly_date)}` : '');
 
 // contiguous runs of equal key(item): [{key, start, end}]
 function runsOf(items, key) {
@@ -1264,7 +1267,7 @@ class UploadFlow {
     if (sum?.roi_kind === 'integers' && this.options?.coding_units.includes('KCs')) offer('coding_unit', 'KCs', 'file', 1, 'numbered ROIs');
     for (const [key, kind, flies, what] of [['raw_data_path', 'raw_dirs', 'raw', 'raw data'], ['mocorr_data_path', 'mocorr_dirs', 'mocorr', 'motion-corrected data']]) {
       const dirs = this.user?.[kind] || [];
-      if (!dirs.length) continue;
+      if (!dirs.length || (sum && !sum.n_flies)) continue; // (of data without flies, nothing is known to be in them)
       // of several, the one with the most of these flies (as found on tensor), else the first
       const inside = (d) => (this.nas?.flies || []).filter((f) => f[flies].some((p) => p === d || p.startsWith(`${d}/`))).length;
       const best = dirs.reduce((a, d) => (inside(d) > inside(a) ? d : a), dirs[0]);
@@ -1325,7 +1328,8 @@ class UploadFlow {
     }
     this.looking = true;
     this._renderYamlStatus();
-    box.replaceChildren(msgBox('info', raw ? `Looking for these flies in <code>${esc(raw)}</code> on tensor…` : `Looking for these flies in the folders of ${esc(name)} on tensor…`));
+    const what = this.data?.summary?.n_flies ? 'these flies' : 'odor YAMLs';
+    box.replaceChildren(msgBox('info', raw ? `Looking for ${what} in <code>${esc(raw)}</code> on tensor…` : `Looking for ${what} in the folders of ${esc(name)} on tensor…`));
     let res;
     try {
       res = await api(`/api/stage/${stageId}/lookup`, { method: 'POST', json: { name, raw_data_path: raw } });
@@ -1381,6 +1385,7 @@ class UploadFlow {
     const plural = (k, word) => `${k} ${word}${k === 1 ? '' : 's'}`;
     const dirsOf = (k) => (k === 'raw_dirs' && n.raw_data_path_given ? [n.raw_data_path_given] : n.user?.[k] || []);
     const flies = (key, folders, path) => {
+      if (!n.flies.length) return '<span class="muted">not looked for: the data names no flies (no date or fly_num)</span>';
       if (!dirsOf(folders).length) return '<span class="muted">no such folders in your settings</span>';
       const missing = n.flies.filter((f) => !f[key].length);
       const found = n.flies.length - missing.length;
@@ -1430,10 +1435,10 @@ class UploadFlow {
         <li>Motion-corrected data: ${flies('mocorr', 'mocorr_dirs', n.mocorr_data_path)}</li>
         <li>ThorImage recordings: ${xml}</li>
         <li>Odor YAML: ${yaml}</li></ul>
-      <details><summary>Each fly${y.candidates.length ? ', and the odor YAMLs tried' : ''}</summary>
-        <table class="odor-table"><thead><tr><th>Fly</th><th>Raw data</th><th>Motion-corrected</th><th>Recordings</th></tr></thead><tbody>${flyRows}</tbody></table>
+      ${flyRows || yamlRows ? `<details><summary>${[flyRows ? 'Each fly' : '', yamlRows ? 'the odor YAMLs tried' : ''].filter(Boolean).join(', and ').replace(/^t/, 'T')}</summary>
+        ${flyRows ? `<table class="odor-table"><thead><tr><th>Fly</th><th>Raw data</th><th>Motion-corrected</th><th>Recordings</th></tr></thead><tbody>${flyRows}</tbody></table>` : ''}
         ${yamlRows ? `<table class="odor-table"><thead><tr><th>Odor YAML</th><th>Found by</th><th>Describes</th><th></th></tr></thead><tbody>${yamlRows}</tbody></table>` : ''}
-      </details></div>`;
+      </details>` : ''}</div>`;
     $('[data-again]', box).addEventListener('click', () => this.lookup());
     $('[data-xml]', box)?.addEventListener('change', (e) => { if (e.target.value) this.addXml({ tensorPath: e.target.value }); }); // chosen
     $$('[data-attach-yaml]', box).forEach((b) => b.addEventListener('click', () => this.addYaml({ tensorPaths: [b.dataset.attachYaml] })));
@@ -1497,10 +1502,10 @@ class UploadFlow {
     result.innerHTML = '';
     const okBox = msgBox('ok', `<b>${esc(name)}</b> passed validation (${esc(s.source_format)}).`);
     okBox.insertAdjacentHTML('beforeend', `<div class="summary-grid">
-      <div><span>flies</span>${s.n_flies} (${esc(s.first_date)}${s.first_date !== s.last_date ? ' to ' + esc(s.last_date) : ''})</div>
+      <div><span>flies</span>${s.n_flies ? `${s.n_flies} (${esc(s.first_date)}${s.first_date !== s.last_date ? ' to ' + esc(s.last_date) : ''})` : 'not given'}</div>
       <div><span>ROI columns</span>${s.n_units.toLocaleString()} (${esc(s.roi_kind)})</div>
       <div><span>odors</span>${s.n_odors} in ${s.panels.length} panel${s.panels.length === 1 ? '' : 's'}</div>
-      <div><span>trials per odor</span>${s.repeats_min === s.repeats_max ? s.repeats_min : s.repeats_min + '–' + s.repeats_max}</div>
+      <div><span>trials per odor</span>${!s.has_repeat_level ? 'not given (a row each)' : s.repeats_min === s.repeats_max ? s.repeats_min : s.repeats_min + '–' + s.repeats_max}</div>
       <div><span>missing cells</span>${(s.nan_fraction * 100).toFixed(1)}%</div>
       <div><span>value range</span>${fmtNum(s.vmin)} to ${fmtNum(s.vmax)}</div>
     </div>`);
@@ -2013,7 +2018,7 @@ class Browse {
         <input type="checkbox" class="pick" data-id="${d.id}" aria-label="Select dataset #${d.id} for download">
         <button type="button" class="list-item" data-id="${d.id}">
           <span class="t">${esc(d.driver)} &gt; ${esc(d.indicator)} <span class="muted">(${esc(d.coding_unit)})</span></span>
-          <span class="s">${d.n_flies} ${d.n_flies === 1 ? 'fly' : 'flies'}, ${d.n_units.toLocaleString()} ROIs, ${d.n_odors} odors; last fly ${esc(d.last_fly_date)}</span>
+          <span class="s">${fliesText(d)}, ${d.n_units.toLocaleString()} ROIs, ${d.n_odors} odors${lastFlyText(d)}</span>
           <span class="s">#${d.id}, ${esc(d.uploader_name)}${d.recording_system ? ', ' + esc(d.recording_system) : ''}</span>
         </button>
       </div>`;
@@ -3630,7 +3635,7 @@ class AdminPage {
     box.innerHTML = `<table class="odor-table"><thead><tr><th>#</th><th>Dataset</th><th>Uploaded</th><th>Last fly</th><th>Flies</th><th>ROIs</th><th>Odors</th><th></th></tr></thead><tbody>
       ${shown.map((d) => `<tr><td class="num">${d.id}</td><td><a href="#browse/${d.id}">${esc(d.title)}</a></td>
         <td>${esc(d.uploader_name)}, ${esc(fmtDay(d.created_at))}</td><td>${esc(d.last_fly_date || '')}</td>
-        <td class="num">${d.n_flies}</td><td class="num">${d.n_units.toLocaleString()}</td><td class="num">${d.n_odors}</td>
+        <td class="num">${d.n_flies || '<span class="muted" title="Flies not given: its columns are ROIs alone">—</span>'}</td><td class="num">${d.n_units.toLocaleString()}</td><td class="num">${d.n_odors}</td>
         <td><button type="button" class="btn small" data-delete="${d.id}">Delete…</button></td></tr>`).join('')}</tbody></table>`;
   }
 
@@ -3639,7 +3644,7 @@ class AdminPage {
     if (!d) return;
     const where = `${this.state?.deleted_dir ?? 'data/deleted'}/${id}`;
     $('#delete-confirm-q').textContent = `Delete dataset #${id}, “${d.title}”?`;
-    $('#delete-confirm-detail').innerHTML = `Uploaded by ${esc(d.uploader_name)} on ${esc(fmtDay(d.created_at))}: ${d.n_flies} flies, `
+    $('#delete-confirm-detail').innerHTML = `Uploaded by ${esc(d.uploader_name)} on ${esc(fmtDay(d.created_at))}: ${fliesText(d)}, `
       + `${d.n_units.toLocaleString()} ROIs, ${d.n_odors} odors. It is gone from the site at once; its files are moved to <code>${esc(where)}</code> on the server.`;
     if (await askDialog($('#delete-confirm')) !== 'delete') return;
     let res;
@@ -3932,7 +3937,7 @@ class ComparePage {
         <input type="checkbox" class="pick" data-id="${d.id}"${picked.has(d.id) ? ' checked' : ''}>
         <span class="list-item">
           <span class="t">${esc(d.driver)} &gt; ${esc(d.indicator)} <span class="muted">(${esc(d.coding_unit)})</span></span>
-          <span class="s">${d.n_flies} ${d.n_flies === 1 ? 'fly' : 'flies'}, ${d.n_units.toLocaleString()} ROIs, ${d.n_odors} odors; last fly ${esc(d.last_fly_date)}</span>
+          <span class="s">${fliesText(d)}, ${d.n_units.toLocaleString()} ROIs, ${d.n_odors} odors${lastFlyText(d)}</span>
           <span class="s">#${d.id}, ${esc(d.uploader_name)}</span>
         </span></label>`;
     const head = (g) => {

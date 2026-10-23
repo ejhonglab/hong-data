@@ -56,6 +56,13 @@ def is_glomerulus(roi: str) -> bool:
     return roi in GLOMERULI
 
 
+def merged(roi: str) -> Optional[list[str]]:
+    """The glomeruli of an ROI that could not be told apart, named by two or more accepted
+    names joined by '/' ('VA1d/VA1v'); None for any other name."""
+    parts = roi.split("/")
+    return parts if len(parts) > 1 and all(p in GLOMERULI for p in parts) else None
+
+
 def same_but_case(roi: str) -> Optional[str]:
     """The accepted glomerulus name `roi` is but for upper and lower case, if any."""
     return _FOLDED.get(roi.casefold())

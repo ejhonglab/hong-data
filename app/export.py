@@ -180,22 +180,26 @@ def wide_frame(matrices: list[tuple[int, dict]]) -> pd.DataFrame:
 
 
 def dataset_frame(m: dict, levels: list[str], keys: list[tuple]) -> pd.DataFrame:
-    """One dataset's trials x ROIs as uploaded: rows indexed by `levels`, columns by date / fly_num / roi.
+    """One dataset's trials x ROIs as uploaded: rows indexed by `levels`, columns by date /
+    fly_num / roi (by roi alone, for a dataset without flies, so a CSV of it has one header line).
 
     Args:
         m: as returned by `Database.get_matrix_arrays`.
         levels, keys: from `dataset_trial_keys`.
     """
+    flies = any(u["date"] is not None for u in m["units"])
     return pd.DataFrame(
         m["values"].T,
         index=pd.MultiIndex.from_tuples(keys, names=levels),
-        columns=pd.MultiIndex.from_tuples([(u["date"], u["fly_num"], u["roi"]) for u in m["units"]], names=list(COL_LEVELS)),
+        columns=(pd.MultiIndex.from_tuples([(u["date"], u["fly_num"], u["roi"]) for u in m["units"]], names=list(COL_LEVELS))
+                 if flies else pd.Index([u["roi"] for u in m["units"]], name="roi")),
     )
 
 
 def write_long(f: TextIO, matrices: list[tuple[int, dict]], levels: list[str], keys: list[list[tuple]], *,
                dataset_id: bool = True) -> None:
-    """Write one CSV row per non-missing value: [dataset_id,] date, fly_num, roi, trial levels, value.
+    """Write one CSV row per non-missing value: [dataset_id,] date, fly_num, roi, trial levels, value
+    (date and fly_num left out for a dataset alone without flies; empty for one among others).
 
     Args:
         matrices: (dataset id, `Database.get_matrix_arrays` dict) pairs.
@@ -204,6 +208,7 @@ def write_long(f: TextIO, matrices: list[tuple[int, dict]], levels: list[str], k
         dataset_id: whether to write the dataset_id column.
     """
     header = True
+    flies = dataset_id or any(u["date"] is not None for _, m in matrices for u in m["units"])
     for (ds_id, m), ks in zip(matrices, keys):
         trial_cols = [np.array(col, dtype=object) for col in zip(*ks)]
         for start in range(0, len(m["units"]), LONG_CHUNK_UNITS):
@@ -212,8 +217,8 @@ def write_long(f: TextIO, matrices: list[tuple[int, dict]], levels: list[str], k
             ui, ti = np.nonzero(np.isfinite(block))
             df = pd.DataFrame({
                 **({"dataset_id": np.full(len(ui), ds_id)} if dataset_id else {}),
-                "date": np.array([u["date"] for u in units], dtype=object)[ui],
-                "fly_num": np.array([u["fly_num"] for u in units])[ui],
+                **({"date": np.array([u["date"] for u in units], dtype=object)[ui],
+                    "fly_num": np.array([u["fly_num"] for u in units], dtype=object)[ui]} if flies else {}),
                 "roi": np.array([u["roi"] for u in units], dtype=object)[ui],
                 **{lvl: col[ti] for lvl, col in zip(levels, trial_cols)},
                 "value": block[ui, ti],

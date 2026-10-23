@@ -79,10 +79,10 @@ def dataset(db, ds_id: int, datasets_dir: Path) -> Optional[dict]:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", RuntimeWarning)
                 columns.append(np.nanmean(means[mine], axis=0))
-            cols.append({"label": g, "n_flies": len({(units[i]["date"], units[i]["fly_num"]) for i in mine})})
+            cols.append({"label": g, "n_flies": len({(units[i]["date"], units[i]["fly_num"]) for i in mine if units[i]["date"] is not None})})
         matrix, kind = np.stack(columns, axis=1), "glomeruli"  # odors × glomeruli
     else:
-        cols = [{"label": f"{u['date']} fly {u['fly_num']}: {u['roi']}"} for u in units]
+        cols = [{"label": f"{u['date']} fly {u['fly_num']}: {u['roi']}" if u["date"] is not None else u["roi"]} for u in units]
         matrix, kind = means.T, "rois"  # odors × ROIs
     return {
         "id": ds_id, "title": ds["title"], "coding_unit": ds["metadata"].get("coding_unit"), "driver": ds["metadata"].get("driver"),
