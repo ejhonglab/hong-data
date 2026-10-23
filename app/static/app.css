@@ -468,6 +468,13 @@ dialog.mismatches::backdrop { background: rgba(29,31,34,.45); }
 .hm-wrap { flex: 1; min-height: 0; position: relative; }
 /* controls hidden: only the colorbar and the status line (with the buttons) stay */
 .viewer.controls-hidden .vt > .vt-group:not(.vt-legend) { display: none; }
+/* ... on one line: the status line's text, the colorbar centred in the room between, then its buttons */
+.viewer.controls-hidden .vt { flex-wrap: nowrap; column-gap: 12px; padding-top: 4px; padding-bottom: 4px; }
+.viewer.controls-hidden .vt-status { display: contents; }
+.viewer.controls-hidden .vt-stats { order: 1; flex: 0 1 auto; }
+.viewer.controls-hidden .vt-legend { order: 2; flex: 1 0 auto; justify-content: center; align-self: center; }
+.viewer.controls-hidden .vt-status > :not(.vt-stats) { order: 3; flex: none; }
+.vt-status [data-role=export] > summary { white-space: nowrap; }
 .vt-status [data-role=controls], .vt-status [data-role=fullscreen] { flex: none; }
 /* a viewer filling the screen (or the browser's window, without the Fullscreen API) */
 .viewer:fullscreen, .viewer.full-window { width: 100vw; height: 100vh !important; max-height: none; border: 0; border-radius: 0; }

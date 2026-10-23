@@ -346,8 +346,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   and ROIs as columns (in reference data too, rows as columns). Every matrix shown (here,
   in reference data and in Compare) has *Full screen* (Esc, or the button again, to
   leave; the browser's window filled where full screen is not available) and *Hide
-  controls*, folding away everything above the matrix but its colorbar and the line of
-  buttons (remembered for the matrices shown next).
+  controls*, folding away everything above the matrix but one line: what is shown (its
+  size and range), its colorbar, and the buttons (remembered for the matrices shown next).
   - *Moving and removing rows and columns* (also in reference data): drag a label
     to move it within its group (fly, panel, ...), or a group's name to move the whole
     group; with individual trials, an odor's trials move with its label (the repeat
