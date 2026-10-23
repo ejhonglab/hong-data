@@ -12,8 +12,8 @@ matrices        the same values as a float32 blob (units x trials) for fast serv
 odors           one row per chemical: names, IDs, supplier (synced from the odor sheet)
 odor_syncs      log of odor syncs (what was added / changed / deleted, by whom)
 users           each user's data folders on tensor (relative to its top), by name
-pubchem         what was fetched from PubChem for an odor CID (its InChI, and its vapor pressure
-                through chemutils: see vapor.py)
+pubchem         what was fetched from PubChem for an odor CID (its InChI), and the properties
+                looked up through chemutils (`PROPERTY_COLUMNS`: see chemprops.py)
 settings        site-wide settings from the Admin tab (the odor sheet's link), by key
 clusterings     clusterings of a dataset's ROIs or odors, as a browser computed them, for any to
                 use again (a cache, the most recently used kept: see `save_clustering`)
@@ -198,10 +198,14 @@ CREATE TABLE IF NOT EXISTS file_log (  -- files the server has read or written i
 );
 """
 # columns added since the first release: (table, column, type)
+# what is looked up through chemutils for an odor CID (chemprops.PROPERTIES): property -> the
+# column of its value (in the units there), beside which are <property>_source (where it is
+# from) and <property>_at (when it was looked up, with both null if none was found)
+PROPERTY_COLUMNS = {"vapor_pressure": "vapor_pressure_kpa", "est_vapor_pressure": "est_vapor_pressure_kpa",
+                    "molar_mass": "molar_mass_g_mol", "density": "density_g_ml", "k_henry": "k_henry_mol_m3_pa"}
 ADDED_COLUMNS = [("datasets", "mocorr_data_path", "TEXT"), ("reference_datasets", "fields", "TEXT"), ("units", "bad", "INTEGER"),
-                 # vapor pressure, and the URL of where it is from; when looked up (with both null if none was found)
-                 ("pubchem", "vapor_pressure_kpa", "REAL"), ("pubchem", "vapor_pressure_source", "TEXT"),
-                 ("pubchem", "vapor_pressure_at", "TEXT")]
+                 *(c for p, col in PROPERTY_COLUMNS.items()
+                   for c in (("pubchem", col, "REAL"), ("pubchem", f"{p}_source", "TEXT"), ("pubchem", f"{p}_at", "TEXT")))]
 USER_DIR_COLUMNS = ("raw_dirs", "mocorr_dirs", "odor_dirs")
 ODOR_COLUMNS = ("name", "abbrev", "aliases", "cid", "cas", "solvent", "supplier", "catalog_no", "catalog_url",
                 "metacyc", "lotus", "inventory", "notes")
@@ -543,12 +547,13 @@ class Database:
 
     # ------------------------------------------------------------------- odors
     def list_odors(self) -> list[dict]:
-        """Every odor, with the InChI of its CID (None until fetched from PubChem), and its
-        vapor pressure (``vapor_pressure_kpa``, ``_source`` and ``_at``: see `save_vapor_pressure`)."""
+        """Every odor, with the InChI of its CID (None until fetched from PubChem), and what
+        was looked up for it through chemutils (the columns of `PROPERTY_COLUMNS`: see
+        `save_property`)."""
+        cols = ", ".join(f"pubchem.{c}" for p, col in PROPERTY_COLUMNS.items() for c in (col, f"{p}_source", f"{p}_at"))
         with self.connect() as con:
             rows = con.execute(
-                "SELECT odors.*, pubchem.inchi, pubchem.vapor_pressure_kpa, pubchem.vapor_pressure_source, "
-                "pubchem.vapor_pressure_at FROM odors LEFT JOIN pubchem USING (cid) ORDER BY name_key"
+                f"SELECT odors.*, pubchem.inchi, {cols} FROM odors LEFT JOIN pubchem USING (cid) ORDER BY name_key"
             ).fetchall()
         out = []
         for r in rows:
@@ -601,18 +606,17 @@ class Database:
                 [(cid, inchi, when) for cid, inchi in inchis.items()],
             )
 
-    def save_vapor_pressure(self, cid: int, found: Optional[dict], when: str) -> None:
-        """Save the vapor pressure looked up for a CID with an InChI (`vapor.look_up`).
+    def save_property(self, cid: int, prop: str, found: Optional[dict], when: str) -> None:
+        """Save a property looked up for a CID with an InChI (`chemprops.look_up`).
 
         Args:
-            found: ``{"kpa", "source"}``, or None if there is none (kept, with when it was
+            prop: of `PROPERTY_COLUMNS`.
+            found: ``{"value", "source"}``, or None if there is none (kept, with when it was
                 looked up, so that it is not looked up again).
         """
         with self.connect() as con:
-            con.execute(
-                "UPDATE pubchem SET vapor_pressure_kpa = ?, vapor_pressure_source = ?, vapor_pressure_at = ? WHERE cid = ?",
-                (found and found["kpa"], found and found["source"], when, cid),
-            )
+            con.execute(f"UPDATE pubchem SET {PROPERTY_COLUMNS[prop]} = ?, {prop}_source = ?, {prop}_at = ? WHERE cid = ?",
+                        (found and found["value"], found and found["source"], when, cid))
 
     def odor_syncs(self, limit: int = 50, source: Optional[str] = None) -> list[dict]:
         """Most recent odor syncs first (optionally only those from `source`)."""

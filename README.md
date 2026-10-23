@@ -34,6 +34,9 @@ expected, and nothing secret is entered. If a download or the page is blocked, s
    with groups of datasets (by experimenter, rig or power) scaled to each other first.
 6. **Compare**: tick datasets to see them side by side, averaged, with how alike their
    odors are, and how that compares with chemical structure or reference data.
+7. **Headspace calculator**: search for odors of the odor table to put in a mixture, give
+   each a concentration (log10 v/v, as in your data), and calculate how much of each is
+   in the air above it (in ppm, µg/L and other units).
 
 ### Browser warnings
 
@@ -200,8 +203,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   and in every download but of the original files. Names that differ from another
   shown (or downloaded) with them only in case stay as they are, so that no two odors
   become one. The upload form shows a file's odors as they are in it.
-- **Browse**: each dataset has a thesis-style odor table (with each odor's CID, InChI and
-  vapor pressure),
+- **Browse**: each dataset has a thesis-style odor table (with each odor's CID, InChI,
+  vapor pressure and molar mass),
   its odors matched to the Odors tab through its odor YAML when it has one, otherwise by
   abbreviation. Those not in the odor table, or that more than one odor there could be,
   are listed above it and highlighted in it; a button copies rows for the odor sheet for
@@ -329,7 +332,7 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   CID) and vapor pressures (in kPa: the mean of the experimental values on the odor's
   PubChem page, at the temperatures given there, looked up through
   [chemutils](https://github.com/ejhonglab/chemutils) once an odor with a CID is added;
-  blank where PubChem has none). It is synced one way from a Google sheet (its link set in
+  blank where PubChem has none), and molar masses (g/mol, PubChem's, likewise). It is synced one way from a Google sheet (its link set in
   the Admin tab) or a CSV imported in the Admin tab, with the columns of
   `config/odor_sheet_template.csv` (downloadable there), which starts it off with
   the odors from the thesis tables: the tab shows what a sync would do, adds new odors,
@@ -392,6 +395,17 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   *Sum over KCs* in the viewer (here and in the Compare tab) shows each glomerulus's
   values summed over them (those not removed; missing values left out), as one row or
   column.
+- **Headspace calculator**: odors are added by any part of a name, abbreviation, alias,
+  CID or CAS number; the solvent (paraffin oil or water) follows what the odor table
+  says of the odors, unless one is chosen. The headspace is at equilibrium in a closed
+  vial at 25 °C: over paraffin oil by Raoult's law for an ideal solution, over water by
+  Henry's law. What it needs of each odor (molar mass, density, vapor pressure, and in
+  water Henry's law constant) is looked up through chemutils the first time (a few
+  seconds an odor) and kept with the odor table; where something is missing, what was
+  assumed instead is noted by the odor (a vapor pressure estimated from the structure,
+  a density of 1 g/mL). The mixture, solvent and units are kept in this browser. How it
+  is computed, and what it leaves out:
+  [design.md](design.md#headspace-calculator).
 - **Admin** (to the right of Docs; it first asks whether you are Tom, Jon or Betty, or
   have asked one of them): settings for the whole site.
   - *Folders on the server* the app may read (by default tensor) and also write (none
@@ -454,7 +468,7 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
 
 Downloads: `/api/download?ids=1,2&format=files|wide|long` (as from the Browse tab).
 Datasets: `/api/datasets`, and each one's matrix at `/api/datasets/{id}/matrix`; the
-odor table, with each odor's InChI and vapor pressure: `/api/odors`. Every endpoint is listed in
+odor table, with each odor's InChI, vapor pressure and molar mass: `/api/odors`. Every endpoint is listed in
 [design.md](design.md#http-api). On the server, `manage.py` lists, shows, exports and
 deletes datasets ([DEPLOY.md](DEPLOY.md), section 7).
 

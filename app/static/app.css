@@ -180,7 +180,7 @@ input[data-src], select[data-src], textarea[data-src] { background: var(--src-so
 .readme-html ul, .readme-preview ul { padding-left: 20px; }
 
 /* ------------------------------------------------------------- settings */
-#tab-settings { overflow: auto; padding: 24px 20px 60px; }
+#tab-settings, #tab-headspace { overflow: auto; padding: 24px 20px 60px; }
 .folders-help { margin-top: 12px; }
 .dir-section { margin-top: 16px; }
 .dir-section p { margin-bottom: 4px; }
@@ -571,6 +571,27 @@ dialog.player::backdrop { background: rgba(29,31,34,.55); }
 .compare-options .space { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; border-top: 1px solid var(--rule); }
 .compare-options .overlap { font-size: 12px; color: var(--ink-muted); padding-left: 20px; }
 .compare-options .overlap.few { color: var(--warn); }
+
+/* Headspace calculator */
+.hs-add { position: relative; max-width: 480px; margin-bottom: 12px; }
+.hs-suggestions { position: absolute; z-index: 20; left: 0; right: 0; top: 100%; margin: 2px 0 0; padding: 4px 0; list-style: none;
+  background: var(--panel); border: 1px solid var(--rule-strong); border-radius: var(--radius); box-shadow: 0 6px 18px rgba(0, 0, 0, .12);
+  max-height: 320px; overflow: auto; }
+.hs-suggestions li { padding: 5px 12px; }
+.hs-suggestions li[data-id] { cursor: pointer; }
+.hs-suggestions li.active, .hs-suggestions li[data-id]:hover { background: var(--accent-soft); }
+.hs-empty { margin: 4px 0 12px; }
+.hs-table input[type=number] { width: 7em; padding: 3px 6px; }
+.hs-table input.invalid { border-color: var(--danger); background: var(--danger-soft); }
+.hs-table.stale { opacity: .5; }
+.hs-table .notes ul { margin: 0; padding-left: 16px; }
+.hs-table .hs-amount { font-weight: 600; }
+.hs-table tr.hs-total td { border-top: 1px solid var(--rule-strong); font-weight: 600; }
+.hs-options { margin-top: 14px; max-width: 640px; }
+#hs-results { overflow-x: auto; }
+.hs-method summary { cursor: pointer; font-weight: 600; }
+.hs-method ul { padding-left: 20px; }
+.hs-method li { margin: 6px 0; max-width: 90ch; }
 
 @media (max-width: 900px) {
   .player-body { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr) auto; }

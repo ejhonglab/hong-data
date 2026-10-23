@@ -181,17 +181,23 @@ between the frontend and the server. Using the app is described in
   RDKit, as SVG (`odormeta.structure_svg`, kept in memory), from the InChI of each CID:
   fetched from PubChem once (a hundred CIDs per request, the first time a structure is
   wanted without one) and kept in the `pubchem` table. PubChem is asked again about a CID
-  it had no InChI for only after an hour. Vapor pressures come from PubChem too, through
-  chemutils (`chemutils.inchi2vapor_pressure`), looked up in a thread after each sync and
-  when the server starts (once the InChIs missing are fetched), one odor with an InChI at
-  a time, each saved in the `pubchem` table as it comes (none found is saved as looked
-  up, and not looked up again; one that could not be is tried again after an hour), and
-  then those added meanwhile.
-  chemutils runs in a process of its own (`vapor.py`), as importing it changes the
+  it had no InChI for only after an hour. Vapor pressures and molar masses come from
+  PubChem too, through chemutils (`chemutils.inchi2vapor_pressure`, `cid2molar_mass`),
+  looked up in a thread after each sync and when the server starts (once the InChIs
+  missing are fetched), one odor with an InChI at a time, each saved in the `pubchem`
+  table as it comes (none found is saved as looked up, and not looked up again; one that
+  could not be is tried again after an hour), and then those added meanwhile. What else
+  the Headspace calculator needs is looked up and kept the same way, when it is first
+  needed (see [Headspace calculator](#headspace-calculator)).
+  chemutils runs in a process of its own (`chemprops.py`), as importing it changes the
   logging of the process that imports it (a root handler printing stack traces with
   warnings, warnings sent to logging, a log file beside its code), with its cache in the
   data folder and a ChemSpider API key set, so that it reads nothing in the home folder,
-  which Landlock denies the server.
+  which Landlock denies the server. chemutils keeps what it looked up in that cache; it
+  does not keep failures, so the server remembers those itself (in memory) to not ask
+  again at once, and tries again, after a few seconds, a lookup a server was too busy
+  for (PubChem answers 429 to more than 5 requests a second, as the first lookup of
+  every odor's molar mass made).
 - **The heatmap is a virtualised canvas**: only the visible cells are drawn, so 10k+
   rows scroll smoothly. The default colormap is built in Oklab so that lightness is
   linear in |value|, with white at 0 and blue and red poles of equal lightness: "twice
@@ -429,6 +435,47 @@ generator was replaced: with `Math.random`, whose figures were the same within s
 error, then in `tests/simulate_pvalues.mjs` with a seeded sfc32, which gave the tables
 above.
 
+## Headspace calculator
+
+The Headspace calculator tab gives how much of each odor of a mixture is in the air above
+it: odors of the odor table diluted together in one vial (each a log10 v/v concentration,
+as in the data), at equilibrium at 25 °C, in paraffin oil or water. The physics is in
+`headspace.py`; the properties it needs of each odor are looked up through chemutils
+(`chemprops.py`) the first time a calculation needs them, and kept in the `pubchem` table
+with the odor's CID, so that a calculation needing nothing new does not start chemutils.
+
+- **Paraffin oil**: Raoult's law for an ideal solution, p = x·p_sat. The moles of each
+  odor are from its volume, density and molar mass; those of the oil as if it were
+  n-hexadecane (226.45 g/mol, 0.770 g/mL), a light paraffin oil's molecules being about
+  as large. E.g. ethyl acetate at -3 (with 1 g/mL for its density, which chemutils cannot
+  read from PubChem, and PubChem's 11.3 kPa): x = 0.0033, 37 Pa, 370 ppm.
+- **Water**: Henry's law, p = c / H_cp, with c from the odor's volume, density and molar
+  mass, and H_cp (mol/m³/Pa) from henrys-law.org (Sander's compilation), else NIST, both
+  at 25 °C. It holds for dilute solutions only, so p is at most the odor's vapor
+  pressure. With no constant found, Raoult's law for an ideal solution in water, which is
+  too low for most odors (esters' activity coefficients in water are from tens to thousands).
+- **Vapor pressure**: PubChem's (the mean of its experimental values, at whatever
+  temperatures they were measured: a value far from 25 °C can make it far off), else
+  estimated from the structure by SIMPOL.1 (`chemutils.inchi2est_vapor_pressure`, often
+  within 3×, but several times too low for furans, tertiary alcohols and some phenols).
+- **Density**: PubChem's (or ChemSpider's, given a key), else 1 g/mL; for most odors
+  between 0.8 and 1.1 g/mL, so this is off by at most ~20%. chemutils raises for some
+  pages it cannot parse (ethyl acetate's), and finds none for many more.
+- **Units**: from the partial pressure at 1 atm and 25 °C: ppm and ppb of the air by
+  volume (p / 101325 Pa), log10 of that v/v, mol/L and molecules/cm³ by the ideal gas
+  law, and µg/L (mg/m³) with the molar mass. These are computed in the browser, so that
+  changing them asks the server nothing.
+
+What is left out: polar odors (alcohols, acids) are less soluble in an alkane than in an
+ideal solution (ethanol's activity coefficient in hexadecane is in the tens when dilute),
+so their real headspace over oil is likely higher than shown; the self-association of
+acids and alcohols as they get more concentrated lowers it again. chemutils'
+`oil_headspace.py` predicts this with modified UNIFAC (activity coefficients from
+functional groups, and a closed-vial mass balance), and could replace Raoult's law here,
+but it is a script outside the chemutils package, needs `thermo`, and makes its own
+uncached PubChem requests. Nothing either way models air flowing over the vial (which
+depletes the headspace) or diluting it before it reaches the fly.
+
 ## Code layout
 
 ```
@@ -446,7 +493,9 @@ app/export.py      downloads: zips of dataset files, concatenated wide/long matr
 app/merge.py       merged downloads of a coding unit: grouping datasets, scaling groups to each other
 app/compare.py     datasets averaged for the Compare tab (odors × glomeruli or ROIs); ECFP fingerprints (RDKit)
 app/odormeta.py    odor table: sheet parsing / validation, sync diff, links, dataset matching
-app/vapor.py       odors' vapor pressures, looked up through chemutils in a process of its own
+app/chemprops.py   odors' vapor pressures, molar masses, densities and Henry's law constants, looked up through
+                   chemutils in a process of its own
+app/headspace.py   headspace concentrations of odors diluted together (Headspace calculator)
 app/tensor.py      users' folders on tensor: path checks, finding a dataset's flies, recordings, YAMLs
 app/sandbox.py     folders the server may read and write (Admin tab): settings, path checks, Landlock
 app/filelog.py     the files the server has read and written in its own folders (Admin tab), paths on the server
@@ -468,7 +517,9 @@ tests/             pytest tests
 `units` (date, fly_num, roi), `trials` (panel, odor, components, repeat), `responses`
 (one row per cell, for SQL queries), `matrices` (the same values as a float32 blob for
 fast serving), `users` (each user's folders on tensor), `odors` and `odor_syncs`,
-`pubchem` (each odor CID's InChI and vapor pressure), `settings` (site-wide settings from the Admin tab:
+`pubchem` (each odor CID's InChI, and its properties looked up through chemutils: vapor pressure,
+estimated vapor pressure, molar mass, density and Henry's law constant, each with where it is from and
+when it was looked up), `settings` (site-wide settings from the Admin tab:
 the odor sheet's link), `reference_datasets` (reference datasets added there) and
 `file_log` (the files the server has read or written in its own folders). Files:
 `data/datasets/<id>/` holds the original data file, `README.md`, `metadata.json`,
@@ -549,8 +600,8 @@ GET    /api/merge/download?coding_unit=&format=wide|long&mode=&by=a,b&target=&to
                                             (&lower=1 too)
 GET    /api/merge/scales?(the same, without format)
                                             each dataset's group and scale factor (scaling.csv)
-GET    /api/odors                           the odor table (with each odor's `inchi` and
-                                            `vapor_pressure_kpa`)
+GET    /api/odors                           the odor table (with each odor's `inchi`,
+                                            `vapor_pressure_kpa`, `molar_mass_g_mol`, ...)
 GET    /api/odors/status                    the odor sheet, when it was last read, whether it
                                             changed since the last sync
 POST   /api/odors/preview                   the sheet (or multipart 'file', a CSV) validated and
@@ -558,6 +609,10 @@ POST   /api/odors/preview                   the sheet (or multipart 'file', a CS
 POST   /api/odors/apply                     {"fingerprint", "changes", "deletions"}
 GET    /api/odors/structure/{cid}           its structure, drawn by RDKit (SVG)
 GET    /api/odors/template.csv              config/odor_sheet_template.csv
+POST   /api/headspace                       {"solvent": "paraffin oil" or "water", "components":
+                                            [{"odor_id", "log10_conc"}, ...]}: the partial
+                                            pressure (Pa) above the mixture of each odor, with
+                                            the properties used and where they are from
 GET    /api/reference                       every reference dataset: whether it can be read (why
                                             not), how many of its chemicals are identified
 GET    /api/reference/{id}                  one, for the viewer (its chemicals as in the odor table)

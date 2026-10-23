@@ -19,6 +19,8 @@
     <a href="#reference" data-tab="reference">Reference data</a>
     <a href="#odors" data-tab="odors">Odors<span class="tab-badge" id="odors-badge" hidden title="The odor sheet changed since it was last synced"></span></a>
     <a href="#settings" data-tab="settings">Settings</a>
+    <span class="tabs-sep" aria-hidden="true"></span>
+    <a href="#headspace" data-tab="headspace">Headspace calculator</a>
   </nav>
   <span class="topbar-status" id="topbar-status"></span>
   <nav class="tabs" aria-label="Help and administration">
@@ -479,6 +481,52 @@
       <label class="check"><input type="checkbox" id="settings-lower-odors"> Odor names (abbreviations) in lowercase</label>
       <p class="muted">Kept on this computer only. Odor names as in datasets (e.g. <code>IaA @ -3</code> as <code>iaa @ -3</code>) and the odor table's abbreviations, wherever they are shown (Browse, Compare, Reference data, the Odors tab) and in every download but of the original files. Names that differ from another shown with them only in case are left as they are, so that no two odors look the same. The upload form shows a file's odors as they are in it.</p>
     </div>
+  </section>
+
+  <!-- ============================================= HEADSPACE CALCULATOR -->
+  <section id="tab-headspace" class="tab" hidden>
+    <div class="page-head">
+      <h1>Headspace calculator</h1>
+      <p class="lede">How much of each odor of a mixture is in the air above it: odors of the <a href="#odors">odor table</a> diluted together in one vial, at equilibrium at 25 °C. What it needs of each odor (molar mass, density, vapor pressure and, in water, Henry's law constant) is looked up through <a href="https://github.com/ejhonglab/chemutils" target="_blank" rel="noopener">chemutils</a> the first time, and kept with the odor table.</p>
+    </div>
+
+    <div class="step" id="hs-mixture">
+      <div class="step-head"><h2>Mixture</h2></div>
+      <div class="hs-add">
+        <label class="field"><span>Add an odor</span>
+          <input type="search" id="hs-search" placeholder="Part of a name, abbreviation, CID or CAS…" autocomplete="off" role="combobox"
+            aria-autocomplete="list" aria-controls="hs-suggestions" aria-expanded="false"></label>
+        <ul class="hs-suggestions" id="hs-suggestions" role="listbox" hidden></ul>
+      </div>
+      <div id="hs-components"></div>
+      <div class="grid hs-options">
+        <label class="field"><span>Solvent</span>
+          <select id="hs-solvent">
+            <option value="paraffin oil">Paraffin (mineral) oil</option>
+            <option value="water">Water</option>
+          </select></label>
+        <label class="field"><span>Headspace in</span><select id="hs-units"></select></label>
+      </div>
+      <p class="muted small" id="hs-solvent-note" hidden></p>
+      <div class="actions">
+        <button type="button" class="btn primary" id="hs-calc" disabled>Calculate headspace</button>
+        <button type="button" class="btn" id="hs-clear" disabled>Clear mixture</button>
+        <span class="muted" id="hs-status" aria-live="polite"></span>
+      </div>
+    </div>
+
+    <div class="step" id="hs-results" hidden></div>
+
+    <details class="step hs-method">
+      <summary>How it is computed</summary>
+      <ul>
+        <li><b>In paraffin oil</b>, by Raoult's law for an ideal solution: each odor's partial pressure is its mole fraction in the liquid times its vapor pressure. Its moles are from its volume (the log<sub>10</sub> v/v concentration), density and molar mass; the oil's as if it were n-hexadecane (226 g/mol, 0.770 g/mL). Polar odors (alcohols, acids) are less soluble in oil than an ideal solution, so their real headspace is likely higher when dilute.</li>
+        <li><b>In water</b>, by Henry's law: each odor's partial pressure is its concentration in the water over its Henry's law solubility constant (from <a href="https://henrys-law.org" target="_blank" rel="noopener">henrys-law.org</a>, else NIST), but at most its vapor pressure. With no constant found, as an ideal solution, as in oil, which is likely too low unless it mixes well with water.</li>
+        <li>Vapor pressures are from PubChem (the mean of the experimental values there), else estimated from the structure (SIMPOL.1, often within 3×, but several times too low for e.g. furans, tertiary alcohols and some phenols). With no density found, 1 g/mL is assumed.</li>
+        <li>Concentrations in the air are at 1 atm and 25 °C: ppm and ppb as parts of the air by volume (moles), mol/L and molecules/cm³ by the ideal gas law. At equilibrium, in a closed vial: air flowing over the liquid, and diluting it after, lowers what reaches the fly.</li>
+      </ul>
+      <p class="muted">For more details, see <a href="https://github.com/ejhonglab/hong-data/blob/main/design.md#headspace-calculator" target="_blank" rel="noopener">Headspace calculator</a> in the design notes.</p>
+    </details>
   </section>
 
   <!-- ========================================================= ADMIN -->

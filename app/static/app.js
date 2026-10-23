@@ -65,6 +65,7 @@ function displayChanged() {
   browse.viewer?._rebuild();
   if (browse.selected != null && !$('#ds-odors').hidden) browse.showOdors(browse.selected);
   reference.viewer?._rebuild();
+  if (currentTab === 'headspace') headspacePage.render();
 }
 
 function esc(s) {
@@ -1817,6 +1818,7 @@ class UploadFlow {
         browse.odorCache.clear();
         comparePage.invalidate(); // its odors' matches to the table
         reference.invalidate();
+        headspacePage.invalidate();
         odorsPage.odors = null; // read again when the Odors tab is opened
       }
       const waiting = p.changed.length + p.missing.length;
@@ -2472,6 +2474,11 @@ function vaporHtml(o) {
 }
 const VAPOR_TH = `<th title="The mean of the experimental values on the odor's PubChem page (at the temperatures given there),
   looked up through chemutils once the odor is added; blank if PubChem has none.">Vapor pressure (kPa)</th>`;
+// an odor's molar mass (g/mol, PubChem's, looked up through chemutils), linked to where it is from
+const molarMassHtml = (o) => (o?.molar_mass_g_mol == null ? ''
+  : o.links?.molar_mass ? `<a href="${esc(o.links.molar_mass)}" target="_blank" rel="noopener">${o.molar_mass_g_mol.toFixed(2)}</a>`
+    : o.molar_mass_g_mol.toFixed(2));
+const MOLAR_MASS_TH = '<th title="PubChem\'s molecular weight, looked up through chemutils once the odor is added">Molar mass (g/mol)</th>';
 const fmtValue = (v) => (Array.isArray(v) ? v.join('; ') : String(v ?? ''));
 // a time as 'YYYY-MM-DD HH:MM' in the browser's time zone
 const fmtDate = (d) => {
@@ -2547,7 +2554,7 @@ function datasetOdorTable(data) {
   const { rows, odors } = data;
   const showOdor = odorShower(rows.map((r) => r.odor));
   const hasGlom = rows.some((r) => r.yaml?.glomerulus);
-  const nCols = hasGlom ? 13 : 12;
+  const nCols = hasGlom ? 14 : 13;
   const body = runsOf(rows, (r) => r.panel).map((g) => {
     const title = g.key != null ? `<tr class="group"><td colspan="${nCols}">${esc(g.key)}</td></tr>` : '';
     return title + rows.slice(g.start, g.end).map((r) => {
@@ -2560,6 +2567,7 @@ function datasetOdorTable(data) {
       const cls = o ? '' : r.match === 'ambiguous' ? ' class="ambiguous"' : ' class="missing"';
       return `<tr${cls}><td><code>${esc(showOdor(r.odor))}</code></td><td>${name}</td><td>${r.log10_conc ?? ''}</td><td>${c.cid || ''}</td>
         <td class="inchi">${esc(o?.inchi || '')}</td><td>${esc(r.yaml?.solvent || o?.solvent || '')}</td><td class="num">${vaporHtml(o)}</td>
+        <td class="num">${molarMassHtml(o)}</td>
         ${hasGlom ? `<td>${esc(r.yaml?.glomerulus || '')}</td>` : ''}<td>${c.catalog || ''}</td><td>${c.metacyc || ''}</td><td>${c.lotus || ''}</td>
         <td class="structure-cell">${o ? structureImg(o) : ''}</td><td>${c.cas || ''}</td></tr>`;
     }).join('');
@@ -2572,10 +2580,10 @@ function datasetOdorTable(data) {
       <div class="menu-list">
         <button type="button" data-odor-format="csv">CSV</button>
         <button type="button" data-odor-format="tex">LaTeX (.tex)</button>
-        <p class="menu-note">CSV: every odor with what the odor table has on it (IDs, InChI, supplier, vapor pressure, links), as in downloads of several datasets.<br><br>LaTeX: a booktabs longtable to <code>\\input</code>, by panel, linked as here; InChI and structures left out.</p>
+        <p class="menu-note">CSV: every odor with what the odor table has on it (IDs, InChI, supplier, vapor pressure, molar mass, links), as in downloads of several datasets.<br><br>LaTeX: a booktabs longtable to <code>\\input</code>, by panel, linked as here; InChI and structures left out.</p>
       </div>
     </details></div>
-    ${missingOdorsHtml(data)}<table class="odor-table"><thead><tr><th>Odor</th><th>Name</th><th>log<sub>10</sub> conc.</th><th>CID</th><th>InChI</th><th>Solvent</th>${VAPOR_TH}
+    ${missingOdorsHtml(data)}<table class="odor-table"><thead><tr><th>Odor</th><th>Name</th><th>log<sub>10</sub> conc.</th><th>CID</th><th>InChI</th><th>Solvent</th>${VAPOR_TH}${MOLAR_MASS_TH}
     ${hasGlom ? '<th>Target glomerulus</th>' : ''}<th>Catalog no.</th><th>MetaCyc</th><th>LOTUS</th><th>Structure</th><th>CAS</th></tr></thead><tbody>${body}</tbody></table>`;
 }
 
@@ -2707,6 +2715,7 @@ class OdorsPage {
     browse.odorCache.clear();
     comparePage.invalidate(); // its odors' matches to the table
     reference.invalidate(); // their chemicals' names
+    headspacePage.invalidate();
     await this.load({ force: true });
   }
 
@@ -2722,12 +2731,13 @@ class OdorsPage {
     }
     const showAbbrev = abbrevShower(all.map((o) => o.abbrev));
     $('#odor-table').innerHTML = `<table class="odor-table"><thead><tr><th>Structure</th><th>Name</th><th>Abbrev.</th><th>CID</th><th>CAS</th><th>Solvent</th>
-      ${VAPOR_TH}<th>Catalog no.</th><th>MetaCyc</th><th>LOTUS</th><th>Inventory</th><th>Datasets</th><th>Notes</th></tr></thead><tbody>
+      ${VAPOR_TH}${MOLAR_MASS_TH}<th>Catalog no.</th><th>MetaCyc</th><th>LOTUS</th><th>Inventory</th><th>Datasets</th><th>Notes</th></tr></thead><tbody>
       ${shown.map((o) => {
         const c = idCells(o);
         return `<tr id="odor-${o.id}"><td class="structure-cell">${structureImg(o)}</td>
           <td><b>${esc(o.name)}</b>${o.aliases.length ? `<div class="muted small">${esc(o.aliases.join('; '))}</div>` : ''}</td>
-          <td>${esc(showAbbrev(o.abbrev) || '')}</td><td>${c.cid}</td><td>${c.cas}</td><td>${esc(o.solvent || '')}</td><td class="num">${vaporHtml(o)}</td><td>${c.catalog}</td>
+          <td>${esc(showAbbrev(o.abbrev) || '')}</td><td>${c.cid}</td><td>${c.cas}</td><td>${esc(o.solvent || '')}</td><td class="num">${vaporHtml(o)}</td>
+          <td class="num">${molarMassHtml(o)}</td><td>${c.catalog}</td>
           <td>${c.metacyc}</td><td>${c.lotus}</td><td>${esc(o.inventory || '')}</td>
           <td>${o.datasets.map((i) => `<a href="#browse/${i}">#${i}</a>`).join(' ')}</td><td class="notes">${esc(o.notes || '')}</td></tr>`;
       }).join('')}</tbody></table>`;
@@ -4767,6 +4777,297 @@ class ComparePage {
   }
 }
 
+// ====================================================== headspace calculator
+const HS_KEY = 'olfdb.headspace';
+const HS_T = 298.15, HS_R = 8.314462618, HS_KB = 1.380649e-23, HS_ATM = 101325;
+// what the headspace can be shown in: [key, label, short label, of(partial pressure in Pa, molar mass in g/mol)]
+const HS_UNITS = [
+  ['ppm', 'ppm (by volume)', 'ppm', (pa) => (pa / HS_ATM) * 1e6],
+  ['ppb', 'ppb (by volume)', 'ppb', (pa) => (pa / HS_ATM) * 1e9],
+  ['log10', 'log₁₀ v/v of the air', 'log₁₀ v/v', (pa) => Math.log10(pa / HS_ATM)],
+  ['pa', 'Pa (partial pressure)', 'Pa', (pa) => pa],
+  ['mol_l', 'mol/L', 'mol/L', (pa) => pa / (HS_R * HS_T) / 1000],
+  ['molecules', 'molecules/cm³', 'molecules/cm³', (pa) => (pa / (HS_KB * HS_T)) * 1e-6],
+  ['ug_l', 'µg/L (= mg/m³)', 'µg/L', (pa, mw) => ((pa * mw) / (HS_R * HS_T)) * 1e3],
+];
+const HS_PROPS = { molar_mass: 'molar mass', density: 'density', vapor_pressure: 'vapor pressure',
+  est_vapor_pressure: 'estimated vapor pressure', k_henry: "Henry's law constant" };
+const isWater = (solvent) => /water|h2o|milli-?q/i.test(solvent || '');
+// a number to `digits` significant figures, as a power of ten if very small or large
+function sigHtml(v, digits = 3) {
+  if (v == null || !Number.isFinite(v)) return '';
+  if (v === 0) return '0';
+  if (Math.abs(v) >= 1e-3 && Math.abs(v) < 1e5) return String(+v.toPrecision(digits));
+  const [m, e] = v.toExponential(digits - 1).split('e');
+  return `${m} × 10<sup>${String(+e).replace('-', '−')}</sup>`;
+}
+// a log10 v/v concentration as typed: its value, if it is one (from -50 to 0)
+const hsConc = (typed) => {
+  const v = String(typed ?? '').trim() === '' ? NaN : +typed;
+  return Number.isFinite(v) && v <= 0 && v >= -50 ? v : null;
+};
+
+class HeadspacePage {
+  constructor() {
+    const saved = LS.get(HS_KEY, {});
+    this.components = Array.isArray(saved.components) ? saved.components : []; // {odor_id, log10_conc: as typed}
+    this.solventChosen = !!saved.solventChosen; // else the solvent follows the odor table's
+    this.odors = null; // the odor table, by id
+    this.result = null; // the last calculation ({res, key: what it was of})
+    this.active = -1; // the suggestion highlighted
+    if (['paraffin oil', 'water'].includes(saved.solvent)) $('#hs-solvent').value = saved.solvent;
+    const units = $('#hs-units');
+    units.innerHTML = HS_UNITS.map(([k, label]) => `<option value="${k}">${esc(label)}</option>`).join('');
+    units.value = HS_UNITS.some(([k]) => k === saved.units) ? saved.units : 'ppm';
+    units.addEventListener('change', () => { this.save(); this.renderResults(); });
+    $('#hs-solvent').addEventListener('change', () => { this.solventChosen = true; this.changed(); });
+    $('#hs-calc').addEventListener('click', () => this.calculate());
+    $('#hs-clear').addEventListener('click', () => {
+      this.components = []; this.solventChosen = false; this.result = null;
+      this.render(); this.save(); $('#hs-search').focus();
+    });
+
+    const search = $('#hs-search'), list = $('#hs-suggestions');
+    search.addEventListener('input', () => { this.active = 0; this.suggest(); });
+    search.addEventListener('focus', () => { if (search.value.trim()) this.suggest(); });
+    search.addEventListener('blur', () => this.closeSuggestions());
+    search.addEventListener('keydown', (e) => {
+      const n = $$('[data-id]', list).length;
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        if (list.hidden) { this.suggest(); return; }
+        e.preventDefault();
+        this.active = n ? (this.active + (e.key === 'ArrowDown' ? 1 : -1) + n) % n : -1;
+        this.markActive();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const li = $$('[data-id]', list)[Math.max(this.active, 0)];
+        if (!list.hidden && li) this.add(+li.dataset.id);
+      } else if (e.key === 'Escape') this.closeSuggestions();
+    });
+    list.addEventListener('mousedown', (e) => {
+      e.preventDefault(); // (keeping the focus in the search box)
+      const li = e.target.closest('[data-id]');
+      if (li) this.add(+li.dataset.id);
+    });
+
+    const box = $('#hs-components');
+    box.addEventListener('input', (e) => {
+      const i = e.target.dataset.conc;
+      if (i == null) return;
+      this.components[+i].log10_conc = e.target.value;
+      e.target.classList.toggle('invalid', e.target.value.trim() !== '' && hsConc(e.target.value) == null);
+      this.changed({ rerender: false });
+    });
+    box.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && e.target.dataset.conc != null && hsConc(e.target.value) != null) { e.preventDefault(); search.focus(); }
+    });
+    box.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-remove]');
+      if (!b) return;
+      this.components.splice(+b.dataset.remove, 1);
+      this.changed();
+    });
+  }
+
+  invalidate() { this.odors = null; }
+
+  async load() {
+    if (!this.odors) {
+      $('#hs-status').textContent = 'Reading the odor table…';
+      try {
+        const { odors } = await api('/api/odors');
+        this.odors = new Map(odors.map((o) => [o.id, o]));
+        $('#hs-status').textContent = '';
+      } catch (e) { $('#hs-status').textContent = `Could not read the odor table: ${e.message}`; return; }
+      this.components = this.components.filter((c) => this.odors.has(c.odor_id));
+    }
+    this.render();
+    if (document.activeElement === $('#hs-search') && $('#hs-search').value.trim()) this.suggest(); // (typed while it was read)
+  }
+
+  save() {
+    LS.set(HS_KEY, { components: this.components, solvent: $('#hs-solvent').value, solventChosen: this.solventChosen,
+      units: $('#hs-units').value });
+  }
+
+  // what a calculation would be of, as it is now
+  _key() {
+    return JSON.stringify([$('#hs-solvent').value, this.components.map((c) => [c.odor_id, hsConc(c.log10_conc)])]);
+  }
+
+  // the mixture changed: the solvent follows the odor table's (unless one was chosen), saved, shown
+  changed({ rerender = true } = {}) {
+    if (!this.solventChosen && this.components.length && this.odors) {
+      const solvents = this.components.map((c) => this.odors.get(c.odor_id)?.solvent).filter(Boolean);
+      $('#hs-solvent').value = solvents.length && solvents.every(isWater) ? 'water' : 'paraffin oil';
+    }
+    this.save();
+    if (rerender) this.renderComponents();
+    this.renderState();
+    this.renderResults();
+  }
+
+  render() { this.renderComponents(); this.renderState(); this.renderResults(); }
+
+  add(id) {
+    this.components.push({ odor_id: id, log10_conc: '' });
+    $('#hs-search').value = '';
+    this.closeSuggestions();
+    this.changed();
+    $(`#hs-components [data-conc="${this.components.length - 1}"]`)?.focus();
+  }
+
+  // odors of the table matching what is typed (in a name, abbreviation, alias, CID or CAS), but
+  // those in the mixture: those named so first, then those whose names start so
+  suggest() {
+    const list = $('#hs-suggestions'), search = $('#hs-search');
+    const q = search.value.trim().toLowerCase();
+    if (!q || !this.odors) { this.closeSuggestions(); return; }
+    const inMix = new Set(this.components.map((c) => c.odor_id));
+    const scored = [];
+    for (const o of this.odors.values()) {
+      if (inMix.has(o.id)) continue;
+      const names = [o.name, o.abbrev, ...(o.aliases || [])].filter(Boolean).map((v) => v.toLowerCase());
+      const ids = [o.cid, o.cas].filter((v) => v != null).map((v) => String(v).toLowerCase());
+      let rank = null;
+      if (names.includes(q) || ids.includes(q)) rank = 0;
+      else if (names.some((v) => v.startsWith(q))) rank = 1;
+      else if ([...names, ...ids].some((v) => v.includes(q))) rank = 2;
+      if (rank != null) scored.push([rank, o]);
+    }
+    scored.sort((a, b) => a[0] - b[0] || odorSortKey(a[1].name).localeCompare(odorSortKey(b[1].name)));
+    const showAbbrev = abbrevShower([...this.odors.values()].map((o) => o.abbrev));
+    const shown = scored.slice(0, 12).map(([, o]) => o);
+    list.innerHTML = shown.length ? shown.map((o, i) => `<li role="option" id="hs-opt-${i}" data-id="${o.id}">
+        <b>${esc(o.name)}</b>${o.abbrev ? ` <span class="muted">${esc(showAbbrev(o.abbrev))}</span>` : ''}
+        <span class="muted small">${o.cid ? `CID ${o.cid}` : 'no CID'}${o.cas ? ` · CAS ${esc(o.cas)}` : ''}</span></li>`).join('')
+      + (scored.length > shown.length ? `<li class="muted small">and ${scored.length - shown.length} more: type more of the name</li>` : '')
+      : `<li class="muted">${inMix.size && scored.length === 0 && [...this.odors.values()].some((o) => [o.name, o.abbrev].some((v) => v?.toLowerCase().includes(q)))
+        ? 'Only odors already in the mixture match' : 'No odor in the table matches'}</li>`;
+    list.hidden = false;
+    search.setAttribute('aria-expanded', 'true');
+    this.active = Math.min(Math.max(this.active, 0), shown.length - 1);
+    this.markActive();
+  }
+
+  markActive() {
+    const items = $$('#hs-suggestions [data-id]');
+    items.forEach((li, i) => li.classList.toggle('active', i === this.active));
+    const a = items[this.active];
+    if (a) { a.scrollIntoView({ block: 'nearest' }); $('#hs-search').setAttribute('aria-activedescendant', a.id); }
+    else $('#hs-search').removeAttribute('aria-activedescendant');
+  }
+
+  closeSuggestions() {
+    $('#hs-suggestions').hidden = true;
+    $('#hs-search').setAttribute('aria-expanded', 'false');
+    $('#hs-search').removeAttribute('aria-activedescendant');
+  }
+
+  renderComponents() {
+    const box = $('#hs-components');
+    if (!this.components.length) {
+      box.innerHTML = '<p class="muted hs-empty">No odors yet: search for one above, then give its concentration.</p>';
+      return;
+    }
+    const showAbbrev = abbrevShower([...(this.odors?.values() || [])].map((o) => o.abbrev));
+    box.innerHTML = `<table class="odor-table hs-table"><thead><tr><th>Odor</th><th>Abbrev.</th><th>CID</th>
+      <th title="As in the odor table">Its solvent</th><th>log<sub>10</sub> conc. (v/v)</th><th></th></tr></thead><tbody>
+      ${this.components.map((c, i) => {
+        const o = this.odors?.get(c.odor_id) || { name: `odor #${c.odor_id}` };
+        const bad = String(c.log10_conc).trim() !== '' && hsConc(c.log10_conc) == null;
+        return `<tr><td><a href="#odors/${c.odor_id}">${esc(o.name)}</a></td><td>${esc(showAbbrev(o.abbrev) || '')}</td>
+          <td>${o.cid ?? '<span class="muted">none</span>'}</td><td>${esc(o.solvent || '')}</td>
+          <td><input type="number" class="narrow${bad ? ' invalid' : ''}" step="any" max="0" min="-50" placeholder="e.g. -3"
+            data-conc="${i}" value="${esc(c.log10_conc)}" aria-label="log10 concentration of ${esc(o.name)} (v/v)"></td>
+          <td><button type="button" class="btn small" data-remove="${i}" aria-label="Remove ${esc(o.name)}">Remove</button></td></tr>`;
+      }).join('')}</tbody></table>`;
+  }
+
+  // whether it can be calculated, and why not; what the odor table says of their solvents
+  renderState() {
+    const n = this.components.length;
+    const concs = this.components.map((c) => hsConc(c.log10_conc));
+    const missing = concs.filter((v) => v == null).length;
+    const total = concs.reduce((t, v) => t + (v == null ? 0 : 10 ** v), 0);
+    let why = '';
+    if (n && missing) why = `Give ${missing === n && n === 1 ? 'its' : missing === 1 ? 'one more' : `${missing} more`} concentration${missing === 1 ? '' : 's'} (log₁₀ v/v, at most 0) to calculate.`;
+    else if (total > 1 + 1e-9) why = `The odors are more than the whole solution (their v/v sum to ${+total.toPrecision(3)}).`;
+    $('#hs-calc').disabled = !n || !!why || this.busy;
+    $('#hs-clear').disabled = !n;
+    if (!this.busy) $('#hs-status').textContent = why;
+    const water = $('#hs-solvent').value === 'water';
+    const other = this.components.map((c) => this.odors?.get(c.odor_id)).filter((o) => o?.solvent && isWater(o.solvent) !== water);
+    const note = $('#hs-solvent-note');
+    note.hidden = !other.length;
+    if (other.length) {
+      const showAbbrev = abbrevShower([...this.odors.values()].map((o) => o.abbrev));
+      note.textContent = `In the odor table, ${other.map((o) => `${showAbbrev(o.abbrev) || o.name} is in ${o.solvent}`).join(', ')}.`;
+    }
+  }
+
+  async calculate() {
+    const json = { solvent: $('#hs-solvent').value, components: this.components.map((c) => ({ odor_id: c.odor_id, log10_conc: hsConc(c.log10_conc) })) };
+    const key = this._key();
+    this.busy = true;
+    this.renderState();
+    $('#hs-status').textContent = 'Calculating (what is not known yet of an odor is looked up first: a few seconds for each)…';
+    try {
+      const res = await api('/api/headspace', { method: 'POST', json });
+      this.result = { res, key };
+      $('#hs-status').textContent = '';
+      odorsPage.odors = null; // (with what was looked up, when the Odors tab is opened)
+    } catch (e) {
+      $('#hs-status').textContent = `Could not calculate: ${e.message}`;
+    } finally {
+      this.busy = false;
+      const status = $('#hs-status').textContent;
+      this.renderState();
+      if (status.startsWith('Could not')) $('#hs-status').textContent = status;
+    }
+    this.renderResults();
+  }
+
+  renderResults() {
+    const box = $('#hs-results');
+    if (!this.result) { box.hidden = true; box.innerHTML = ''; return; }
+    const { res, key } = this.result;
+    const [unit, unitLabel, unitShort, of] = HS_UNITS.find(([k]) => k === $('#hs-units').value) || HS_UNITS[0];
+    const water = res.solvent === 'water';
+    const showAbbrev = abbrevShower([...(this.odors?.values() || [])].map((o) => o.abbrev));
+    const amount = (v) => (v == null ? '' : unit === 'log10' ? (v > 0 ? of(v).toFixed(2) : '−∞') : sigHtml(of(v)));
+    const link = (c, p, html) => (c.links?.[p] ? `<a href="${esc(c.links[p])}" target="_blank" rel="noopener">${html}</a>` : html);
+    const rows = res.components.map((c) => {
+      const o = this.odors?.get(c.odor_id) || { name: `odor #${c.odor_id}` };
+      const pr = c.properties || {};
+      const mw = pr.molar_mass;
+      const vp = pr.vapor_pressure != null ? link(c, 'vapor_pressure', sigHtml(pr.vapor_pressure))
+        : pr.est_vapor_pressure != null ? `${link(c, 'est_vapor_pressure', sigHtml(pr.est_vapor_pressure))} <span class="muted small">est.</span>` : '';
+      const dens = pr.density != null ? link(c, 'density', sigHtml(pr.density)) : '<span class="muted">1 (assumed)</span>';
+      const hs = c.pa == null ? '' : unit === 'ug_l' ? sigHtml(of(c.pa, mw)) : amount(c.pa);
+      const notes = [...c.notes.map(esc), ...Object.entries(c.failed || {}).map(([p, e]) => `${esc(HS_PROPS[p] || p)} could not be looked up:
+        <span class="muted" title="${esc(e)}">${esc(e.length > 90 ? `${e.slice(0, 90)}…` : e)}</span>`)];
+      return `<tr><td><a href="#odors/${c.odor_id}">${esc(o.name)}</a>${o.abbrev ? ` <span class="muted">${esc(showAbbrev(o.abbrev))}</span>` : ''}</td>
+        <td class="num">${c.log10_conc}</td><td class="num">${mw != null ? link(c, 'molar_mass', mw.toFixed(2)) : ''}</td><td class="num">${dens}</td>
+        <td class="num">${vp}</td>${water ? `<td class="num">${link(c, 'k_henry', sigHtml(pr.k_henry))}</td>` : ''}
+        <td class="num">${sigHtml(c.mole_fraction)}</td><td class="num hs-amount">${hs}</td>
+        <td class="notes">${notes.length ? `<ul>${notes.map((t) => `<li>${t}</li>`).join('')}</ul>` : ''}</td></tr>`;
+    }).join('');
+    const computed = res.components.filter((c) => c.pa != null);
+    const total = unit === 'ug_l' ? computed.reduce((t, c) => t + of(c.pa, c.properties.molar_mass), 0) : null;
+    const totalRow = res.components.length > 1 ? `<tr class="hs-total"><td colspan="${water ? 7 : 6}">All together${computed.length < res.components.length ? ' (of those that could be computed)' : ''}</td>
+      <td class="num hs-amount">${computed.length ? (total != null ? sigHtml(total) : amount(res.total_pa)) : ''}</td><td></td></tr>` : '';
+    box.hidden = false;
+    box.innerHTML = `<div class="step-head"><h2>Headspace</h2><span class="muted">in ${esc(res.solvent)}, at ${+res.temperature_c.toFixed(2)} °C, in ${esc(unitLabel)}</span></div>
+      ${key !== this._key() ? '<p class="msg warn">The mixture has changed since this was calculated: calculate it again to see it.</p>' : ''}
+      <table class="odor-table hs-table${key !== this._key() ? ' stale' : ''}"><thead><tr><th>Odor</th><th>log<sub>10</sub> conc.</th>
+        <th>Molar mass (g/mol)</th><th>Density (g/mL)</th><th title="From PubChem, else estimated from its structure (est.)">Vapor pressure (kPa)</th>
+        ${water ? '<th title="Henry\'s law solubility constant in water at 25 °C">K<sub>H</sub> (mol/m³/Pa)</th>' : ''}
+        <th title="In the liquid">Mole fraction</th><th>Headspace (${esc(unitShort)})</th><th>Notes</th></tr></thead>
+      <tbody>${rows}${totalRow}</tbody></table>`;
+  }
+}
+
 // ==================================================================== router
 const upload = new UploadFlow();
 const browse = new Browse();
@@ -4775,6 +5076,7 @@ const reference = new Reference();
 const mergePage = new MergePage();
 const comparePage = new ComparePage();
 const settings = new SettingsPage();
+const headspacePage = new HeadspacePage();
 const admin = new AdminPage();
 const player = new MoviePlayer($('#player'), { api, esc, fmtBytes });
 
@@ -4783,7 +5085,7 @@ let lastPlace = 'browse'; // the hash of the last place shown other than the Adm
 
 function route() {
   const [tab, id] = location.hash.replace(/^#/, '').split('/');
-  const name = ['upload', 'browse', 'merge', 'compare', 'odors', 'reference', 'settings', 'admin'].includes(tab) ? tab : 'browse';
+  const name = ['upload', 'browse', 'merge', 'compare', 'odors', 'reference', 'settings', 'headspace', 'admin'].includes(tab) ? tab : 'browse';
   $$('.tab').forEach((s) => { s.hidden = s.id !== `tab-${name}`; });
   $$('.tabs a').forEach((a) => a.classList.toggle('active', a.dataset.tab === name));
   if (name === 'admin' && currentTab !== 'admin') admin.enter(lastPlace);
@@ -4793,6 +5095,7 @@ function route() {
   if (name === 'odors') { odorsPage.highlightId = id ? +id : null; odorsPage.load().then(() => { if (id) odorsPage.highlight(+id); }); }
   if (name === 'reference') { reference.load().then(() => { if (id) reference.show(id); }); }
   if (name === 'settings') settings.load();
+  if (name === 'headspace') headspacePage.load();
   if (name === 'merge') mergePage.load();
   if (name === 'compare') comparePage.load();
   if (name === 'browse' && !id) { $('#browse-empty').hidden = false; $('#dataset-view').hidden = true; browse.selected = null; }

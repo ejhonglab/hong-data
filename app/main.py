@@ -21,7 +21,7 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 import markdown
 import numpy as np
@@ -36,8 +36,8 @@ from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, R
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import backup, compare, config, export, filelog, merge, movies, odormeta, reference, sandbox, tensor, thorimage, vapor, yamlcheck
-from .db import Database
+from . import backup, chemprops, compare, config, export, filelog, headspace, merge, movies, odormeta, reference, sandbox, tensor, thorimage, yamlcheck
+from .db import PROPERTY_COLUMNS, Database
 from .glomeruli import load_glomeruli
 from .ingest import ParsedData, ValidationError, kc_id_problems, load_file, load_parsed, save_parsed
 from .metadata import (
@@ -1338,43 +1338,146 @@ def _fetch_inchis(wait: bool = False) -> None:
         _inchi_lock.release()
 
 
-_vapor_lock = threading.Lock()
-_vapor_tried: dict[int, float] = {}  # CID -> when its vapor pressure last could not be looked up (tried again after an hour)
+_props_lock = threading.Lock()
+# (CID, property) -> when it last could not be looked up, and why (tried again after an hour)
+_props_failed: dict[tuple[int, str], tuple[float, str]] = {}
+SHOWN_PROPERTIES = ("vapor_pressure", "molar_mass")  # looked up for every odor, to show with it
 
 
-def _fetch_vapor_pressures() -> None:
-    """Look up through chemutils (`vapor.look_up`) the vapor pressure of every odor with an
-    InChI that has not been looked up yet (but those that could not be in the last hour),
-    once the InChIs missing are fetched (`_fetch_inchis`), and then of those added since:
-    skipped while another call is at it."""
-    if not _vapor_lock.acquire(blocking=False):
+def _look_up_properties(todo: list[tuple[int, str, list[str]]]) -> None:
+    """Look up properties of odors through chemutils (`chemprops.look_up`), each saved as
+    it comes; those that could not be looked up kept in `_props_failed`."""
+    save = lambda cid, prop, found: db.save_property(cid, prop, found, when=dt.datetime.now().isoformat(timespec="seconds"))
+    now = time.time()
+    failed = chemprops.look_up(todo, save)
+    _props_failed.update({k: (now, e) for k, e in failed.items()})
+    if failed:
+        log.warning("could not look up %d properties of odors (%s), e.g.: %s", len(failed),
+                    ", ".join(f"CID {cid}: {prop}" for cid, prop in sorted(failed)), next(iter(failed.values())))
+
+
+def _to_look_up(odor: dict, props: Iterable[str], now: float, retry_s: float = 3600) -> list[str]:
+    """Those of `props` not looked up yet for an odor with an InChI (but those that could
+    not be in the last `retry_s`)."""
+    return [p for p in props if odor["inchi"] and not odor[f"{p}_at"]
+            and now - _props_failed.get((odor["cid"], p), (0, ""))[0] > retry_s]
+
+
+def _fetch_properties() -> None:
+    """Look up through chemutils the properties shown with every odor (`SHOWN_PROPERTIES`)
+    of those with an InChI that has not had them looked up yet (but those that could not be
+    in the last hour), once the InChIs missing are fetched (`_fetch_inchis`), and then of
+    those added since: skipped while another call is at it."""
+    if not _props_lock.acquire(blocking=False):
         return
-    save = lambda cid, found: db.save_vapor_pressure(cid, found, when=dt.datetime.now().isoformat(timespec="seconds"))
     seen: set[int] = set()
     try:
         while True:
             _fetch_inchis(wait=True)
             now = time.time()
-            todo = sorted({(o["cid"], o["inchi"]) for o in db.list_odors() if o["inchi"] and not o["vapor_pressure_at"]
-                           and o["cid"] not in seen and now - _vapor_tried.get(o["cid"], 0) > 3600})
+            todo = {o["cid"]: (o["cid"], o["inchi"], props) for o in db.list_odors()
+                    if o["cid"] not in seen and (props := _to_look_up(o, SHOWN_PROPERTIES, now))}
             if not todo:
                 break
-            seen.update(cid for cid, _ in todo)
-            failed = vapor.look_up(todo, save)
-            _vapor_tried.update(dict.fromkeys(failed, now))
-            if failed:
-                log.warning("could not look up the vapor pressure of %d odors (CIDs %s), e.g.: %s", len(failed),
-                            ", ".join(map(str, sorted(failed))), next(iter(failed.values())))
+            seen.update(todo)
+            _look_up_properties(sorted(todo.values()))
     except Exception:
-        log.exception("could not look up vapor pressures")
+        log.exception("could not look up properties of odors")
     finally:
-        _vapor_lock.release()
+        _props_lock.release()
 
 
 def _look_up_odors() -> None:
-    """`_fetch_vapor_pressures` (and so `_fetch_inchis`) in a thread of its own, as each
-    lookup takes about a second."""
-    threading.Thread(target=_fetch_vapor_pressures, name="vapor-pressures", daemon=True).start()
+    """`_fetch_properties` (and so `_fetch_inchis`) in a thread of its own, as each lookup
+    takes about a second."""
+    threading.Thread(target=_fetch_properties, name="odor-properties", daemon=True).start()
+
+
+HEADSPACE_MAX_ODORS = 50
+HEADSPACE_RETRY_S = 60  # what could not be looked up is tried again by a calculation after this (s)
+
+
+def _headspace_properties(odor: dict, solvent: str) -> list[str]:
+    """The properties `headspace.calculate` needs of an odor in a solvent."""
+    props = ["molar_mass", "density", "vapor_pressure"]
+    if not odor["vapor_pressure_at"] or odor["vapor_pressure_kpa"] is None:
+        props.append("est_vapor_pressure")  # (if PubChem has no vapor pressure)
+    return props + ["k_henry"] * (solvent == "water")
+
+
+def _headspace(solvent: str, comps: list[dict]) -> dict:
+    """The headspace of odors diluted together (`headspace.calculate`), with the properties
+    it needs of each looked up through chemutils first, where they have not been (but those
+    that could not be in the last `HEADSPACE_RETRY_S`).
+
+    Args:
+        comps: ``odor_id`` (in the odor table) and ``log10_conc`` of each.
+
+    Returns:
+        `headspace.calculate`'s, with each component's ``odor_id``, ``log10_conc``,
+        ``properties`` (property -> its value, None if there is none; of those it needs),
+        ``links`` (property -> where it is from, see `odormeta.property_link`) and ``failed``
+        (property -> why it could not be looked up, on one line, for those that could not); and
+        ``solvent`` and ``temperature_c``.
+    """
+    def odors() -> dict[int, dict]:
+        return {o["id"]: o for o in db.list_odors()}
+
+    table = odors()
+    if any(table[c["odor_id"]]["cid"] and not table[c["odor_id"]]["inchi"] for c in comps):
+        _fetch_inchis(wait=True)
+        table = odors()
+    now = time.time()
+    todo = {}
+    for c in comps:
+        o = table[c["odor_id"]]
+        if o["cid"] and (props := _to_look_up(o, _headspace_properties(o, solvent), now, HEADSPACE_RETRY_S)):
+            todo[o["cid"]] = (o["cid"], o["inchi"], props)
+    if todo:
+        _look_up_properties(sorted(todo.values()))
+        table = odors()
+
+    inputs, extra = [], []
+    for c in comps:
+        o = table[c["odor_id"]]
+        props = _headspace_properties(o, solvent)
+        values = {p: o[PROPERTY_COLUMNS[p]] for p in props}
+        failed = {p: " ".join(_props_failed[(o["cid"], p)][1].split())[:300] for p in props
+                  if values[p] is None and (o["cid"], p) in _props_failed}
+        notes = [] if o["cid"] else ["no CID in the odor table, so nothing about it could be looked up"]
+        if o["cid"] and not o["inchi"]:
+            notes.append("PubChem gave no InChI for its CID (or could not be reached), so nothing about it could be looked up")
+        inputs.append({"log10_conc": c["log10_conc"], **values})
+        extra.append({"odor_id": o["id"], "log10_conc": c["log10_conc"], "properties": values,
+                      "links": {p: odormeta.property_link(o, p) for p in props}, "failed": failed, "notes": notes})
+    result = headspace.calculate(inputs, solvent)
+    for r, e in zip(result["components"], extra):
+        r.update({**e, "notes": e["notes"] + r["notes"]})
+    return {**result, "solvent": solvent, "temperature_c": headspace.T_K - 273.15}
+
+
+async def headspace_calc(request: Request) -> Response:
+    """The Headspace calculator's: {"solvent" (of `headspace.SOLVENTS`), "components": [{"odor_id",
+    "log10_conc"}, ...]} -> `_headspace`."""
+    body = await request.json()
+    if not isinstance(body, dict) or body.get("solvent") not in headspace.SOLVENTS or not isinstance(body.get("components"), list):
+        return json_error(400, f'expected {{"solvent": one of {", ".join(headspace.SOLVENTS)}, "components": [{{"odor_id", "log10_conc"}}, ...]}}')
+    comps = body["components"]
+    if not 1 <= len(comps) <= HEADSPACE_MAX_ODORS:
+        return json_error(400, f"a mixture needs from 1 to {HEADSPACE_MAX_ODORS} odors")
+    ids = {o["id"] for o in await run_in_threadpool(db.list_odors)}
+    for c in comps:
+        conc = c.get("log10_conc") if isinstance(c, dict) else None
+        if not isinstance(c, dict) or type(c.get("odor_id")) is not int or c["odor_id"] not in ids:
+            return json_error(400, f"not an odor of the odor table: {c.get('odor_id') if isinstance(c, dict) else c!r}")
+        if isinstance(conc, bool) or not isinstance(conc, (int, float)) or not -50 <= conc <= 0:
+            return json_error(400, "each odor's log10 concentration (v/v) is a number from -50 to 0")
+    if len({c["odor_id"] for c in comps}) < len(comps):
+        return json_error(400, "an odor is in the mixture more than once")
+    try:
+        return JSONResponse(await run_in_threadpool(_headspace, body["solvent"], comps))
+    except ValueError as e:
+        return json_error(400, str(e))
 
 
 def _apply(fp: str, change_ids: set[int], delete_ids: set[int]) -> dict:
@@ -1918,6 +2021,7 @@ routes = [
     Route("/api/odors/apply", odors_apply, methods=["POST"]),
     Route("/api/odors/structure/{cid:int}", odor_structure),
     Route("/api/odors/template.csv", odor_template),
+    Route("/api/headspace", headspace_calc, methods=["POST"]),
     Route("/api/reference", reference_list),
     Route("/api/reference/{ref_id}", reference_get),
     Route("/api/admin", admin_get),

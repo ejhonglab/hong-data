@@ -31,6 +31,7 @@ from typing import Any, Callable, Optional
 
 from . import config, yamlcheck
 from .db import ODOR_COLUMNS as FIELDS
+from .db import PROPERTY_COLUMNS
 from .odors import SOLVENT_STR, OdorFormatError, format_conc, parse_odor
 
 # accepted header names (lower case, '_' and runs of spaces as one space, trailing ' .:#' dropped)
@@ -336,17 +337,33 @@ class SheetWatch:
 # ----------------------------------------------------------------------- links
 
 
+# the sections of a PubChem page that properties looked up from it are in (chemprops.py)
+_PUBCHEM_SECTIONS = {"vapor_pressure": "Vapor-Pressure", "molar_mass": "Molecular-Weight", "density": "Density"}
+
+
+def property_link(odor: dict, prop: str) -> Optional[str]:
+    """The URL of where a property of an odor looked up through chemutils is from (of
+    `PROPERTY_COLUMNS`: its section, for a PubChem page; the first URL in it, for an
+    estimate's source), or None if it has none."""
+    source = odor.get(f"{prop}_source") if odor.get(PROPERTY_COLUMNS[prop]) is not None else None
+    url = re.search(r"https?://[^\s()]+", source or "")
+    if not url:
+        return None
+    url = url[0]
+    if url.startswith("https://pubchem.ncbi.nlm.nih.gov/compound/") and prop in _PUBCHEM_SECTIONS:
+        url += f"#section={_PUBCHEM_SECTIONS[prop]}"
+    return url
+
+
 def links(odor: dict) -> dict[str, Optional[str]]:
-    """URLs for an odor's identifiers (None where there is nothing to link)."""
+    """URLs for an odor's identifiers, and where each property looked up for it is from
+    (`property_link`); None where there is nothing to link."""
     cat = odor.get("catalog_no")
     catalog = odor.get("catalog_url")
     if not catalog and cat and SIGMA_RE.search(odor.get("supplier") or ""):
         q = urllib.parse.quote(cat)
         catalog = f"https://www.sigmaaldrich.com/US/en/search/{q}?focus=products&term={q}&type=product_number"
     cid, cas, metacyc, lotus = (odor.get(k) for k in ("cid", "cas", "metacyc", "lotus"))
-    vapor = odor.get("vapor_pressure_source") if odor.get("vapor_pressure_kpa") is not None else None
-    if vapor and vapor.startswith("https://pubchem.ncbi.nlm.nih.gov/compound/"):
-        vapor += "#section=Vapor-Pressure"
     return {
         "pubchem": f"https://pubchem.ncbi.nlm.nih.gov/compound/{cid}" if cid else None,
         "cas": f"https://commonchemistry.cas.org/detail?cas_rn={cas}" if cas else None,
@@ -354,7 +371,7 @@ def links(odor: dict) -> dict[str, Optional[str]]:
         "metacyc": f"https://biocyc.org/compound?orgid=META&id={urllib.parse.quote(metacyc)}" if metacyc else None,
         "lotus": f"https://lotus.naturalproducts.net/compound/lotus_id/{lotus}" if lotus else None,
         "structure": f"/api/odors/structure/{cid}" if cid else None,
-        "vapor_pressure": vapor,
+        **{prop: property_link(odor, prop) for prop in PROPERTY_COLUMNS},
     }
 
 
@@ -695,6 +712,7 @@ def table_rows(rows: list[dict], index: OdorIndex) -> list[dict]:
             "supplier": o.get("supplier"),
             "catalog_no": o.get("catalog_no"), "metacyc": o.get("metacyc"), "lotus": o.get("lotus"),
             "inventory": y.get("inventory") or o.get("inventory"), "vapor_pressure_kpa": o.get("vapor_pressure_kpa"),
+            "molar_mass_g_mol": o.get("molar_mass_g_mol"),
             "pubchem_url": lk.get("pubchem"), "cas_url": lk.get("cas"), "catalog_url": lk.get("catalog"),
             "metacyc_url": lk.get("metacyc"), "lotus_url": lk.get("lotus"), "vapor_pressure_url": lk.get("vapor_pressure"),
             "matched_by": r["match"] if r["odor_id"] is not None else None,
