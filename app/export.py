@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import datetime as dt
 import io
+import math
 import re
 import unicodedata
 import zipfile
@@ -40,10 +41,11 @@ from typing import Iterable, Iterator, Optional, TextIO
 import numpy as np
 import pandas as pd
 
-from . import merge, odormeta
+from . import headspace, merge, odormeta
 from .db import Database
 from .ingest import BAD, CELLS
-from .odors import SOLVENT_STR, is_odor_level, lowercase_map, lowercase_odor, odor_level_sort_key, odor_names
+from .odors import (SOLVENT_STR, format_conc, is_odor_level, lowercase_map, lowercase_odor, odor_level_sort_key,
+                    odor_names)
 
 FORMATS = ("files", "wide", "long")
 UNIT_LEVELS = ("dataset_id", "date", "fly_num", "roi")
@@ -392,28 +394,43 @@ def _tex_link(url: Optional[str], text: str) -> str:
     return f"\\href{{{escaped}}}{{{text}}}"
 
 
-def odors_tex(rows: list[dict], caption: str, label: str) -> str:
-    """Odors as a LaTeX table to ``\\input``, like the thesis's: a booktabs longtable (over
-    as many pages as it needs), footnote-sized, a row per odor, grouped by panel: its name
-    (from the odor table, else from its odor YAML), abbreviation and concentration as in the
-    data, then CID, solvent, target glomerulus, supplier, catalog number, MetaCyc and LOTUS
-    IDs, CAS number and vapor pressure (linked as on the site), each only if an odor has one. InChI and
-    structures are left out (too long to typeset; the CSV has InChI).
+def _tex_number(v: float, digits: int = 3) -> str:
+    """A number as the site shows it: to `digits` significant figures (trailing zeros
+    dropped), as a power of ten under 0.001 or from 100,000."""
+    if v == 0:
+        return "0"
+    if 1e-3 <= abs(v) < 1e5:
+        return np.format_float_positional(float(f"{v:.{digits}g}"), trim="-")
+    m, e = f"{v:.{digits - 1}e}".split("e")
+    return f"${m} \\times 10^{{{int(e)}}}$"
+
+
+def _tex_longtable(rows: list[dict], columns: list[tuple], caption: str, label: str, *, group=None,
+                   last: Optional[list[str]] = None, notes: Optional[str] = None) -> str:
+    """Rows as a LaTeX table to ``\\input``, like the thesis's: a booktabs longtable (over as
+    many pages as it needs), footnote-sized, linked as on the site (hyperref's ``\\href``).
 
     Args:
-        rows: as from `odormeta.table_rows`, in order (each panel's together).
-        caption: of the table; label: its ``\\label``.
+        columns: (heading, alignment, cell: row -> its TeX ('' for none), always: whether
+            kept when no row has anything in it (else left out)).
+        group: row -> its group (e.g. its panel; rows of each together), each titled, with a
+            rule between them; None for no groups.
+        last: rows (each its cells' TeX, one per column kept) after a rule, e.g. a total.
+        notes: TeX under the table.
     """
-    cols = [c for c in _TEX_COLUMNS if any(r.get(c[2]) not in (None, "") for r in rows)]
-    n = 3 + len(cols)
-    head = " & ".join(["Name", "Abbrev.", r"$\log_{10}$ conc.", *(c[0] for c in cols)]) + r" \\"
+    cells = [[c[2](r) for c in columns] for r in rows]
+    kept = [i for i, c in enumerate(columns) if c[3] or any(row[i] for row in cells)]
+    n = len(kept)
+    head = " & ".join(columns[i][0] for i in kept) + r" \\"
     out = [
         f"% {caption}: from the odor response database, {dt.date.today():%Y-%m-%d}.",
-        r"% Needs \usepackage{booktabs}, \usepackage{longtable} and \usepackage{hyperref}; in a landscape",
-        r"% environment (\usepackage{pdflscape}) if too wide. Columns no odor has a value in are left out.",
+        r"% Needs \usepackage{booktabs}, \usepackage{longtable}, \usepackage{array} and \usepackage{hyperref}; in a landscape",
+        r"% environment (\usepackage{pdflscape}) if too wide, and narrower margins if still (e.g.",
+        r"% \usepackage[margin=2cm]{geometry}). Columns with nothing in them are left out.",
         r"\begingroup",
         r"\footnotesize",
-        f"\\begin{{longtable}}{{lll{''.join(c[1] for c in cols)}}}",
+        r"\setlength{\tabcolsep}{4pt}",
+        f"\\begin{{longtable}}{{{''.join(columns[i][1] for i in kept)}}}",
         f"\\caption{{{_tex(caption)}}}\\label{{{label}}} \\\\",
         r"\toprule", head, r"\midrule", r"\endfirsthead",
         f"\\caption[]{{{_tex(caption)} (continued)}} \\\\",
@@ -421,21 +438,241 @@ def odors_tex(rows: list[dict], caption: str, label: str) -> str:
         r"\midrule", f"\\multicolumn{{{n}}}{{r}}{{\\emph{{continued on the next page}}}} \\\\", r"\endfoot",
         r"\bottomrule", r"\endlastfoot",
     ]
-    panel = object()  # none yet
-    for r in rows:
-        if r["panel"] != panel:
-            if out[-1] != r"\endlastfoot":  # a panel before it
+    current = object()  # (no group yet)
+    for r, row in zip(rows, cells):
+        if group is not None and group(r) != current:
+            if out[-1] != r"\endlastfoot":  # (a group before it)
                 out.append(r"\midrule")
-            panel = r["panel"]
-            if panel is not None:
-                out.append(f"\\multicolumn{{{n}}}{{l}}{{\\textit{{{_tex(panel)}}}}} \\\\")
-        cells = [_tex(r["name"]) if r["name"] else r"\textit{not in the odor table}", _tex(r["abbrev"] or ""),
-                 f"${r['log10_conc']}$" if r["log10_conc"] not in (None, "") else ""]
-        cells += [_tex_link(r.get(url), _TEX_FORMATS.get(key, _tex)(r[key])) if r.get(key) not in (None, "") else ""
-                  for _, _, key, url in cols]
-        out.append(" & ".join(cells) + r" \\")
-    out += [r"\end{longtable}", r"\endgroup", ""]
+            current = group(r)
+            if current is not None:
+                out.append(f"\\multicolumn{{{n}}}{{l}}{{\\textit{{{_tex(current)}}}}} \\\\")
+        out.append(" & ".join(row[i] for i in kept) + r" \\")
+    if last:
+        out.append(r"\midrule")
+        out += [" & ".join(row[i] for i in kept) + r" \\" for row in last]
+    out += [r"\end{longtable}", *([notes] if notes else []), r"\endgroup", ""]
     return "\n".join(out)
+
+
+# a column of text wrapped to a width (left-aligned: \\raggedright), for long names
+_TEX_WRAP = ">{{\\raggedright\\arraybackslash}}p{{{}}}"
+
+
+def _tex_head(top: str, bottom: str, align: str = "r") -> str:
+    """A column's heading on two lines (e.g. its name, then its units), aligned as the column."""
+    return f"\\begin{{tabular}}[b]{{@{{}}{align}@{{}}}}{top}\\\\{bottom}\\end{{tabular}}"
+
+
+def _tex_cell(value, url: Optional[str] = None, fmt=None) -> str:
+    """A value as a table's TeX ('' if none), linked to `url` if there is one."""
+    if value in (None, ""):
+        return ""
+    return _tex_link(url, (fmt or _tex)(value))
+
+
+def odors_tex(rows: list[dict], caption: str, label: str) -> str:
+    """Odors as a LaTeX table to ``\\input``, like the thesis's (`_tex_longtable`): a row
+    per odor, grouped by panel: its name (from the odor table, else from its odor YAML),
+    abbreviation and concentration as in the data, then CID, solvent, target glomerulus,
+    supplier, catalog number, MetaCyc and LOTUS IDs, CAS number and vapor pressure (linked
+    as on the site), each only if an odor has one. InChI and structures are left out (too
+    long to typeset; the CSV has InChI).
+
+    Args:
+        rows: as from `odormeta.table_rows`, in order (each panel's together).
+        caption: of the table; label: its ``\\label``.
+    """
+    columns = [
+        ("Name", "l", lambda r: _tex(r["name"]) if r["name"] else r"\textit{not in the odor table}", True),
+        ("Abbrev.", "l", lambda r: _tex(r["abbrev"] or ""), True),
+        (r"$\log_{10}$ conc.", "l", lambda r: f"${r['log10_conc']}$" if r["log10_conc"] not in (None, "") else "", True),
+        *((heading, align, lambda r, key=key, url=url: _tex_cell(r.get(key), r.get(url) if url else None, _TEX_FORMATS.get(key)),
+           False) for heading, align, key, url in _TEX_COLUMNS),
+    ]
+    return _tex_longtable(rows, columns, caption, label, group=lambda r: r["panel"])
+
+
+_SORT_PREFIX = re.compile(r"^(?:\([^)]*\)-|[\d,]+-|[a-z]-(?=[a-z]))+")
+
+
+def _odor_sort_key(name: str) -> tuple[str, str]:
+    """An odor's place in the Odors tab: by its name without prefixes ('(E)-', '2-', 'a-'), as the tab sorts them."""
+    return _SORT_PREFIX.sub("", name.lower()), name
+
+
+def _lower_abbrevs(odors: list[dict]) -> dict[str, str]:
+    """The odor table's abbreviations as shown in lowercase (`lowercase_map`, over them all)."""
+    return lowercase_map(o["abbrev"] for o in odors if o.get("abbrev"))
+
+
+def _download(rows: list[dict], fmt: str, stem: str, tex) -> tuple[str, str, str]:
+    """`rows` as a CSV (their keys its columns, CIDs as integers) or LaTeX (`tex()`): (text, file name, media type)."""
+    if fmt == "csv":
+        df = pd.DataFrame(rows, columns=list(rows[0]) if rows else None)
+        if "cid" in df:
+            df["cid"] = df["cid"].astype("Int64")
+        return df.to_csv(index=False), f"{stem}.csv", "text/csv"
+    return tex(), f"{stem}.tex", "text/x-tex"
+
+
+def odor_table_download(db: Database, datasets_dir: Path, fmt: str, *, query: str = "",
+                        lower: bool = False) -> tuple[str, str, str]:
+    """The odor table (as the Odors tab shows it, and in its order) to download.
+
+    Args:
+        fmt: 'csv' (every field of each odor, its links, the datasets using it) or 'tex' (a
+            LaTeX table of its names, IDs, supplier, vapor pressure and molar mass, linked
+            as on the site: `_tex_longtable`).
+        query: only the odors the tab's filter shows for it (in a name, abbreviation, alias,
+            CID, CAS, catalog number, supplier or inventory), if any.
+        lower: abbreviations in lowercase (see the module's docstring).
+
+    Returns:
+        (its text, its file name, its media type).
+
+    Raises:
+        ExportError: another format.
+    """
+    if fmt not in ("csv", "tex"):
+        raise ExportError(f"unknown format {fmt!r}")
+    odors = db.list_odors()
+    used = odormeta.usage(db, datasets_dir, odors)
+    names = _lower_abbrevs(odors) if lower else {}
+    q = query.strip().lower()
+    fields = ("name", "abbrev", "cid", "cas", "catalog_no", "supplier", "inventory")
+    shown = [o for o in odors if not q or any(q in str(v).lower() for v in [*(o.get(f) for f in fields), *o["aliases"]] if v is not None)]
+    shown.sort(key=lambda o: _odor_sort_key(o["name"]))
+    rows = []
+    for o in shown:
+        lk = odormeta.links(o)
+        rows.append({
+            "name": o["name"], "abbrev": names.get(o["abbrev"], o["abbrev"]), "aliases": "; ".join(o["aliases"]) or None,
+            "cid": o["cid"], "cas": o["cas"], "inchi": o.get("inchi"), "solvent": o["solvent"], "supplier": o["supplier"],
+            "catalog_no": o["catalog_no"], "metacyc": o["metacyc"], "lotus": o["lotus"], "inventory": o["inventory"],
+            "vapor_pressure_kpa": o.get("vapor_pressure_kpa"), "vapor_pressure_measured": o.get("vapor_pressure_measured"),
+            "molar_mass_g_mol": o.get("molar_mass_g_mol"),
+            "datasets": " ".join(map(str, sorted(used.get(o["id"], ())))) or None, "notes": o["notes"],
+            "pubchem_url": lk["pubchem"], "cas_url": lk["cas"], "catalog_url": lk["catalog"], "metacyc_url": lk["metacyc"],
+            "lotus_url": lk["lotus"], "vapor_pressure_url": lk["vapor_pressure"], "molar_mass_url": lk["molar_mass"],
+        })
+    caption = f"Odors{f' matching “{query.strip()}”' if q else ''}"
+    columns = [
+        ("Name", _TEX_WRAP.format("3cm"), lambda r: _tex(r["name"]), True), ("Abbrev.", "l", lambda r: _tex_cell(r["abbrev"]), True),
+        ("CID", "r", lambda r: _tex_cell(r["cid"], r["pubchem_url"]), False),
+        ("CAS", "l", lambda r: _tex_cell(r["cas"], r["cas_url"]), False),
+        ("Solvent", "l", lambda r: _tex_cell(r["solvent"]), False),
+        ("Supplier, catalog no.", _TEX_WRAP.format("3cm"), lambda r: " ".join(x for x in (_tex_cell(r["supplier"]),
+                                                                       _tex_cell(r["catalog_no"], r["catalog_url"])) if x), False),
+        ("MetaCyc ID", "l", lambda r: _tex_cell(r["metacyc"], r["metacyc_url"]), False),
+        ("LOTUS ID", "l", lambda r: _tex_cell(r["lotus"], r["lotus_url"]), False),
+        (_tex_head("Vapor pressure", "(kPa)"), "r",
+         lambda r: _tex_cell(r["vapor_pressure_kpa"], r["vapor_pressure_url"], _tex_pressure), False),
+        (_tex_head("Molar mass", "(g/mol)"), "r", lambda r: _tex_cell(r["molar_mass_g_mol"], r["molar_mass_url"], lambda v: f"{v:.2f}"), False),
+    ]
+    return _download(rows, fmt, "olfdb_odors", lambda: _tex_longtable(rows, columns, caption, "tab:odors"))
+
+
+def _tex_measured(measured: Optional[bool]) -> str:
+    """A mark of whether a value is from measurements (m) or an estimate (e), if known."""
+    return "" if measured is None else "$^{m}$" if measured else "$^{e}$"
+
+
+def headspace_download(result: dict, odors: dict[int, dict], fmt: str, units: str, *,
+                       lower: bool = False) -> tuple[str, str, str]:
+    """A Headspace calculator's result (`main._headspace`) to download.
+
+    Args:
+        odors: the odor table, by id.
+        fmt: 'csv' (a row per odor, then one of them all together: what was used of each,
+            whether measured, where from, its headspace in every one of `headspace.UNITS`)
+            or 'tex' (a LaTeX table as the tab shows it, in `units`, linked as on the site,
+            values marked as measured or estimates: `_tex_longtable`).
+        units: of `headspace.UNITS`, for 'tex'.
+        lower: abbreviations in lowercase (see the module's docstring).
+
+    Returns:
+        (its text, its file name, its media type).
+
+    Raises:
+        ExportError: another format, or unit.
+    """
+    if fmt not in ("csv", "tex"):
+        raise ExportError(f"unknown format {fmt!r}")
+    if units not in headspace.UNITS:
+        raise ExportError(f"unknown units {units!r}")
+    names = _lower_abbrevs(list(odors.values())) if lower else {}
+    solvent, model = result["solvent"], result["model"]
+    water, henry = solvent == "water", solvent == "water" or model == "henry"
+    k_prop = "k_henry" if water else "k_henry_pfo"
+    rows = []
+    for c in result["components"]:
+        o = odors.get(c["odor_id"], {})
+        pr, links, sources = c.get("properties") or {}, c.get("links") or {}, c.get("sources") or {}
+        if c.get("vapor_pressure_source"):  # (the one a constant in oil was estimated with)
+            vp_from = c["vapor_pressure_source"]
+            vp_url = (m := re.search(r"https?://[^\s()]+", vp_from)) and m[0]
+        else:
+            vp_prop = "vapor_pressure" if pr.get("vapor_pressure") is not None else "est_vapor_pressure"
+            vp_from, vp_url = sources.get(vp_prop), links.get(vp_prop)
+        notes = [*c["notes"], *(f"{p.replace('_', ' ')} could not be looked up: {e}" for p, e in (c.get("failed") or {}).items())]
+        rows.append({
+            "name": o.get("name"), "abbrev": names.get(o.get("abbrev"), o.get("abbrev")), "cid": o.get("cid"),
+            "log10_conc": c["log10_conc"], "solvent": solvent, "model": model, "law": c["law"],
+            "molar_mass_g_mol": pr.get("molar_mass"), "density_g_ml": pr.get("density"),
+            "vapor_pressure_kpa": c["vapor_pressure"], "vapor_pressure_measured": c["vapor_pressure_measured"],
+            "vapor_pressure_source": vp_from,
+            "k_henry_mol_m3_pa": c["k_henry"], "k_henry_measured": c["k_henry_measured"],
+            "k_henry_source": sources.get(k_prop) if c["k_henry"] is not None else None,
+            "mole_fraction": c["mole_fraction"],
+            **{f"headspace_{k}": (None if c["pa"] is None else u[3](c["pa"], pr.get("molar_mass"))) for k, u in headspace.UNITS.items()},
+            "notes": "; ".join(notes) or None,
+            # (for the LaTeX: where each is from)
+            "_links": {**links, "pubchem": odormeta.links(o)["pubchem"] if o else None, "vp": vp_url},
+        })
+    computed = [r for r, c in zip(rows, result["components"]) if c["pa"] is not None]
+    total = {f"headspace_{k}": (sum(r["headspace_ug_l"] for r in computed if r["headspace_ug_l"] is not None) if k == "ug_l"
+                                else u[3](result["total_pa"], None)) if computed else None for k, u in headspace.UNITS.items()}
+    if len(rows) > 1:
+        rows.append({**dict.fromkeys(rows[0]), "name": "All together", "solvent": solvent, "model": model, **total, "_links": {}})
+    how = "by Henry's law" if water else "by Henry's law, constants estimated by chemutils" if model == "henry" else "by Raoult's law only"
+    stem = f"headspace_{solvent.replace(' ', '-')}{f'_{model}' if model else ''}"
+
+    def tex() -> str:
+        label, short, tex_units, _ = headspace.UNITS[units]
+        key = f"headspace_{units}"
+        fmt_amount = (lambda v: f"${v:.2f}$" if math.isfinite(v) else r"$-\infty$") if units == "log10" else _tex_number
+        link = lambda r, p, text: _tex_link(r["_links"].get(p), text)
+        odor_rows = rows[:len(result["components"])]
+        columns = [
+            ("Odor", "l", lambda r: _tex_link(r["_links"].get("pubchem"), _tex(r["name"] or "")), True),
+            ("Abbrev.", "l", lambda r: _tex_cell(r["abbrev"]), True),
+            (_tex_head(r"$\log_{10}$", "conc."), "r", lambda r: f"${format_conc(r['log10_conc'])}$", True),
+            (_tex_head("Molar mass", "(g/mol)"), "r",
+             lambda r: link(r, "molar_mass", f"{r['molar_mass_g_mol']:.2f}") if r["molar_mass_g_mol"] else "", False),
+            (_tex_head("Density", "(g/mL)"), "r",
+             lambda r: link(r, "density", _tex_number(r["density_g_ml"])) if r["density_g_ml"] else r"1 (assumed)", True),
+            (_tex_head("Vapor pressure", "(kPa)"), "r", lambda r: "" if r["vapor_pressure_kpa"] is None else
+             link(r, "vp", _tex_number(r["vapor_pressure_kpa"])) + _tex_measured(r["vapor_pressure_measured"]), False),
+            *([(_tex_head(f"$K_H$ in {'water' if water else 'oil'}", "(mol/m$^3$/Pa)"), "r", lambda r: "" if r["k_henry_mol_m3_pa"] is None else
+                (link(r, k_prop, _tex_number(r["k_henry_mol_m3_pa"])) + _tex_measured(r["k_henry_measured"])), False)] if henry else []),
+            # (only where Raoult's law used it)
+            (_tex_head("Mole", "fraction"), "r",
+             lambda r: _tex_number(r["mole_fraction"]) if r["mole_fraction"] is not None and r["law"] == "raoult" else "", False),
+            (_tex_head("Headspace", f"({tex_units})"), "r", lambda r: fmt_amount(r[key]) if r[key] is not None else "", True),
+            ("Notes", r"p{4cm}", lambda r: _tex_cell(r["notes"]), False),
+        ]
+        last = None
+        if len(rows) > 1:
+            last = [["All together", *([""] * (len(columns) - 3)), fmt_amount(total[key]) if total[key] is not None else "", ""]]
+        legend = (r"\noindent $^{m}$ from measurements of the compound; $^{e}$ estimated, with nothing measured of the compound "
+                  r"itself" + (r" (in oil, every $K_H$ is: no measured solubility in oil or alkanes is used; its "
+                               r"vapor pressure is the one it was estimated with)" if henry and not water else "")
+                  + r". Headspace at equilibrium, at 25\,\textdegree{}C"
+                  r" and 1 atm.\par")
+        caption = f"Headspace of {len(odor_rows)} odor{'s' if len(odor_rows) != 1 else ''} in {solvent}, {how}, in {label}"
+        return _tex_longtable(odor_rows, columns, caption, f"tab:{stem}", last=last, notes=legend)
+
+    return _download([{k: v for k, v in r.items() if k != "_links"} for r in rows], fmt, stem, tex)
 
 
 # ------------------------------------------------------------------------- zip

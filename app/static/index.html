@@ -403,7 +403,18 @@
       </div>
       <div class="odor-table-head">
         <h2>Odor table <span class="muted" id="odor-count"></span></h2>
-        <input type="search" id="odor-filter" placeholder="Filter by name, abbreviation, CID, CAS…" aria-label="Filter odors">
+        <div class="odor-table-tools">
+          <input type="search" id="odor-filter" placeholder="Filter by name, abbreviation, CID, CAS…" aria-label="Filter odors">
+          <span class="dl-status" id="odors-dl-status"></span>
+          <details class="menu menu-right" id="odors-download">
+            <summary class="btn small">Download table</summary>
+            <div class="menu-list">
+              <button type="button" data-odor-format="csv">CSV</button>
+              <button type="button" data-odor-format="tex">LaTeX (.tex)</button>
+              <p class="menu-note">The odors shown (all, or those the filter matches), in this order.<br><br>CSV: every field of each odor (aliases, IDs, InChI, supplier, vapor pressure, molar mass, notes), its links, and the datasets using it.<br><br>LaTeX: a booktabs longtable to <code>\input</code>, linked as here (hyperref); InChI, structures and notes left out.</p>
+            </div>
+          </details>
+        </div>
       </div>
       <div id="odor-table"></div>
       <details class="sync-history"><summary>Sync history</summary><div id="odor-syncs"></div></details>

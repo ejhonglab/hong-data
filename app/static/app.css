@@ -252,6 +252,9 @@ dialog.confirm .actions { justify-content: flex-end; }
 .odors-page h4, #admin-odor-preview h4 { margin: 18px 0 6px; font-size: 13.5px; }
 .odor-table-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin: 24px 0 8px; }
 .odor-table-head input { max-width: 340px; }
+.odor-table-tools { display: flex; align-items: center; gap: 10px; flex: 0 1 560px; justify-content: flex-end; }
+.odor-table-tools .dl-status:empty { display: none; }
+.hs-results-tools { margin-left: auto; display: flex; align-items: center; gap: 10px; }
 .odor-table { border-collapse: collapse; width: 100%; font-size: 12.5px; background: var(--panel); }
 .odor-table th { text-align: left; font-weight: 600; color: var(--ink-muted); border-bottom: 1px solid var(--rule-strong); padding: 6px 8px; position: sticky; top: 0; background: var(--panel); z-index: 1; }
 .odor-table td { border-bottom: 1px solid var(--rule); padding: 4px 8px; vertical-align: middle; }

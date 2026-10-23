@@ -560,3 +560,53 @@ def test_extra_levels(store, tmp_path):
     wide = read_member(zip_path, member, header=[0, 1, 2, 3, 4], index_col=[0, 1, 2, 3])
     assert list(wide.columns.names) == ["dataset_id", "date", "fly_num", "hemibrain", "roi"]
     assert [c[3] for c in wide.columns][:3] == ["L", "R", "L"] and all(str(c[3]).startswith("Unnamed") for c in wide.columns[3:])
+
+
+def get_file(endpoint, params=None, path_params=None):
+    """An endpoint's response to a GET (with `params`), as a file is answered."""
+    from urllib.parse import urlencode
+
+    scope = {"type": "http", "method": "GET", "path": "/", "headers": [], "query_string": urlencode(params or {}).encode(),
+             "path_params": path_params or {}}
+    return asyncio.run(endpoint(Request(scope)))
+
+
+def test_odor_table_download(main, store, two, monkeypatch):  # noqa: F811
+    from tests.test_odormeta import HEADER, apply_all, rows_of
+
+    monkeypatch.setattr(main, "db", store[0])
+    monkeypatch.setattr(config, "DATASETS_DIR", store[1])
+    db = store[0]
+    apply_all(db, rows_of(HEADER + "(E)-2-hexenal,E2H,hexenal;leaf aldehyde,5281168,6728-26-3,pfo,Sigma-Aldrich,W256005,,,,F-1,\n"
+                          "ethyl acetate,ea,,8857,,,,,,,,,\n" "valeric acid,va,,7991,,water,,,,,,,\n" "isoamyl acetate,IAA,,31276,,,,,,,,,\n"))
+    db.save_inchis({8857: "InChI=1S/C4H8O2/c1-3-6-4(2)5/h3H2,1-2H3"}, when="2026-10-23T00:00:00")
+    db.save_property(8857, "vapor_pressure", {"value": 12.43, "source": "https://pubchem.ncbi.nlm.nih.gov/compound/8857", "measured": True},
+                     when="2026-10-23T00:00:00")
+    db.save_property(8857, "molar_mass", {"value": 88.11, "source": "https://pubchem.ncbi.nlm.nih.gov/compound/8857"},
+                     when="2026-10-23T00:00:00")
+    get = lambda fmt, **params: get_file(main.odors_file, params, {"fmt": fmt})
+
+    # every odor, in the Odors tab's order (names without their prefixes), with its links and the datasets using it
+    r = get("csv")
+    assert r.status_code == 200 and r.headers["content-disposition"] == 'attachment; filename="olfdb_odors.csv"'
+    df = pd.read_csv(io.StringIO(r.body.decode()))
+    assert list(df["name"]) == ["ethyl acetate", "(E)-2-hexenal", "isoamyl acetate", "valeric acid"]
+    e2h, ea = df.set_index("abbrev").loc["E2H"], df.set_index("abbrev").loc["ea"]
+    assert e2h["aliases"] == "hexenal; leaf aldehyde" and e2h["cid"] == 5281168 and "W256005" in e2h["catalog_url"]
+    assert (ea["vapor_pressure_kpa"], ea["vapor_pressure_measured"], ea["molar_mass_g_mol"]) == (12.43, True, 88.11)
+    va = df.set_index("abbrev").loc["va"]
+    assert va["datasets"] == f"{two[0][0]} {two[1][0]}" and ea["datasets"] == str(two[0][0]) and pd.isna(e2h["datasets"])
+    # those the filter shows, abbreviations in lowercase if asked
+    df = pd.read_csv(io.StringIO(get("csv", q="leaf", lower="1").body.decode()))
+    assert list(df["abbrev"]) == ["e2h"]
+    assert list(pd.read_csv(io.StringIO(get("csv", q="31276", lower="1").body.decode()))["abbrev"]) == ["iaa"]
+
+    # LaTeX, linked as on the site; columns with nothing in them left out
+    tex = get("tex", q="a").body.decode()
+    lines = tex.splitlines()
+    assert r"\caption{Odors matching “a”}\label{tab:odors} \\" in lines
+    assert (r"ethyl acetate & ea & \href{https://pubchem.ncbi.nlm.nih.gov/compound/8857}{8857} &  &  &  & "
+            r"\href{https://pubchem.ncbi.nlm.nih.gov/compound/8857\#section=Vapor-Pressure}{12.4} & "
+            r"\href{https://pubchem.ncbi.nlm.nih.gov/compound/8857\#section=Molecular-Weight}{88.11} \\") in lines
+    assert r"\href{https://commonchemistry.cas.org/detail?cas_rn=6728-26-3}{6728-26-3}" in tex and "MetaCyc" not in tex
+    assert get("xlsx").status_code == 404

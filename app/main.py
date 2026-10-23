@@ -1567,11 +1567,9 @@ async def headspace_panels(request: Request) -> Response:
     return JSONResponse({"panels": await run_in_threadpool(_headspace_panels)})
 
 
-async def headspace_calc(request: Request) -> Response:
-    """The Headspace calculator's: {"solvent" (of `headspace.SOLVENTS`), "model" (of
-    `headspace.MODELS`, for paraffin oil; optional), "components": [{"odor_id", "log10_conc"},
-    ...]} -> `_headspace`."""
-    body = await request.json()
+async def _checked_headspace(body) -> tuple[str, Optional[str], list[dict]] | Response:
+    """A Headspace calculation asked for (as `headspace_calc` takes it): its solvent, model and
+    components, else the error to answer with."""
     if not isinstance(body, dict) or body.get("solvent") not in headspace.SOLVENTS or not isinstance(body.get("components"), list):
         return json_error(400, f'expected {{"solvent": one of {", ".join(headspace.SOLVENTS)}, "components": [{{"odor_id", "log10_conc"}}, ...]}}')
     if body.get("model") is not None and body["model"] not in headspace.MODELS:
@@ -1588,10 +1586,60 @@ async def headspace_calc(request: Request) -> Response:
             return json_error(400, "each odor's log10 concentration (v/v) is a number from -50 to 0")
     if len({c["odor_id"] for c in comps}) < len(comps):
         return json_error(400, "an odor is in the mixture more than once")
+    return body["solvent"], body.get("model"), comps
+
+
+async def headspace_calc(request: Request) -> Response:
+    """The Headspace calculator's: {"solvent" (of `headspace.SOLVENTS`), "model" (of
+    `headspace.MODELS`, for paraffin oil; optional), "components": [{"odor_id", "log10_conc"},
+    ...]} -> `_headspace`."""
+    checked = await _checked_headspace(await request.json())
+    if isinstance(checked, Response):
+        return checked
+    solvent, model, comps = checked
     try:
-        return JSONResponse(await run_in_threadpool(_headspace, body["solvent"], comps, body.get("model")))
+        return JSONResponse(await run_in_threadpool(_headspace, solvent, comps, model))
     except ValueError as e:
         return json_error(400, str(e))
+
+
+async def headspace_file(request: Request) -> Response:
+    """A Headspace calculation's table as a file to save, a CSV or a LaTeX table
+    (`export.headspace_download`): ``solvent``, ``model`` (optional), ``odors``
+    (``<odor id>:<log10 conc>,...``), ``units`` (of `headspace.UNITS`, for LaTeX) and
+    ``lower=1`` for abbreviations in lowercase."""
+    q = request.query_params
+    try:
+        comps = [{"odor_id": int(i), "log10_conc": float(c)} for i, c in (x.split(":") for x in q.get("odors", "").split(",") if x)]
+    except ValueError:
+        return json_error(400, "expected odors=<odor id>:<log10 concentration>,...")
+    checked = await _checked_headspace({"solvent": q.get("solvent"), "model": q.get("model") or None, "components": comps})
+    if isinstance(checked, Response):
+        return checked
+    solvent, model, comps = checked
+
+    def run() -> tuple[str, str, str]:
+        result = _headspace(solvent, comps, model)
+        return export.headspace_download(result, {o["id"]: o for o in db.list_odors()}, request.path_params["fmt"],
+                                         q.get("units") or "ppm", lower=_lower(request))
+
+    try:
+        text, name, media_type = await run_in_threadpool(run)
+    except (export.ExportError, ValueError) as e:
+        return json_error(400, str(e))
+    return Response(text, media_type=media_type, headers={"content-disposition": f'attachment; filename="{name}"'})
+
+
+async def odors_file(request: Request) -> Response:
+    """The odor table as a file to save: a CSV or a LaTeX table (`export.odor_table_download`;
+    ``q`` for the odors the Odors tab's filter shows for it, ``lower=1`` for abbreviations in
+    lowercase)."""
+    try:
+        text, name, media_type = await run_in_threadpool(lambda: export.odor_table_download(
+            db, config.DATASETS_DIR, request.path_params["fmt"], query=request.query_params.get("q", ""), lower=_lower(request)))
+    except export.ExportError as e:
+        return json_error(404, str(e))
+    return Response(text, media_type=media_type, headers={"content-disposition": f'attachment; filename="{name}"'})
 
 
 def _apply(fp: str, change_ids: set[int], delete_ids: set[int]) -> dict:
@@ -2153,12 +2201,14 @@ routes = [
     Route("/api/merge/download", merge_download),
     Route("/api/merge/scales", merge_scales),
     Route("/api/odors", odors_list),
+    Route("/api/odors.{fmt}", odors_file),
     Route("/api/odors/status", odors_status),
     Route("/api/odors/preview", odors_preview, methods=["POST"]),
     Route("/api/odors/apply", odors_apply, methods=["POST"]),
     Route("/api/odors/structure/{cid:int}", odor_structure),
     Route("/api/odors/template.csv", odor_template),
     Route("/api/headspace", headspace_calc, methods=["POST"]),
+    Route("/api/headspace.{fmt}", headspace_file),
     Route("/api/headspace/panels", headspace_panels),
     Route("/api/reference", reference_list),
     Route("/api/reference/{ref_id}", reference_get),

@@ -230,8 +230,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   syncing it. "Download table" saves it as a CSV (every odor with the odor table's
   details and links, as in downloads of several datasets) or as LaTeX (a booktabs
   longtable by panel, linked, without InChI or structures, to `\input`: it needs the
-  booktabs, longtable and hyperref packages), named as the dataset's other downloads
-  with `_odors`. "Raw data" and "Motion corrected / traces" show where those are on
+  booktabs, longtable, array and hyperref packages, and fits a landscape page with 2 cm
+  margins), named as the dataset's other downloads with `_odors`. The Odors tab and the
+  Headspace calculator's results have the same "Download table" menu. "Raw data" and "Motion corrected / traces" show where those are on
   tensor (to copy, as browsers cannot open folders on your computer) and what is in
   them. They are red, saying why, when no path was entered, or the server cannot find
   it (from the top of tensor, or from a folder set in the Admin tab) or may not read it;
@@ -357,7 +358,11 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   renames that would unlink datasets. A badge on the tab shows when the sheet changed
   since its last sync. An odor's *aliases* (in one cell, separated by `;`) are its other
   abbreviations and names alike: data, odor YAMLs and reference data naming it by any of
-  them are matched to it, e.g. `IaA` with aliases `IAA; isopentyl acetate`.
+  them are matched to it, e.g. `IaA` with aliases `IAA; isopentyl acetate`. "Download
+  table" saves the odors shown (all, or those the filter matches), in the tab's order, as
+  a CSV (every field of each odor, its links and the datasets using it) or LaTeX (a
+  longtable of names, IDs, supplier and catalog number, vapor pressure and molar mass,
+  linked as on the site).
 - **Viewer** (datasets and the upload preview): odor labels stay at the
   top and fly/ROI labels at the left while scrolling, with hover tooltips. Average over
   repeats or show individual trials; rows by fly→ROI, ROI→fly or ungrouped; odors as in
@@ -427,8 +432,11 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   and Henry's law constants are labelled *measured* or *estimate* (where chemutils says:
   every constant in oil is an estimate, with the vapor pressure it was estimated with
   shown, labelled too). What was calculated since the page was opened is shown again at
-  once, for another solvent or model too. The mixture, solvent, model and units are kept
-  in this browser. How it is computed, and what it leaves out:
+  once, for another solvent or model too. "Download table" saves the results as a CSV
+  (a row per odor, then one of them all together: what was used of each, whether
+  measured, where from, and its headspace in every unit) or LaTeX (as shown, in the
+  units chosen, linked, measured values and estimates marked). The mixture, solvent,
+  model and units are kept in this browser. How it is computed, and what it leaves out:
   [design.md](design.md#headspace-calculator).
 - **Admin** (to the right of Docs; it first asks whether you are Tom, Jon or Betty, or
   have asked one of them): settings for the whole site.

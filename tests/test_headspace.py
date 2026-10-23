@@ -222,3 +222,41 @@ def test_panels(main, tmp_path):
                                   {"odor_id": ids["ea"], "log10_conc": -4.2, "concs": [-4.2, -5]}]
     assert kiwi["skipped"] == [{"odor": "pfo", "why": "a solvent"}, {"odor": "kmix", "why": "not in the odor table"},
                                {"odor": "y", "why": "no CID in the odor table"}]
+
+
+def test_download(main):
+    from tests.test_export import get_file
+
+    ids = {o["name"]: o["id"] for o in main.db.list_odors()}
+    params = {"solvent": "paraffin oil", "odors": f"{ids['ethyl acetate']}:-3,{ids['ethanol']}:-2", "units": "ppm"}
+    get = lambda fmt, **kw: get_file(main.headspace_file, {**params, **kw}, {"fmt": fmt})
+    r = get("csv")
+    assert r.status_code == 200 and r.headers["content-disposition"] == 'attachment; filename="headspace_paraffin-oil_henry.csv"'
+    import io
+
+    import pandas as pd
+    df = pd.read_csv(io.StringIO(r.body.decode()))
+    # a row per odor, then one of them all together: what was used of each, whether measured, its headspace in every unit
+    assert list(df["name"]) == ["ethyl acetate", "ethanol", "All together"] and list(df["law"][:2]) == ["henry", "raoult"]
+    ea, etoh, total = df.to_dict("records")
+    assert (ea["k_henry_mol_m3_pa"], ea["k_henry_measured"], ea["vapor_pressure_kpa"], ea["vapor_pressure_measured"]) == (0.0977, False, 12.61, True)
+    assert ea["vapor_pressure_source"] == "thermo WAGNER_MCGARRY" and ea["k_henry_source"] == "UNIFAC estimate"
+    assert (etoh["vapor_pressure_kpa"], etoh["vapor_pressure_measured"]) == (7.0, False) and "SIMPOL" in etoh["notes"]
+    assert "density could not be looked up" in etoh["notes"]
+    assert total["headspace_pa"] == pytest.approx(ea["headspace_pa"] + etoh["headspace_pa"])
+    assert ea["headspace_ppm"] == pytest.approx(ea["headspace_pa"] / 101325 * 1e6)
+    assert total["headspace_ug_l"] == pytest.approx(ea["headspace_ug_l"] + etoh["headspace_ug_l"])
+
+    # LaTeX: as the tab shows it, in the units chosen, linked, values marked measured or estimates, with a legend
+    tex = get("tex", units="log10").body.decode()
+    lines = tex.splitlines()
+    assert any(l.startswith(r"\href{https://pubchem.ncbi.nlm.nih.gov/compound/8857}{ethyl acetate} & ea & $-3$ & ") for l in lines)
+    ea_line = next(l for l in lines if "{ethyl acetate}" in l)
+    assert r"12.6$^{m}$" in ea_line and r"0.0977$^{e}$" in ea_line and r"8857\#section=Molecular-Weight}{88.11}" in ea_line
+    assert r"$K_H$ in oil\\(mol/m$^3$/Pa)" in tex and r"Headspace\\($\log_{10}$ v/v)" in tex
+    assert any(l.startswith("All together &") for l in lines)
+    assert r"$^{e}$ estimated, with nothing measured of the compound itself (in oil, every $K_H$ is" in tex
+    assert get("tex", model="raoult").body.decode().count("$K_H$") == 0  # (none, by Raoult's law)
+    # errors
+    assert get("csv", odors="x").status_code == 400 and get("tex", units="ppt").status_code == 400
+    assert get("xlsx").status_code == 400 and get("csv", odors="999:-3").status_code == 400

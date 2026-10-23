@@ -25,9 +25,13 @@ converts them to other units), from the properties of each looked up through che
 """
 from __future__ import annotations
 
+import math
 from typing import Optional
 
 T_K = 298.15
+P_ATM = 101325.0  # Pa: the air's total pressure, for parts of it by volume
+R = 8.314462618  # J/(mol K)
+K_B = 1.380649e-23  # J/K
 # solvent -> (molar mass in g/mol, density in g/mL at 25 °C), with n-hexadecane for paraffin oil
 SOLVENTS = {"paraffin oil": (226.45, 0.770), "water": (18.015, 0.997)}
 # how the headspace over paraffin oil is computed (see the module's docstring), the default first
@@ -35,6 +39,17 @@ MODELS = ("henry", "raoult")
 # the property with each solvent's Henry's law constants (`chemprops.PROPERTIES`), with Henry's law
 HENRY_PROPERTIES = {"paraffin oil": "k_henry_pfo", "water": "k_henry"}
 DEFAULT_DENSITY = 1.0  # g/mL, for an odor with none found
+# what a headspace can be given in, as the browser shows it: key -> (label, short label, the
+# short label as LaTeX, of(partial pressure in Pa, molar mass in g/mol))
+UNITS = {
+    "ppm": ("ppm (by volume)", "ppm", "ppm", lambda pa, mw: pa / P_ATM * 1e6),
+    "ppb": ("ppb (by volume)", "ppb", "ppb", lambda pa, mw: pa / P_ATM * 1e9),
+    "log10": ("log10 v/v of the air", "log10 v/v", r"$\log_{10}$ v/v", lambda pa, mw: math.log10(pa / P_ATM) if pa > 0 else -math.inf),
+    "pa": ("Pa (partial pressure)", "Pa", "Pa", lambda pa, mw: pa),
+    "mol_l": ("mol/L", "mol/L", "mol/L", lambda pa, mw: pa / (R * T_K) / 1000),
+    "molecules": ("molecules/cm³", "molecules/cm³", r"molecules/cm$^3$", lambda pa, mw: pa / (K_B * T_K) * 1e-6),
+    "ug_l": ("µg/L (= mg/m³)", "µg/L", r"$\mu$g/L", lambda pa, mw: pa * mw / (R * T_K) * 1e3 if mw else None),
+}
 # names (or abbreviations) of solvents in the odor table, left out of the mixtures of panels
 SOLVENT_NAMES = {"pfo", "paraffin oil", "mineral oil", "water", "h2o", "mineral oil (light)"}
 

@@ -2620,6 +2620,8 @@ class OdorsPage {
     $('#odor-csv-btn').addEventListener('click', () => $('#odor-csv-input').click());
     $('#odor-csv-input').addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) this.runPreview(f); });
     $('#odor-filter').addEventListener('input', () => this.renderTable());
+    wireMenu($('#odors-download'), ({ odorFormat }) => download(
+      `/api/odors.${odorFormat}?q=${encodeURIComponent($('#odor-filter').value.trim())}${lowerQuery('&')}`, $('#odors-dl-status')));
   }
 
   async load({ force = false } = {}) {
@@ -5208,7 +5210,14 @@ class HeadspacePage {
     box.hidden = false;
     const how = water ? "by Henry's law" : res.model === 'henry' ? "by Henry's law, with constants estimated by chemutils" : "by Raoult's law only";
     const anyTag = res.components.some((c) => c.vapor_pressure_measured != null || (henry && c.k_henry_measured != null));
-    box.innerHTML = `<div class="step-head"><h2>Headspace</h2><span class="muted">in ${esc(res.solvent)} ${how}, at ${+res.temperature_c.toFixed(2)} °C, in ${esc(unitLabel)}</span></div>
+    box.innerHTML = `<div class="step-head"><h2>Headspace</h2><span class="muted">in ${esc(res.solvent)} ${how}, at ${+res.temperature_c.toFixed(2)} °C, in ${esc(unitLabel)}</span>
+      <span class="hs-results-tools"><span class="dl-status" id="hs-dl-status"></span>
+      <details class="menu menu-right" id="hs-download"><summary class="btn small">Download table</summary>
+        <div class="menu-list">
+          <button type="button" data-odor-format="csv">CSV</button>
+          <button type="button" data-odor-format="tex">LaTeX (.tex)</button>
+          <p class="menu-note">CSV: a row per odor, then one of them all together: what was used of each (and whether measured or an estimate, and where from), and its headspace in every unit.<br><br>LaTeX: a booktabs longtable to <code>\\input</code>, as here (in ${esc(unitShort)}), linked as here (hyperref), values marked as measured or estimates.</p>
+        </div></details></span></div>
       ${key !== now ? '<p class="msg warn">The mixture has changed since this was calculated: calculate it again to see it.</p>' : ''}
       ${anyTag ? `<p class="muted small hs-legend"><span class="hs-tag measured">measured</span> from measurements of the compound;
         <span class="hs-tag estimate">estimate</span> estimated, with nothing measured of the compound itself${water ? '' : ` (in oil, every Henry's law
@@ -5218,6 +5227,11 @@ class HeadspacePage {
         ${henry ? `<th title="Henry's law solubility constant at 25 °C (concentration in the ${water ? 'water' : 'oil'} over partial pressure above it)">K<sub>H</sub> in ${water ? 'water' : 'oil'} (mol/m³/Pa)</th>` : ''}
         <th title="In the liquid">Mole fraction</th><th>Headspace (${esc(unitShort)})</th><th>Notes</th></tr></thead>
       <tbody>${rows}${totalRow}</tbody></table>`;
+    // (the table of what is shown: its mixture, solvent and model, as calculated)
+    const [solvent, model, comps] = JSON.parse(key);
+    const query = `solvent=${encodeURIComponent(solvent)}${model ? `&model=${model}` : ''}`
+      + `&odors=${comps.map(([id, c]) => `${id}:${c}`).join(',')}&units=${unit}${lowerQuery('&')}`;
+    wireMenu($('#hs-download', box), ({ odorFormat }) => download(`/api/headspace.${odorFormat}?${query}`, $('#hs-dl-status', box)));
   }
 }
 

@@ -659,12 +659,17 @@ POST   /api/odors/preview                   the sheet (or multipart 'file', a CS
 POST   /api/odors/apply                     {"fingerprint", "changes", "deletions"}
 GET    /api/odors/structure/{cid}           its structure, drawn by RDKit (SVG)
 GET    /api/odors/template.csv              config/odor_sheet_template.csv
+GET    /api/odors.csv, /api/odors.tex       the odor table as a file (?q= as the Odors tab's
+                                            filter; ?lower=1 for abbreviations in lowercase)
 POST   /api/headspace                       {"solvent": "paraffin oil" or "water", "model": "henry"
                                             or "raoult" (oil only), "components": [{"odor_id",
                                             "log10_conc"}, ...]}: the partial pressure (Pa) above
                                             the mixture of each odor, with the properties used,
                                             where they are from and whether measured
 GET    /api/headspace/panels                the panels of the datasets as mixtures
+GET    /api/headspace.csv, .tex             a calculation's table as a file: ?solvent=, model=,
+                                            odors=<odor id>:<log10 conc>,... (calculated again, from
+                                            what was looked up for it), units= (for LaTeX), lower=1
 GET    /api/reference                       every reference dataset: whether it can be read (why
                                             not), how many of its chemicals are identified
 GET    /api/reference/{id}                  one, for the viewer (its chemicals as in the odor table)
