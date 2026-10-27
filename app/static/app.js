@@ -616,6 +616,48 @@ function dataRange(values, clip) {
   return { vmin: finite[Math.floor(0.005 * (n - 1))], vmax: finite[Math.ceil(0.995 * (n - 1))] };
 }
 
+// the range of the positive values (of a log color scale), clipped as dataRange is
+function positiveRange(values, clip) {
+  const pos = [];
+  for (let i = 0; i < values.length; i++) { const v = values[i]; if (v > 0) pos.push(v); }
+  return dataRange(Float32Array.from(pos), clip);
+}
+
+const LOG_DECADES = 3; // orders of magnitude the positive values span, at least, for a log color scale (when 'auto')
+
+// whether values are shown on a log color scale: as chosen, else if none are negative and
+// the positive ones span `LOG_DECADES` or more
+function logScale(values, scale) {
+  if (scale === 'linear') return false;
+  let lo = Infinity, hi = 0, negative = false;
+  for (let i = 0; i < values.length; i++) {
+    const v = values[i];
+    if (v < 0) negative = true;
+    else if (v > 0) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  }
+  if (!(hi > 0)) return false;
+  return scale === 'log' || (!negative && hi / lo >= 10 ** LOG_DECADES);
+}
+
+// the indices of an axis's items sorted by their values over those of the other axis given
+// (`valueAt(item, other)`): the highest mean, or largest (`how`: 'mean' | 'max'), first,
+// those with none last; within their groups, in the order the groups come
+function sortedByValues(idx, items, others, valueAt, how) {
+  const score = new Map();
+  for (const i of idx) {
+    let s = how === 'max' ? -Infinity : 0, n = 0;
+    for (const j of others) {
+      const v = valueAt(i, j);
+      if (v === v) { n++; s = how === 'max' ? Math.max(s, v) : s + v; }
+    }
+    score.set(i, n ? (how === 'max' ? s : s / n) : -Infinity);
+  }
+  const groupRank = new Map();
+  for (const i of idx) if (!groupRank.has(items[i].group)) groupRank.set(items[i].group, groupRank.size);
+  const byScore = (a, b) => (score.get(a) === score.get(b) ? 0 : score.get(b) > score.get(a) ? 1 : -1);
+  return [...idx].sort((a, b) => groupRank.get(items[a].group) - groupRank.get(items[b].group) || byScore(a, b) || a - b);
+}
+
 // ------------------------------------------------------------- matrix viewer
 // Edits of a viewer's rows and columns, kept for each matrix shown until reset: keys
 // removed, and the order they were dragged into. For neural data, rows are the units and
@@ -654,6 +696,7 @@ class MatrixViewer {
       {
         mode: 'average', rowOrder: 'fly', roiSort: 'file', odorOrder: 'file', clusterRows: false, clusterCols: false, metric: 'correlation',
         cellW: 16, cellH: 16, colormap: 'oklab-div', range: 'twoslope', clip: false, chemLabels: 'name', sumKCs: false, hideControls: false,
+        scale: 'auto', sortRows: 'file', sortCols: 'file',
       },
       saved,
       { transpose: !!saved.transposed?.[kind] },
@@ -687,6 +730,7 @@ class MatrixViewer {
       // an order chosen here replaces the one dragged into
       if (s.dataset.opt === 'rowOrder' || s.dataset.opt === 'roiSort') this.edits.rows.order = null;
       if (s.dataset.opt === 'odorOrder') this.edits.cols.order = null;
+      if (s.dataset.opt === 'sortRows' || s.dataset.opt === 'sortCols') this.edits[this._editAxis(s.dataset.opt === 'sortRows' ? 'rows' : 'cols')].order = null;
       this._save();
       this._rebuild();
       if (s.dataset.opt === 'chemLabels') this.linked?.other._setLinkedOpts({ chemLabels: s.value });
@@ -733,7 +777,8 @@ class MatrixViewer {
     LS.set('olfdb.viewer', {
       cellW: this.ownCells ? saved.cellW : o.cellW, cellH: this.ownCells ? saved.cellH : o.cellH, colormap: o.colormap, range: o.range, rowOrder: o.rowOrder, roiSort: o.roiSort, odorOrder: o.odorOrder,
       clusterRows: o.clusterRows, clusterCols: o.clusterCols, metric: o.metric, chemLabels: o.chemLabels, sumKCs: o.sumKCs,
-      hideControls: o.hideControls, transposed: { ...saved.transposed, [this.kind]: o.transpose },
+      hideControls: o.hideControls, transposed: { ...saved.transposed, [this.kind]: o.transpose }, scale: o.scale, sortRows: o.sortRows,
+      sortCols: o.sortCols,
     });
   }
 
@@ -749,6 +794,7 @@ class MatrixViewer {
     const neural = this.kind === 'neural';
     for (const role of ['mode', 'rows', 'cols', 'cluster']) $(`[data-role=${role}]`, tb).hidden = !neural;
     $('[data-role=chem]', tb).hidden = neural || !this.data?.chemAxis;
+    $('[data-role=sort]', tb).hidden = neural;
     $('[data-role=kc]', tb).hidden = neural ? !this.kc : !this.data?.kcAxis;
     $('[data-role=kc]', tb).title = neural ? "Each fly's KCs summed into one row (those not removed or hidden; missing values left out); a row for each part of a fly its ROIs' other column levels tell apart (e.g. each side of its brain)"
       : 'Of a table of glomeruli by something other than odors, that other axis is taken to be KCs: summed, each glomerulus\'s '
@@ -765,9 +811,10 @@ class MatrixViewer {
     if (!maps.some((m) => m.id === o.colormap)) o.colormap = maps[0].id;
     cmSel.value = o.colormap;
     $('[data-role=range]', tb).hidden = mapKind !== 'diverging';
+    $('[data-role=scale]', tb).hidden = mapKind !== 'sequential';
     $('input[data-opt=clip]', tb).parentElement.hidden = mapKind === 'binary';
     $('input[data-opt=transpose]', tb).parentElement.title = neural ? 'Odors as rows and ROIs as columns' : 'Rows as columns and columns as rows';
-    for (const k of ['rowOrder', 'roiSort', 'odorOrder', 'metric', 'range', 'chemLabels']) { const s = $(`select[data-opt=${k}]`, tb); if (s) s.value = o[k]; }
+    for (const k of ['rowOrder', 'roiSort', 'odorOrder', 'metric', 'range', 'chemLabels', 'scale', 'sortRows', 'sortCols']) { const s = $(`select[data-opt=${k}]`, tb); if (s) s.value = o[k]; }
     for (const k of ['cellW', 'cellH']) { $(`input[data-opt=${k}]`, tb).value = o[k]; $(`[data-out=${k}]`, tb).textContent = o[k]; }
     this._syncControls();
     $$('input[type=checkbox][data-opt]', tb).forEach((cb) => { cb.checked = !!o[cb.dataset.opt]; });
@@ -815,6 +862,12 @@ class MatrixViewer {
     odor.title = o.clusterCols ? 'odors are ordered by the clustering' : '';
     $('select[data-opt=metric]', tb).disabled = !(o.clusterRows || o.clusterCols);
     $('[data-role=rows-label]', tb).textContent = o.transpose ? 'Columns' : 'Rows';
+    // (an axis shared with a linked viewer keeps its order)
+    for (const [opt, axis] of [['sortRows', 'rows'], ['sortCols', 'cols']]) {
+      const sel = $(`select[data-opt=${opt}]`, tb), shared = this._sharedAxis(this._editAxis(axis));
+      sel.disabled = shared;
+      sel.title = shared ? 'In the order of the matrix beside it' : '';
+    }
   }
 
   // title: for the exported figure's metadata; fileStem: its file name; kc: whether it is of KCs;
@@ -937,8 +990,16 @@ class MatrixViewer {
   // its chemicals labelled as chosen, and its KCs (those not removed) summed if chosen
   _genericModel() {
     const b = this.data.model, nC = b.cols.length;
-    const rows = arrange(b.rows.map((_, i) => i), (i) => b.rows[i].key, this.edits.rows);
-    const cols = arrange(b.cols.map((_, j) => j), (j) => b.cols[j].key, this.edits.cols).filter((j) => !(this.kc && this.hideBad && b.cols[j].bad));
+    const hidden = (j) => this.kc && this.hideBad && b.cols[j].bad;
+    let rowIdx = b.rows.map((_, i) => i), colIdx = b.cols.map((_, j) => j);
+    // sorted by their values over those of the other axis shown, as chosen for the axis they are shown on
+    const [byRows, byCols] = this.opts.transpose ? [this.opts.sortCols, this.opts.sortRows] : [this.opts.sortRows, this.opts.sortCols];
+    const keptRows = rowIdx.filter((i) => !this.edits.rows.removed.has(b.rows[i].key));
+    const keptCols = colIdx.filter((j) => !this.edits.cols.removed.has(b.cols[j].key) && !hidden(j));
+    if (byRows !== 'file' && !this._sharedAxis('rows')) rowIdx = sortedByValues(rowIdx, b.rows, keptCols, (i, j) => b.values[i * nC + j], byRows);
+    if (byCols !== 'file' && !this._sharedAxis('cols')) colIdx = sortedByValues(colIdx, b.cols, keptRows, (j, i) => b.values[i * nC + j], byCols);
+    const rows = arrange(rowIdx, (i) => b.rows[i].key, this.edits.rows);
+    const cols = arrange(colIdx, (j) => b.cols[j].key, this.edits.cols).filter((j) => !hidden(j));
     const values = new Float32Array(rows.length * cols.length);
     rows.forEach((i, r) => { cols.forEach((j, c) => { values[r * cols.length + c] = b.values[i * nC + j]; }); });
     const showAbbrev = abbrevShower([...b.rows, ...b.cols].map((it) => it.chem?.abbrev));
@@ -1018,9 +1079,13 @@ class MatrixViewer {
     const fixed = !neural && !model.summed && this.data.meta.value_range; // [vmin, vmax] whatever the values
     const { vmin, vmax } = fixed ? { vmin: fixed[0], vmax: fixed[1] } : dataRange(model.values, o.clip);
     let norm;
+    const log = cm.kind === 'sequential' && logScale(model.values, o.scale);
     if (cm.kind === 'diverging') norm = makeNorm(o.range === 'symmetric' ? 'symmetric' : 'twoslope', vmin, vmax);
     else if (cm.kind === 'binary') norm = makeNorm('linear', 0, 1);
-    else norm = makeNorm('linear', vmin, vmax);
+    else if (log) {
+      const pos = positiveRange(model.values, o.clip);
+      norm = makeNorm('log', fixed ? Math.max(vmin, pos.vmin) : pos.vmin, vmax);
+    } else norm = makeNorm('linear', vmin, vmax);
     const dims = neural
       ? [model.summed ? `${model.nFlies.toLocaleString()} ${model.nFlies === 1 ? 'fly' : 'flies'}${model.rows.length !== model.nFlies
           ? ` (${model.rows.length.toLocaleString()} sums, by ${model.summedBy.join(' and ')})` : ''}`
@@ -1041,7 +1106,7 @@ class MatrixViewer {
     drawColorbar(this.colorbar, cm.lut, norm);
     const valueLabel = this._valueLabel();
     this.statsText = `${dims.join(' × ')}` + (neural && model.nPanels > 1 ? ` in ${model.nPanels} panels` : '') + ` · range ${fmtNum(vmin)} to ${fmtNum(vmax)}` +
-      (valueLabel ? ` (${valueLabel})` : '');
+      (valueLabel ? ` (${valueLabel})` : '') + (log ? ' · log color scale' : '');
     this._setNote(note);
     const grouped = (drag.rows && model.rows.some((r) => r.group != null)) || (drag.cols && model.cols.some((c) => c.group != null));
     const which = drag.rows && drag.cols ? 'a label' : drag.rows ? 'a row label' : 'a column label';
@@ -1095,6 +1160,9 @@ class MatrixViewer {
     this._rebuild();
     this._linkEdits();
   }
+
+  // whether an axis of the edits (of the data, however shown) is in the order of a linked viewer's
+  _sharedAxis(axis) { return !!this.linked && (axis === 'rows' || this.linked.cols); }
 
   // ------------------------------------------------------- linked viewers
   // this viewer's edits of its rows (and columns, if they are the same too) made the other's
@@ -5447,6 +5515,9 @@ class HeadspaceVcf {
     units.value = HS_UNITS.some(([k]) => k === saved.units) ? saved.units : 'ppb';
     units.addEventListener('change', () => { this.save(); this.render(); });
     $('#hs-vcf-model').value = HS_MODELS.includes(saved.model) ? saved.model : '';
+    const sort = $('#hs-vcf-sort');
+    sort.value = ['quantity', 'headspace', 'name'].includes(saved.sort) ? saved.sort : 'quantity';
+    sort.addEventListener('change', () => { this.save(); this.render(); });
     for (const id of ['#hs-vcf-refs', '#hs-vcf-products', '#hs-vcf-model', '#hs-vcf-source']) {
       $(id).addEventListener('change', () => {
         if (id === '#hs-vcf-source') this.fillNames();
@@ -5463,14 +5534,18 @@ class HeadspaceVcf {
 
   save() {
     LS.set(HS_VCF_KEY, { query: $('#hs-vcf-query').value, source: $('#hs-vcf-source').value || this.savedSource,
-      refs: $('#hs-vcf-refs').value, products: $('#hs-vcf-products').value, model: $('#hs-vcf-model').value, units: $('#hs-vcf-units').value });
+      refs: $('#hs-vcf-refs').value, products: $('#hs-vcf-products').value, model: $('#hs-vcf-model').value, units: $('#hs-vcf-units').value,
+      sort: $('#hs-vcf-sort').value });
   }
 
-  // the VCF reference datasets, read once; a search whose oil was being looked up asked again
+  // whether what the search shown needs is still being looked up
+  pending() { return !!(this.res?.lookups?.pending || this.res?.oil?.pending); }
+
+  // the VCF reference datasets, read once; a search with something being looked up asked again
   async load() {
     if (this.sources) {
       this.render();
-      if (this.res?.oil?.pending) this.search({ poll: true });
+      if (this.pending()) this.search({ poll: true });
       return;
     }
     const status = $('#hs-vcf-status');
@@ -5529,7 +5604,7 @@ class HeadspaceVcf {
     this.res = res;
     this.asked = json;
     this.render();
-    if (res.oil?.pending) this.timer = setTimeout(() => { if (currentTab === 'headspace') this.search({ poll: true }); }, HS_VCF_POLL_MS);
+    if (this.pending()) this.timer = setTimeout(() => { if (currentTab === 'headspace') this.search({ poll: true }); }, HS_VCF_POLL_MS);
   }
 
   // the search shown, its chemicals' headspace in the units chosen
@@ -5566,14 +5641,22 @@ class HeadspaceVcf {
       return;
     }
 
+    // the chemicals in the order chosen (those with none of it last), and by the most headspace first
+    const desc = (f) => (a, b) => (f(chems[b]) ?? -Infinity) - (f(chems[a]) ?? -Infinity) || a - b;
+    const sorted = (how) => chems.map((_, i) => i).sort(how === 'name' ? (a, b) => chems[a].name.localeCompare(chems[b].name) || a - b
+      : desc(how === 'headspace' ? (c) => c.pa : (c) => c.ppm));
+    const order = sorted($('#hs-vcf-sort').value), byHeadspace = sorted('headspace');
+    const rank = new Map(order.map((i, k) => [i, k]));
+
     const productRows = products.map((p) => `<tr><td>${esc(p.name)}</td><td>${esc(p.category || '')}</td><td>${esc(p.group || '')}</td>
       <td class="num">${p.references}</td><td class="num">${p.chemicals}</td><td class="num">${p.lines}</td></tr>`).join('');
-    const lineRows = lines.slice(0, HS_VCF_MAX_LINES).map(([ci, pi, ri, qty, v]) => `<tr><td>${esc(chems[ci].name)}</td>
+    const lineOrder = lines.map((_, k) => k).sort((a, b) => rank.get(lines[a][0]) - rank.get(lines[b][0]) || (lines[b][4] ?? -1) - (lines[a][4] ?? -1));
+    const lineRows = lineOrder.slice(0, HS_VCF_MAX_LINES).map((k) => lines[k]).map(([ci, pi, ri, qty, v]) => `<tr><td>${esc(chems[ci].name)}</td>
       <td>${esc(products[pi].name)}</td><td class="hs-ref">${esc(references[ri])}</td><td class="num">${esc(qty ?? '')}</td><td class="num">${sigHtml(v)}</td></tr>`).join('');
     const per = (c) => new Map(c.per_product.map(([i, v, n], j) => [i, { ppm: v, refs: n, pa: c.per_product_pa[j] }]));
 
-    const liquidRows = chems.map((c) => {
-      const p = per(c);
+    const liquidRows = order.map((i) => {
+      const c = chems[i], p = per(c);
       return `<tr><td>${name(c)}</td><td class="num">${cid(c)}</td><td>${odor(c)}</td>
         ${columns ? products.map((_, i) => `<td class="num">${p.has(i) ? `<span title="${plural(p.get(i).refs, 'reference')}">${sigHtml(p.get(i).ppm)}</span>` : ''}</td>`).join('') : ''}
         <td class="num hs-amount">${c.ppm == null ? '<span class="muted">not quantified</span>' : sigHtml(c.ppm)}</td>
@@ -5581,19 +5664,27 @@ class HeadspaceVcf {
         <td class="num">${c.min == null ? '' : c.min === c.max ? sigHtml(c.min) : `${sigHtml(c.min)} – ${sigHtml(c.max)}`}</td></tr>`;
     }).join('');
 
-    // (the headspace, and the oil to match it, those with the most headspace first)
-    const order = chems.map((_, i) => i).sort((a, b) => (chems[b].pa ?? -1) - (chems[a].pa ?? -1));
     const total = (pas) => {
       const known = pas.filter(([pa]) => pa != null);
       if (!known.length) return '';
       return unit === 'ug_l' ? sigHtml(known.reduce((t, [pa, mw]) => t + (mw ? of(pa, mw) : 0), 0)) : amount(known.reduce((t, [pa]) => t + pa, 0));
     };
+    // a Henry's law constant or vapor pressure as used: where it is from, whether the file's differs, whether being looked up
+    const used = (c, p) => {
+      const looking = c.pending.includes(p) || c.pending.includes(`est_${p}`);
+      if (c[p] == null) return looking ? '<span class="muted">looking up…</span>' : '';
+      const from = c[`${p}_from`], mismatch = c.mismatches.find((m) => m.prop === p);
+      return sourceLink(sigHtml(c[p]), c[`${p}_source`])
+        + (from === 'file' ? ` <span class="hs-tag file" title="As in VCF's file${looking ? '' : ': chemutils found none'}">file</span>`
+          : measuredTag(c[`${p}_measured`], from === 'estimate' ? c[`${p}_source`] : ''))
+        + (mismatch ? `<br><span class="hs-mismatch" title="VCF's file has ${esc(String(mismatch.file))}: what chemutils finds is used">⚠ file: ${sigHtml(mismatch.file)}</span>` : '')
+        + (looking && from !== 'chemutils' ? ' <span class="muted" title="Being looked up through chemutils">…</span>' : '');
+    };
     const hsRows = order.map((i) => {
       const c = chems[i], p = per(c);
-      const k = c.k_henry != null ? sourceLink(sigHtml(c.k_henry), c.k_henry_source) : '';
-      const vp = c.vapor_pressure != null ? sourceLink(sigHtml(c.vapor_pressure), c.vapor_pressure_source) : '';
-      return `<tr><td>${name(c)}</td><td class="hs-by">${c.law ? esc(HS_VCF_LAW[c.law]) : '<span class="muted">—</span>'}</td>
-        <td class="num${c.law === 'henry' ? ' hs-used' : ''}">${k}</td><td class="num${c.law === 'raoult' ? ' hs-used' : ''}">${vp}</td>
+      const by = c.law === 'henry' && c.k_henry_from === 'estimate' ? "Henry's law (estimated K_H)" : HS_VCF_LAW[c.law];
+      return `<tr><td>${name(c)}</td><td class="hs-by">${c.law ? esc(by) : '<span class="muted">—</span>'}</td>
+        <td class="num${c.law === 'henry' ? ' hs-used' : ''}">${used(c, 'k_henry')}</td><td class="num${c.law === 'raoult' ? ' hs-used' : ''}">${used(c, 'vapor_pressure')}</td>
         <td class="num">${c.molar_mass != null ? c.molar_mass.toFixed(2) : ''}</td>
         ${columns ? products.map((_, j) => `<td class="num">${p.has(j) ? amount(p.get(j).pa, c.molar_mass) : ''}</td>`).join('') : ''}
         <td class="num hs-amount">${amount(c.pa, c.molar_mass)}</td><td class="notes">${hsNotes([...c.notes, ...c.headspace_notes].map(esc))}</td></tr>`;
@@ -5603,8 +5694,16 @@ class HeadspaceVcf {
       ${columns ? products.map((_, j) => `<td class="num">${total(chems.map((c) => [per(c).get(j)?.pa ?? null, c.molar_mass]))}</td>`).join('') : ''}
       <td class="num hs-amount">${total(chems.map((c) => [c.pa, c.molar_mass]))}</td><td></td></tr>`;
 
+    const lk = res.lookups || { pending: 0, mismatches: 0 };
+    const mismatched = order.map((i) => chems[i]).filter((c) => c.mismatches.length);
+    const what = (c) => c.mismatches.map((m) => (m.prop === 'k_henry' ? 'K_H' : 'vapor pressure')).join(' and ');
+    const notices = (lk.pending ? `<p class="msg info">Looking up K<sub>H</sub> and vapor pressures of ${plural(lk.pending, 'chemical')} through chemutils,
+        in the background: those VCF's file lacks first, then checking those it has (a few seconds each, the first time: kept). This updates as they come.</p>` : '')
+      + (mismatched.length ? `<p class="msg warn">For ${plural(mismatched.length, 'chemical')} of these, chemutils finds a K<sub>H</sub> or vapor pressure
+        that differs from VCF's file's by more than ${Math.round(lk.tolerance * 100)}%: what it finds is used (⚠ by the file's, below).
+        <span class="small">${mismatched.slice(0, 12).map((c) => `${esc(c.name)} (${what(c)})`).join(', ')}${mismatched.length > 12 ? `, and ${mismatched.length - 12} more` : ''}.</span></p>` : '');
     const across = `each reference's lines on a product averaged, the ${statLabel(this.asked.across_references)} of each product's references${several ? `, then the ${statLabel(this.asked.across_products)} of the products` : ''}, of those that quantify it`;
-    box.innerHTML = `${head}
+    box.innerHTML = `${head}${notices}
       <h3>Products</h3>
       <div class="hs-wide"><table class="odor-table hs-table"><thead><tr><th>Product</th><th>Category</th><th>Group</th><th class="num">References</th>
         <th class="num">Chemicals</th><th class="num">Lines</th></tr></thead><tbody>${productRows}</tbody></table></div>
@@ -5618,18 +5717,20 @@ class HeadspaceVcf {
         ${productHeads()}<th class="num">${several ? 'All' : 'Quantity'} (mg/kg)</th><th class="num" title="Quantifying it: each a reference on a product">References</th>
         <th class="num" title="Of its lines">Range</th></tr></thead><tbody>${liquidRows}</tbody></table></div>
       <h3>Headspace over the samples, as water</h3>
-      <p class="muted small">At equilibrium at ${+res.temperature_c.toFixed(2)} °C, in ${esc(unitLabel)}: by Henry's law with the constant in VCF's file, else (by Raoult's law) its vapor pressure there; what is used is in bold.</p>
+      <p class="muted small">At equilibrium at ${+res.temperature_c.toFixed(2)} °C, in ${esc(unitLabel)}: by Henry's law, else by Raoult's law with its vapor pressure; what is used is in bold.
+        Each as chemutils finds it, else as in VCF's file (<span class="hs-tag file">file</span>), else estimated (<span class="hs-tag estimate">estimate</span>).</p>
       <div class="hs-wide"><table class="odor-table hs-table"><thead><tr><th>Chemical</th><th>By</th>
-        <th class="num" title="Henry's law solubility constant in water at 25 °C, as in VCF's file">K<sub>H</sub> in water (mol/m³/Pa)</th>
-        <th class="num" title="As in VCF's file">Vapor pressure (kPa)</th><th class="num" title="From its InChI">Molar mass (g/mol)</th>
+        <th class="num" title="Henry's law solubility constant in water at 25 °C: from henrys-law.org, else NIST; else VCF's file's; else estimated from its solubility in water over its vapor pressure">K<sub>H</sub> in water (mol/m³/Pa)</th>
+        <th class="num" title="From PubChem; else VCF's file's; else estimated from its structure (SIMPOL.1)">Vapor pressure (kPa)</th><th class="num" title="From its InChI">Molar mass (g/mol)</th>
         ${productHeads()}<th class="num">Headspace (${esc(unitShort)})</th><th>Notes</th></tr></thead><tbody>${hsRows}${hsTotal}</tbody></table></div>
-      ${oil ? this.oilHtml(order, amount, unitShort) : ''}`;
+      ${oil ? this.oilHtml(order, amount, unitShort, byHeadspace) : ''}`;
     wireMenu($('#hs-vcf-download', box), ({ vcfFile }) => this.downloadCsv(vcfFile));
-    $('#hs-vcf-mix', box)?.addEventListener('click', () => this.toMixture(order));
+    $('#hs-vcf-mix', box)?.addEventListener('click', () => this.toMixture(byHeadspace));
   }
 
-  // the table of the v/v in paraffin oil that gives each chemical's headspace, in `order`
-  oilHtml(order, amount, unitShort) {
+  // the table of the v/v in paraffin oil that gives each chemical's headspace, in `order` (the
+  // chemicals' indices), those that can be made the mixture by the most headspace first (`byHeadspace`)
+  oilHtml(order, amount, unitShort, byHeadspace) {
     const { chemicals: chems, oil } = this.res;
     if (oil.error) return `<h3>In paraffin oil, for the same headspace</h3><p class="msg warn">${esc(oil.error)}</p>`;
     const link = (r, p, html) => (r.links?.[p] ? `<a href="${esc(r.links[p])}" target="_blank" rel="noopener">${html}</a>` : html);
@@ -5653,7 +5754,7 @@ class HeadspaceVcf {
     const done = order.filter((i) => oil.chemicals[i]?.log10_conc != null);
     const totalRow = done.length > 1 ? `<tr class="hs-total"><td colspan="6">All together${done.length < shown.length ? ' (of those that could be computed)' : ''}</td>
       <td class="num hs-amount">${esc(shortConc(Math.log10(oil.total)))}</td><td class="notes">${oil.total > 1 ? 'more than the whole solution: they cannot all be in it' : `${sigHtml(oil.total * 100)}% of the solution`}</td></tr>` : '';
-    const mix = this.mixable(order);
+    const mix = this.mixable(byHeadspace);
     const how = oil.model === 'henry' ? "by Henry's law, with constants estimated by chemutils" : "by Raoult's law only";
     return `<h3>In paraffin oil, for the same headspace</h3>
       <p class="muted small">Every chemical with a headspace, together in paraffin oil ${how} (as the mixture above computes it, backwards).
@@ -5714,15 +5815,16 @@ class HeadspaceVcf {
     } else {
       const withOil = oil && !oil.error;
       rows = [['chemical', 'inchi', 'cid', 'odor', 'molar_mass_g_mol', 'lines', 'references', 'products', 'min_mg_kg', 'max_mg_kg', 'mg_kg',
-        ...products.map((p) => `mg_kg ${p.name}`), 'law', 'k_henry_mol_m3_pa', 'k_henry_source', 'vapor_pressure_kpa', 'vapor_pressure_source',
+        ...products.map((p) => `mg_kg ${p.name}`), 'law', 'k_henry_mol_m3_pa', 'k_henry_from', 'k_henry_source', 'file_k_henry_mol_m3_pa',
+        'vapor_pressure_kpa', 'vapor_pressure_from', 'vapor_pressure_source', 'file_vapor_pressure_kpa',
         ...HS_UNITS.map(([k]) => `headspace_${k}`), ...products.map((p) => `headspace_pa ${p.name}`), 'notes',
         ...(withOil ? ['oil_law', 'oil_k_henry_mol_m3_pa', 'oil_vapor_pressure_kpa', 'oil_density_g_ml', 'oil_log10_conc', 'oil_notes'] : [])]];
       chems.forEach((c, i) => {
         const per = new Map(c.per_product.map(([j, v], n) => [j, [v, c.per_product_pa[n]]]));
         const r = withOil ? oil.chemicals[i] : null;
         rows.push([c.name, c.inchi ?? '', c.cid ?? '', odor(c), c.molar_mass ?? '', c.lines, c.references, c.products, c.min ?? '', c.max ?? '', c.ppm ?? '',
-          ...products.map((_, j) => per.get(j)?.[0] ?? ''), c.law ?? '', c.k_henry ?? '', c.k_henry_source ?? '', c.vapor_pressure ?? '',
-          c.vapor_pressure_source ?? '', ...HS_UNITS.map(([, , , f]) => (c.pa == null ? '' : f(c.pa, c.molar_mass) ?? '')),
+          ...products.map((_, j) => per.get(j)?.[0] ?? ''), c.law ?? '', c.k_henry ?? '', c.k_henry_from ?? '', c.k_henry_source ?? '',
+          c.file.k_henry ?? '', c.vapor_pressure ?? '', c.vapor_pressure_from ?? '', c.vapor_pressure_source ?? '', c.file.vapor_pressure ?? '', ...HS_UNITS.map(([, , , f]) => (c.pa == null ? '' : f(c.pa, c.molar_mass) ?? '')),
           ...products.map((_, j) => per.get(j)?.[1] ?? ''), [...c.notes, ...c.headspace_notes].join('; '),
           ...(withOil ? (r ? [r.law ?? '', r.k_henry ?? '', r.vapor_pressure ?? '', r.properties?.density ?? '', r.log10_conc ?? '', r.notes.join('; ')]
             : ['', '', '', '', '', '']) : [])]);

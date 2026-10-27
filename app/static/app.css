@@ -640,6 +640,8 @@ dialog.player::backdrop { background: rgba(29,31,34,.55); }
 .hs-table td.hs-ref { min-width: 240px; max-width: 480px; color: var(--ink-muted); }
 .hs-table td.hs-used { font-weight: 600; }
 .hs-table td.hs-by { white-space: nowrap; }
+.hs-tag.file { background: var(--surface-2); color: var(--ink-muted); }
+.hs-mismatch { color: var(--warn); font-size: 11px; white-space: nowrap; }
 .hs-table tr.hs-pending td { color: var(--ink-muted); }
 #hs-results { overflow-x: auto; }
 .hs-method summary { cursor: pointer; font-weight: 600; }

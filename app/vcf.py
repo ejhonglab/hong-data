@@ -13,8 +13,11 @@ is typed in it, and reduces their quantities to one per chemical: those of one r
 (a paper's sample) on one product are averaged (as in the reference dataset's matrix),
 then each product's are reduced across its references, then across products (by `STATS`,
 the median by default), each over those that quantify the chemical. The headspace over
-each sample, taken as water, is computed from these (`headspace.sample`), by the file's
-Henry's law constant, else its vapor pressure.
+each sample, taken as water, is computed from these (`add_headspace`, by `headspace.sample`):
+by Henry's law, else by Raoult's law with its vapor pressure. Both are looked up again
+through chemutils (by main.py, kept apart from the odor table's), and what it looks up
+is used rather than the file's, which is used where it finds none, then estimates
+(`USED`); where the two differ (by more than `MISMATCH`), it is said.
 """
 from __future__ import annotations
 
@@ -51,6 +54,10 @@ ATOMIC_MASSES = {
     "Mo": 95.95, "Ag": 107.87, "Sn": 118.71, "I": 126.90, "Hg": 200.59, "Pb": 207.2,
 }
 MEMO_SIZE = 2  # files kept read
+# what each of the Henry's law constant and the vapor pressure used is, in order: looked up through
+# chemutils, else the file's, else this estimate looked up through chemutils (`chemprops.PROPERTIES`)
+USED = {"k_henry": "est_k_henry", "vapor_pressure": "est_vapor_pressure"}
+MISMATCH = 0.1  # the relative difference beyond which a value looked up and the file's are said to differ
 
 _memo: "OrderedDict[tuple, dict]" = OrderedDict()
 _memo_lock = threading.Lock()
@@ -210,7 +217,7 @@ def _reduce(values: pd.Series, by, stat: str) -> pd.Series:
 def search(table: dict, query: str, across_references: str = "median", across_products: str = "median") -> dict:
     """The lines of the products (of a file `load` read) whose name, category or group has
     `query` in it (but for case), and one quantity per chemical from them (see the
-    module's docstring), with the headspace over each sample (`headspace.sample`).
+    module's docstring); the headspace over the samples is from `add_headspace`.
 
     Args:
         across_references, across_products: of `STATS`.
@@ -223,10 +230,8 @@ def search(table: dict, query: str, across_references: str = "median", across_pr
         ``value``]), ``chemicals`` (each of the lines, those with the highest quantity
         first: as `load` gives them, and ``ppm`` (the quantity of it, from those of each
         product, ``per_product``: [product index, quantity, references]), ``lines`` (how
-        many), ``references`` and ``products`` (how many quantify it), ``min`` and ``max``
-        (of its lines), and its headspace over the samples (``pa``, Pa, and that of each
-        product, ``per_product_pa``, in the order of ``per_product``), ``law`` ('henry',
-        'raoult' or None) and ``headspace_notes``).
+        many), ``references`` and ``products`` (how many quantify it), and ``min`` and
+        ``max`` (of its lines)).
 
     Raises:
         VcfError: if `query` is empty, or a stat is not one of `STATS`.
@@ -273,17 +278,6 @@ def search(table: dict, query: str, across_references: str = "median", across_pr
     out.sort(key=lambda c: (c["ppm"] is None, -(c["ppm"] or 0), c["name"].casefold()))
     index = {c.pop("chem"): i for i, c in enumerate(out)}
 
-    # the headspace of the quantity of each, and of each product's (as `headspace.sample` takes them)
-    props = lambda c, ppm: {"ppm": ppm, **{k: c[k] for k in ("molar_mass", "k_henry", "vapor_pressure")}}
-    given = [c for c in out if c["ppm"] is not None]
-    for c, r in zip(given, headspace.sample([props(c, c["ppm"]) for c in given])):
-        c.update(pa=r["pa"], law=r["law"], headspace_notes=r["notes"])
-    for c in out:
-        c.setdefault("pa", None)
-        c.setdefault("law", None)
-        c.setdefault("headspace_notes", [] if c["ppm"] is not None else ["no quantity given (only that it is there)"])
-        c["per_product_pa"] = [r["pa"] for r in headspace.sample([props(c, v) for _, v, _ in c["per_product"]])]
-
     by_product = m.groupby("product")
     summary = []
     for p in products:
@@ -294,3 +288,51 @@ def search(table: dict, query: str, across_references: str = "median", across_pr
     return {"query": query.strip(), "products": summary, "references": refs, "chemicals": out,
             "lines": [[index[ch], product_of[p], ref_of[r], qty, None if not np.isfinite(v) else float(v)]
                       for ch, p, r, qty, v in zip(m["chem"], m["product"], m["reference"], m["quantity"], m["value"])]}
+
+
+def add_headspace(chemicals: list[dict], looked: Optional[dict] = None, pending: Optional[set] = None) -> None:
+    """The headspace over the samples of `search`'s chemicals (`headspace.sample`), each
+    with its Henry's law constant and vapor pressure as used (`USED`), into each.
+
+    Args:
+        looked: CID -> property -> what was looked up of it through chemutils (as
+            `db.vcf_properties` gives them).
+        pending: (CID, property) of those being looked up.
+
+    Adds to each: ``k_henry`` and ``vapor_pressure`` (as used, None if none), each with
+    ``_source``, ``_from`` ('chemutils', 'file' or 'estimate') and ``_measured``; ``file``
+    (the file's: ``k_henry``, ``vapor_pressure`` and their ``_source``), ``mismatches``
+    (each ``prop``, ``file`` and ``looked_up``: where they differ), ``pending`` (those of
+    `USED` being looked up), ``pa`` (Pa, of its quantity; None if it cannot be computed),
+    ``per_product_pa`` (of each product's, in the order of ``per_product``), ``law``
+    ('henry', 'raoult' or None) and ``headspace_notes``.
+    """
+    looked, pending = looked or {}, pending or set()
+    for c in chemicals:
+        lk = looked.get(c["cid"], {}) if c["cid"] else {}
+        value = lambda p: (lk.get(p) or {}).get("value")
+        c["file"] = {k: c[k] for k in ("k_henry", "k_henry_source", "vapor_pressure", "vapor_pressure_source")}
+        c["mismatches"], notes = [], []
+        for p, est in USED.items():
+            mine, theirs = value(p), c["file"][p]
+            if mine is not None:
+                c.update({p: mine, f"{p}_source": lk[p]["source"], f"{p}_from": "chemutils", f"{p}_measured": lk[p]["measured"]})
+                if theirs is not None and abs(mine - theirs) > MISMATCH * max(mine, theirs):
+                    c["mismatches"].append({"prop": p, "file": theirs, "looked_up": mine})
+            elif theirs is not None:
+                c.update({f"{p}_from": "file", f"{p}_measured": None})
+            elif value(est) is not None:
+                c.update({p: value(est), f"{p}_source": lk[est]["source"], f"{p}_from": "estimate", f"{p}_measured": False})
+            else:
+                c.update({p: None, f"{p}_source": None, f"{p}_from": None, f"{p}_measured": None})
+        if c["k_henry_from"] == "estimate":
+            notes.append("its Henry's law constant estimated from its solubility in water over its vapor pressure (VP/AS), "
+                         "which is only reasonable for chemicals not very soluble in water")
+        c["pending"] = [p for p in (*USED, *USED.values()) if (c["cid"], p) in pending]
+        props = lambda ppm: {"ppm": ppm, **{k: c[k] for k in ("molar_mass", "k_henry", "vapor_pressure")}}
+        if c["ppm"] is None:
+            c.update(pa=None, law=None, headspace_notes=["no quantity given (only that it is there)"])
+        else:
+            (r,) = headspace.sample([props(c["ppm"])])
+            c.update(pa=r["pa"], law=r["law"], headspace_notes=notes + r["notes"])
+        c["per_product_pa"] = [r["pa"] for r in headspace.sample([props(v) for _, v, _ in c["per_product"]])]

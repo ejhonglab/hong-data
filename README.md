@@ -436,6 +436,11 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   *Sum over KCs* in the viewer (here and in the Compare tab) shows each glomerulus's
   values summed over them (those not removed; missing values left out), as one row or
   column.
+  *Sort rows* and *columns* order each by its values over those of the other axis shown
+  (by mean or largest value, highest first, those with none last, within its group;
+  remove columns to sort by some of them, e.g. one product of VCF's). Sequential colors
+  are on a log scale when the values are none negative and span 3 or more orders of
+  magnitude (*Scale*: auto, or linear or log, 0 then the lowest color), as VCF's do.
 - **Headspace calculator**: odors are added by any part of a name, abbreviation, alias,
   CID or CAS number, or a mixture starts from a panel of the datasets: its odors in the
   odor table with a CID, but solvents, each at the highest concentration presented (what
@@ -465,8 +470,15 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     chemical's quantity in the samples (mg/kg: each reference's lines on a product
     averaged, then the median of a product's references, then of the products; or the
     mean, geometric mean, maximum or minimum), and the headspace over the samples taken
-    as water, by the file's Henry's law constant, else its vapor pressure (Raoult's law),
-    saying which. With up to 8 products, each product's values are columns too. If
+    as water, by Henry's law, else by Raoult's law with its vapor pressure, saying which.
+    Both are looked up again through chemutils in the background (those the file lacks
+    first, then those it has, to check them; kept apart from the odor table's, and the
+    tables fill in as they come): what it finds is used, else the file's (*file*), else
+    estimates (*estimate*: a Henry's law constant from solubility over vapor pressure, a
+    vapor pressure from the structure). Where what it finds differs from the file's by
+    more than 10%, a warning lists those chemicals, and the file's value is shown by each
+    (⚠). *Sort the tables by* quantity (the default), headspace or name. With up to 8
+    products, each product's values are columns too. If
     chosen, also the v/v of each in paraffin oil, all together, that gives the same
     headspace (by Henry's law with chemutils' estimated constants, or Raoult's law only);
     what that needs of each chemical is looked up through chemutils in the background
@@ -474,7 +486,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     table fills in as it comes. *Make them the mixture* puts those that are odors of the
     odor table (at most 50) in the mixture above, at those v/v. "Download tables" saves
     a CSV per chemical (each product's values, the headspace in every unit, the oil) or
-    of the matching lines.
+    of the matching lines (with where each constant and vapor pressure is from, and the
+    file's).
 - **Admin** (to the right of Docs; it first asks whether you are Tom, Jon or Betty, or
   have asked one of them): settings for the whole site.
   - *Folders on the server* the app may read (by default tensor) and also write (none

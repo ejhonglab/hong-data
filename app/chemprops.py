@@ -1,7 +1,7 @@
 """Properties of odors' chemicals, looked up through chemutils, which keeps what it looked
 up in its cache (`config.CHEMUTILS_CACHE`): vapor pressures (shown with each odor), molar
 masses (likewise), and densities and Henry's law constants (for the Headspace calculator,
-headspace.py). See `PROPERTIES`.
+headspace.py; of VCF's chemicals too, vcf.py). See `PROPERTIES`.
 
 chemutils runs in a process of its own (`look_up` starts ``python -m app.chemprops``), as
 importing it changes the logging of the process that imports it (a handler on the root
@@ -50,12 +50,16 @@ RETRY_WAITS_S = (2, 5, 15)  # waits before each retry of a lookup a server was t
 #   (concentration in water over partial pressure above it) from henrys-law.org, else NIST
 # - k_henry_pfo: `inchi2k_henry_pfo`, the same in paraffin oil, estimated (modified UNIFAC
 #   activity coefficient in n-hexadecane, and a vapor pressure; computed, not looked up)
+# - est_k_henry: `inchi2est_k_henry`, the one in water estimated from its solubility in water
+#   (PubChem's) over its vapor pressure (VP/AS; only for VCF's chemicals, vcf.py)
 PROPERTIES = {"vapor_pressure": "kPa", "est_vapor_pressure": "kPa", "molar_mass": "g/mol", "density": "g/mL",
-              "k_henry": "mol/m^3/Pa", "k_henry_pfo": "mol/m^3/Pa"}
+              "k_henry": "mol/m^3/Pa", "k_henry_pfo": "mol/m^3/Pa", "est_k_henry": "mol/m^3/Pa"}
 LABELS = {"vapor_pressure": "Vapor pressure", "est_vapor_pressure": "Vapor pressure estimated from the structure",
           "molar_mass": "Molar mass", "density": "Density", "k_henry": "Henry's law constant",
-          "k_henry_pfo": "Henry's law constant in paraffin oil"}
-COMPUTED = ("est_vapor_pressure", "k_henry_pfo")  # (not kept in chemutils' cache)
+          "k_henry_pfo": "Henry's law constant in paraffin oil",
+          "est_k_henry": "Henry's law constant estimated from solubility and vapor pressure"}
+COMPUTED = ("est_vapor_pressure", "k_henry_pfo", "est_k_henry")  # (not kept in chemutils' cache, but what they use)
+WATER_DENSITY = 0.997  # kg/L, for Henry's law constants per kg of water (NIST's, in mol/kg/bar)
 # what of inchi2k_henry_pfo's output is kept with its value (`look_up`'s ``details``)
 K_HENRY_PFO_DETAILS = ("k_henry_pfo_method", "log10_k_oil_air", "solvent_surrogate", "gamma_inf", "unifac_groups",
                        "unifac_groups_source", "unifac_parameters", "vapor_pressure_kpa", "vapor_pressure_source",
@@ -189,15 +193,19 @@ def _property(chemutils, cid: int, inchi: str, prop: str, refresh: bool = False)
     q, units, source = _plain(r[key]), r[f"{key}_units"], r[f"{key}_sources"]
     details = {k: _plain(r.get(k)) for k in K_HENRY_PFO_DETAILS} if prop == "k_henry_pfo" else None
     measured = {"vapor_pressure": lambda: _plain(r.get("vapor_pressure_measured")), "est_vapor_pressure": lambda: False,
-                "k_henry_pfo": lambda: bool(_plain(r.get("k_henry_pfo_measured_partitioning")))}.get(prop, lambda: None)()
+                "k_henry_pfo": lambda: bool(_plain(r.get("k_henry_pfo_measured_partitioning"))),
+                "est_k_henry": lambda: False}.get(prop, lambda: None)()
     if q is None:
         return {"value": None, "source": None, "measured": None, "details": details}
     if not units:
         raise ValueError(f"{q} without units")
     if isinstance(source, (list, tuple)):
         source = "; ".join(map(str, source))
-    return {"value": float(chemutils.ureg.Quantity(float(q), units).to(PROPERTIES[prop]).magnitude),
-            "source": source and str(source), "measured": measured, "details": details}
+    quantity, ureg = chemutils.ureg.Quantity(float(q), units), chemutils.ureg
+    if prop.endswith("k_henry") and quantity.dimensionality == ureg.Quantity(1, "mol/kg/Pa").dimensionality:
+        quantity = quantity * ureg.Quantity(WATER_DENSITY, "kg/L")  # (per kg of water, as NIST gives them)
+    return {"value": float(quantity.to(PROPERTIES[prop]).magnitude), "source": source and str(source), "measured": measured,
+            "details": details}
 
 
 def _busy(e: Exception) -> bool:

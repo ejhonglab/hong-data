@@ -13,8 +13,9 @@ odors           one row per chemical: names, IDs, supplier (synced from the odor
 odor_syncs      log of odor syncs (what was added / changed / deleted, by whom)
 users           each user's data folders on tensor (relative to its top), by name
 pubchem         what was fetched from PubChem for an odor CID (its InChI), and the properties
-                looked up through chemutils (`PROPERTY_COLUMNS`: see chemprops.py); also of
-                chemicals of VCF's foods (vcf.py) not in the odor table, with VCF's InChI
+                looked up through chemutils (`PROPERTY_COLUMNS`: see chemprops.py)
+vcf_properties  properties of VCF's chemicals (vcf.py) looked up through chemutils, apart from the
+                odor table's, by CID and property
 settings        site-wide settings from the Admin tab (the odor sheet's link), by key
 clusterings     clusterings of a dataset's ROIs or odors, as a browser computed them, for any to
                 use again (a cache, the most recently used kept: see `save_clustering`)
@@ -194,6 +195,18 @@ CREATE TABLE IF NOT EXISTS clusterings (
     created_at TEXT NOT NULL,
     used_at TEXT NOT NULL,
     PRIMARY KEY (dataset_id, key)
+);
+CREATE TABLE IF NOT EXISTS vcf_properties (  -- what was looked up through chemutils of VCF's chemicals (vcf.py)
+    cid INTEGER NOT NULL,
+    prop TEXT NOT NULL,                -- of chemprops.PROPERTIES
+    inchi TEXT NOT NULL,               -- what it was looked up by (VCF's)
+    value REAL,                        -- in the units of chemprops.PROPERTIES; null if none was found
+    source TEXT,
+    measured INTEGER,                  -- 1 if from measurements, 0 if an estimate, null if not known
+    details TEXT,                      -- JSON: more of what chemutils said of it (of k_henry_pfo)
+    looked_up_at TEXT NOT NULL,
+    chemutils TEXT,                    -- the chemutils that looked it up (chemprops.installed)
+    PRIMARY KEY (cid, prop)
 );
 CREATE TABLE IF NOT EXISTS file_log (  -- files the server has read or written in its own folders (see filelog.py)
     path TEXT PRIMARY KEY,             -- as the server sees it (in Docker, in the container)
@@ -712,25 +725,6 @@ class Database:
                 [(cid, inchi, when) for cid, inchi in inchis.items()],
             )
 
-    def add_inchis(self, inchis: dict[int, str], when: str) -> None:
-        """Keep InChIs of CIDs that have none yet (e.g. of chemicals not in the odor table, as a
-        reference dataset gives them, to look up properties of them: see `save_property`)."""
-        with self.connect() as con:
-            con.executemany("INSERT INTO pubchem (cid, inchi, fetched_at) VALUES (?,?,?) ON CONFLICT (cid) DO NOTHING",
-                            [(cid, inchi, when) for cid, inchi in inchis.items()])
-
-    def chemicals(self, cids: Iterable[int]) -> dict[int, dict]:
-        """CID -> its InChI, and what was looked up for it through chemutils (as `list_odors`
-        gives them), of those of `cids` with an InChI."""
-        cids = sorted(set(cids))
-        out = {}
-        with self.connect() as con:
-            for i in range(0, len(cids), 500):
-                chunk = cids[i:i + 500]
-                for r in con.execute(f"SELECT * FROM pubchem WHERE cid IN ({', '.join('?' * len(chunk))})", chunk):
-                    out[r["cid"]] = _properties(dict(r))
-        return out
-
     def save_property(self, cid: int, prop: str, found: Optional[dict], when: str, chemutils: Optional[str] = None) -> None:
         """Save a property looked up for a CID with an InChI (`chemprops.look_up`).
 
@@ -758,6 +752,34 @@ class Database:
                 f"SELECT {prop}_chemutils AS chemutils, count(*) AS n, count({col}) AS found FROM pubchem "
                 f"WHERE {prop}_at IS NOT NULL AND cid IN (SELECT cid FROM odors) GROUP BY 1 ORDER BY 1")]
                 for prop, col in PROPERTY_COLUMNS.items()}
+
+    def save_vcf_property(self, cid: int, inchi: str, prop: str, found: Optional[dict], when: str,
+                          chemutils: Optional[str] = None) -> None:
+        """Save a property of a chemical of VCF's (vcf.py) looked up through chemutils, by its
+        CID and the InChI it was looked up by: as `save_property` takes them (`prop` of
+        `chemprops.PROPERTIES`), kept apart from the odor table's."""
+        found = found or {}
+        measured, details = found.get("measured"), found.get("details")
+        with self.connect() as con:
+            con.execute("INSERT OR REPLACE INTO vcf_properties (cid, prop, inchi, value, source, measured, details, looked_up_at, "
+                        "chemutils) VALUES (?,?,?,?,?,?,?,?,?)",
+                        (cid, prop, inchi, found.get("value"), found.get("source"), None if measured is None else int(measured),
+                         json.dumps(details) if details else None, when, chemutils))
+
+    def vcf_properties(self, cids: Iterable[int]) -> dict[int, dict[str, dict]]:
+        """CID -> property -> what was looked up of it for VCF (`save_vcf_property`): ``value``
+        (None if none was found), ``source``, ``measured`` (a bool, or None), ``details``,
+        ``at`` (when) and ``chemutils``; of those of `cids` with any."""
+        cids = sorted(set(cids))
+        out: dict[int, dict[str, dict]] = {}
+        with self.connect() as con:
+            for i in range(0, len(cids), 500):
+                chunk = cids[i:i + 500]
+                for r in con.execute(f"SELECT * FROM vcf_properties WHERE cid IN ({', '.join('?' * len(chunk))})", chunk):
+                    out.setdefault(r["cid"], {})[r["prop"]] = {
+                        "value": r["value"], "source": r["source"], "measured": None if r["measured"] is None else bool(r["measured"]),
+                        "details": r["details"] and json.loads(r["details"]), "at": r["looked_up_at"], "chemutils": r["chemutils"]}
+        return out
 
     def odor_syncs(self, limit: int = 50, source: Optional[str] = None) -> list[dict]:
         """Most recent odor syncs first (optionally only those from `source`)."""

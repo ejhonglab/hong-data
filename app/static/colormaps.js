@@ -91,6 +91,7 @@ export function colormapsOfKind(kind) {
 }
 
 // ---- normalisation -------------------------------------------------------------
+// kind: 'twoslope' | 'symmetric' | 'log' | 'linear'.
 // Returns {toUnit(v) -> 0..1 | NaN, vmin, vmax, ticks:[{t, value}]}
 export function makeNorm(kind, vmin, vmax) {
   if (!Number.isFinite(vmin) || !Number.isFinite(vmax)) { vmin = 0; vmax = 1; }
@@ -116,6 +117,20 @@ export function makeNorm(kind, vmin, vmax) {
       ticks: [{ t: 0, value: -m }, { t: 0.5, value: 0 }, { t: 1, value: m }],
     };
   }
+  if (kind === 'log') {
+    // of positive values: 0 and below the lowest color
+    if (!(vmax > 0)) vmax = 1;
+    if (!(vmin > 0) || vmin >= vmax) vmin = vmax / 1e3;
+    const lo = Math.log10(vmin), hi = Math.log10(vmax), span = hi - lo || 1;
+    return {
+      kind, vmin, vmax,
+      toUnit(v) {
+        if (!Number.isFinite(v)) return NaN;
+        return v > 0 ? Math.max(0, Math.min(1, (Math.log10(v) - lo) / span)) : 0;
+      },
+      ticks: logTicks(lo, hi),
+    };
+  }
   // linear
   const span = vmax - vmin || 1;
   return {
@@ -123,6 +138,20 @@ export function makeNorm(kind, vmin, vmax) {
     toUnit(v) { return Number.isFinite(v) ? Math.max(0, Math.min(1, (v - vmin) / span)) : NaN; },
     ticks: [{ t: 0, value: vmin }, { t: 0.5, value: vmin + span / 2 }, { t: 1, value: vmax }],
   };
+}
+
+// ticks of a log scale from 10^lo to 10^hi: its ends, and at most 2 powers of ten between
+// them (not near either end, so that their labels do not overlap)
+function logTicks(lo, hi) {
+  const span = hi - lo || 1;
+  let decades = [];
+  for (let k = Math.ceil(lo); k <= Math.floor(hi); k++) {
+    const t = (k - lo) / span;
+    if (t >= 0.2 && t <= 0.8) decades.push(k);
+  }
+  const step = Math.ceil(decades.length / 2);
+  decades = decades.filter((_, i) => i % step === 0);
+  return [{ t: 0, value: 10 ** lo }, ...decades.map((k) => ({ t: (k - lo) / span, value: 10 ** k })), { t: 1, value: 10 ** hi }];
 }
 
 export function lutColor(lut, t) {
@@ -160,9 +189,10 @@ export function fmtNum(v) {
   if (!Number.isFinite(v)) return 'NaN';
   const a = Math.abs(v);
   if (a === 0) return '0';
+  if (a >= 1e5) return v.toExponential(1).replace('e+', 'e').replace('.0e', 'e');
   if (a >= 100) return v.toFixed(0);
   if (a >= 10) return v.toFixed(1);
   if (a >= 1) return v.toFixed(2);
   if (a >= 0.01) return v.toFixed(3);
-  return v.toExponential(1);
+  return v.toExponential(1).replace('.0e', 'e');
 }

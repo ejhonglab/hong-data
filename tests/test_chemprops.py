@@ -74,7 +74,12 @@ def inchi2density(inchi, **kwargs):
     return {"density": 902.0, "density_units": "kg / m^3", "density_sources": ["https://a", "https://b"]}
 
 def inchi2k_henry(inchi, **kwargs):
+    if inchi == "InChI=1S/d":  # (NIST's)
+        return {"k_henry": 2.0, "k_henry_units": "mol / kg / bar", "k_henry_sources": "https://webbook.nist.gov/x"}
     return {"k_henry": 5.9e-4, "k_henry_units": "mol / L / kPa", "k_henry_sources": "https://henrys-law.org/x"}
+
+def inchi2est_k_henry(inchi, verbose=False):
+    return {"k_henry": 0.03, "k_henry_units": "mol / m^3 / Pa", "k_henry_sources": "VP/AS estimate from ..."}
 """
 
 
@@ -129,6 +134,11 @@ def test_look_up(fake_chemutils, tmp_path, monkeypatch):
                                                                  "InChI=1S/d", "CID 8", "CID 8", "CID 9", "CID 9"]
     assert not (fake_chemutils / "chemutils.log").exists()
     assert chemprops.look_up([], save) == {} and chemprops.look_up([(1, "InChI=1S/a", [])], save) == {}
+    # Henry's law constants per kg of water (NIST's) per m³ of it; estimated from solubility, said so
+    saved.clear()
+    assert chemprops.look_up([(5, "InChI=1S/d", ["k_henry", "est_k_henry"])], save) == {}
+    assert saved[(5, "k_henry")]["value"] == pytest.approx(2.0 * 0.997e3 / 1e5)
+    assert (saved[(5, "est_k_henry")]["value"], saved[(5, "est_k_henry")]["measured"]) == (0.03, False)
 
     # those after it stopped could not be looked up
     saved.clear()
@@ -175,8 +185,8 @@ def test_installed():
 
 
 def test_columns():
-    # each property kept in the database, and nothing else
-    assert set(PROPERTY_COLUMNS) == set(chemprops.PROPERTIES)
+    # each property kept with the odor table, and nothing else (but est_k_henry, looked up for VCF's chemicals alone)
+    assert set(PROPERTY_COLUMNS) == set(chemprops.PROPERTIES) - {"est_k_henry"}
 
 
 def test_properties_in_database(tmp_path, monkeypatch):

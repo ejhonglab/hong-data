@@ -248,6 +248,14 @@ between the frontend and the server. Using the app is described in
   linear in |value|, with white at 0 and blue and red poles of equal lightness: "twice
   as dark" means "twice as large" on either side, which the ColorBrewer and Moreland
   maps only approximate.
+- **Log color scale** (`makeNorm('log')`): for sequential colors, of the positive values
+  (0 and below the lowest color), chosen automatically when none are negative and the
+  positive ones span 3 or more orders of magnitude (`LOG_DECADES`), as VCF's
+  quantities do (1e-6 to 2e6 mg/kg); its colorbar is labelled at its ends and at most two
+  powers of ten between them.
+- **Sorting a matrix** (`sortedByValues`): of reference data, each row (or column) by the
+  mean or largest of its values over the columns (or rows) shown, within its group; an
+  axis shared with a linked viewer (side by side in Compare) keeps that viewer's order.
 - **Clustering runs in web workers.** Distances use only the entries both vectors have
   (like pandas' `DataFrame.corr`), so missing values are fine. They are computed in
   blocks of rows spread over the workers, and average linkage (UPGMA, merges in scipy's
@@ -556,13 +564,29 @@ and columns (by the fields chosen for it), and its values taken as mg/kg.
   references, then across products (median by default; mean, geometric mean, max or
   min), each over those that quantify it: a paper that does not list a chemical may not
   have looked for it, so absence is not taken as 0.
-- **Headspace over the samples** (`headspace.sample`): each taken as water (0.997 g/mL),
-  each chemical on its own (dilute): c = ppm · ρ_water / M, p = c / H_cp with the file's
-  constant (henrys-law.org, else NIST), at most its vapor pressure; else Raoult's law
-  with the file's vapor pressure, too low for most volatiles; else none. Not chemutils'
-  values for the odor table, so that it is what the file says. M is from the InChI's
-  formula (`vcf.molar_mass`), so nothing is looked up for it. Sugars, salts and fat in a
-  real sample change these (fat holds hydrophobic volatiles back); nothing models that.
+- **Headspace over the samples** (`headspace.sample`, `vcf.add_headspace`): each taken as
+  water (0.997 g/mL), each chemical on its own (dilute): c = ppm · ρ_water / M,
+  p = c / H_cp, at most its vapor pressure; else Raoult's law with its vapor pressure,
+  too low for most volatiles; else none. M is from the InChI's formula
+  (`vcf.molar_mass`), so nothing is looked up for it. Sugars, salts and fat in a real
+  sample change these (fat holds hydrophobic volatiles back); nothing models that.
+- **Constants and vapor pressures** (`vcf.USED`): looked up again through chemutils
+  (`inchi2k_henry`: henrys-law.org, else NIST, whose mol/kg/bar are taken per kg of
+  water; `inchi2vapor_pressure`: PubChem's at or near 25 °C), as the file's are from an
+  older chemutils (its vapor pressures from values at any temperature: isoamyl alcohol's
+  1.7 kPa, now 0.32), and henrys-law.org has several values for most chemicals. What
+  chemutils finds is used, else the file's, else estimates (`inchi2est_k_henry`:
+  solubility in water over vapor pressure, VP/AS, only reasonable for chemicals not very
+  soluble; `inchi2est_vapor_pressure`: SIMPOL.1), asked for only once neither the file
+  nor the lookup has one. A difference of more than `vcf.MISMATCH` (10%; about two in
+  three of banana's) is shown with both values and a warning. They are kept in the
+  `vcf_properties` table, by CID and property, apart from the odor table's `pubchem`
+  (so that the Admin tab's counts and looking up again are of the odor table's alone),
+  and looked up in a thread of the server's (`main._vcf_look_up`, 10 CIDs at a time) by
+  priority (`main.VCF_PRIORITY`): of chemicals the file has neither of, then no
+  constant of, then what paraffin oil needs, then checking the file's. Each search asks
+  for what its chemicals lack (those that could not be looked up in the last hour
+  aside), and the browser asks again every 3 s while any is being looked up.
 - **Paraffin oil for the same headspace** (`headspace.invert`): `calculate` backwards, of
   every chemical with a headspace, together. By Henry's law each v/v is from its own
   headspace, f = p·H·M/(10⁶·ρ); by Raoult's law from x = p/p_sat, with the moles of the
@@ -570,13 +594,12 @@ and columns (by the fields chosen for it), and its values taken as mg/kg.
   the volume and moles of those by Henry's law, n_pure the moles in a mL of each, pure),
   so that `calculate` of the result gives the headspace back exactly (tested). A
   headspace of at least the vapor pressure cannot be reached. What it needs of each
-  (density, vapor pressure, constant in oil) is looked up through chemutils, kept in the
-  `pubchem` table by CID with VCF's InChI (not counted with the odor table's in the
-  Admin tab, nor looked up again there): in a thread of the server's
-  (`main._vcf_look_up`, 10 CIDs at a time), as one search may need hundreds; the
-  response says how many are pending, and the browser asks again every 3 s until none
-  are. At most 500 chemicals with a headspace per search, so that a search of `a` does
-  not look up thousands.
+  (density, vapor pressure, constant in oil) is looked up through chemutils as above,
+  kept in `vcf_properties`. At most 500 chemicals with a headspace per search, so that
+  a search of `a` does not look up thousands for oil.
+- **Sorting**: the tables are in the order chosen (quantity, headspace or name; the
+  matching lines by their chemicals', then by value), but *Make them the mixture* takes
+  those with the most headspace first.
 - **Make them the mixture**: those whose v/v was computed that are odors of the odor table
   (matched as reference datasets' chemicals are, by CID, else InChI, ...), at most 50,
   most headspace first, become the mixture above in paraffin oil, by the same model, to
@@ -628,7 +651,8 @@ fast serving), `users` (each user's folders on tensor), `odors` and `odor_syncs`
 `pubchem` (each odor CID's InChI, and its properties looked up through chemutils: vapor pressure,
 estimated vapor pressure, molar mass, density and Henry's law constants in water and paraffin oil, each
 with where it is from, when it was looked up, the chemutils commit that did, whether measured, and for
-constants in oil what they were estimated with), `settings` (site-wide settings from the Admin tab:
+constants in oil what they were estimated with), `vcf_properties` (the same of VCF's chemicals, and
+estimated Henry's law constants, by CID and property, apart from the odor table's), `settings` (site-wide settings from the Admin tab:
 the odor sheet's link, panels shown renamed), `reference_datasets` (reference datasets added there) and
 `file_log` (the files the server has read or written in its own folders). Files:
 `data/datasets/<id>/` holds the original data file (or files, if several were combined:
@@ -734,9 +758,11 @@ GET    /api/headspace/vcf                   the VCF reference datasets to search
                                             their products, categories and groups
 POST   /api/headspace/vcf                   {"source", "query", "across_references", "across_products",
                                             "model": null, "henry" or "raoult"}: the matching lines,
-                                            one quantity per chemical, the headspace over the samples,
-                                            and (with a model) the v/v in paraffin oil for it, with
-                                            how many are still being looked up
+                                            one quantity per chemical, the headspace over the samples
+                                            (constants and vapor pressures as chemutils finds them,
+                                            else the file's, else estimates; where they differ), and
+                                            (with a model) the v/v in paraffin oil for it, with how
+                                            many are still being looked up
 GET    /api/headspace.csv, .tex             a calculation's table as a file: ?solvent=, model=,
                                             odors=<odor id>:<log10 conc>,... (calculated again, from
                                             what was looked up for it), units= (for LaTeX), lower=1

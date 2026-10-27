@@ -20,7 +20,6 @@ import socket
 import sqlite3
 import threading
 import time
-from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
@@ -1401,12 +1400,19 @@ SHOWN_PROPERTIES = ("vapor_pressure", "molar_mass")  # looked up for every odor,
 
 
 def _look_up_properties(todo: list[tuple[int, str, list[str]]], refresh: bool = False,
-                        saved: Optional[Callable[[], None]] = None) -> dict[tuple[int, str], str]:
+                        saved: Optional[Callable[[], None]] = None, vcf: bool = False) -> dict[tuple[int, str], str]:
     """Look up properties of odors through chemutils (`chemprops.look_up`, with `refresh`),
-    each saved as it comes (then `saved` called), with the chemutils that looked it up;
+    each saved as it comes (then `saved` called), with the chemutils that looked it up
+    (with `vcf`, as VCF's chemicals', apart from the odor table's: `db.save_vcf_property`);
     those that could not be looked up kept in `_props_failed`, and returned."""
+    inchis = {cid: inchi for cid, inchi, _ in todo}
+
     def save(cid: int, prop: str, found: Optional[dict]) -> None:
-        db.save_property(cid, prop, found, when=dt.datetime.now().isoformat(timespec="seconds"), chemutils=chemprops.installed())
+        when, by = dt.datetime.now().isoformat(timespec="seconds"), chemprops.installed()
+        if vcf:
+            db.save_vcf_property(cid, inchis[cid], prop, found, when=when, chemutils=by)
+        else:
+            db.save_property(cid, prop, found, when=when, chemutils=by)
         if saved:
             saved()
 
@@ -1414,7 +1420,7 @@ def _look_up_properties(todo: list[tuple[int, str, list[str]]], refresh: bool = 
     failed = chemprops.look_up(todo, save, refresh=refresh)
     _props_failed.update({k: (now, e) for k, e in failed.items()})
     if failed:
-        log.warning("could not look up %d properties of odors (%s), e.g.: %s", len(failed),
+        log.warning("could not look up %d properties of %s (%s), e.g.: %s", len(failed), "VCF's chemicals" if vcf else "odors",
                     ", ".join(f"CID {cid}: {prop}" for cid, prop in sorted(failed)), next(iter(failed.values())))
     return failed
 
@@ -1686,36 +1692,99 @@ async def headspace_file(request: Request) -> Response:
 
 VCF_MAX_OIL = 500  # chemicals with a headspace over their samples, at most, to calculate in paraffin oil
 VCF_LOOKUP_BATCH = 10  # CIDs looked up through chemutils at once for VCF's chemicals (`_vcf_look_up`)
-# CID -> (CID, InChI, properties) of VCF's chemicals to look up in the background, for the
-# paraffin oil to match their headspace, and those being looked up (`_vcf_look_up`)
-_vcf_queue: "OrderedDict[int, tuple[int, str, list[str]]]" = OrderedDict()
-_vcf_busy: set[int] = set()
+# what is looked up of VCF's chemicals first (`_vcf_needs`): the Henry's law constants and vapor
+# pressures VCF's file lacks (of those with neither first), then what paraffin oil needs, then
+# those the file has, to check them
+VCF_PRIORITY = {"neither": 0, "no k_henry": 1, "oil": 2, "check": 3}
+# (CID, property) -> (priority, order asked, InChI) of what is to be looked up of VCF's
+# chemicals in the background, and those being looked up (`_vcf_look_up`)
+_vcf_queue: dict[tuple[int, str], tuple[int, int, str]] = {}
+_vcf_busy: set[tuple[int, str]] = set()
 _vcf_lock = threading.Lock()
-_vcf_worker = {"running": False}
+_vcf_worker = {"running": False, "asked": 0}
 
 
 def _vcf_look_up() -> None:
-    """Look up through chemutils what was asked for of VCF's chemicals (`_vcf_queue`), a few
-    CIDs at a time (each property saved as it comes), until nothing is left."""
+    """Look up through chemutils what was asked for of VCF's chemicals (`_vcf_queue`), what
+    comes first first, a few CIDs at a time (with all asked for of each), each property
+    saved as it comes, until nothing is left."""
     while True:
         with _vcf_lock:
             _vcf_busy.clear()
             if not _vcf_queue:
                 _vcf_worker["running"] = False
                 return
-            batch = [_vcf_queue.popitem(last=False)[1] for _ in range(min(VCF_LOOKUP_BATCH, len(_vcf_queue)))]
-            _vcf_busy.update(cid for cid, _, _ in batch)
+            cids: list[int] = []
+            for (cid, _), _ in sorted(_vcf_queue.items(), key=lambda kv: kv[1][:2]):
+                if cid not in cids:
+                    cids.append(cid)
+                    if len(cids) == VCF_LOOKUP_BATCH:
+                        break
+            batch: dict[int, tuple[str, list[str]]] = {}
+            for key in [k for k in _vcf_queue if k[0] in cids]:
+                inchi = _vcf_queue.pop(key)[2]
+                batch.setdefault(key[0], (inchi, []))[1].append(key[1])
+                _vcf_busy.add(key)
         try:
-            _look_up_properties(batch)
+            _look_up_properties([(cid, inchi, props) for cid, (inchi, props) in batch.items()], vcf=True)
         except Exception:
             log.exception("could not look up properties of VCF's chemicals")
 
 
-def _vcf_oil(chemicals: list[dict], model: str) -> dict:
+def _vcf_ask(needs: dict[tuple[int, str], tuple[int, str]]) -> set[tuple[int, str]]:
+    """Have what VCF's chemicals need ((CID, property) -> (priority, InChI)) looked up in the
+    background (`_vcf_look_up`), sooner if asked for sooner than it was; what of it, and of
+    what was asked before, is being looked up."""
+    with _vcf_lock:
+        for key, (priority, inchi) in needs.items():
+            if key in _vcf_busy:
+                continue
+            if key not in _vcf_queue or priority < _vcf_queue[key][0]:
+                _vcf_worker["asked"] += 1
+                _vcf_queue[key] = (priority, _vcf_worker["asked"], inchi)
+        start = bool(_vcf_queue) and not _vcf_worker["running"]
+        _vcf_worker["running"] |= start
+        pending = set(_vcf_queue) | _vcf_busy
+    if start:
+        threading.Thread(target=_vcf_look_up, name="vcf-properties", daemon=True).start()
+    return pending
+
+
+def _vcf_row(cid: int, inchi: str, looked: dict[str, dict]) -> dict:
+    """What was looked up of a chemical of VCF's (as `db.vcf_properties` gives them), as
+    `db.list_odors` gives an odor's (for `_headspace_properties`, `_to_look_up` and
+    `odormeta.property_link`)."""
+    row = {"cid": cid, "inchi": inchi}
+    for p, col in PROPERTY_COLUMNS.items():
+        x = looked.get(p) or {}
+        row.update({col: x.get("value"), f"{p}_source": x.get("source"), f"{p}_at": x.get("at"),
+                    f"{p}_measured": x.get("measured"), f"{p}_details": x.get("details")})
+    return row
+
+
+def _vcf_needs(c: dict, looked: dict[str, dict], now: float) -> dict[str, int]:
+    """What is to be looked up of a chemical of VCF's (`vcf.search`'s, with a CID and InChI)
+    for its headspace over the samples: property -> its priority (`VCF_PRIORITY`). Its
+    Henry's law constant and vapor pressure, and estimates of them (`vcf.USED`) once
+    neither the file nor chemutils has one; but those that could not be looked up in the
+    last hour."""
+    file = c.get("file") or c
+    why = "check" if file["k_henry"] is not None else "no k_henry" if file["vapor_pressure"] is not None else "neither"
+    out = {}
+    for p, est in vcf.USED.items():
+        if p not in looked:
+            out[p] = VCF_PRIORITY[why]
+        elif looked[p]["value"] is None and file[p] is None and est not in looked:
+            out[est] = VCF_PRIORITY[why]
+    return {p: pr for p, pr in out.items() if now - _props_failed.get((c["cid"], p), (0, ""))[0] > 3600}
+
+
+def _vcf_oil(chemicals: list[dict], model: str, looked: dict[int, dict]) -> dict:
     """The paraffin oil that would give the headspace over VCF's samples (`vcf.search`'s
-    ``chemicals``, each with its ``pa``): the v/v of each in it (`headspace.invert`, of them
-    all together, with its molar mass from its InChI), from what is known of each, the rest
-    queued to be looked up through chemutils in the background (`_vcf_look_up`).
+    ``chemicals``, each with its ``pa``: `vcf.add_headspace`): the v/v of each in it
+    (`headspace.invert`, of them all together, with its molar mass from its InChI), from
+    what is known of each (`looked`, as `db.vcf_properties` gives it), the rest asked to be
+    looked up through chemutils in the background (`_vcf_ask`).
 
     Returns:
         ``model``, ``chemicals`` (of each given, in order: `headspace.invert`'s, with
@@ -1728,22 +1797,12 @@ def _vcf_oil(chemicals: list[dict], model: str) -> dict:
     if len(targets) > VCF_MAX_OIL:
         return {"model": model, "chemicals": [None] * len(chemicals), "total": None, "pending": 0,
                 "error": f"{len(targets):,} chemicals with a headspace, and at most {VCF_MAX_OIL} are calculated in oil: narrow the search"}
-    ids = {c["cid"]: c["inchi"] for c in targets if c["cid"] and c["inchi"]}
-    rows = db.chemicals(ids)
-    if missing := {cid: inchi for cid, inchi in ids.items() if cid not in rows}:
-        db.add_inchis(missing, when=dt.datetime.now().isoformat(timespec="seconds"))
-        rows.update(db.chemicals(missing))
+    rows = {c["cid"]: _vcf_row(c["cid"], c["inchi"], looked.get(c["cid"], {})) for c in targets if c["cid"] and c["inchi"]}
     now = time.time()
     needs = lambda row: [p for p in _headspace_properties(row, "paraffin oil", model) if p != "molar_mass"]  # (from the InChI)
-    with _vcf_lock:
-        for cid, row in rows.items():
-            if cid not in _vcf_queue and cid not in _vcf_busy and (todo := _to_look_up(row, needs(row), now)):
-                _vcf_queue[cid] = (cid, row["inchi"], todo)
-        pending = {cid for cid in rows if cid in _vcf_queue or cid in _vcf_busy}
-        start = bool(_vcf_queue) and not _vcf_worker["running"]
-        _vcf_worker["running"] |= start
-    if start:
-        threading.Thread(target=_vcf_look_up, name="vcf-properties", daemon=True).start()
+    pending_keys = _vcf_ask({(cid, p): (VCF_PRIORITY["oil"], row["inchi"]) for cid, row in rows.items()
+                             for p in _to_look_up(row, needs(row), now)})
+    pending = {cid for cid, row in rows.items() if any((cid, p) in pending_keys for p in needs(row))}
 
     inputs, extra = [], []
     for c in chemicals:
@@ -1798,9 +1857,13 @@ def _vcf_search(body: dict) -> dict:
     """`vcf.search` of a VCF reference dataset (``source``, its id; else the first of
     `vcf.sources`) for ``query``, its quantities reduced ``across_references`` and
     ``across_products``, each chemical with the odor of the odor table it is (``odor_id``,
-    matched as reference datasets' are), and with ``model`` (of `headspace.MODELS`), the
-    paraffin oil to match its headspace (``oil``: `_vcf_oil`). With its ``source``
-    (``id``, ``title``).
+    matched as reference datasets' are), and its headspace over the samples
+    (`vcf.add_headspace`), from what was looked up of it through chemutils, the rest asked
+    to be looked up in the background (`_vcf_needs`): ``lookups`` says how many chemicals
+    have something being looked up (``pending``) and differ from the file (``mismatches``,
+    by more than ``tolerance``, `vcf.MISMATCH`).
+    With ``model`` (of `headspace.MODELS`), the paraffin oil to match its headspace
+    (``oil``: `_vcf_oil`). With its ``source`` (``id``, ``title``).
 
     Raises:
         vcf.VcfError: if there is no such VCF reference dataset, or for `vcf.search`'s.
@@ -1812,11 +1875,19 @@ def _vcf_search(body: dict) -> dict:
                            "no VCF reference dataset: add one in the Admin tab (Reference data)")
     res = vcf.search(vcf.load(source), str(body.get("query") or ""), body.get("across_references") or "median",
                      body.get("across_products") or "median")
+    chems = res["chemicals"]
     index = odormeta.OdorIndex(db.list_odors())
-    for c in res["chemicals"]:
+    for c in chems:
         c["odor_id"] = index.match_chemical({k: c[k] for k in ("cid", "inchi", "name") if c[k]}, c["name"])[0]
+    known = [c for c in chems if c["cid"] and c["inchi"]]
+    looked = db.vcf_properties(c["cid"] for c in known)
+    now = time.time()
+    pending = _vcf_ask({(c["cid"], p): (pr, c["inchi"]) for c in known for p, pr in _vcf_needs(c, looked.get(c["cid"], {}), now).items()})
+    vcf.add_headspace(chems, looked, pending)
+    res["lookups"] = {"pending": sum(bool(c["pending"]) for c in chems), "mismatches": sum(bool(c["mismatches"]) for c in chems),
+                      "tolerance": vcf.MISMATCH}
     if body.get("model"):
-        res["oil"] = _vcf_oil(res["chemicals"], body["model"])
+        res["oil"] = _vcf_oil(chems, body["model"], looked)
     return {**res, "source": {"id": source["id"], "title": source["title"]}, "temperature_c": headspace.T_K - 273.15}
 
 
@@ -2330,11 +2401,12 @@ async def admin_chemutils(request: Request) -> Response:
 
 async def admin_chemutils_relookup(request: Request) -> Response:
     """Look up again, in the background, every value of some properties looked up through
-    chemutils ({"props": [...]}, of `chemprops.PROPERTIES`: see `_relookup`); then, as from GET."""
+    chemutils ({"props": [...]}, of those kept with the odor table, `PROPERTY_COLUMNS`: see
+    `_relookup`); then, as from GET."""
     body = await request.json()
     props = body.get("props") if isinstance(body, dict) else None
-    if not isinstance(props, list) or not props or any(p not in chemprops.PROPERTIES for p in props):
-        return json_error(400, f"expected {{\"props\": [...]}}, of {', '.join(chemprops.PROPERTIES)}")
+    if not isinstance(props, list) or not props or any(p not in PROPERTY_COLUMNS for p in props):
+        return json_error(400, f"expected {{\"props\": [...]}}, of {', '.join(PROPERTY_COLUMNS)}")
     with _relookup_lock:
         if _relookup_job.get("running"):
             return json_error(409, "values are being looked up again already")
