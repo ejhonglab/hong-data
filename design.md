@@ -542,6 +542,46 @@ that polar odors are less soluble in oil than an ideal solution, so it is too lo
 them. Neither models air flowing over the vial (which depletes the headspace) or
 diluting it before it reaches the fly.
 
+### Foods' volatiles (VCF)
+
+Below the mixture, a search of VCF's foods (`vcf.py`): of a reference dataset of one value
+per line whose file also has `k_henry` and `vapor_pressure` columns (`vcf.sources`), as
+the VCF CSVs made with chemutils do. The file is read again as its lines (kept in memory
+while it is unchanged), its chemicals and products being the reference dataset's rows
+and columns (by the fields chosen for it), and its values taken as mg/kg.
+
+- **Search**: what is typed, in a product's name, category or group (but for case).
+- **One quantity per chemical**: each reference's lines on a product averaged (as in the
+  reference dataset's matrix: e.g. two cultivars), then reduced across the product's
+  references, then across products (median by default; mean, geometric mean, max or
+  min), each over those that quantify it: a paper that does not list a chemical may not
+  have looked for it, so absence is not taken as 0.
+- **Headspace over the samples** (`headspace.sample`): each taken as water (0.997 g/mL),
+  each chemical on its own (dilute): c = ppm · ρ_water / M, p = c / H_cp with the file's
+  constant (henrys-law.org, else NIST), at most its vapor pressure; else Raoult's law
+  with the file's vapor pressure, too low for most volatiles; else none. Not chemutils'
+  values for the odor table, so that it is what the file says. M is from the InChI's
+  formula (`vcf.molar_mass`), so nothing is looked up for it. Sugars, salts and fat in a
+  real sample change these (fat holds hydrophobic volatiles back); nothing models that.
+- **Paraffin oil for the same headspace** (`headspace.invert`): `calculate` backwards, of
+  every chemical with a headspace, together. By Henry's law each v/v is from its own
+  headspace, f = p·H·M/(10⁶·ρ); by Raoult's law from x = p/p_sat, with the moles of the
+  whole solution N = (n_oil·(1 − F_H) + n_H) / (1 − Σ x·(1 − n_oil/n_pure)) (F_H and n_H
+  the volume and moles of those by Henry's law, n_pure the moles in a mL of each, pure),
+  so that `calculate` of the result gives the headspace back exactly (tested). A
+  headspace of at least the vapor pressure cannot be reached. What it needs of each
+  (density, vapor pressure, constant in oil) is looked up through chemutils, kept in the
+  `pubchem` table by CID with VCF's InChI (not counted with the odor table's in the
+  Admin tab, nor looked up again there): in a thread of the server's
+  (`main._vcf_look_up`, 10 CIDs at a time), as one search may need hundreds; the
+  response says how many are pending, and the browser asks again every 3 s until none
+  are. At most 500 chemicals with a headspace per search, so that a search of `a` does
+  not look up thousands.
+- **Make them the mixture**: those whose v/v was computed that are odors of the odor table
+  (matched as reference datasets' chemicals are, by CID, else InChI, ...), at most 50,
+  most headspace first, become the mixture above in paraffin oil, by the same model, to
+  check or change (their headspace is then calculated as the mixture's).
+
 ## Code layout
 
 ```
@@ -561,7 +601,9 @@ app/compare.py     datasets averaged for the Compare tab (odors × glomeruli or 
 app/odormeta.py    odor table: sheet parsing / validation, sync diff, links, dataset matching
 app/chemprops.py   odors' vapor pressures, molar masses, densities and Henry's law constants, looked up through
                    chemutils in a process of its own
-app/headspace.py   headspace concentrations of odors diluted together (Headspace calculator)
+app/headspace.py   headspace concentrations of odors diluted together (Headspace calculator), over samples
+                   taken as water, and the concentrations giving a headspace
+app/vcf.py         VCF's foods, from a reference dataset of its quantities: search, one quantity per chemical
 app/tensor.py      users' folders on tensor: path checks, finding a dataset's flies, recordings, YAMLs
 app/sandbox.py     folders the server may read and write (Admin tab): settings, path checks, Landlock
 app/filelog.py     the files the server has read and written in its own folders (Admin tab), paths on the server
@@ -688,6 +730,13 @@ POST   /api/headspace                       {"solvent": "paraffin oil" or "water
                                             the mixture of each odor, with the properties used,
                                             where they are from and whether measured
 GET    /api/headspace/panels                the panels of the datasets as mixtures
+GET    /api/headspace/vcf                   the VCF reference datasets to search, with the names of
+                                            their products, categories and groups
+POST   /api/headspace/vcf                   {"source", "query", "across_references", "across_products",
+                                            "model": null, "henry" or "raoult"}: the matching lines,
+                                            one quantity per chemical, the headspace over the samples,
+                                            and (with a model) the v/v in paraffin oil for it, with
+                                            how many are still being looked up
 GET    /api/headspace.csv, .tex             a calculation's table as a file: ?solvent=, model=,
                                             odors=<odor id>:<log10 conc>,... (calculated again, from
                                             what was looked up for it), units= (for LaTeX), lower=1

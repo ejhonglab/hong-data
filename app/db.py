@@ -13,7 +13,8 @@ odors           one row per chemical: names, IDs, supplier (synced from the odor
 odor_syncs      log of odor syncs (what was added / changed / deleted, by whom)
 users           each user's data folders on tensor (relative to its top), by name
 pubchem         what was fetched from PubChem for an odor CID (its InChI), and the properties
-                looked up through chemutils (`PROPERTY_COLUMNS`: see chemprops.py)
+                looked up through chemutils (`PROPERTY_COLUMNS`: see chemprops.py); also of
+                chemicals of VCF's foods (vcf.py) not in the odor table, with VCF's InChI
 settings        site-wide settings from the Admin tab (the odor sheet's link), by key
 clusterings     clusterings of a dataset's ROIs or odors, as a browser computed them, for any to
                 use again (a cache, the most recently used kept: see `save_clustering`)
@@ -27,7 +28,7 @@ import re
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Iterator, Optional
+from typing import Any, Callable, Iterable, Iterator, Optional
 
 import numpy as np
 
@@ -289,6 +290,15 @@ def _units_nullable(con: sqlite3.Connection) -> None:
     bad = con.execute("PRAGMA foreign_key_check").fetchall()
     if bad:
         raise sqlite3.IntegrityError(f"remaking the units table left {len(bad)} rows referring to nothing")
+
+
+def _properties(row: dict) -> dict:
+    """A row with the columns of what was looked up through chemutils (`PROPERTY_COLUMNS`),
+    their ``<property>_measured`` as bools and ``<property>_details`` as read from JSON."""
+    for p in PROPERTY_COLUMNS:
+        row[f"{p}_measured"] = None if row[f"{p}_measured"] is None else bool(row[f"{p}_measured"])
+        row[f"{p}_details"] = row[f"{p}_details"] and json.loads(row[f"{p}_details"])
+    return row
 
 
 class Database:
@@ -653,12 +663,9 @@ class Database:
             ).fetchall()
         out = []
         for r in rows:
-            d = dict(r)
+            d = _properties(dict(r))
             del d["name_key"]
             d["aliases"] = json.loads(d["aliases"])
-            for p in PROPERTY_COLUMNS:
-                d[f"{p}_measured"] = None if d[f"{p}_measured"] is None else bool(d[f"{p}_measured"])
-                d[f"{p}_details"] = d[f"{p}_details"] and json.loads(d[f"{p}_details"])
             out.append(d)
         return out
 
@@ -704,6 +711,25 @@ class Database:
                 "ON CONFLICT (cid) DO UPDATE SET inchi = excluded.inchi, fetched_at = excluded.fetched_at",
                 [(cid, inchi, when) for cid, inchi in inchis.items()],
             )
+
+    def add_inchis(self, inchis: dict[int, str], when: str) -> None:
+        """Keep InChIs of CIDs that have none yet (e.g. of chemicals not in the odor table, as a
+        reference dataset gives them, to look up properties of them: see `save_property`)."""
+        with self.connect() as con:
+            con.executemany("INSERT INTO pubchem (cid, inchi, fetched_at) VALUES (?,?,?) ON CONFLICT (cid) DO NOTHING",
+                            [(cid, inchi, when) for cid, inchi in inchis.items()])
+
+    def chemicals(self, cids: Iterable[int]) -> dict[int, dict]:
+        """CID -> its InChI, and what was looked up for it through chemutils (as `list_odors`
+        gives them), of those of `cids` with an InChI."""
+        cids = sorted(set(cids))
+        out = {}
+        with self.connect() as con:
+            for i in range(0, len(cids), 500):
+                chunk = cids[i:i + 500]
+                for r in con.execute(f"SELECT * FROM pubchem WHERE cid IN ({', '.join('?' * len(chunk))})", chunk):
+                    out[r["cid"]] = _properties(dict(r))
+        return out
 
     def save_property(self, cid: int, prop: str, found: Optional[dict], when: str, chemutils: Optional[str] = None) -> None:
         """Save a property looked up for a CID with an InChI (`chemprops.look_up`).

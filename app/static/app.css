@@ -630,6 +630,17 @@ dialog.player::backdrop { background: rgba(29,31,34,.55); }
 .hs-table .hs-amount { font-weight: 600; }
 .hs-table tr.hs-total td { border-top: 1px solid var(--rule-strong); font-weight: 600; }
 .hs-options { margin-top: 14px; max-width: 640px; }
+.hs-vcf-options { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); max-width: 960px; }
+#hs-vcf-results h3 { margin: 22px 0 6px; }
+#hs-vcf-results h3 + .muted { margin-top: 0; }
+.hs-wide { overflow-x: auto; }
+.hs-scroll { max-height: 420px; overflow: auto; margin-top: 6px; }
+.hs-vcf-lines { margin-top: 14px; }
+.hs-vcf-lines summary { cursor: pointer; font-weight: 600; }
+.hs-table td.hs-ref { min-width: 240px; max-width: 480px; color: var(--ink-muted); }
+.hs-table td.hs-used { font-weight: 600; }
+.hs-table td.hs-by { white-space: nowrap; }
+.hs-table tr.hs-pending td { color: var(--ink-muted); }
 #hs-results { overflow-x: auto; }
 .hs-method summary { cursor: pointer; font-weight: 600; }
 .hs-method ul { padding-left: 20px; }

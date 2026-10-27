@@ -5408,6 +5408,330 @@ class HeadspacePage {
   }
 }
 
+// foods' volatiles from VCF, in the Headspace calculator: a search of its products, one
+// quantity of each chemical, the headspace over the samples and the paraffin oil to match
+const HS_VCF_KEY = 'olfdb.headspace.vcf';
+const HS_VCF_STATS = [['median', 'median'], ['mean', 'mean'], ['geomean', 'geometric mean'], ['max', 'maximum'], ['min', 'minimum']]; // (vcf.STATS)
+const HS_VCF_MAX_LINES = 2000; // matching lines shown (all of them in the CSV)
+const HS_VCF_MAX_COLUMNS = 8; // products, at most, each shown in a column of its own
+const HS_VCF_POLL_MS = 3000; // how often it asks again, while what oil needs is looked up
+const HS_MAX_ODORS = 50; // in a mixture (main.HEADSPACE_MAX_ODORS)
+const HS_VCF_LAW = { henry: "Henry's law", raoult: "vapor pressure (Raoult's law)" }; // (over the samples)
+const hsPlural = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
+const hsNotes = (notes) => (notes.length ? `<ul>${notes.map((t) => `<li>${t}</li>`).join('')}</ul>` : ''); // (each HTML)
+
+// a value linked to the first URL in where it is from (as VCF's file gives them), titled by all of that
+function sourceLink(html, source) {
+  const url = String(source || '').match(/https?:\/\/[^\s()]+/)?.[0];
+  if (url) return `<a href="${esc(url)}" target="_blank" rel="noopener" title="${esc(source)}">${html}</a>`;
+  return source ? `<span title="${esc(source)}">${html}</span>` : html;
+}
+
+class HeadspaceVcf {
+  constructor(page) {
+    this.page = page; // the Headspace calculator, whose mixture it can set
+    const saved = LS.get(HS_VCF_KEY, {});
+    this.sources = null; // the VCF reference datasets (/api/headspace/vcf)
+    this.savedSource = saved.source;
+    this.res = null; // the search shown
+    this.asked = null; // what it was of, as asked
+    this.seq = 0; // of the searches asked, so that only the last is shown
+    this.timer = null;
+    for (const [id, key] of [['#hs-vcf-refs', 'refs'], ['#hs-vcf-products', 'products']]) {
+      const sel = $(id);
+      sel.innerHTML = HS_VCF_STATS.map(([k, label]) => `<option value="${k}">${esc(label)}</option>`).join('');
+      sel.value = HS_VCF_STATS.some(([k]) => k === saved[key]) ? saved[key] : 'median';
+    }
+    const units = $('#hs-vcf-units');
+    units.innerHTML = HS_UNITS.map(([k, label]) => `<option value="${k}">${esc(label)}</option>`).join('');
+    units.value = HS_UNITS.some(([k]) => k === saved.units) ? saved.units : 'ppb';
+    units.addEventListener('change', () => { this.save(); this.render(); });
+    $('#hs-vcf-model').value = HS_MODELS.includes(saved.model) ? saved.model : '';
+    for (const id of ['#hs-vcf-refs', '#hs-vcf-products', '#hs-vcf-model', '#hs-vcf-source']) {
+      $(id).addEventListener('change', () => {
+        if (id === '#hs-vcf-source') this.fillNames();
+        this.save();
+        if (this.res) this.search();
+      });
+    }
+    const q = $('#hs-vcf-query');
+    q.value = saved.query || '';
+    q.addEventListener('input', () => this.renderState());
+    q.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); this.search(); } });
+    $('#hs-vcf-go').addEventListener('click', () => this.search());
+  }
+
+  save() {
+    LS.set(HS_VCF_KEY, { query: $('#hs-vcf-query').value, source: $('#hs-vcf-source').value || this.savedSource,
+      refs: $('#hs-vcf-refs').value, products: $('#hs-vcf-products').value, model: $('#hs-vcf-model').value, units: $('#hs-vcf-units').value });
+  }
+
+  // the VCF reference datasets, read once; a search whose oil was being looked up asked again
+  async load() {
+    if (this.sources) {
+      this.render();
+      if (this.res?.oil?.pending) this.search({ poll: true });
+      return;
+    }
+    const status = $('#hs-vcf-status');
+    status.textContent = "Reading VCF's foods…";
+    try {
+      ({ sources: this.sources } = await api('/api/headspace/vcf'));
+    } catch (e) { status.textContent = `Could not read VCF's foods: ${e.message}`; return; }
+    const ok = this.sources.filter((s) => !s.error);
+    const sel = $('#hs-vcf-source');
+    sel.innerHTML = this.sources.map((s) => `<option value="${esc(s.id)}"${s.error ? ' disabled' : ''}>${esc(s.title)}${s.error ? ` (${esc(s.error)})` : ''}</option>`).join('');
+    sel.value = (ok.find((s) => s.id === this.savedSource) || ok[0] || {}).id || '';
+    $('#hs-vcf-source-field').hidden = this.sources.length < 2;
+    this.fillNames();
+    status.textContent = !this.sources.length
+      ? "No VCF data yet: add VCF's CSV in the Admin tab (Reference data), as one value per line, with its k_henry and vapor_pressure columns."
+      : !ok.length ? `It cannot be read: ${this.sources[0].error}` : '';
+    this.renderState();
+  }
+
+  source() { return this.sources?.find((s) => s.id === $('#hs-vcf-source').value && !s.error) || null; }
+
+  // what can be searched for, suggested as it is typed: groups, categories and products
+  fillNames() {
+    const s = this.source();
+    const names = s ? [...new Set([...s.groups, ...s.categories, ...s.products])] : [];
+    $('#hs-vcf-names').innerHTML = names.map((n) => `<option value="${esc(n)}"></option>`).join('');
+  }
+
+  renderState() { $('#hs-vcf-go').disabled = !this.source() || !$('#hs-vcf-query').value.trim() || !!this.busy; }
+
+  // with `poll`, the search shown asked again (for what was looked up since), saying nothing while it is
+  async search({ poll = false } = {}) {
+    clearTimeout(this.timer);
+    const s = this.source(), query = $('#hs-vcf-query').value.trim();
+    if (!s || (!query && !poll)) return;
+    const json = poll ? this.asked : { source: s.id, query, across_references: $('#hs-vcf-refs').value,
+      across_products: $('#hs-vcf-products').value, model: $('#hs-vcf-model').value || null };
+    const seq = ++this.seq;
+    const status = $('#hs-vcf-status');
+    this.save();
+    if (!poll) {
+      this.busy = true;
+      this.renderState();
+      status.textContent = 'Searching…';
+    }
+    let res;
+    try {
+      res = await api('/api/headspace/vcf', { method: 'POST', json });
+    } catch (e) {
+      if (seq === this.seq) status.textContent = `Could not search: ${e.message}`;
+    } finally {
+      if (seq === this.seq) { this.busy = false; this.renderState(); }
+    }
+    if (seq !== this.seq || !res) return;
+    if (!poll) status.textContent = '';
+    this.res = res;
+    this.asked = json;
+    this.render();
+    if (res.oil?.pending) this.timer = setTimeout(() => { if (currentTab === 'headspace') this.search({ poll: true }); }, HS_VCF_POLL_MS);
+  }
+
+  // the search shown, its chemicals' headspace in the units chosen
+  render() {
+    const box = $('#hs-vcf-results');
+    const res = this.res;
+    if (!res) { box.hidden = true; box.innerHTML = ''; return; }
+    box.hidden = false;
+    const [unit, unitLabel, unitShort, of] = HS_UNITS.find(([k]) => k === $('#hs-vcf-units').value) || HS_UNITS[0];
+    const amount = (pa, mw) => (pa == null ? '' : unit === 'log10' ? (pa > 0 ? of(pa).toFixed(2) : '−∞') : sigHtml(of(pa, mw)));
+    const statLabel = (k) => HS_VCF_STATS.find(([s]) => s === k)?.[1] || k;
+    const { products, chemicals: chems, lines, references, oil } = res;
+    const several = products.length > 1, columns = several && products.length <= HS_VCF_MAX_COLUMNS;
+    const odors = this.page.odors;
+    const showAbbrev = abbrevShower([...(odors?.values() || [])].map((o) => o.abbrev));
+    const plural = hsPlural;
+    const name = (c) => (c.url ? `<a href="${esc(c.url)}" target="_blank" rel="noopener" title="Its page in VCF">${esc(c.name)}</a>` : esc(c.name));
+    const cid = (c) => (c.cid ? `<a href="https://pubchem.ncbi.nlm.nih.gov/compound/${c.cid}" target="_blank" rel="noopener">${c.cid}</a>` : '<span class="muted">none</span>');
+    const odor = (c) => {
+      const o = c.odor_id != null ? odors?.get(c.odor_id) : null;
+      return o ? `<a href="#odors/${o.id}" title="${esc(o.name)}">${esc(showAbbrev(o.abbrev) || o.name)}</a>` : '';
+    };
+    const productHeads = () => (columns ? products.map((p) => `<th class="num" title="${esc(p.name)}">${esc(p.name.length > 18 ? `${p.name.slice(0, 17)}…` : p.name)}</th>`).join('') : '');
+    const head = `<div class="step-head"><h2>VCF: ${esc(res.query)}</h2><span class="muted">${plural(lines.length, 'line')} of ${plural(products.length, 'product')}
+      (${plural(references.length, 'reference')}), ${plural(chems.length, 'chemical')}, in ${esc(res.source.title)}</span>
+      ${lines.length ? `<span class="hs-results-tools"><details class="menu menu-right" id="hs-vcf-download"><summary class="btn small">Download tables</summary>
+        <div class="menu-list">
+          <button type="button" data-vcf-file="chemicals">Per chemical (CSV)</button>
+          <button type="button" data-vcf-file="lines">Matching lines (CSV)</button>
+          <p class="menu-note">Per chemical: its quantity in the samples (and in each product's), the headspace over them in every unit${oil && !oil.error ? ', the v/v in paraffin oil' : ''}, and what was used.<br><br>Matching lines: as in VCF's file, all of them.</p>
+        </div></details></span>` : ''}</div>`;
+    if (!lines.length) {
+      box.innerHTML = `${head}<p class="muted">No product, category or group has “${esc(res.query)}” in it.</p>`;
+      return;
+    }
+
+    const productRows = products.map((p) => `<tr><td>${esc(p.name)}</td><td>${esc(p.category || '')}</td><td>${esc(p.group || '')}</td>
+      <td class="num">${p.references}</td><td class="num">${p.chemicals}</td><td class="num">${p.lines}</td></tr>`).join('');
+    const lineRows = lines.slice(0, HS_VCF_MAX_LINES).map(([ci, pi, ri, qty, v]) => `<tr><td>${esc(chems[ci].name)}</td>
+      <td>${esc(products[pi].name)}</td><td class="hs-ref">${esc(references[ri])}</td><td class="num">${esc(qty ?? '')}</td><td class="num">${sigHtml(v)}</td></tr>`).join('');
+    const per = (c) => new Map(c.per_product.map(([i, v, n], j) => [i, { ppm: v, refs: n, pa: c.per_product_pa[j] }]));
+
+    const liquidRows = chems.map((c) => {
+      const p = per(c);
+      return `<tr><td>${name(c)}</td><td class="num">${cid(c)}</td><td>${odor(c)}</td>
+        ${columns ? products.map((_, i) => `<td class="num">${p.has(i) ? `<span title="${plural(p.get(i).refs, 'reference')}">${sigHtml(p.get(i).ppm)}</span>` : ''}</td>`).join('') : ''}
+        <td class="num hs-amount">${c.ppm == null ? '<span class="muted">not quantified</span>' : sigHtml(c.ppm)}</td>
+        <td class="num">${c.references}${several ? ` <span class="muted">(${plural(c.products, 'product')})</span>` : ''}</td>
+        <td class="num">${c.min == null ? '' : c.min === c.max ? sigHtml(c.min) : `${sigHtml(c.min)} – ${sigHtml(c.max)}`}</td></tr>`;
+    }).join('');
+
+    // (the headspace, and the oil to match it, those with the most headspace first)
+    const order = chems.map((_, i) => i).sort((a, b) => (chems[b].pa ?? -1) - (chems[a].pa ?? -1));
+    const total = (pas) => {
+      const known = pas.filter(([pa]) => pa != null);
+      if (!known.length) return '';
+      return unit === 'ug_l' ? sigHtml(known.reduce((t, [pa, mw]) => t + (mw ? of(pa, mw) : 0), 0)) : amount(known.reduce((t, [pa]) => t + pa, 0));
+    };
+    const hsRows = order.map((i) => {
+      const c = chems[i], p = per(c);
+      const k = c.k_henry != null ? sourceLink(sigHtml(c.k_henry), c.k_henry_source) : '';
+      const vp = c.vapor_pressure != null ? sourceLink(sigHtml(c.vapor_pressure), c.vapor_pressure_source) : '';
+      return `<tr><td>${name(c)}</td><td class="hs-by">${c.law ? esc(HS_VCF_LAW[c.law]) : '<span class="muted">—</span>'}</td>
+        <td class="num${c.law === 'henry' ? ' hs-used' : ''}">${k}</td><td class="num${c.law === 'raoult' ? ' hs-used' : ''}">${vp}</td>
+        <td class="num">${c.molar_mass != null ? c.molar_mass.toFixed(2) : ''}</td>
+        ${columns ? products.map((_, j) => `<td class="num">${p.has(j) ? amount(p.get(j).pa, c.molar_mass) : ''}</td>`).join('') : ''}
+        <td class="num hs-amount">${amount(c.pa, c.molar_mass)}</td><td class="notes">${hsNotes([...c.notes, ...c.headspace_notes].map(esc))}</td></tr>`;
+    }).join('');
+    const computed = chems.filter((c) => c.pa != null);
+    const hsTotal = `<tr class="hs-total"><td colspan="5">All together${computed.length < chems.length ? ' (of those that could be computed)' : ''}</td>
+      ${columns ? products.map((_, j) => `<td class="num">${total(chems.map((c) => [per(c).get(j)?.pa ?? null, c.molar_mass]))}</td>`).join('') : ''}
+      <td class="num hs-amount">${total(chems.map((c) => [c.pa, c.molar_mass]))}</td><td></td></tr>`;
+
+    const across = `each reference's lines on a product averaged, the ${statLabel(this.asked.across_references)} of each product's references${several ? `, then the ${statLabel(this.asked.across_products)} of the products` : ''}, of those that quantify it`;
+    box.innerHTML = `${head}
+      <h3>Products</h3>
+      <div class="hs-wide"><table class="odor-table hs-table"><thead><tr><th>Product</th><th>Category</th><th>Group</th><th class="num">References</th>
+        <th class="num">Chemicals</th><th class="num">Lines</th></tr></thead><tbody>${productRows}</tbody></table></div>
+      <details class="hs-vcf-lines"><summary>Every matching line (${lines.length.toLocaleString()})</summary>
+        ${lines.length > HS_VCF_MAX_LINES ? `<p class="muted small">The first ${HS_VCF_MAX_LINES.toLocaleString()} of them: every one is in the CSV (Download tables).</p>` : ''}
+        <div class="hs-scroll"><table class="odor-table hs-table"><thead><tr><th>Chemical</th><th>Product</th><th>Reference</th>
+          <th class="num" title="As written in VCF">Quantity</th><th class="num" title="The reference dataset's value of the line">mg/kg</th></tr></thead><tbody>${lineRows}</tbody></table></div></details>
+      <h3>In the samples (mg/kg)</h3>
+      <p class="muted small">Of each chemical: ${across}${several && !columns ? `. Each product's are in the CSV (${products.length} products)` : ''}.</p>
+      <div class="hs-wide"><table class="odor-table hs-table"><thead><tr><th>Chemical</th><th class="num">CID</th><th title="The odor of the odor table it is">Odor</th>
+        ${productHeads()}<th class="num">${several ? 'All' : 'Quantity'} (mg/kg)</th><th class="num" title="Quantifying it: each a reference on a product">References</th>
+        <th class="num" title="Of its lines">Range</th></tr></thead><tbody>${liquidRows}</tbody></table></div>
+      <h3>Headspace over the samples, as water</h3>
+      <p class="muted small">At equilibrium at ${+res.temperature_c.toFixed(2)} °C, in ${esc(unitLabel)}: by Henry's law with the constant in VCF's file, else (by Raoult's law) its vapor pressure there; what is used is in bold.</p>
+      <div class="hs-wide"><table class="odor-table hs-table"><thead><tr><th>Chemical</th><th>By</th>
+        <th class="num" title="Henry's law solubility constant in water at 25 °C, as in VCF's file">K<sub>H</sub> in water (mol/m³/Pa)</th>
+        <th class="num" title="As in VCF's file">Vapor pressure (kPa)</th><th class="num" title="From its InChI">Molar mass (g/mol)</th>
+        ${productHeads()}<th class="num">Headspace (${esc(unitShort)})</th><th>Notes</th></tr></thead><tbody>${hsRows}${hsTotal}</tbody></table></div>
+      ${oil ? this.oilHtml(order, amount, unitShort) : ''}`;
+    wireMenu($('#hs-vcf-download', box), ({ vcfFile }) => this.downloadCsv(vcfFile));
+    $('#hs-vcf-mix', box)?.addEventListener('click', () => this.toMixture(order));
+  }
+
+  // the table of the v/v in paraffin oil that gives each chemical's headspace, in `order`
+  oilHtml(order, amount, unitShort) {
+    const { chemicals: chems, oil } = this.res;
+    if (oil.error) return `<h3>In paraffin oil, for the same headspace</h3><p class="msg warn">${esc(oil.error)}</p>`;
+    const link = (r, p, html) => (r.links?.[p] ? `<a href="${esc(r.links[p])}" target="_blank" rel="noopener">${html}</a>` : html);
+    const shown = order.filter((i) => oil.chemicals[i]);
+    const rows = shown.map((i) => {
+      const c = chems[i], r = oil.chemicals[i], pr = r.properties || {};
+      const vpTitle = r.vapor_pressure_source ? `Used to estimate its Henry's law constant: ${r.vapor_pressure_source}` : '';
+      const vpLink = r.vapor_pressure_source ? null : pr.vapor_pressure != null ? 'vapor_pressure' : 'est_vapor_pressure';
+      const vp = r.vapor_pressure == null ? ''
+        : `${vpLink ? link(r, vpLink, sigHtml(r.vapor_pressure)) : `<span title="${esc(vpTitle)}">${sigHtml(r.vapor_pressure)}</span>`}${measuredTag(r.vapor_pressure_measured, vpTitle)}`;
+      const kTitle = r.sources?.k_henry_pfo || '';
+      const k = r.law === 'henry' ? `<span title="${esc(kTitle)}">${sigHtml(r.k_henry)}</span>${measuredTag(r.k_henry_measured, kTitle)}`
+        : r.law ? '<span class="muted" title="Not by Henry\'s law: see its notes">—</span>' : '';
+      const dens = r.pending || !r.law ? '' : pr.density != null ? link(r, 'density', sigHtml(pr.density)) : '<span class="muted">1 (assumed)</span>';
+      const notes = [...r.notes.map(esc), ...Object.entries(r.failed || {}).map(([p, e]) => `${esc(HS_PROPS[p] || p)} could not be looked up:
+        <span class="muted" title="${esc(e)}">${esc(e.length > 90 ? `${e.slice(0, 90)}…` : e)}</span>`)];
+      return `<tr${r.pending ? ' class="hs-pending"' : ''}><td>${esc(c.name)}</td><td class="hs-by">${r.law ? esc({ henry: "Henry's law", raoult: "Raoult's law" }[r.law]) : ''}</td>
+        <td class="num">${k}</td><td class="num">${vp}</td><td class="num">${dens}</td><td class="num">${amount(c.pa, c.molar_mass)}</td>
+        <td class="num hs-amount">${r.log10_conc == null ? '' : esc(shortConc(r.log10_conc))}</td><td class="notes">${hsNotes(notes)}</td></tr>`;
+    }).join('');
+    const done = order.filter((i) => oil.chemicals[i]?.log10_conc != null);
+    const totalRow = done.length > 1 ? `<tr class="hs-total"><td colspan="6">All together${done.length < shown.length ? ' (of those that could be computed)' : ''}</td>
+      <td class="num hs-amount">${esc(shortConc(Math.log10(oil.total)))}</td><td class="notes">${oil.total > 1 ? 'more than the whole solution: they cannot all be in it' : `${sigHtml(oil.total * 100)}% of the solution`}</td></tr>` : '';
+    const mix = this.mixable(order);
+    const how = oil.model === 'henry' ? "by Henry's law, with constants estimated by chemutils" : "by Raoult's law only";
+    return `<h3>In paraffin oil, for the same headspace</h3>
+      <p class="muted small">Every chemical with a headspace, together in paraffin oil ${how} (as the mixture above computes it, backwards).
+        The odors of the odor table among them can be made the mixture above, to see or change.</p>
+      ${oil.pending ? `<p class="msg info">Looking up what is needed in oil of ${oil.pending} of them through chemutils, in the background:
+        a few seconds each, the first time (kept). This updates as they come.</p>` : ''}
+      <div class="hs-wide"><table class="odor-table hs-table"><thead><tr><th>Chemical</th><th>By</th>
+        <th class="num" title="Henry's law solubility constant in paraffin oil at 25 °C, estimated by chemutils">K<sub>H</sub> in oil (mol/m³/Pa)</th>
+        <th class="num" title="As used: from PubChem, else estimated from its structure; by Henry's law, the one its constant was estimated with">Vapor pressure (kPa)</th>
+        <th class="num">Density (g/mL)</th><th class="num" title="Over the samples">Headspace (${esc(unitShort)})</th><th>log<sub>10</sub> conc. (v/v)</th><th>Notes</th></tr></thead>
+        <tbody>${rows}${totalRow}</tbody></table></div>
+      <div class="actions"><button type="button" class="btn" id="hs-vcf-mix"${mix.picked.length ? '' : ' disabled'}>Make them the mixture</button>
+        <span class="muted small">${mix.picked.length ? `the ${hsPlural(mix.picked.length, 'odor')} of the odor table among them${mix.over ? ` with the most headspace (at most ${HS_MAX_ODORS})` : ''}` : 'none of them is an odor of the odor table'}</span></div>`;
+  }
+
+  // the chemicals whose v/v in oil was computed that are odors of the odor table (once each, at
+  // most `HS_MAX_ODORS`, those with the most headspace first): their indices, and whether more are
+  mixable(order) {
+    const { chemicals: chems, oil } = this.res;
+    const seen = new Set(), picked = [];
+    for (const i of order) {
+      const id = chems[i].odor_id;
+      if (oil.chemicals[i]?.log10_conc == null || id == null || !this.page.odors?.has(id) || seen.has(id)) continue;
+      seen.add(id);
+      picked.push(i);
+    }
+    return { picked: picked.slice(0, HS_MAX_ODORS), over: picked.length > HS_MAX_ODORS };
+  }
+
+  // the mixture above made of them, in paraffin oil, by the model used
+  toMixture(order) {
+    const { chemicals: chems, oil, query } = this.res;
+    const { picked, over } = this.mixable(order);
+    const page = this.page;
+    page.components = picked.map((i) => ({ odor_id: chems[i].odor_id, log10_conc: String(+oil.chemicals[i].log10_conc.toFixed(3)) }));
+    page.solventChosen = true;
+    $('#hs-solvent').value = 'paraffin oil';
+    $('#hs-model').value = oil.model;
+    const n = oil.chemicals.filter((r) => r?.log10_conc != null).length;
+    const note = $('#hs-panel-note');
+    note.hidden = false;
+    note.textContent = `From VCF, “${query}”: ${picked.length} of the ${n} chemicals computed in paraffin oil (those that are odors of the odor table${over ? `, the ${HS_MAX_ODORS} with the most headspace` : ''}), at the v/v that gives each its headspace over the samples.`;
+    page.changed();
+    $('#hs-mixture').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  downloadCsv(which) {
+    const { products, chemicals: chems, lines, references, oil, query } = this.res;
+    const stem = `vcf_${query.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'search'}`;
+    const odor = (c) => (c.odor_id != null ? this.page.odors?.get(c.odor_id)?.name ?? '' : '');
+    let rows;
+    if (which === 'lines') {
+      rows = [['chemical', 'inchi', 'cid', 'odor', 'product', 'category', 'group', 'reference', 'quantity', 'mg_kg'],
+        ...lines.map(([ci, pi, ri, qty, v]) => {
+          const c = chems[ci], p = products[pi];
+          return [c.name, c.inchi ?? '', c.cid ?? '', odor(c), p.name, p.category ?? '', p.group ?? '', references[ri], qty ?? '', v ?? ''];
+        })];
+    } else {
+      const withOil = oil && !oil.error;
+      rows = [['chemical', 'inchi', 'cid', 'odor', 'molar_mass_g_mol', 'lines', 'references', 'products', 'min_mg_kg', 'max_mg_kg', 'mg_kg',
+        ...products.map((p) => `mg_kg ${p.name}`), 'law', 'k_henry_mol_m3_pa', 'k_henry_source', 'vapor_pressure_kpa', 'vapor_pressure_source',
+        ...HS_UNITS.map(([k]) => `headspace_${k}`), ...products.map((p) => `headspace_pa ${p.name}`), 'notes',
+        ...(withOil ? ['oil_law', 'oil_k_henry_mol_m3_pa', 'oil_vapor_pressure_kpa', 'oil_density_g_ml', 'oil_log10_conc', 'oil_notes'] : [])]];
+      chems.forEach((c, i) => {
+        const per = new Map(c.per_product.map(([j, v], n) => [j, [v, c.per_product_pa[n]]]));
+        const r = withOil ? oil.chemicals[i] : null;
+        rows.push([c.name, c.inchi ?? '', c.cid ?? '', odor(c), c.molar_mass ?? '', c.lines, c.references, c.products, c.min ?? '', c.max ?? '', c.ppm ?? '',
+          ...products.map((_, j) => per.get(j)?.[0] ?? ''), c.law ?? '', c.k_henry ?? '', c.k_henry_source ?? '', c.vapor_pressure ?? '',
+          c.vapor_pressure_source ?? '', ...HS_UNITS.map(([, , , f]) => (c.pa == null ? '' : f(c.pa, c.molar_mass) ?? '')),
+          ...products.map((_, j) => per.get(j)?.[1] ?? ''), [...c.notes, ...c.headspace_notes].join('; '),
+          ...(withOil ? (r ? [r.law ?? '', r.k_henry ?? '', r.vapor_pressure ?? '', r.properties?.density ?? '', r.log10_conc ?? '', r.notes.join('; ')]
+            : ['', '', '', '', '', '']) : [])]);
+      });
+    }
+    saveBlob(new Blob([`${rows.map((l) => l.map(csvCell).join(',')).join('\n')}\n`], { type: 'text/csv' }), `${stem}_${which}.csv`);
+  }
+}
+
 // ==================================================================== router
 const upload = new UploadFlow();
 const browse = new Browse();
@@ -5417,6 +5741,7 @@ const mergePage = new MergePage();
 const comparePage = new ComparePage();
 const settings = new SettingsPage();
 const headspacePage = new HeadspacePage();
+const headspaceVcf = new HeadspaceVcf(headspacePage);
 const admin = new AdminPage();
 const player = new MoviePlayer($('#player'), { api, esc, fmtBytes });
 
@@ -5435,7 +5760,7 @@ function route() {
   if (name === 'odors') { odorsPage.highlightId = id ? +id : null; odorsPage.load().then(() => { if (id) odorsPage.highlight(+id); }); }
   if (name === 'reference') { reference.load().then(() => { if (id) reference.show(id); }); }
   if (name === 'settings') settings.load();
-  if (name === 'headspace') headspacePage.load();
+  if (name === 'headspace') headspacePage.load().then(() => headspaceVcf.load());
   if (name === 'merge') mergePage.load();
   if (name === 'compare') comparePage.load();
   if (name === 'browse' && !id) { $('#browse-empty').hidden = false; $('#dataset-view').hidden = true; browse.selected = null; }

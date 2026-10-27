@@ -20,6 +20,7 @@ import socket
 import sqlite3
 import threading
 import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
@@ -36,7 +37,8 @@ from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, R
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import backup, chemprops, compare, config, export, filelog, headspace, merge, movies, odormeta, reference, sandbox, tensor, thorimage, yamlcheck
+from . import (backup, chemprops, compare, config, export, filelog, headspace, merge, movies, odormeta, reference, sandbox, tensor,
+               thorimage, vcf, yamlcheck)
 from .db import PANEL_RENAMES, PROPERTY_COLUMNS, Database, rename_panel
 from .glomeruli import load_glomeruli
 from .ingest import (ParsedData, ValidationError, combine, extra_text, files_text, fly_key, kc_id_problems, load_file,
@@ -1681,6 +1683,159 @@ async def headspace_file(request: Request) -> Response:
     return Response(text, media_type=media_type, headers={"content-disposition": f'attachment; filename="{name}"'})
 
 
+
+VCF_MAX_OIL = 500  # chemicals with a headspace over their samples, at most, to calculate in paraffin oil
+VCF_LOOKUP_BATCH = 10  # CIDs looked up through chemutils at once for VCF's chemicals (`_vcf_look_up`)
+# CID -> (CID, InChI, properties) of VCF's chemicals to look up in the background, for the
+# paraffin oil to match their headspace, and those being looked up (`_vcf_look_up`)
+_vcf_queue: "OrderedDict[int, tuple[int, str, list[str]]]" = OrderedDict()
+_vcf_busy: set[int] = set()
+_vcf_lock = threading.Lock()
+_vcf_worker = {"running": False}
+
+
+def _vcf_look_up() -> None:
+    """Look up through chemutils what was asked for of VCF's chemicals (`_vcf_queue`), a few
+    CIDs at a time (each property saved as it comes), until nothing is left."""
+    while True:
+        with _vcf_lock:
+            _vcf_busy.clear()
+            if not _vcf_queue:
+                _vcf_worker["running"] = False
+                return
+            batch = [_vcf_queue.popitem(last=False)[1] for _ in range(min(VCF_LOOKUP_BATCH, len(_vcf_queue)))]
+            _vcf_busy.update(cid for cid, _, _ in batch)
+        try:
+            _look_up_properties(batch)
+        except Exception:
+            log.exception("could not look up properties of VCF's chemicals")
+
+
+def _vcf_oil(chemicals: list[dict], model: str) -> dict:
+    """The paraffin oil that would give the headspace over VCF's samples (`vcf.search`'s
+    ``chemicals``, each with its ``pa``): the v/v of each in it (`headspace.invert`, of them
+    all together, with its molar mass from its InChI), from what is known of each, the rest
+    queued to be looked up through chemutils in the background (`_vcf_look_up`).
+
+    Returns:
+        ``model``, ``chemicals`` (of each given, in order: `headspace.invert`'s, with
+        ``properties``, ``sources``, ``links`` and ``failed`` as `_headspace` gives them, and
+        ``pending``: whether its properties are being looked up; None for those with no
+        headspace), ``total`` (v/v, of those computed), ``pending`` (how many are being
+        looked up) and ``error`` (if there are too many to compute).
+    """
+    targets = [c for c in chemicals if c["pa"] is not None]
+    if len(targets) > VCF_MAX_OIL:
+        return {"model": model, "chemicals": [None] * len(chemicals), "total": None, "pending": 0,
+                "error": f"{len(targets):,} chemicals with a headspace, and at most {VCF_MAX_OIL} are calculated in oil: narrow the search"}
+    ids = {c["cid"]: c["inchi"] for c in targets if c["cid"] and c["inchi"]}
+    rows = db.chemicals(ids)
+    if missing := {cid: inchi for cid, inchi in ids.items() if cid not in rows}:
+        db.add_inchis(missing, when=dt.datetime.now().isoformat(timespec="seconds"))
+        rows.update(db.chemicals(missing))
+    now = time.time()
+    needs = lambda row: [p for p in _headspace_properties(row, "paraffin oil", model) if p != "molar_mass"]  # (from the InChI)
+    with _vcf_lock:
+        for cid, row in rows.items():
+            if cid not in _vcf_queue and cid not in _vcf_busy and (todo := _to_look_up(row, needs(row), now)):
+                _vcf_queue[cid] = (cid, row["inchi"], todo)
+        pending = {cid for cid in rows if cid in _vcf_queue or cid in _vcf_busy}
+        start = bool(_vcf_queue) and not _vcf_worker["running"]
+        _vcf_worker["running"] |= start
+    if start:
+        threading.Thread(target=_vcf_look_up, name="vcf-properties", daemon=True).start()
+
+    inputs, extra = [], []
+    for c in chemicals:
+        row = rows.get(c["cid"]) if c["pa"] is not None else None
+        if c["pa"] is None:
+            inputs.append({"pa": None})
+            extra.append(None)
+            continue
+        if row is None:
+            inputs.append({"pa": None})
+            extra.append({"properties": {}, "sources": {}, "links": {}, "failed": {}, "pending": False,
+                          "notes": ["no CID or InChI in the file, so nothing could be looked up of it in oil"]})
+            continue
+        props = needs(row)
+        values = {p: row[PROPERTY_COLUMNS[p]] for p in props}
+        known = {f"{p}_{k}": row[f"{p}_{k}"] for p in props for k in ("measured", "details")}
+        waiting = c["cid"] in pending
+        inputs.append({"pa": None if waiting else c["pa"], "molar_mass": c["molar_mass"], **values, **known})
+        failed = {p: " ".join(_props_failed[(c["cid"], p)][1].split())[:300] for p in props
+                  if values[p] is None and (c["cid"], p) in _props_failed}
+        extra.append({"properties": values, "sources": {p: row[f"{p}_source"] for p in props},
+                      "links": {p: odormeta.property_link(row, p) for p in props}, "failed": failed, "pending": waiting,
+                      "notes": ["being looked up through chemutils"] if waiting else []})
+    result = headspace.invert(inputs, "paraffin oil", model)
+    out = []
+    for r, e in zip(result["components"], extra):
+        out.append(None if e is None else {**r, **e, "notes": e["notes"] + r["notes"]})
+    return {"model": model, "chemicals": out, "total": result["total"], "pending": len(pending), "error": None}
+
+
+def _vcf_sources() -> list[dict]:
+    return vcf.sources(reference.entries(db))
+
+
+def _vcf_listing() -> list[dict]:
+    """The VCF reference datasets (`vcf.sources`), for the Headspace calculator: each ``id``,
+    ``title``, and how many ``lines`` and ``chemicals`` it has, with the names of its
+    ``products``, ``categories`` and ``groups`` (to search for); or ``error``, why it
+    cannot be read."""
+    out = []
+    for s in _vcf_sources():
+        try:
+            t = vcf.load(s)
+        except Exception as e:
+            out.append({"id": s["id"], "title": s["title"], "error": reference._read_error(Path(s["path"]), e)})
+            continue
+        out.append({"id": s["id"], "title": s["title"], "lines": len(t["lines"]), "chemicals": len(t["chemicals"]), **t["names"]})
+    return out
+
+
+def _vcf_search(body: dict) -> dict:
+    """`vcf.search` of a VCF reference dataset (``source``, its id; else the first of
+    `vcf.sources`) for ``query``, its quantities reduced ``across_references`` and
+    ``across_products``, each chemical with the odor of the odor table it is (``odor_id``,
+    matched as reference datasets' are), and with ``model`` (of `headspace.MODELS`), the
+    paraffin oil to match its headspace (``oil``: `_vcf_oil`). With its ``source``
+    (``id``, ``title``).
+
+    Raises:
+        vcf.VcfError: if there is no such VCF reference dataset, or for `vcf.search`'s.
+    """
+    sources = _vcf_sources()
+    source = next((s for s in sources if s["id"] == body.get("source")), None) if body.get("source") else next(iter(sources), None)
+    if source is None:
+        raise vcf.VcfError("no such VCF reference dataset" if body.get("source") else
+                           "no VCF reference dataset: add one in the Admin tab (Reference data)")
+    res = vcf.search(vcf.load(source), str(body.get("query") or ""), body.get("across_references") or "median",
+                     body.get("across_products") or "median")
+    index = odormeta.OdorIndex(db.list_odors())
+    for c in res["chemicals"]:
+        c["odor_id"] = index.match_chemical({k: c[k] for k in ("cid", "inchi", "name") if c[k]}, c["name"])[0]
+    if body.get("model"):
+        res["oil"] = _vcf_oil(res["chemicals"], body["model"])
+    return {**res, "source": {"id": source["id"], "title": source["title"]}, "temperature_c": headspace.T_K - 273.15}
+
+
+async def headspace_vcf(request: Request) -> Response:
+    """GET: the VCF reference datasets to search (`_vcf_listing`). POST: a search of one
+    ({"source", "query", "across_references", "across_products" (of `vcf.STATS`), "model"
+    (of `headspace.MODELS`, or null)}) -> `_vcf_search`."""
+    if request.method == "GET":
+        return JSONResponse({"sources": await run_in_threadpool(_vcf_listing), "stats": vcf.STATS, "max_oil": VCF_MAX_OIL})
+    body = await request.json()
+    if not isinstance(body, dict):
+        return json_error(400, 'expected {"source", "query", "across_references", "across_products", "model"}')
+    if body.get("model") is not None and body["model"] not in headspace.MODELS:
+        return json_error(400, f"the model is one of {', '.join(headspace.MODELS)}")
+    try:
+        return JSONResponse(await run_in_threadpool(_vcf_search, body))
+    except vcf.VcfError as e:
+        return json_error(400, str(e))
+
 async def odors_file(request: Request) -> Response:
     """The odor table as a file to save: a CSV or a LaTeX table (`export.odor_table_download`;
     ``q`` for the odors the Odors tab's filter shows for it, ``lower=1`` for abbreviations in
@@ -2333,6 +2488,7 @@ routes = [
     Route("/api/headspace", headspace_calc, methods=["POST"]),
     Route("/api/headspace.{fmt}", headspace_file),
     Route("/api/headspace/panels", headspace_panels),
+    Route("/api/headspace/vcf", headspace_vcf, methods=["GET", "POST"]),
     Route("/api/reference", reference_list),
     Route("/api/reference/{ref_id}", reference_get),
     Route("/api/admin", admin_get),

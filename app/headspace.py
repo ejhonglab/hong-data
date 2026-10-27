@@ -22,6 +22,10 @@ converts them to other units), from the properties of each looked up through che
 - An odor's vapor pressure is the one PubChem gives, else one estimated from its structure
   (SIMPOL.1); in oil by Henry's law, the one chemutils estimated the constant with. Its
   density, if none is found, is taken as `DEFAULT_DENSITY`.
+
+Also (`sample`) the headspace over samples taken as water, of volatiles quantified by mass
+(mg/kg, as VCF gives them for foods: `vcf.py`), and (`invert`) the concentrations of odors
+in a solvent that give a headspace, e.g. a food's.
 """
 from __future__ import annotations
 
@@ -63,6 +67,35 @@ def _vapor_pressure(c: dict, notes: list[str]) -> tuple[Optional[float], Optiona
         notes.append("no vapor pressure found, so estimated from its structure (SIMPOL.1)")
         return c["est_vapor_pressure"], False
     return None, None
+
+
+def _law(c: dict, solvent: str, henry: Optional[str], r: dict) -> None:
+    """How an odor's headspace over a solvent is computed, into `r` (as `calculate` gives
+    it): ``law`` ('henry' if `henry`, the property with its Henry's law constant there, is
+    known of it, else 'raoult'), ``k_henry`` and ``k_henry_measured`` (by Henry's law),
+    the vapor pressure used and whether it was measured (by Henry's law, at most it), and
+    what was assumed (``notes``)."""
+    details = (c.get(f"{henry}_details") or {}) if henry else {}
+    if henry and c.get(henry):
+        r.update(law="henry", k_henry=c[henry], k_henry_measured=c.get(f"{henry}_measured"))
+        if details.get("vapor_pressure_kpa") is not None:  # (the one the constant was estimated with)
+            r.update(vapor_pressure=details["vapor_pressure_kpa"], vapor_pressure_measured=details.get("vapor_pressure_measured"),
+                     vapor_pressure_source=details.get("vapor_pressure_source"))
+        else:
+            r["vapor_pressure"], r["vapor_pressure_measured"] = _vapor_pressure(c, r["notes"])
+        if details.get("notes"):
+            r["notes"].append(details["notes"])
+        return
+    r["law"] = "raoult"
+    if solvent == "water":
+        r["notes"].append("no Henry's law constant found, so as an ideal solution (Raoult's law): "
+                          "likely too low, unless it is very soluble in water")
+    elif henry:
+        why = f" ({details['notes']})" if details.get("notes") else ""
+        r["notes"].append(f"no Henry's law constant could be estimated in oil{why}, so as an ideal solution (Raoult's law)")
+    r["vapor_pressure"], r["vapor_pressure_measured"] = _vapor_pressure(c, r["notes"])
+    if r["vapor_pressure"] is None:
+        r["notes"].append("no vapor pressure, so its headspace cannot be computed")
 
 
 def calculate(components: list[dict], solvent: str, model: str = MODELS[0]) -> dict:
@@ -119,31 +152,131 @@ def calculate(components: list[dict], solvent: str, model: str = MODELS[0]) -> d
         if n is None:
             continue
         r["mole_fraction"] = n / n_total
-        details = (c.get(f"{henry}_details") or {}) if henry else {}
-        if henry and c.get(henry):
-            r.update(law="henry", k_henry=c[henry], k_henry_measured=c.get(f"{henry}_measured"))
-            if details.get("vapor_pressure_kpa") is not None:  # (the one the constant was estimated with)
-                r.update(vapor_pressure=details["vapor_pressure_kpa"], vapor_pressure_measured=details.get("vapor_pressure_measured"),
-                         vapor_pressure_source=details.get("vapor_pressure_source"))
-            else:
-                r["vapor_pressure"], r["vapor_pressure_measured"] = _vapor_pressure(c, r["notes"])
-            if details.get("notes"):
-                r["notes"].append(details["notes"])
-            r["pa"] = n * 1e6 / c[henry]  # mol/mL as mol/m³, over mol/m³/Pa
+        _law(c, solvent, henry, r)
+        if r["law"] == "henry":
+            r["pa"] = n * 1e6 / r["k_henry"]  # mol/mL as mol/m³, over mol/m³/Pa
             if r["vapor_pressure"] is not None and r["pa"] > r["vapor_pressure"] * 1e3:
                 r["pa"] = r["vapor_pressure"] * 1e3
                 r["notes"].append(f"more than {solvent} dissolves by Henry's law, so at its vapor pressure")
+        elif r["vapor_pressure"] is not None:
+            r["pa"] = r["mole_fraction"] * r["vapor_pressure"] * 1e3
+    return {"components": out, "total_pa": sum(r["pa"] for r in out if r["pa"] is not None)}
+
+
+def sample(components: list[dict]) -> list[dict]:
+    """The headspace over samples taken as water (e.g. foods, as VCF quantifies their volatiles:
+    `vcf.py`), each volatile on its own (they are dilute): by Henry's law, else (with no
+    constant) by Raoult's law for an ideal solution, which is too low for volatiles not
+    very soluble in water.
+
+    Args:
+        components: each with ``ppm`` (mg/kg of the sample), ``molar_mass`` (g/mol),
+            ``k_henry`` (in water, mol/m³/Pa) and ``vapor_pressure`` (kPa); None where not known.
+
+    Returns:
+        For each, in order: ``pa`` (its partial pressure in the headspace, Pa; None if it
+        cannot be computed), ``law`` ('henry', 'raoult' or None) and ``notes``.
+    """
+    m_water, rho_water = SOLVENTS["water"]
+    out = []
+    for c in components:
+        r = {"pa": None, "law": None, "notes": []}
+        out.append(r)
+        mass, k, vp = c.get("molar_mass"), c.get("k_henry"), c.get("vapor_pressure")
+        if not mass:
+            r["notes"].append("no molar mass, so its headspace cannot be computed")
             continue
-        r["law"] = "raoult"
-        if solvent == "water":
+        if c["ppm"] >= 1e6:
+            r["notes"].append("more than the whole sample (more than 10⁶ mg/kg: likely in other units), so not computed")
+            continue
+        n = c["ppm"] * 1e-3 / mass  # mol/kg of the sample
+        if k:
+            r["law"] = "henry"
+            r["pa"] = n * rho_water * 1e3 / k  # mol/m³ over mol/m³/Pa
+            if vp is not None and r["pa"] > vp * 1e3:
+                r["pa"] = vp * 1e3
+                r["notes"].append("more than water dissolves by Henry's law, so at its vapor pressure")
+        elif vp is not None:
+            r["law"] = "raoult"
             r["notes"].append("no Henry's law constant found, so as an ideal solution (Raoult's law): "
                               "likely too low, unless it is very soluble in water")
-        elif henry:
-            why = f" ({details['notes']})" if details.get("notes") else ""
-            r["notes"].append(f"no Henry's law constant could be estimated in oil{why}, so as an ideal solution (Raoult's law)")
-        r["vapor_pressure"], r["vapor_pressure_measured"] = _vapor_pressure(c, r["notes"])
-        if r["vapor_pressure"] is None:
-            r["notes"].append("no vapor pressure, so its headspace cannot be computed")
+            r["pa"] = n / (n + (1 - c["ppm"] * 1e-6) * 1e3 / m_water) * vp * 1e3
+        else:
+            r["notes"].append("no Henry's law constant or vapor pressure found, so its headspace cannot be computed")
+    return out
+
+
+def invert(components: list[dict], solvent: str = "paraffin oil", model: str = MODELS[0]) -> dict:
+    """The concentrations (v/v) of odors diluted together in a solvent that give each a
+    headspace: `calculate` backwards (of the mixture of those that can be computed).
+
+    By Henry's law, an odor's concentration is from its own headspace alone; by Raoult's
+    law, from its mole fraction, x = p / p_sat, so that with every odor's moles n (with
+    those of the solvent) N = (n_solvent (1 - F_H) + n_H) / (1 - Σ x (1 - n_solvent / n_pure)),
+    over those by Raoult's law (F_H and n_H the volume and moles of those by Henry's, and
+    each n the moles of a mL, pure).
+
+    Args:
+        components: each with ``pa`` (its headspace, Pa; None to leave it out) and its
+            properties, as `calculate` takes them.
+        solvent: of `SOLVENTS`.
+        model: of `MODELS`, for paraffin oil.
+
+    Returns:
+        dict with ``components``, one for each given, in order: ``log10_conc`` (its
+        concentration, log10 v/v; None if it cannot be computed or reached), as
+        `calculate` gives them but ``pa`` (as given); and ``total`` (the v/v of those
+        computed, together; more than 1 if they cannot be).
+    """
+    m_solvent, rho_solvent = SOLVENTS[solvent]
+    a_solvent = rho_solvent / m_solvent  # (mol/mL, pure)
+    henry = HENRY_PROPERTIES[solvent] if solvent == "water" or model == "henry" else None
+    out, pure = [], []
+    for c in components:
+        r = {"log10_conc": None, "pa": c.get("pa"), "law": None, "mole_fraction": None, "vapor_pressure": None,
+             "vapor_pressure_measured": None, "vapor_pressure_source": None, "k_henry": None, "k_henry_measured": None,
+             "notes": []}
+        out.append(r)
+        pure.append(None)
+        if r["pa"] is None:
             continue
-        r["pa"] = r["mole_fraction"] * r["vapor_pressure"] * 1e3
-    return {"components": out, "total_pa": sum(r["pa"] for r in out if r["pa"] is not None)}
+        if r["pa"] <= 0:
+            r["notes"].append("no headspace, so none of it")
+            continue
+        rho = c.get("density")
+        if rho is None:
+            rho = DEFAULT_DENSITY
+            r["notes"].append(f"no density found, so taken as {DEFAULT_DENSITY:g} g/mL")
+        if not c.get("molar_mass"):
+            r["notes"].append("no molar mass, so its concentration cannot be computed")
+            continue
+        _law(c, solvent, henry, r)
+        if r["law"] == "raoult" and r["vapor_pressure"] is None:
+            continue
+        if r["vapor_pressure"] is not None and r["pa"] >= r["vapor_pressure"] * 1e3:
+            r["notes"].append("its headspace is at least its vapor pressure, so it cannot be reached in a solution")
+            continue
+        pure[-1] = rho / c["molar_mass"]
+
+    fraction = [None] * len(out)
+    for i, (r, a) in enumerate(zip(out, pure)):
+        if a is not None and r["law"] == "henry":
+            fraction[i] = r["pa"] * r["k_henry"] / 1e6 / a
+    by_raoult = [i for i, (r, a) in enumerate(zip(out, pure)) if a is not None and r["law"] == "raoult"]
+    f_henry = sum(f for f in fraction if f is not None)
+    n_henry = sum(f * pure[i] for i, f in enumerate(fraction) if f is not None)
+    x = {i: out[i]["pa"] / (out[i]["vapor_pressure"] * 1e3) for i in by_raoult}
+    rest = 1 - sum(x[i] * (1 - a_solvent / pure[i]) for i in by_raoult)
+    n_total = (a_solvent * (1 - f_henry) + n_henry) / rest if rest > 0 else None
+    for i in by_raoult:
+        if n_total is None:
+            out[i]["notes"].append("together, more than the whole solution would be needed by Raoult's law, so not computed")
+        else:
+            fraction[i] = x[i] * n_total / pure[i]
+    if n_total is None:  # (the mole fractions of those by Henry's law, without those by Raoult's)
+        n_total = a_solvent * (1 - f_henry) + n_henry
+    for r, f, a in zip(out, fraction, pure):
+        if f is not None:
+            r["log10_conc"] = math.log10(f)
+            r["mole_fraction"] = f * a / n_total
+    return {"components": out, "total": sum(f for f in fraction if f is not None)}

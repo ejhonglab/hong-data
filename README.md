@@ -38,6 +38,8 @@ expected, and nothing secret is entered. If a download or the page is blocked, s
 7. **Headspace calculator**: search for odors of the odor table to put in a mixture (or
    start from a panel's odors), give each a concentration (log10 v/v, as in your data),
    and calculate how much of each is in the air above it (in ppm, µg/L and other units).
+   Below it, search VCF's foods (e.g. `kiwi`) for their volatiles, the headspace over
+   them, and the dilutions in paraffin oil that would give the same headspace.
 
 ### Browser warnings
 
@@ -455,6 +457,24 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   units chosen, linked, measured values and estimates marked). The mixture, solvent,
   model and units are kept in this browser. How it is computed, and what it leaves out:
   [design.md](design.md#headspace-calculator).
+  - *Foods' volatiles (VCF)*: needs a reference dataset of VCF's CSV (Admin tab: one value
+    per line, e.g. rows `name` with `inchi`, columns `product_name`, values `mid_ppm`)
+    whose file also has `k_henry` and `vapor_pressure` columns (with their `_units` and
+    `_sources`). Typed text is matched against every product's name, category and group
+    (suggested as you type). Shown: the products matched, every matching line, each
+    chemical's quantity in the samples (mg/kg: each reference's lines on a product
+    averaged, then the median of a product's references, then of the products; or the
+    mean, geometric mean, maximum or minimum), and the headspace over the samples taken
+    as water, by the file's Henry's law constant, else its vapor pressure (Raoult's law),
+    saying which. With up to 8 products, each product's values are columns too. If
+    chosen, also the v/v of each in paraffin oil, all together, that gives the same
+    headspace (by Henry's law with chemutils' estimated constants, or Raoult's law only);
+    what that needs of each chemical is looked up through chemutils in the background
+    the first time (a few seconds a chemical, at most 500 chemicals a search), and the
+    table fills in as it comes. *Make them the mixture* puts those that are odors of the
+    odor table (at most 50) in the mixture above, at those v/v. "Download tables" saves
+    a CSV per chemical (each product's values, the headspace in every unit, the oil) or
+    of the matching lines.
 - **Admin** (to the right of Docs; it first asks whether you are Tom, Jon or Betty, or
   have asked one of them): settings for the whole site.
   - *Folders on the server* the app may read (by default tensor) and also write (none

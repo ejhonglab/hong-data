@@ -550,6 +550,36 @@
 
     <div class="step" id="hs-results" hidden></div>
 
+    <div class="step" id="hs-vcf">
+      <div class="step-head"><h2>Foods' volatiles (VCF)</h2></div>
+      <p class="muted">The volatiles of foods, as <a href="https://www.vcf-online.nl" target="_blank" rel="noopener">VCF</a> gives them (mg/kg) in a reference dataset of its quantities: those of every product whose name, category or group has what you type, one quantity of each chemical from them, the headspace over the samples (taken as water) and the paraffin oil that would give the same headspace.</p>
+      <div class="hs-start">
+        <div class="hs-add">
+          <label class="field"><span>Search products, categories or groups</span>
+            <input type="search" id="hs-vcf-query" list="hs-vcf-names" placeholder="e.g. kiwi, banana, Fruits…" autocomplete="off"></label>
+          <datalist id="hs-vcf-names"></datalist>
+        </div>
+        <label class="field" id="hs-vcf-source-field" hidden><span>From</span><select id="hs-vcf-source"></select></label>
+      </div>
+      <div class="grid hs-options hs-vcf-options">
+        <label class="field"><span>Across a product's references</span><select id="hs-vcf-refs"></select></label>
+        <label class="field"><span>Then across products</span><select id="hs-vcf-products"></select></label>
+        <label class="field"><span>Paraffin oil for the same headspace</span>
+          <select id="hs-vcf-model">
+            <option value="">Not calculated</option>
+            <option value="henry" title="Henry's law constants in oil estimated by chemutils (modified UNIFAC)">By Henry's law (estimated constants)</option>
+            <option value="raoult" title="An ideal solution">By Raoult's law only</option>
+          </select></label>
+        <label class="field"><span>Headspace in</span><select id="hs-vcf-units"></select></label>
+      </div>
+      <div class="actions">
+        <button type="button" class="btn primary" id="hs-vcf-go" disabled>Search</button>
+        <span class="muted" id="hs-vcf-status" aria-live="polite"></span>
+      </div>
+    </div>
+
+    <div class="step" id="hs-vcf-results" hidden></div>
+
     <details class="step hs-method">
       <summary>How it is computed</summary>
       <ul>
@@ -558,6 +588,8 @@
         <li><b>In water</b>, by Henry's law: each odor's partial pressure is its concentration in the water over its Henry's law solubility constant (from <a href="https://henrys-law.org" target="_blank" rel="noopener">henrys-law.org</a>, else NIST), but at most its vapor pressure. With no constant found, as an ideal solution, as in oil, which is likely too low unless it mixes well with water.</li>
         <li>Vapor pressures are from PubChem (the mean of its values at or near 25 °C), else estimated from the structure (SIMPOL.1, often within 3×, but several times too low for e.g. furans, tertiary alcohols and some phenols); in oil by Henry's law, the one chemutils estimated the constant with (fit to measurements by <code>thermo</code> where it can be, else as above). With no density found, 1 g/mL is assumed.</li>
         <li>A panel's mixture: the odors presented in it (in every dataset with that panel) that are in the odor table with a CID, but solvents, each at the highest concentration presented.</li>
+        <li><b>Foods' volatiles (VCF)</b>: of every product whose name, category or group has what is typed, each chemical's quantities (mg/kg, as the reference dataset's values, e.g. the middle of a range) are averaged over each reference's lines on a product, reduced across the product's references (the median, by default), then across products, each over those that quantify it. The headspace over a sample takes it as water (0.997 g/mL): by Henry's law with the constant in VCF's file (from henrys-law.org, else NIST), at most its vapor pressure; with none, by Raoult's law with the file's vapor pressure (which is too low for most volatiles, which are less soluble in water than an ideal solution); with neither, none. Each chemical on its own: they are dilute. Molar masses are from their InChIs' formulas.</li>
+        <li><b>Paraffin oil for the same headspace</b>: the v/v of each chemical, all together in oil, that gives its headspace over the samples, by the model chosen, as the mixture above computes it backwards: by Henry's law from its own headspace, by Raoult's law from its mole fraction. What it needs of each (density, vapor pressure, Henry's law constant in oil) is looked up through chemutils, in the background the first time (a few seconds a chemical), and kept. A headspace of at least a chemical's vapor pressure cannot be reached in a solution.</li>
         <li>Concentrations in the air are at 1 atm and 25 °C: ppm and ppb as parts of the air by volume (moles), mol/L and molecules/cm³ by the ideal gas law. At equilibrium, in a closed vial: air flowing over the liquid, and diluting it after, lowers what reaches the fly.</li>
       </ul>
       <p class="muted">For more details, see <a href="https://github.com/ejhonglab/hong-data/blob/main/design.md#headspace-calculator" target="_blank" rel="noopener">Headspace calculator</a> in the design notes.</p>
