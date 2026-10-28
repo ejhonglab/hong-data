@@ -191,6 +191,14 @@ between the frontend and the server. Using the app is described in
   a download. The Admin tab can refuse new names with capitals (in uploads and in the
   odor sheet) while allowing any already in the database, so that the names in use
   can stay as they are while new ones are kept lowercase.
+- **Light or dark from color tokens.** Every color of the page is a variable on `:root`
+  in `app.css`, given again under `:root[data-theme="dark"]`. `data-theme` is set by a
+  script in `index.html`'s head, before the page is drawn (so that it never flashes the
+  other theme), from Settings (kept in the browser), else the system's or browser's
+  `prefers-color-scheme`. `app.js` keeps it up to date as either changes, and says so
+  (`olfdb-theme` on `window`) so that canvases, whose colors are read from the tokens
+  when drawn (heatmaps, colorbars), are drawn again. Exported figures keep their own
+  light colors (`figure.js`), and chemical structures (black on white) are inverted.
 - **The laser wavelength is never read from `Experiment.xml`**: ThorImage's
   `MultiPhotonLaser` value does not follow changes made to the wavelength at the laser,
   so the wavelength is only ever entered in the form.

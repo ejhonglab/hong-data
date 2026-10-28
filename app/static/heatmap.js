@@ -36,6 +36,9 @@ export class Heatmap {
     this._hover = null;
     this.mark = null; // {rows, cols}: indices of a row and a column shaded (see setMark)
     this._build();
+    // drawn again in the colors of a new theme (app.js's 'olfdb-theme'), while on the page
+    const onTheme = () => (this.container.isConnected ? this._schedule() : window.removeEventListener('olfdb-theme', onTheme));
+    window.addEventListener('olfdb-theme', onTheme);
   }
 
   _build() {
@@ -446,7 +449,7 @@ export class Heatmap {
     const { cellW, cellH } = this.options;
     const mk = this.mark;
     if (mk) {
-      ctx.fillStyle = hc.fillStyle = 'rgba(0,0,0,0.1)';
+      ctx.fillStyle = hc.fillStyle = cssVar(this.container, '--hm-shade', 'rgba(0,0,0,0.1)');
       if (mk.rows != null) ctx.fillRect(0, mk.rows * cellH - this.scroll.scrollTop, this.viewW, cellH);
       const x = this.labelW + mk.cols * cellW - this.scroll.scrollLeft;
       if (mk.cols != null && x > this.labelW - cellW) {
@@ -463,7 +466,7 @@ export class Heatmap {
     ctx.lineWidth = 2;
     ctx.strokeRect(x + 1, y + 1, cellW - 2, cellH - 2);
     // faint crosshair along the row and column
-    ctx.fillStyle = 'rgba(0,0,0,0.06)';
+    ctx.fillStyle = cssVar(this.container, '--hm-crosshair', 'rgba(0,0,0,0.06)');
     ctx.fillRect(this.labelW, y, this.viewW - this.labelW, cellH);
     ctx.fillRect(x, 0, cellW, this.viewH);
   }

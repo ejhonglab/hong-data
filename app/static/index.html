@@ -5,6 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Odor response database</title>
 <link rel="stylesheet" href="/static/app.css">
+<script>/* the theme, before the page is drawn: Settings', else the system's or browser's (as app.js's applyTheme) */
+try {
+  const theme = JSON.parse(localStorage.getItem('olfdb.display') || '{}').theme;
+  document.documentElement.dataset.theme = theme === 'light' || theme === 'dark' ? theme
+    : matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+} catch { /* light; app.js sets it */ }
+</script>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='7' height='7' fill='%23c0392b'/%3E%3Crect x='9' width='7' height='7' fill='%23e8e8e8'/%3E%3Crect y='9' width='7' height='7' fill='%23e8e8e8'/%3E%3Crect x='9' y='9' width='7' height='7' fill='%232c5aa0'/%3E%3C/svg%3E">
 </head>
 <body>
@@ -437,7 +444,7 @@
   <section id="tab-settings" class="tab" hidden>
     <div class="page-head">
       <h1>Settings</h1>
-      <p class="lede">Who you are and where your data is on tensor, so that the upload form can fill itself in, and how odors are shown to you. Your folders are saved on the server under your name; the rest is kept on this computer only.</p>
+      <p class="lede">Who you are and where your data is on tensor, so that the upload form can fill itself in, and how odors (and the page, light or dark) are shown to you. Your folders are saved on the server under your name; the rest is kept on this computer only.</p>
     </div>
 
     <div class="step" id="settings-folders">
@@ -501,6 +508,11 @@
 
     <div class="step" id="settings-display">
       <div class="step-head"><h2>Display</h2></div>
+      <div class="grid">
+        <label class="field"><span>Theme</span>
+          <select id="settings-theme"><option value="system">As this computer's system or browser</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
+      </div>
+      <p class="muted">Kept on this computer only. Exported figures are always light.</p>
       <label class="check"><input type="checkbox" id="settings-lower-odors"> Odor names (abbreviations) in lowercase</label>
       <p class="muted">Kept on this computer only. Odor names as in datasets (e.g. <code>IaA @ -3</code> as <code>iaa @ -3</code>) and the odor table's abbreviations, wherever they are shown (Browse, Compare, Reference data, the Odors tab) and in every download but of the original files. Names that differ from another shown with them only in case are left as they are, so that no two odors look the same. The upload form shows a file's odors as they are in it.</p>
     </div>

@@ -14,9 +14,22 @@ const LS = {
 };
 
 // How odors are shown, as chosen in Settings (kept in this browser): lowerOdors, their
-// names (abbreviations) in lowercase, in downloads too but of the original files
+// names (abbreviations) in lowercase, in downloads too but of the original files; and the
+// theme: 'system' (as the system or browser is set), 'light' or 'dark'
 const DISPLAY_KEY = 'olfdb.display';
-const display = { lowerOdors: false, ...LS.get(DISPLAY_KEY, {}) };
+const display = { lowerOdors: false, theme: 'system', ...LS.get(DISPLAY_KEY, {}) };
+
+// the theme shown (index.html's script sets it first, before the page is drawn): when it
+// changes, 'olfdb-theme' on window, so that canvases are drawn again in its colors
+const darkQuery = matchMedia('(prefers-color-scheme: dark)');
+function applyTheme() {
+  const theme = display.theme === 'light' || display.theme === 'dark' ? display.theme : darkQuery.matches ? 'dark' : 'light';
+  if (document.documentElement.dataset.theme === theme) return;
+  document.documentElement.dataset.theme = theme;
+  window.dispatchEvent(new Event('olfdb-theme'));
+}
+darkQuery.addEventListener('change', applyTheme);
+applyTheme();
 
 // odor names (abbreviations) as shown in lowercase: each lowercased, but for those that
 // would then be the same as another (differing from it only in case), which are left as
@@ -691,6 +704,7 @@ class MatrixViewer {
     });
     this.heatmap.scroll.addEventListener('scroll', () => this._linkScroll(), { passive: true });
     this.colorbar = $('.colorbar', container);
+    window.addEventListener('olfdb-theme', () => { if (this.lut) drawColorbar(this.colorbar, this.lut, this.norm); });
     const saved = LS.get('olfdb.viewer', {});
     this.opts = Object.assign(
       {
@@ -3158,6 +3172,9 @@ class SettingsPage {
     const lower = $('#settings-lower-odors');
     lower.checked = display.lowerOdors;
     lower.addEventListener('change', () => { display.lowerOdors = lower.checked; displayChanged(); });
+    const theme = $('#settings-theme');
+    theme.value = display.theme;
+    theme.addEventListener('change', () => { display.theme = theme.value; LS.set(DISPLAY_KEY, display); applyTheme(); });
   }
 
   // what the upload form is filled in from

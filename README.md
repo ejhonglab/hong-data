@@ -235,7 +235,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   e.g. `IaA @ -3` as `iaa @ -3`, in Browse, Compare, Reference data and the Odors tab,
   and in every download but of the original files. Names that differ from another
   shown (or downloaded) with them only in case stay as they are, so that no two odors
-  become one. The upload form shows a file's odors as they are in it.
+  become one. The upload form shows a file's odors as they are in it. The page is light
+  or dark as your system or browser is set, unless chosen there (in this browser only;
+  exported figures are always light).
 - **Browse** (and the Compare tab's list): datasets grouped by panel (the panels the
   upload form gave, else the file's; those named with "diag" last, in light gray), by
   the month of their last fly, by uploader (each one's newest upload first) or by the
