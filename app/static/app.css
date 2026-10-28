@@ -644,6 +644,7 @@ dialog.player::backdrop { background: rgba(29,31,34,.55); }
 .hs-mismatch { color: var(--warn); font-size: 11px; white-space: nowrap; }
 .hs-table tr.hs-pending td { color: var(--ink-muted); }
 .hs-dilute-options { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); max-width: 960px; }
+.hs-dilute-total { margin-top: 12px; }
 .hs-table td.hs-off { color: var(--danger); font-weight: 600; }
 .hs-table td.hs-vials { white-space: nowrap; }
 #hs-results { overflow-x: auto; }

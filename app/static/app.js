@@ -5596,13 +5596,16 @@ class HeadspaceDilutions {
         <td class="num">${n ? `${n} × ${hsVolume(o.dilution_ul)} µL` : '<span class="muted">none</span>'}</td>
         <td class="hs-vials">${vials}</td><td class="notes">${hsNotes(o.notes.map(esc))}</td></tr>`;
     }).join('');
+    const total = res.odors.reduce((sum, o) => sum + o.vials.length, 0);
     $('#hs-dilute-out').innerHTML = `${outside}
       <p>Into each vial, <b>${(t.ml * t.density).toPrecision(4)} g</b> of ${esc(this.solvent)} (${+t.ml.toPrecision(4)} mL at ${+t.density.toPrecision(4)} g/mL);
         then into the first, the neat chemical${into}. The last vial has the concentration.</p>
       <div class="hs-wide"><table class="odor-table hs-table"><thead><tr><th>Odor</th><th>log<sub>10</sub> conc. (v/v)</th>
         <th title="Into the first vial">Neat chemical (µL)</th><th title="How many, of how much of the vial before">Dilutions</th>
         <th title="As pipetted (volumes taken as additive), the first with the neat chemical">Vials (log<sub>10</sub> v/v)</th><th>Notes</th></tr></thead>
-      <tbody>${rows}</tbody></table></div>`;
+      <tbody>${rows}</tbody></table></div>
+      <p class="hs-dilute-total">In all, <b>${hsPlural(total, 'vial')}</b>, each with an aliquot of ${+t.ml.toPrecision(4)} mL of solvent:
+        ${(total * t.ml * t.density).toPrecision(4)} g of ${esc(this.solvent)}.</p>`;
   }
 }
 

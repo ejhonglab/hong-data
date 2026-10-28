@@ -466,7 +466,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   - *Serial dilutions*: for each odor of the mixture with a concentration, the µL of its
     neat chemical into the first of its vials, how many dilutions of how many µL of each
     vial into the next, and each vial's concentration, in the mixture's solvent: each vial
-    gets the same weight of it (2 mL at 0.85 g/mL of paraffin oil by default, as typed).
+    gets the same weight of it (2 mL at 0.85 g/mL of paraffin oil by default, as typed);
+    then how many vials (aliquots of solvent) they take in all, and how much solvent.
     The neat chemical's volume is kept from 2 to 200 µL (as typed), and the dilutions are
     of one volume for every odor where they can be, with the fewest dilutions, then as
     large volumes as can be. The dilutions' least (100 µL by default, so as not to pipette
