@@ -550,6 +550,46 @@ that polar odors are less soluble in oil than an ideal solution, so it is too lo
 them. Neither models air flowing over the vial (which depletes the headspace) or
 diluting it before it reaches the fly.
 
+### Serial dilutions
+
+Below the mixture, how to make each of its odors at its concentration from the neat
+chemical (`dilution.py`, in the server, so that it is tested; `POST
+/api/headspace/dilutions` as typed), in the mixture's solvent, each in vials of its own:
+into each vial the same weight of solvent (a volume, 2 mL by default, by its density:
+paraffin oil's 0.85 g/mL, water's 0.997, as typed), then the neat chemical (into the
+first) or some of the vial before. Volumes are taken as additive, so v µL into V µL of
+solvent dilutes by v / (v + V), not v / V: 2 µL of the neat chemical into 2 mL is -3.0004.
+
+- **The neat chemical's volume** changes from odor to odor, within its limits (2 to 200
+  µL by default, so from -3.0 to -1.04 in 2 mL): an odor within them needs no dilution;
+  one above them cannot be made in one vial's solvent (what it would need is said).
+- **The dilutions' volume** is the same for every dilution of every odor where it can be,
+  so that their pipette can be left on one setting (as diluting viscous paraffin oil is
+  most of the work). Of round volumes (1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8 × 10^k µL),
+  and those that just make an odor's concentration with the most or least of its neat
+  chemical (for neat chemicals' limits too narrow for round volumes), it is chosen: so
+  that as many odors as can be are made within the neat chemical's limits; within the
+  dilutions' limits (by default from 100 µL, or a vial's solvent if less, to a vial's
+  solvent), unless none within them does as well; the same for as many odors as can be
+  (each volume so in turn, of those left: a volume of their own only where no one volume
+  makes them all); with the fewest dilutions; with the least volume pipetted (of the neat
+  chemicals and the dilutions) as large as can be, as pipettes are least precise at
+  their least, then the next least, and so on; then round (so only between volumes as
+  good by all else, e.g. a dilutions' least typed as 23.7 µL is kept over 25). With d =
+  log10((v + V) / v) the decades a dilution takes, an odor at c needs the fewest n with
+  c + n·d at least the neat chemical's least; any d no more than the neat chemical's
+  range (1.96 decades by default, any v of at least 22 µL in 2 mL) makes every odor, but
+  a larger d (a smaller v) can take fewer dilutions: e.g. -4.2 and -6 take one and three
+  of 100 µL, one and two of 20 µL, or one each of 2 µL. The least by default, 100 µL, is
+  so that viscous paraffin oil is not pipetted in volumes too small to pipette well; as
+  smaller dilutions need more of each neat chemical (for as many dilutions), the volume
+  chosen is mostly that least.
+- **Volumes** are rounded to 3 significant digits, as pipettes are set, and the
+  concentrations of the vials shown are from them as rounded.
+
+What is left out: the volume taken out of each vial before the last (it does not change
+the next's concentration), and mixing the odors in one vial (each is made on its own).
+
 ### Foods' volatiles (VCF)
 
 Below the mixture, a search of VCF's foods (`vcf.py`): of a reference dataset of one value
@@ -626,6 +666,7 @@ app/chemprops.py   odors' vapor pressures, molar masses, densities and Henry's l
                    chemutils in a process of its own
 app/headspace.py   headspace concentrations of odors diluted together (Headspace calculator), over samples
                    taken as water, and the concentrations giving a headspace
+app/dilution.py    serial dilutions of odors from their neat chemicals (Headspace calculator)
 app/vcf.py         VCF's foods, from a reference dataset of its quantities: search, one quantity per chemical
 app/tensor.py      users' folders on tensor: path checks, finding a dataset's flies, recordings, YAMLs
 app/sandbox.py     folders the server may read and write (Admin tab): settings, path checks, Landlock
@@ -754,6 +795,10 @@ POST   /api/headspace                       {"solvent": "paraffin oil" or "water
                                             the mixture of each odor, with the properties used,
                                             where they are from and whether measured
 GET    /api/headspace/panels                the panels of the datasets as mixtures
+POST   /api/headspace/dilutions             {"targets": [log10 v/v, ...], "solvent_ml", "neat_ul":
+                                            [least, most], "dilution_ul": [least or null, most or
+                                            null]}: for each, the µL of its neat chemical, of the
+                                            dilutions, and the log10 v/v of each vial
 GET    /api/headspace/vcf                   the VCF reference datasets to search, with the names of
                                             their products, categories and groups
 POST   /api/headspace/vcf                   {"source", "query", "across_references", "across_products",

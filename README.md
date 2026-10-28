@@ -38,7 +38,8 @@ expected, and nothing secret is entered. If a download or the page is blocked, s
 7. **Headspace calculator**: search for odors of the odor table to put in a mixture (or
    start from a panel's odors), give each a concentration (log10 v/v, as in your data),
    and calculate how much of each is in the air above it (in ppm, µg/L and other units).
-   Below it, search VCF's foods (e.g. `kiwi`) for their volatiles, the headspace over
+   Below it, how to make each odor from its neat chemical by serial dilutions; then
+   search VCF's foods (e.g. `kiwi`) for their volatiles, the headspace over
    them, and the dilutions in paraffin oil that would give the same headspace.
 
 ### Browser warnings
@@ -462,6 +463,17 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   units chosen, linked, measured values and estimates marked). The mixture, solvent,
   model and units are kept in this browser. How it is computed, and what it leaves out:
   [design.md](design.md#headspace-calculator).
+  - *Serial dilutions*: for each odor of the mixture with a concentration, the µL of its
+    neat chemical into the first of its vials, how many dilutions of how many µL of each
+    vial into the next, and each vial's concentration, in the mixture's solvent: each vial
+    gets the same weight of it (2 mL at 0.85 g/mL of paraffin oil by default, as typed).
+    The neat chemical's volume is kept from 2 to 200 µL (as typed), and the dilutions are
+    of one volume for every odor where they can be, with the fewest dilutions, then as
+    large volumes as can be. The dilutions' least (100 µL by default, so as not to pipette
+    very little paraffin oil; a smaller one can take fewer dilutions) and most (optional:
+    a vial's solvent) are kept to only where every odor can still be made within the
+    neat chemical's limits. What is typed is kept in this browser. How they are chosen:
+    [design.md](design.md#serial-dilutions).
   - *Foods' volatiles (VCF)*: needs a reference dataset of VCF's CSV (Admin tab: one value
     per line, e.g. rows `name` with `inchi`, columns `product_name`, values `mid_ppm`)
     whose file also has `k_henry` and `vapor_pressure` columns (with their `_units` and

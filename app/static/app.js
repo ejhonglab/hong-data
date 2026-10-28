@@ -5282,9 +5282,10 @@ class HeadspacePage {
     if (rerender) this.renderComponents();
     this.renderState();
     this.renderResults();
+    this.onChange?.();
   }
 
-  render() { this.renderComponents(); this.renderState(); this.renderResults(); }
+  render() { this.renderComponents(); this.renderState(); this.renderResults(); this.onChange?.(); }
 
   add(id) {
     this.components.push({ odor_id: id, log10_conc: '' });
@@ -5473,6 +5474,135 @@ class HeadspacePage {
     const query = `solvent=${encodeURIComponent(solvent)}${model ? `&model=${model}` : ''}`
       + `&odors=${comps.map(([id, c]) => `${id}:${c}`).join(',')}&units=${unit}${lowerQuery('&')}`;
     wireMenu($('#hs-download', box), ({ odorFormat }) => download(`/api/headspace.${odorFormat}?${query}`, $('#hs-dl-status', box)));
+  }
+}
+
+// serial dilutions of the mixture's odors from their neat chemicals, in the Headspace
+// calculator: each in vials of its own, of the same weight of solvent (/api/headspace/dilutions)
+const HS_DILUTE_KEY = 'olfdb.headspace.dilute';
+const HS_DENSITY = { 'paraffin oil': 0.85, water: 0.997 }; // g/mL, by default
+// its inputs: [selector, saved as, default where blank (null: the server's, dilution.DILUTION_UL for the dilutions'
+// least, or their most if less; else no limit)] (dilution.SOLVENT_ML, NEAT_UL)
+const HS_DILUTE_FIELDS = [['#hs-dilute-ml', 'ml', 2], ['#hs-dilute-neat-min', 'neatMin', 2], ['#hs-dilute-neat-max', 'neatMax', 200],
+  ['#hs-dilute-min', 'min', null], ['#hs-dilute-max', 'max', null]];
+const hsVolume = (v) => String(+v.toPrecision(3)); // (µL, as pipetted)
+const hsLog = (v) => v.toFixed(2).replace('-', '−');
+
+class HeadspaceDilutions {
+  constructor(page) {
+    this.page = page; // the Headspace calculator, whose mixture it makes
+    const saved = LS.get(HS_DILUTE_KEY, {});
+    this.density = { ...Object.fromEntries(Object.entries(HS_DENSITY).map(([k, v]) => [k, String(v)])), ...saved.density }; // (as typed, by solvent)
+    this.cache = new Map(); // the plans asked for since the page was opened, by what of
+    this.seq = 0; // of those asked, so that only the last is shown
+    this.timer = null;
+    this.solvent = null; // the one whose density is shown
+    for (const [id, key, dflt] of HS_DILUTE_FIELDS) $(id).value = saved[key] ?? dflt ?? '';
+    $('#hs-dilute').addEventListener('input', (e) => {
+      if (e.target.id === 'hs-dilute-density') this.density[this.solvent] = e.target.value;
+      this.save();
+      this.update();
+    });
+    page.onChange = () => this.update();
+  }
+
+  save() {
+    LS.set(HS_DILUTE_KEY, { density: this.density, ...Object.fromEntries(HS_DILUTE_FIELDS.map(([id, key]) => [key, $(id).value])) });
+  }
+
+  // the mixture or what is typed changed: its solvent shown at once, the plan in a moment
+  update() {
+    const solvent = $('#hs-solvent').value === 'water' ? 'water' : 'paraffin oil';
+    if (solvent !== this.solvent) {
+      this.solvent = solvent;
+      $('#hs-dilute-solvent').textContent = solvent;
+      $('#hs-dilute-density-label').textContent = `${solvent === 'water' ? "Water's" : "Paraffin oil's"} density (g/mL)`;
+      $('#hs-dilute-density').value = this.density[solvent] ?? '';
+      $('#hs-dilute-density').placeholder = String(HS_DENSITY[solvent]);
+    }
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.ask(), 200);
+  }
+
+  // what is typed: each field's number (its default where blank), else why not
+  _typed() {
+    const fields = [['#hs-dilute-density', 'density', HS_DENSITY[this.solvent]], ...HS_DILUTE_FIELDS];
+    const t = {}, bad = [];
+    for (const [id, key, dflt] of fields) {
+      const el = $(id), typed = el.value.trim();
+      const v = typed === '' && !el.validity.badInput ? dflt : +typed;
+      const ok = v == null || (Number.isFinite(v) && v > 0);
+      el.classList.toggle('invalid', !ok);
+      if (!ok) bad.push(el.closest('label').querySelector('span').textContent);
+      t[key] = v;
+    }
+    if (bad.length) t.error = `Give ${bad.join(', ')} as a number more than 0.`;
+    else if (t.neatMin > t.neatMax) t.error = "The neat chemical's least is more than its most.";
+    else if (t.min != null && t.max != null && t.min > t.max) t.error = "The dilutions' least is more than their most.";
+    else if (t.ml > 1000) t.error = 'At most 1,000 mL of solvent in each vial.'; // (main.DILUTION_MAX_ML)
+    return t;
+  }
+
+  async ask() {
+    const out = $('#hs-dilute-out'), status = $('#hs-dilute-status');
+    const comps = this.page.components;
+    const given = comps.map((c) => ({ odor_id: c.odor_id, conc: hsConc(c.log10_conc) })).filter((c) => c.conc != null);
+    const t = this._typed();
+    if (!given.length || t.error) {
+      this.seq++;
+      out.innerHTML = '';
+      status.textContent = t.error || (comps.length ? 'Give the odors of the mixture their concentrations to see how to make each.'
+        : 'Add odors to the mixture above, with their concentrations, to see how to make each.');
+      return;
+    }
+    const json = { targets: given.map((c) => c.conc), solvent_ml: t.ml, neat_ul: [t.neatMin, t.neatMax], dilution_ul: [t.min, t.max] };
+    const key = JSON.stringify(json);
+    const seq = ++this.seq;
+    if (!this.cache.has(key)) {
+      try {
+        this.cache.set(key, await api('/api/headspace/dilutions', { method: 'POST', json }));
+      } catch (e) {
+        if (seq === this.seq) { status.textContent = `Could not plan them: ${e.message}`; out.innerHTML = ''; }
+        return;
+      }
+    }
+    if (seq !== this.seq) return;
+    const odors = this.page.odors, showAbbrev = abbrevShower([...(odors?.values() || [])].map((o) => o.abbrev));
+    const left = comps.filter((c) => hsConc(c.log10_conc) == null).map((c) => { const o = odors?.get(c.odor_id); return o ? showAbbrev(o.abbrev) || o.name : `odor #${c.odor_id}`; });
+    status.textContent = left.length ? `Left out, with no concentration yet: ${left.join(', ')}.` : '';
+    this.render(this.cache.get(key), given, t);
+  }
+
+  render(res, given, t) {
+    const odors = this.page.odors;
+    const showAbbrev = abbrevShower([...(odors?.values() || [])].map((o) => o.abbrev));
+    const label = (id) => { const o = odors?.get(id); return o ? showAbbrev(o.abbrev) || o.name : `odor #${id}`; };
+    const neat = `${hsVolume(t.neatMin)}–${hsVolume(t.neatMax)} µL`;
+    const [lo, hi] = res.dilution_limits;
+    const vols = res.volumes;
+    const into = !vols.length ? ''
+      : vols.length === 1 ? `, and into each next, <b>${hsVolume(vols[0].ul)} µL</b> of the vial before`
+      : `, and into each next, of the vial before: ${vols.map((v) => `<b>${hsVolume(v.ul)} µL</b> for ${esc(v.odors.map((i) => label(given[i].odor_id)).join(', '))}`).join('; ')}
+        (no one volume within the dilutions’ limits makes every odor with ${neat} of its neat chemical)`;
+    const outside = vols.filter((v) => !v.within).map((v) => `<p class="msg warn">No volume of dilutions from ${hsVolume(lo)} to ${hsVolume(hi)} µL makes
+      ${esc(v.odors.map((i) => label(given[i].odor_id)).join(', '))} with ${neat} of ${v.odors.length === 1 ? 'its' : 'their'} neat chemical${v.odors.length === 1 ? '' : 's'}, so ${hsVolume(v.ul)} µL.</p>`).join('');
+    const rows = res.odors.map((o, i) => {
+      const id = given[i].odor_id, od = odors?.get(id);
+      const n = Math.max(o.vials.length - 1, 0);
+      const vials = o.vials.map((v, j) => (j === n ? `<b>${hsLog(v)}</b>` : hsLog(v))).join(' → ');
+      return `<tr><td><a href="#odors/${id}">${esc(od?.name || `odor #${id}`)}</a>${od?.abbrev ? ` <span class="muted">${esc(showAbbrev(od.abbrev))}</span>` : ''}</td>
+        <td class="num">${esc(shortConc(given[i].conc))}</td>
+        <td class="num${o.ok ? '' : ' hs-off'}">${o.neat_ul == null ? '<span class="muted">itself</span>' : hsVolume(o.neat_ul)}</td>
+        <td class="num">${n ? `${n} × ${hsVolume(o.dilution_ul)} µL` : '<span class="muted">none</span>'}</td>
+        <td class="hs-vials">${vials}</td><td class="notes">${hsNotes(o.notes.map(esc))}</td></tr>`;
+    }).join('');
+    $('#hs-dilute-out').innerHTML = `${outside}
+      <p>Into each vial, <b>${(t.ml * t.density).toPrecision(4)} g</b> of ${esc(this.solvent)} (${+t.ml.toPrecision(4)} mL at ${+t.density.toPrecision(4)} g/mL);
+        then into the first, the neat chemical${into}. The last vial has the concentration.</p>
+      <div class="hs-wide"><table class="odor-table hs-table"><thead><tr><th>Odor</th><th>log<sub>10</sub> conc. (v/v)</th>
+        <th title="Into the first vial">Neat chemical (µL)</th><th title="How many, of how much of the vial before">Dilutions</th>
+        <th title="As pipetted (volumes taken as additive), the first with the neat chemical">Vials (log<sub>10</sub> v/v)</th><th>Notes</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
   }
 }
 
@@ -5844,6 +5974,7 @@ const comparePage = new ComparePage();
 const settings = new SettingsPage();
 const headspacePage = new HeadspacePage();
 const headspaceVcf = new HeadspaceVcf(headspacePage);
+const headspaceDilutions = new HeadspaceDilutions(headspacePage);
 const admin = new AdminPage();
 const player = new MoviePlayer($('#player'), { api, esc, fmtBytes });
 

@@ -550,6 +550,28 @@
 
     <div class="step" id="hs-results" hidden></div>
 
+    <div class="step" id="hs-dilute">
+      <div class="step-head"><h2>Serial dilutions</h2></div>
+      <p class="muted">How to make each odor of the mixture above at its concentration from its neat chemical, in <b id="hs-dilute-solvent">paraffin oil</b> (the mixture's solvent), each in vials of its own: into each vial, the same weight of solvent, then the neat chemical (into the first) or some of the vial before. The neat chemical's volume changes from odor to odor; every dilution is of one volume where it can be, so that its pipette can be left on one setting.</p>
+      <div class="grid hs-options hs-dilute-options">
+        <label class="field"><span id="hs-dilute-density-label">Paraffin oil's density (g/mL)</span>
+          <input type="number" id="hs-dilute-density" step="any" min="0" placeholder="0.85"></label>
+        <label class="field"><span>Solvent in each vial (mL, weighed)</span>
+          <input type="number" id="hs-dilute-ml" step="any" min="0" placeholder="2"></label>
+        <label class="field"><span>Neat chemical: at least (µL)</span>
+          <input type="number" id="hs-dilute-neat-min" step="any" min="0" placeholder="2"></label>
+        <label class="field"><span>Neat chemical: at most (µL)</span>
+          <input type="number" id="hs-dilute-neat-max" step="any" min="0" placeholder="200"></label>
+        <label class="field"><span>Dilutions: at least (µL)</span>
+          <input type="number" id="hs-dilute-min" step="any" min="0" placeholder="100"></label>
+        <label class="field"><span>Dilutions: at most (µL)</span>
+          <input type="number" id="hs-dilute-max" step="any" min="0" placeholder="a vial's solvent"></label>
+      </div>
+      <p class="muted small">The dilutions' limits are kept to only where every odor can still be made within the neat chemical's.</p>
+      <p class="muted" id="hs-dilute-status" aria-live="polite"></p>
+      <div id="hs-dilute-out"></div>
+    </div>
+
     <div class="step" id="hs-vcf">
       <div class="step-head"><h2>Foods' volatiles (VCF)</h2></div>
       <p class="muted">The volatiles of foods, as <a href="https://www.vcf-online.nl" target="_blank" rel="noopener">VCF</a> gives them (mg/kg) in a reference dataset of its quantities: those of every product whose name, category or group has what you type, one quantity of each chemical from them, the headspace over the samples (taken as water) and the paraffin oil that would give the same headspace.</p>
@@ -593,6 +615,7 @@
         <li><b>Or by Raoult's law only</b> (an ideal solution, also when no constant can be estimated): each odor's partial pressure is its mole fraction in the liquid times its vapor pressure. Its moles are from its volume (the log<sub>10</sub> v/v concentration), density and molar mass; the oil's as if it were n-hexadecane (226 g/mol, 0.770 g/mL).</li>
         <li><b>In water</b>, by Henry's law: each odor's partial pressure is its concentration in the water over its Henry's law solubility constant (from <a href="https://henrys-law.org" target="_blank" rel="noopener">henrys-law.org</a>, else NIST), but at most its vapor pressure. With no constant found, as an ideal solution, as in oil, which is likely too low unless it mixes well with water.</li>
         <li>Vapor pressures are from PubChem (the mean of its values at or near 25 °C), else estimated from the structure (SIMPOL.1, often within 3×, but several times too low for e.g. furans, tertiary alcohols and some phenols); in oil by Henry's law, the one chemutils estimated the constant with (fit to measurements by <code>thermo</code> where it can be, else as above). With no density found, 1 g/mL is assumed.</li>
+        <li><b>Serial dilutions</b>: each odor on its own, from its neat chemical, in vials of the same weight of solvent (the volume typed, by its density); volumes are taken as additive, so v µL into V µL of solvent dilutes by v / (v + V). The neat chemical's volume changes from odor to odor, within its limits; the dilutions' volume is chosen so that as many odors as can be are made within them, within the dilutions' limits unless none within them does as well, the same for as many odors as can be, with the fewest dilutions, with the least volume pipetted as large as can be, then round. Volumes are rounded to 3 significant digits, and each vial's concentration is from them as rounded.</li>
         <li>A panel's mixture: the odors presented in it (in every dataset with that panel) that are in the odor table with a CID, but solvents, each at the highest concentration presented.</li>
         <li><b>Foods' volatiles (VCF)</b>: of every product whose name, category or group has what is typed, each chemical's quantities (mg/kg, as the reference dataset's values, e.g. the middle of a range) are averaged over each reference's lines on a product, reduced across the product's references (the median, by default), then across products, each over those that quantify it. The headspace over a sample takes it as water (0.997 g/mL): by Henry's law, at most its vapor pressure; with no constant, by Raoult's law with its vapor pressure (which is too low for most volatiles, which are less soluble in water than an ideal solution); with neither, none. Each chemical on its own: they are dilute. Molar masses are from their InChIs' formulas.</li>
         <li><b>Their Henry's law constants and vapor pressures</b> are looked up again through chemutils (henrys-law.org, else NIST; PubChem), in the background the first time (those VCF's file lacks first, then those it has), and kept apart from the odor table's. What chemutils finds is used; where it finds none, the file's; where neither has one, estimates (a constant from the chemical's solubility in water over its vapor pressure, only reasonable for those not very soluble; a vapor pressure from its structure). Where what chemutils finds differs from the file's by more than 10%, both are shown, with a warning.</li>

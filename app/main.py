@@ -11,6 +11,7 @@ import hashlib
 import ipaddress
 import json
 import logging
+import math
 import os
 import re
 import secrets
@@ -36,8 +37,8 @@ from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, R
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import (backup, chemprops, compare, config, export, filelog, headspace, merge, movies, odormeta, reference, sandbox, tensor,
-               thorimage, vcf, yamlcheck)
+from . import (backup, chemprops, compare, config, dilution, export, filelog, headspace, merge, movies, odormeta, reference,
+               sandbox, tensor, thorimage, vcf, yamlcheck)
 from .db import PANEL_RENAMES, PROPERTY_COLUMNS, Database, rename_panel
 from .glomeruli import load_glomeruli
 from .ingest import (ParsedData, ValidationError, combine, extra_text, files_text, fly_key, kc_id_problems, load_file,
@@ -1689,6 +1690,34 @@ async def headspace_file(request: Request) -> Response:
     return Response(text, media_type=media_type, headers={"content-disposition": f'attachment; filename="{name}"'})
 
 
+DILUTION_MAX_ML = 1000.0  # of solvent in each vial, at most (mL)
+
+
+async def headspace_dilutions(request: Request) -> Response:
+    """The Headspace calculator's serial dilutions: {"targets" (log10 v/v, from -50 to 0),
+    "solvent_ml", "neat_ul" ([the least, the most]), "dilution_ul" ([the least, the most],
+    each optional)} -> `dilution.plan`."""
+    body = await request.json()
+    num = lambda v: not isinstance(v, bool) and isinstance(v, (int, float)) and math.isfinite(v)
+    pair = lambda v: isinstance(v, list) and len(v) == 2
+    if not isinstance(body, dict) or not isinstance(body.get("targets"), list):
+        return json_error(400, 'expected {"targets": [log10 v/v, ...], "solvent_ml", "neat_ul": [least, most], "dilution_ul": [least, most]}')
+    targets = body["targets"]
+    if not 1 <= len(targets) <= HEADSPACE_MAX_ODORS:
+        return json_error(400, f"from 1 to {HEADSPACE_MAX_ODORS} odors")
+    if not all(num(t) and -50 <= t <= 0 for t in targets):
+        return json_error(400, "each odor's log10 concentration (v/v) is a number from -50 to 0")
+    ml = body.get("solvent_ml", dilution.SOLVENT_ML)
+    if not num(ml) or not 0 < ml <= DILUTION_MAX_ML:
+        return json_error(400, f"the solvent in each vial is more than 0 mL, and at most {DILUTION_MAX_ML:,g}")
+    neat = body.get("neat_ul", list(dilution.NEAT_UL))
+    if not pair(neat) or not all(num(v) and v > 0 for v in neat) or neat[0] > neat[1]:
+        return json_error(400, "the neat chemical's least and most (µL) are numbers more than 0, the least at most the most")
+    dil = body.get("dilution_ul", [None, None])
+    if not pair(dil) or not all(v is None or (num(v) and v > 0) for v in dil) or (None not in dil and dil[0] > dil[1]):
+        return json_error(400, "the dilutions' least and most (µL) are numbers more than 0 (or null), the least at most the most")
+    return JSONResponse(await run_in_threadpool(dilution.plan, targets, ml, tuple(neat), tuple(dil)))
+
 
 VCF_MAX_OIL = 500  # chemicals with a headspace over their samples, at most, to calculate in paraffin oil
 VCF_LOOKUP_BATCH = 10  # CIDs looked up through chemutils at once for VCF's chemicals (`_vcf_look_up`)
@@ -2560,6 +2589,7 @@ routes = [
     Route("/api/headspace", headspace_calc, methods=["POST"]),
     Route("/api/headspace.{fmt}", headspace_file),
     Route("/api/headspace/panels", headspace_panels),
+    Route("/api/headspace/dilutions", headspace_dilutions, methods=["POST"]),
     Route("/api/headspace/vcf", headspace_vcf, methods=["GET", "POST"]),
     Route("/api/reference", reference_list),
     Route("/api/reference/{ref_id}", reference_get),
