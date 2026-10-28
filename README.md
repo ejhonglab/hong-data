@@ -271,7 +271,13 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   is left as it is). Its README can be edited there too (Edit, in the README box): saving asks
   whether to overwrite the README on the server (its path is shown) or discard the
   edits, and refuses if someone else changed it meanwhile. Unsaved edits are kept while
-  you look at other datasets.
+  you look at other datasets. *Edit* (next to *README*) changes any detail entered at
+  upload but its files: checked as the upload form checks them (data paths only if
+  changed, an upload's refusals too, e.g. another of your datasets of that coding unit
+  with the same flies and manipulations), saved once you answer *Yes* to whether you are
+  sure (*No* is the default). Its title and panels follow, and its README too unless it
+  was edited by hand; `metadata.json` keeps each edit (when, and each field before and
+  after).
 - **Movies** ("Play movies…" in the Raw data or Motion corrected menu of a dataset whose
   folder is found): a player for the movies of the dataset's flies in that menu's data
   folder (raw, or motion corrected).

@@ -248,6 +248,7 @@ try {
               <span class="dl-status" id="ds-download-status"></span>
               <button type="button" class="btn" id="ds-odors-toggle" aria-expanded="false">Odors</button>
               <button type="button" class="btn" id="ds-readme-toggle" aria-expanded="false">README</button>
+              <button type="button" class="btn" id="ds-edit-toggle" aria-expanded="false">Edit</button>
               <details class="menu menu-right" id="ds-download">
                 <summary class="btn">Download</summary>
                 <div class="menu-list">
@@ -274,6 +275,48 @@ try {
           <div class="ds-files" id="ds-files"></div>
         </div>
         <div id="ds-odors" class="readme-panel" hidden></div>
+        <form id="ds-edit" class="readme-panel ds-edit" hidden autocomplete="off">
+          <p class="muted">The details entered when it was uploaded, checked as the upload form checks them. Its title and panels follow them,
+            and its README too, unless it was edited by hand. Its files (data, odor YAMLs, Experiment.xml) cannot be changed here.</p>
+          <div class="grid">
+            <label class="field"><span>Uploaded by *</span><input name="uploader_name" required list="dl-uploaders"></label>
+            <label class="field"><span>Calcium indicator *</span><input name="indicator" required list="dl-indicators"></label>
+            <label class="field"><span>Driver * <span class="muted">(e.g. Gal4, LexA, etc.)</span></span><input name="driver" required list="dl-drivers"></label>
+            <label class="field"><span>Coding unit recorded from *</span><input name="coding_unit" required list="dl-coding-units"></label>
+            <label class="field span2"><span>Full fly genotype</span><input name="genotype" list="dl-genotypes" placeholder="e.g. w;GH146-Gal4/UAS-GCaMP6f;+"></label>
+            <div class="field span2"><span>Manipulations <span class="muted">(a name and a value, or a name alone; shown in brackets after the dataset's name)</span></span>
+              <div class="manip-rows" data-role="manip-rows"></div>
+              <div class="row"><button type="button" class="btn" data-role="manip-add">Add another</button></div>
+            </div>
+            <div class="field"><span>Fly age range (days after eclosion, from 0)</span>
+              <div class="row"><input name="age_min_days" type="number" min="0" step="any" placeholder="min" class="narrow"><span class="dash">–</span><input name="age_max_days" type="number" min="0" step="any" placeholder="max" class="narrow"></div>
+            </div>
+            <label class="field"><span>Excitation wavelength (nm)</span><input name="wavelength_nm" type="number" min="0" step="any"></label>
+            <div class="field"><span>Power measured at the fly (mW)</span>
+              <div class="row"><input name="power_mw" type="number" min="0" step="any" placeholder="e.g. 12" class="narrow"><span class="dash">±</span><input name="power_tolerance_mw" type="number" min="0" step="any" placeholder="tolerance" class="narrow"></div>
+            </div>
+            <div class="field"><span>Was the power measured on the day of the experiments?</span>
+              <div class="row radios">
+                <label><input type="radio" name="power_measured_same_day" value="true"> yes</label>
+                <label><input type="radio" name="power_measured_same_day" value="false"> no</label>
+                <label><input type="radio" name="power_measured_same_day" value=""> not sure</label>
+              </div>
+            </div>
+            <label class="field"><span>Recording system</span><input name="recording_system" list="dl-systems"></label>
+            <label class="field"><span>Panel name(s) <span class="muted">(comma-separated)</span></span><input name="panel_names" list="dl-panels" placeholder="e.g. megamat"></label>
+            <label class="field"><span>Analysis source code (link)</span><input name="source_code_url" type="url" placeholder="https://github.com/…"></label>
+            <span></span>
+            <label class="field"><span>Raw data path on tensor <span class="muted">(from its top)</span></span><input name="raw_data_path" placeholder="e.g. tom/raw_data/2023-11-19" spellcheck="false"><span class="path-msg"></span></label>
+            <label class="field"><span>Motion-corrected data path on tensor <span class="muted">(from its top)</span></span><input name="mocorr_data_path" placeholder="e.g. tom/analysis/2023-11-19" spellcheck="false"><span class="path-msg"></span></label>
+            <label class="field span2"><span>Notes</span><textarea name="notes" rows="4"></textarea></label>
+          </div>
+          <div data-role="errors"></div>
+          <div class="actions">
+            <button type="submit" class="btn primary">Save changes</button>
+            <button type="button" class="btn" data-role="cancel">Cancel</button>
+            <span class="dl-status" id="ds-edit-status" aria-live="polite"></span>
+          </div>
+        </form>
         <div id="dataset-viewer" class="viewer viewer-main"></div>
       </div>
     </div>
@@ -889,6 +932,17 @@ try {
       <tbody></tbody>
     </table>
   </div>
+</dialog>
+
+<dialog id="edit-confirm" class="confirm" aria-labelledby="edit-confirm-q">
+  <form method="dialog">
+    <p id="edit-confirm-q">Are you sure you want to save these changes to this dataset?</p>
+    <p class="muted small" id="edit-confirm-detail"></p>
+    <div class="actions">
+      <button type="submit" value="yes" class="btn danger">Yes</button>
+      <button type="submit" value="no" class="btn" autofocus>No</button>
+    </div>
+  </form>
 </dialog>
 
 <dialog id="readme-confirm" class="confirm" aria-labelledby="readme-confirm-q">

@@ -1332,6 +1332,24 @@ const AUTO_FIELDS = ['uploader_name', 'indicator', 'driver', 'coding_unit', 'gen
   'mocorr_data_path', 'notes'];
 // fields about one dataset only, emptied for each new file
 const DATASET_FIELDS = ['raw_data_path', 'mocorr_data_path'];
+// a row of a manipulation ({key, value}) to enter, as the upload form and the Edit panel have them
+function manipRow(m = {}) {
+  const row = document.createElement('div');
+  row.className = 'row manip-row';
+  row.innerHTML = `<input class="manip-key" list="dl-manip-keys" placeholder="name, e.g. drug" aria-label="Manipulation name">
+    <span class="dash">=</span><input class="manip-value" list="dl-manip-values" placeholder="value (optional), e.g. CNO" aria-label="Its value">
+    <button type="button" class="btn manip-remove" aria-label="Remove this manipulation" title="Remove">×</button>`;
+  row.querySelector('.manip-key').value = m.key || '';
+  row.querySelector('.manip-value').value = m.value ?? '';
+  return row;
+}
+
+// the manipulations entered in rows (of `manipRow`): [{key, value (null if none)}], rows with neither left out
+function manipulationsIn(rows) {
+  return $$('.manip-row', rows).map((row) => ({ key: row.querySelector('.manip-key').value.trim(), value: row.querySelector('.manip-value').value.trim() || null }))
+    .filter((m) => m.key || m.value);
+}
+
 // <select> + "Other…" input pairs
 const COMBOS = { indicator: ['#indicator-select', '#indicator-other'], coding_unit: ['#coding-unit-select', '#coding-unit-other'], recording_system: ['#system-select', '#system-other'] };
 // the field a form element belongs to
@@ -1504,7 +1522,7 @@ class UploadFlow {
 
     this._setManipulations([]);
     $('#manip-add').addEventListener('click', () => {
-      const row = this._manipRow();
+      const row = manipRow();
       $('#manip-rows').appendChild(row);
       row.querySelector('.manip-key').focus();
     });
@@ -1512,7 +1530,7 @@ class UploadFlow {
       const b = e.target.closest('.manip-remove');
       if (!b) return;
       b.closest('.manip-row').remove();
-      if (!$('#manip-rows').children.length) $('#manip-rows').appendChild(this._manipRow());
+      if (!$('#manip-rows').children.length) $('#manip-rows').appendChild(manipRow());
       this._saveSoon();
     });
 
@@ -1528,27 +1546,12 @@ class UploadFlow {
   }
 
   // ------------------------------------------------------------- manipulations
-  _manipRow(m = {}) {
-    const row = document.createElement('div');
-    row.className = 'row manip-row';
-    row.innerHTML = `<input class="manip-key" list="dl-manip-keys" placeholder="name, e.g. drug" aria-label="Manipulation name">
-      <span class="dash">=</span><input class="manip-value" list="dl-manip-values" placeholder="value (optional), e.g. CNO" aria-label="Its value">
-      <button type="button" class="btn manip-remove" aria-label="Remove this manipulation" title="Remove">×</button>`;
-    row.querySelector('.manip-key').value = m.key || '';
-    row.querySelector('.manip-value').value = m.value ?? '';
-    return row;
-  }
-
   // the rows of manipulations (at least one, empty)
   _setManipulations(list) {
-    $('#manip-rows').replaceChildren(...(list.length ? list : [{}]).map((m) => this._manipRow(m)));
+    $('#manip-rows').replaceChildren(...(list.length ? list : [{}]).map((m) => manipRow(m)));
   }
 
-  // the manipulations entered: [{key, value (null if none)}], rows with neither left out
-  _manipulations() {
-    return $$('#manip-rows .manip-row').map((row) => ({ key: row.querySelector('.manip-key').value.trim(), value: row.querySelector('.manip-value').value.trim() || null }))
-      .filter((m) => m.key || m.value);
-  }
+  _manipulations() { return manipulationsIn($('#manip-rows')); }
 
   _syncPower() {
     const has = $('#power-mw').value !== '';
@@ -2311,8 +2314,37 @@ class Browse {
       $('#ds-readme-preview').innerHTML = renderMarkdown(e.target.value);
     });
     window.addEventListener('beforeunload', (e) => {
-      if ([...this.readmeDrafts].some(([id, text]) => text !== this.cache.get(id)?.d.readme_md)) { e.preventDefault(); e.returnValue = ''; }
+      if ([...this.readmeDrafts].some(([id, text]) => text !== this.cache.get(id)?.d.readme_md) || this._editChanged().length) {
+        e.preventDefault(); e.returnValue = '';
+      }
     });
+    this.editOf = null; // {id, start}: the dataset in the Edit panel, and its values as filled in
+    const edit = $('#ds-edit');
+    $('#ds-edit-toggle').addEventListener('click', () => {
+      edit.hidden = !edit.hidden;
+      $('#ds-edit-toggle').setAttribute('aria-expanded', String(!edit.hidden));
+      if (!edit.hidden && this.cache.has(this.selected) && this.editOf?.id !== this.selected) this._fillEdit(this.selected);
+    });
+    $('[data-role=cancel]', edit).addEventListener('click', () => {
+      this.editOf = null;
+      edit.hidden = true;
+      $('#ds-edit-toggle').setAttribute('aria-expanded', 'false');
+    });
+    edit.power_mw.addEventListener('input', () => this._syncEditPower());
+    for (const key of DATASET_FIELDS) edit[key].addEventListener('change', () => checkPathInput(edit[key], edit[key].nextElementSibling));
+    $('[data-role=manip-add]', edit).addEventListener('click', () => {
+      const row = manipRow();
+      $('[data-role=manip-rows]', edit).appendChild(row);
+      row.querySelector('.manip-key').focus();
+    });
+    $('[data-role=manip-rows]', edit).addEventListener('click', (e) => {
+      const b = e.target.closest('.manip-remove');
+      if (!b) return;
+      const rows = b.closest('[data-role=manip-rows]');
+      b.closest('.manip-row').remove();
+      if (!rows.children.length) rows.appendChild(manipRow());
+    });
+    edit.addEventListener('submit', (e) => { e.preventDefault(); this.saveEdit(); });
     this.odorCache = new Map();
     $('#ds-odors-toggle').addEventListener('click', () => {
       const p = $('#ds-odors');
@@ -2464,7 +2496,91 @@ class Browse {
     this.viewer.setNeuralData(m, { title: d.title, fileStem: `olfdb_dataset-${id}`, kc: isKcData(md.coding_unit, d.summary?.col_levels),
       serverCache: serverClusterCache(id) });
     if (!$('#ds-odors').hidden) this.showOdors(id);
+    if (!$('#ds-edit').hidden && this.editOf?.id !== id) this._fillEdit(id);
     this.showDataPaths(id);
+  }
+
+  // The Edit panel filled in with a dataset's metadata as entered at upload (as shown)
+  _fillEdit(id) {
+    const f = $('#ds-edit'), md = this.cache.get(id).d.metadata;
+    for (const key of Object.keys(EDIT_FIELDS)) {
+      const v = md[key];
+      if (key === 'manipulations') $('[data-role=manip-rows]', f).replaceChildren(...(v?.length ? v : [{}]).map((m) => manipRow(m)));
+      else if (key === 'power_measured_same_day') $$(`input[name=${key}]`, f).forEach((r) => { r.checked = r.value === (v == null ? '' : String(v)); });
+      else f[key].value = v == null ? '' : Array.isArray(v) ? v.join(', ') : String(v);
+    }
+    for (const key of DATASET_FIELDS) showPathCheck(f[key], f[key].nextElementSibling, null);
+    $('[data-role=errors]', f).replaceChildren();
+    setStatus($('#ds-edit-status'), '');
+    this._syncEditPower();
+    this.editOf = { id, start: this._editValues() };
+  }
+
+  _syncEditPower() {
+    const f = $('#ds-edit'), has = f.power_mw.value !== '';
+    f.power_tolerance_mw.disabled = !has;
+    $$('input[name=power_measured_same_day]', f).forEach((r) => { r.disabled = !has; });
+  }
+
+  // the Edit panel's values, as the upload form sends them
+  _editValues() {
+    const f = $('#ds-edit'), hasPower = f.power_mw.value !== '', out = {};
+    for (const key of Object.keys(EDIT_FIELDS)) {
+      if (key === 'manipulations') out[key] = manipulationsIn($('[data-role=manip-rows]', f));
+      else if (key === 'power_measured_same_day') {
+        const r = $(`input[name=${key}]:checked`, f)?.value;
+        out[key] = hasPower && r ? r === 'true' : null;
+      } else if (key === 'power_tolerance_mw' && !hasPower) out[key] = null;
+      else if (NUMBER_FIELDS.includes(key)) out[key] = f[key].value === '' ? null : Number(f[key].value);
+      else out[key] = f[key].value.trim() || null;
+    }
+    return out;
+  }
+
+  // the fields changed in the Edit panel since it was filled in
+  _editChanged() {
+    if (!this.editOf || $('#ds-edit').hidden) return [];
+    const now = this._editValues(), { start } = this.editOf;
+    return Object.keys(EDIT_FIELDS).filter((k) => JSON.stringify(now[k]) !== JSON.stringify(start[k]));
+  }
+
+  // Saves the Edit panel's changes, once asked whether to (No by default); then everything
+  // shown of the dataset is read again (its title, panels and README follow them)
+  async saveEdit() {
+    const f = $('#ds-edit'), id = this.editOf?.id, status = $('#ds-edit-status'), errors = $('[data-role=errors]', f);
+    if (id == null || !f.reportValidity()) return;
+    const changed = this._editChanged();
+    errors.replaceChildren();
+    if (!changed.length) { setStatus(status, 'Nothing was changed.'); return; }
+    const { d } = this.cache.get(id);
+    $('#edit-confirm-q').textContent = `Are you sure you want to save these changes to dataset #${id}?`;
+    $('#edit-confirm-detail').textContent = `Changed: ${changed.map((k) => EDIT_FIELDS[k]).join(', ')}. `
+      + (d.readme_edited ? 'Its README was edited by hand, so it will stay as it is.' : 'Its README will be written again from them.');
+    if (await askDialog($('#edit-confirm')) !== 'yes') return;
+    setStatus(status, 'Saving…');
+    let res;
+    try {
+      res = await api(`/api/datasets/${id}/metadata`, { method: 'PUT', json: { metadata: this._editValues(), base: d.metadata } });
+    } catch (e) {
+      setStatus(status, `Not saved: ${e.message}`, 'error');
+      return;
+    }
+    if (!res.ok) {
+      setStatus(status, '');
+      errors.replaceChildren(msgBox('error', `Not saved:${listHtml(res.errors)}`));
+      for (const [key, c] of Object.entries(res.checks || {})) showPathCheck(f[key], f[key].nextElementSibling, c);
+      return;
+    }
+    this.invalidate();
+    comparePage.invalidate();
+    await this.load();
+    if (this.selected === id) {
+      this.editOf = null;
+      await this.show(id);
+    }
+    const what = res.changed.map((k) => EDIT_FIELDS[k]).join(', ');
+    setStatus(status, !res.changed.length ? 'Nothing was changed.'
+      : `✓ Saved: ${what}. ${res.readme === 'generated' ? 'Its README was written again.' : 'Its README, edited by hand, was left as it was.'}`);
   }
 
   // The links to the dataset's raw and motion-corrected data on tensor, red with the
@@ -2672,6 +2788,15 @@ class Browse {
       $('#ds-odors-status', panel)));
   }
 }
+
+// the metadata entered at upload, in the order of the Edit panel (metadata.Metadata): as it names them
+const EDIT_FIELDS = {
+  uploader_name: 'uploaded by', indicator: 'calcium indicator', driver: 'driver', coding_unit: 'coding unit', genotype: 'genotype',
+  manipulations: 'manipulations', age_min_days: 'fly age (min)', age_max_days: 'fly age (max)', wavelength_nm: 'wavelength',
+  power_mw: 'power', power_tolerance_mw: 'power tolerance', power_measured_same_day: 'whether power was measured on the day',
+  recording_system: 'recording system', panel_names: 'panel names', source_code_url: 'analysis code link',
+  raw_data_path: 'raw data path', mocorr_data_path: 'motion-corrected data path', notes: 'notes',
+};
 
 const DATA_LINKS = { raw: 'Raw data', mocorr: 'Motion corrected / traces' };
 // recordings with movies in one of a dataset's data folders and none in the other: said so on that one

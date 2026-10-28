@@ -252,6 +252,29 @@ def _parsed(d: dict) -> dict:
     return {**d, "data_files": files, "manipulations": json.loads(d["manipulations"]) if d.get("manipulations") else []}
 
 
+def _metadata_columns(metadata: dict) -> dict:
+    """A dataset's columns of its metadata as entered (`metadata.Metadata`, dumped)."""
+    panels = metadata.get("panel_names") or []
+    same_day = metadata.get("power_measured_same_day")
+    return {
+        **{k: metadata.get(k) for k in ("uploader_name", "indicator", "driver", "coding_unit", "genotype", "age_min_days",
+                                        "age_max_days", "power_mw", "power_tolerance_mw")},
+        "power_measured_same_day": None if same_day is None else int(same_day),
+        **{k: metadata.get(k) for k in ("wavelength_nm", "source_code_url", "raw_data_path", "mocorr_data_path")},
+        "panel_names": ", ".join(panels) if panels else None,
+        "recording_system": metadata.get("recording_system"),
+        "manipulations": json.dumps(metadata["manipulations"]) if metadata.get("manipulations") else None,
+        "notes": metadata.get("notes"),
+        "metadata_json": json.dumps(metadata),
+    }
+
+
+def _panel_rows(ds_id: int, metadata: dict, summary: dict) -> list[tuple]:
+    """A dataset's rows of dataset_panels: those entered, then the file's others."""
+    form = metadata.get("panel_names") or []
+    return [(ds_id, p, "form") for p in form] + [(ds_id, p, "file") for p in summary.get("panel_names") or [] if p not in form]
+
+
 def rename_panel(name: Optional[str], renames: dict[str, str]) -> Optional[str]:
     """A panel's name as shown (`PANEL_RENAMES`): as renamed, if it is."""
     return renames.get(name, name) if name is not None else None
@@ -366,36 +389,21 @@ class Database:
     ) -> int:
         """Store a dataset; its id. ``data_file`` and ``data_sha256`` are of its (first) data
         file, and ``data_files`` of each, if several were combined into it: [{name, sha256}]."""
-        panels_form = metadata.get("panel_names") or []
-        panels_file = summary.get("panel_names") or []
+        row = {
+            "created_at": created_at, "title": title, **_metadata_columns(metadata), "readme_md": readme_md,
+            "readme_edited": int(readme_edited), "data_file": data_file, "data_format": data_format, "data_sha256": data_sha256,
+            "data_files": json.dumps(data_files) if data_files else None, "odor_yaml_files": json.dumps(odor_yaml_files),
+            "experiment_xml_file": experiment_xml_file,
+            "experiment_xml_info": json.dumps(experiment_xml_info) if experiment_xml_info else None,
+            "n_flies": summary["n_flies"], "n_units": summary["n_units"], "n_trials": summary["n_trials"],
+            "n_odors": summary["n_odors"], "repeats_min": summary.get("repeats_min"), "repeats_max": summary.get("repeats_max"),
+            "first_fly_date": summary.get("first_date"), "last_fly_date": summary.get("last_date"),
+            "roi_kind": summary.get("roi_kind"), "summary_json": json.dumps(summary),
+        }
         with self.connect() as con:
-            cur = con.execute(
-                """INSERT INTO datasets (created_at, title, uploader_name, indicator, driver, coding_unit,
-                    genotype, age_min_days, age_max_days, power_mw, power_tolerance_mw, power_measured_same_day,
-                    wavelength_nm, source_code_url, raw_data_path, mocorr_data_path, panel_names, recording_system,
-                    manipulations, notes, readme_md, readme_edited, data_file, data_format, data_sha256, data_files, odor_yaml_files,
-                    experiment_xml_file, experiment_xml_info, n_flies, n_units, n_trials, n_odors,
-                    repeats_min, repeats_max, first_fly_date, last_fly_date, roi_kind, metadata_json, summary_json)
-                VALUES (?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?,?,?,?)""",
-                (
-                    created_at, title, metadata["uploader_name"], metadata["indicator"], metadata["driver"],
-                    metadata["coding_unit"], metadata.get("genotype"), metadata.get("age_min_days"),
-                    metadata.get("age_max_days"), metadata.get("power_mw"), metadata.get("power_tolerance_mw"),
-                    None if metadata.get("power_measured_same_day") is None else int(metadata["power_measured_same_day"]),
-                    metadata.get("wavelength_nm"), metadata.get("source_code_url"), metadata.get("raw_data_path"),
-                    metadata.get("mocorr_data_path"), ", ".join(panels_form) if panels_form else None, metadata.get("recording_system"),
-                    json.dumps(metadata["manipulations"]) if metadata.get("manipulations") else None, metadata.get("notes"), readme_md, int(readme_edited), data_file, data_format, data_sha256,
-                    json.dumps(data_files) if data_files else None, json.dumps(odor_yaml_files), experiment_xml_file,
-                    json.dumps(experiment_xml_info) if experiment_xml_info else None,
-                    summary["n_flies"], summary["n_units"], summary["n_trials"], summary["n_odors"],
-                    summary.get("repeats_min"), summary.get("repeats_max"), summary.get("first_date"),
-                    summary.get("last_date"), summary.get("roi_kind"), json.dumps(metadata), json.dumps(summary),
-                ),
-            )
+            cur = con.execute(f"INSERT INTO datasets ({', '.join(row)}) VALUES ({', '.join('?' * len(row))})", tuple(row.values()))
             ds_id = int(cur.lastrowid)
-            panel_rows = [(ds_id, p, "form") for p in panels_form]
-            panel_rows += [(ds_id, p, "file") for p in panels_file if p not in panels_form]
-            con.executemany("INSERT OR IGNORE INTO dataset_panels VALUES (?,?,?)", panel_rows)
+            con.executemany("INSERT OR IGNORE INTO dataset_panels VALUES (?,?,?)", _panel_rows(ds_id, metadata, summary))
 
             unit_ids = []
             for i, u in enumerate(units):
@@ -494,7 +502,8 @@ class Database:
             out.setdefault(r["dataset_id"], set()).add(fly_key(r["date"], r["fly_num"], json.loads(r["extra_json"] or "{}")))
         return out
 
-    def get_dataset(self, ds_id: int) -> Optional[dict]:
+    def get_dataset(self, ds_id: int, as_shown: bool = True) -> Optional[dict]:
+        """A dataset's row, parsed; its panels as shown (`panel_renames`) unless not `as_shown`."""
         with self.connect() as con:
             r = con.execute("SELECT * FROM datasets WHERE id = ?", (ds_id,)).fetchone()
             if r is None:
@@ -509,7 +518,7 @@ class Database:
         d["odor_yaml_files"] = json.loads(d.get("odor_yaml_files") or "[]")
         d["experiment_xml_info"] = json.loads(d["experiment_xml_info"]) if d.get("experiment_xml_info") else None
         d["panels"] = [dict(p) for p in panels]
-        return self._renamed(d, self.panel_renames())
+        return self._renamed(d, self.panel_renames()) if as_shown else d
 
     def get_matrix_arrays(self, ds_id: int) -> Optional[dict]:
         """Units, trials and the float32 response matrix (n_units, n_trials) of a dataset.
@@ -619,6 +628,16 @@ class Database:
             con.execute(f"UPDATE datasets SET {', '.join(f'{k} = ?' for k in paths)}, metadata_json = ? WHERE id = ?",
                         (*paths.values(), json.dumps(metadata), ds_id))
         return metadata
+
+    def update_metadata(self, ds_id: int, metadata: dict, title: str, readme_md: Optional[str] = None) -> None:
+        """Replace a dataset's metadata as entered (`metadata.Metadata`, dumped): its columns,
+        title and panels; and its README, if given (one generated from it, so not edited)."""
+        with self.connect() as con:
+            summary = json.loads(con.execute("SELECT summary_json FROM datasets WHERE id = ?", (ds_id,)).fetchone()["summary_json"])
+            row = {"title": title, **_metadata_columns(metadata), **({"readme_md": readme_md} if readme_md is not None else {})}
+            con.execute(f"UPDATE datasets SET {', '.join(f'{k} = ?' for k in row)} WHERE id = ?", (*row.values(), ds_id))
+            con.execute("DELETE FROM dataset_panels WHERE dataset_id = ?", (ds_id,))
+            con.executemany("INSERT OR IGNORE INTO dataset_panels VALUES (?,?,?)", _panel_rows(ds_id, metadata, summary))
 
     def update_readme(self, ds_id: int, readme_md: str) -> None:
         """Replace a dataset's README (marking it as edited)."""

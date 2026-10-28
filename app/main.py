@@ -701,7 +701,7 @@ async def stage_readme(request: Request) -> Response:
     if errors:
         return JSONResponse({"ok": False, "errors": errors}, status_code=422)
     parsed = await run_in_threadpool(load_parsed, d / "parsed")
-    kc = _kc_problem(parsed, m.coding_unit)
+    kc = _kc_problem(parsed.units, m.coding_unit)
     if kc:
         return JSONResponse({"ok": False, "errors": [kc]}, status_code=422)
     errors, warnings = await run_in_threadpool(_duplicates, parsed, _stage_files(meta), m.uploader_name, m.coding_unit,
@@ -722,20 +722,20 @@ async def stage_readme(request: Request) -> Response:
     return JSONResponse({"ok": True, "readme": readme, "title": dataset_title(m, summary), "warnings": warnings})
 
 
-def _kc_problem(parsed: ParsedData, coding_unit: str) -> Optional[str]:
+def _kc_problem(units: list[dict], coding_unit: str) -> Optional[str]:
     """Why an upload of KCs (its coding unit) with ROIs numbered is refused, if it is: each
-    fly's ids not every one from 0 or 1 to the highest (`ingest.kc_id_problems`; as for a
-    ``cells`` level whatever the coding unit, when the file was read)."""
-    if not is_kc(coding_unit) or not parsed.units or any(u["roi_kind"] != "int" for u in parsed.units):
+    fly's ids (of its `units`) not every one from 0 or 1 to the highest (`ingest.kc_id_problems`;
+    as for a ``cells`` level whatever the coding unit, when the file was read)."""
+    if not is_kc(coding_unit) or not units or any(u["roi_kind"] != "int" for u in units):
         return None
-    return kc_id_problems(parsed.units)
+    return kc_id_problems(units)
 
 
 def _commit(d: Path, meta: dict, m: Metadata, readme: str, readme_edited: bool) -> dict:
     parsed = load_parsed(d / "parsed")
     summary = parsed.summary()
     # consistency checks that must pass before anything is written
-    problems = [p for p in [_kc_problem(parsed, m.coding_unit)] if p]
+    problems = [p for p in [_kc_problem(parsed.units, m.coding_unit)] if p]
     files = _stage_files(meta)
     problems += _duplicates(parsed, files, m.uploader_name, m.coding_unit, m.manipulations)[0]
     if meta["odor_yamls"]:
@@ -991,6 +991,102 @@ async def dataset_data_paths_save(request: Request) -> Response:
         return 200, {"ok": True, "metadata": metadata, "checks": checks}
 
     status, result = await run_in_threadpool(run)
+    return JSONResponse(result, status_code=status)
+
+
+_metadata_lock = threading.Lock()
+
+
+def _same_flies_problems(ds_id: int, m: Metadata) -> list[str]:
+    """Why a dataset's metadata as edited is refused, as an upload with it would be
+    (`_duplicates`): its flies all and only those of another dataset of its uploader, coding
+    unit and manipulations."""
+    stored = db.dataset_flies()
+    flies = stored.get(ds_id, set())
+    out = []
+    for d in sorted(db.list_datasets(), key=lambda d: d["id"]):
+        if (d["id"] != ds_id and flies and stored.get(d["id"], set()) == flies and _same_name(d["uploader_name"], m.uploader_name)
+                and _same_unit(d["coding_unit"], m.coding_unit) and same_manipulations(d["manipulations"], m.manipulations)):
+            out.append(f"its flies ({_flies_text(flies)}) are exactly those of dataset #{d['id']} ({d['title']}), uploaded by "
+                       f"{d['uploader_name']} on {d['created_at'][:10]}, also of {d['coding_unit']}: one person's datasets of a "
+                       "coding unit cannot have the same flies, but for other manipulations (e.g. after a drug: enter them "
+                       "under Manipulations)")
+    return out
+
+
+def _as_entered(metadata: dict) -> dict:
+    """Stored metadata as `Metadata` dumps it now (fields added since it was stored, at their
+    defaults), to compare with an edit of it; as it is if it is no longer valid."""
+    try:
+        return Metadata.model_validate(metadata).model_dump()
+    except PydanticValidationError:
+        return metadata
+
+
+def _save_metadata(ds_id: int, values: Any, base: dict) -> tuple[int, dict]:
+    """Replace a dataset's metadata as entered at upload with `values` (checked as an upload's
+    are) if it is still `base` (as shown): (status, response)."""
+    with _metadata_lock:  # one at a time, so that what is saved is what `base` was checked against
+        shown, d = db.get_dataset(ds_id), db.get_dataset(ds_id, as_shown=False)
+        if shown is None:
+            return 404, {"error": "dataset not found"}
+        if base not in (shown["metadata"], d["metadata"]):
+            return 409, {"error": "its details were changed on the server since you started editing them; copy your "
+                                  "edits somewhere, and reload the page to see the new ones"}
+        m, errors = _parse_metadata(values)
+        if errors:
+            return 422, {"ok": False, "errors": errors}
+        old = _as_entered(d["metadata"])
+        if m.panel_names == shown["metadata"].get("panel_names"):  # (as shown: those renamed kept as stored)
+            m.panel_names = old.get("panel_names") or []
+        # data paths checked on tensor as at upload, but only those changed (tensor may be away)
+        paths, checks, errors = _check_data_paths({k: getattr(m, k) for k in DATA_PATH_FIELDS if getattr(m, k) != old.get(k)})
+        if errors:
+            return 422, {"ok": False, "errors": errors, "checks": checks}
+        for k, v in paths.items():
+            setattr(m, k, v)
+        problems = [p for p in [_kc_problem(db.get_matrix_arrays(ds_id)["units"], m.coding_unit)] if p]
+        problems += _same_flies_problems(ds_id, m)
+        if problems:
+            return 422, {"ok": False, "errors": problems}
+        new = m.model_dump()
+        changed = {k: [old.get(k), v] for k, v in new.items() if old.get(k) != v}
+        if not changed:
+            return 200, {"ok": True, "changed": [], "readme": "kept"}
+        title = dataset_title(m, d["summary"])
+        folder = config.DATASETS_DIR / str(ds_id)
+        try:
+            saved = json.loads((folder / "metadata.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            saved = None
+        readme = None
+        if not d["readme_edited"]:  # (one generated at upload follows them; one edited by hand is left alone)
+            files = {"data_files": d["data_files"], "odor_yamls": d["odor_yaml_files"], "experiment_xml": d.get("experiment_xml_file"),
+                     "sources": (saved or {}).get("tensor_sources") or {}}
+            readme = generate_readme(m, d["summary"], files, created_at=dt.datetime.fromisoformat(d["created_at"]))
+        db.update_metadata(ds_id, new, title, readme)
+        if readme is not None:
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / "README.md").write_text(readme, encoding="utf-8")
+        if saved is not None:
+            saved.update(title=title, metadata=new)
+            saved.setdefault("edits", []).append({"at": dt.datetime.now().isoformat(timespec="seconds"), "changed": changed})
+            (folder / "metadata.json").write_text(json.dumps(saved, indent=1), encoding="utf-8")
+    log.info("metadata of dataset %d edited: %s", ds_id, ", ".join(changed))
+    return 200, {"ok": True, "changed": list(changed), "readme": "kept" if readme is None else "generated"}
+
+
+async def dataset_metadata_save(request: Request) -> Response:
+    """Replace a dataset's metadata as entered at upload ({"metadata": every field, as an
+    upload sends them; "base": its metadata as the edit started from}), checked as an
+    upload's (its data paths, those changed); its title and panels follow, and its README if
+    it was not edited by hand. 409 if it was changed on the server since `base`."""
+    ds_id = int(request.path_params["ds_id"])
+    body = await request.json()
+    values, base = (body.get("metadata"), body.get("base")) if isinstance(body, dict) else (None, None)
+    if not isinstance(values, dict) or not isinstance(base, dict):
+        return json_error(400, 'expected {"metadata": {...}, "base": {...}}')
+    status, result = await run_in_threadpool(_save_metadata, ds_id, values, base)
     return JSONResponse(result, status_code=status)
 
 
@@ -2560,6 +2656,7 @@ routes = [
     Route("/api/datasets/{ds_id:int}", dataset_get),
     Route("/api/datasets/{ds_id:int}/matrix", dataset_matrix),
     Route("/api/datasets/{ds_id:int}/readme", dataset_readme_save, methods=["PUT"]),
+    Route("/api/datasets/{ds_id:int}/metadata", dataset_metadata_save, methods=["PUT"]),
     Route("/api/datasets/{ds_id:int}/files/{path:path}", dataset_file),
     Route("/api/datasets/{ds_id:int}/odors", dataset_odor_table),
     Route("/api/datasets/{ds_id:int}/odors.{fmt}", dataset_odors_file),

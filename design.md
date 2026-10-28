@@ -38,7 +38,10 @@ between the frontend and the server. Using the app is described in
   every form value is stored on its own (database and `metadata.json`), apart from the
   README, which can be edited freely, at upload and later from the dataset's page (its
   file and database copy both overwritten, once the user confirms, unless it changed
-  since the edit began). Anything parsed from them can be redone.
+  since the edit began). The form values can be edited later too (all but the files),
+  checked as an upload's and saved likewise; what follows from them (title, panels, and
+  a README not edited by hand) is made again, and `metadata.json` keeps each edit, with
+  each field before and after. Anything parsed from them can be redone.
 - **Each matrix is stored twice**: as a long `responses` table (one row per cell) for
   SQL queries, and as a float32 blob (`matrices`) for fast serving to the viewer.
 - **Row levels that say nothing are dropped on upload** (`ingest.uninformative_levels`),
@@ -753,6 +756,9 @@ GET    /api/datasets                        list
 GET    /api/datasets/{id}                   metadata + README (markdown and HTML, and its path)
 PUT    /api/datasets/{id}/readme            {"readme", "base"} → the README overwritten (409 if it is
                                             no longer "base", the one the edit started from)
+PUT    /api/datasets/{id}/metadata          {"metadata", "base"} → the values entered at upload replaced,
+                                            checked as an upload's: {changed, readme: "generated" |
+                                            "kept"} (409 if they are no longer "base")
 GET    /api/datasets/{id}/matrix            units, trials, base64 float32 values
 GET    /api/datasets/{id}/files/{path}      original files
 GET    /api/compare/datasets/{id}           its odors × glomeruli (or ROIs), every trial (and fly) averaged,
