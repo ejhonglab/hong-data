@@ -5478,13 +5478,13 @@ class HeadspacePage {
 }
 
 // serial dilutions of the mixture's odors from their neat chemicals, in the Headspace
-// calculator: each in vials of its own, of the same weight of solvent (/api/headspace/dilutions)
+// calculator: each in vials of its own, of the same amount of solvent (/api/headspace/dilutions)
 const HS_DILUTE_KEY = 'olfdb.headspace.dilute';
-const HS_DENSITY = { 'paraffin oil': 0.85, water: 0.997 }; // g/mL, by default
 // its inputs: [selector, saved as, default where blank (null: the server's, dilution.DILUTION_UL for the dilutions'
-// least, or their most if less; else no limit)] (dilution.SOLVENT_ML, NEAT_UL)
-const HS_DILUTE_FIELDS = [['#hs-dilute-ml', 'ml', 2], ['#hs-dilute-neat-min', 'neatMin', 2], ['#hs-dilute-neat-max', 'neatMax', 200],
-  ['#hs-dilute-min', 'min', null], ['#hs-dilute-max', 'max', null]];
+// least, or their most if less; else no limit)] (dilution.SOLVENT_ML, NEAT_UL); the density (g/mL) only of
+// paraffin oil, which is weighed as it is viscous (water is measured by volume)
+const HS_DILUTE_FIELDS = [['#hs-dilute-density', 'density', 0.85], ['#hs-dilute-ml', 'ml', 2], ['#hs-dilute-neat-min', 'neatMin', 2],
+  ['#hs-dilute-neat-max', 'neatMax', 200], ['#hs-dilute-min', 'min', null], ['#hs-dilute-max', 'max', null]];
 const hsVolume = (v) => String(+v.toPrecision(3)); // (µL, as pipetted)
 const hsLog = (v) => v.toFixed(2).replace('-', '−');
 
@@ -5492,14 +5492,12 @@ class HeadspaceDilutions {
   constructor(page) {
     this.page = page; // the Headspace calculator, whose mixture it makes
     const saved = LS.get(HS_DILUTE_KEY, {});
-    this.density = { ...Object.fromEntries(Object.entries(HS_DENSITY).map(([k, v]) => [k, String(v)])), ...saved.density }; // (as typed, by solvent)
     this.cache = new Map(); // the plans asked for since the page was opened, by what of
     this.seq = 0; // of those asked, so that only the last is shown
     this.timer = null;
-    this.solvent = null; // the one whose density is shown
-    for (const [id, key, dflt] of HS_DILUTE_FIELDS) $(id).value = saved[key] ?? dflt ?? '';
-    $('#hs-dilute').addEventListener('input', (e) => {
-      if (e.target.id === 'hs-dilute-density') this.density[this.solvent] = e.target.value;
+    this.solvent = null; // the mixture's, as last shown
+    for (const [id, key, dflt] of HS_DILUTE_FIELDS) $(id).value = typeof saved[key] === 'string' ? saved[key] : dflt ?? '';
+    $('#hs-dilute').addEventListener('input', () => {
       this.save();
       this.update();
     });
@@ -5507,7 +5505,7 @@ class HeadspaceDilutions {
   }
 
   save() {
-    LS.set(HS_DILUTE_KEY, { density: this.density, ...Object.fromEntries(HS_DILUTE_FIELDS.map(([id, key]) => [key, $(id).value])) });
+    LS.set(HS_DILUTE_KEY, Object.fromEntries(HS_DILUTE_FIELDS.map(([id, key]) => [key, $(id).value])));
   }
 
   // the mixture or what is typed changed: its solvent shown at once, the plan in a moment
@@ -5516,9 +5514,7 @@ class HeadspaceDilutions {
     if (solvent !== this.solvent) {
       this.solvent = solvent;
       $('#hs-dilute-solvent').textContent = solvent;
-      $('#hs-dilute-density-label').textContent = `${solvent === 'water' ? "Water's" : "Paraffin oil's"} density (g/mL)`;
-      $('#hs-dilute-density').value = this.density[solvent] ?? '';
-      $('#hs-dilute-density').placeholder = String(HS_DENSITY[solvent]);
+      $('#hs-dilute-density').closest('label').hidden = solvent === 'water';
     }
     clearTimeout(this.timer);
     this.timer = setTimeout(() => this.ask(), 200);
@@ -5526,7 +5522,7 @@ class HeadspaceDilutions {
 
   // what is typed: each field's number (its default where blank), else why not
   _typed() {
-    const fields = [['#hs-dilute-density', 'density', HS_DENSITY[this.solvent]], ...HS_DILUTE_FIELDS];
+    const fields = HS_DILUTE_FIELDS.filter(([, key]) => key !== 'density' || this.solvent !== 'water');
     const t = {}, bad = [];
     for (const [id, key, dflt] of fields) {
       const el = $(id), typed = el.value.trim();
@@ -5597,15 +5593,17 @@ class HeadspaceDilutions {
         <td class="hs-vials">${vials}</td><td class="notes">${hsNotes(o.notes.map(esc))}</td></tr>`;
     }).join('');
     const total = res.odors.reduce((sum, o) => sum + o.vials.length, 0);
+    const ml = +t.ml.toPrecision(4), weighed = t.density != null; // (paraffin oil)
+    const amount = (vials) => (weighed ? `${(vials * t.ml * t.density).toPrecision(4)} g` : `${+(vials * t.ml).toPrecision(4)} mL`);
     $('#hs-dilute-out').innerHTML = `${outside}
-      <p>Into each vial, <b>${(t.ml * t.density).toPrecision(4)} g</b> of ${esc(this.solvent)} (${+t.ml.toPrecision(4)} mL at ${+t.density.toPrecision(4)} g/mL);
+      <p>Into each vial, <b>${amount(1)}</b> of ${esc(this.solvent)}${weighed ? ` (${ml} mL at ${+t.density.toPrecision(4)} g/mL, weighed)` : ''};
         then into the first, the neat chemical${into}. The last vial has the concentration.</p>
       <div class="hs-wide"><table class="odor-table hs-table"><thead><tr><th>Odor</th><th>log<sub>10</sub> conc. (v/v)</th>
         <th title="Into the first vial">Neat chemical (µL)</th><th title="How many, of how much of the vial before">Dilutions</th>
         <th title="As pipetted (volumes taken as additive), the first with the neat chemical">Vials (log<sub>10</sub> v/v)</th><th>Notes</th></tr></thead>
       <tbody>${rows}</tbody></table></div>
-      <p class="hs-dilute-total">In all, <b>${hsPlural(total, 'vial')}</b>, each with an aliquot of ${+t.ml.toPrecision(4)} mL of solvent:
-        ${(total * t.ml * t.density).toPrecision(4)} g of ${esc(this.solvent)}.</p>`;
+      <p class="hs-dilute-total">In all, <b>${hsPlural(total, 'vial')}</b>, each with an aliquot of ${ml} mL of solvent:
+        ${amount(total)} of ${esc(this.solvent)}.</p>`;
   }
 }
 

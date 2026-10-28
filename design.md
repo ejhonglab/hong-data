@@ -555,9 +555,9 @@ diluting it before it reaches the fly.
 Below the mixture, how to make each of its odors at its concentration from the neat
 chemical (`dilution.py`, in the server, so that it is tested; `POST
 /api/headspace/dilutions` as typed), in the mixture's solvent, each in vials of its own:
-into each vial the same weight of solvent (a volume, 2 mL by default, by its density:
-paraffin oil's 0.85 g/mL, water's 0.997, as typed), then the neat chemical (into the
-first) or some of the vial before. Volumes are taken as additive, so v µL into V µL of
+into each vial the same amount of solvent (2 mL by default; paraffin oil weighed, as it
+is viscous, by its density, 0.85 g/mL as typed; water measured by volume, with no
+density), then the neat chemical (into the first) or some of the vial before. Volumes are taken as additive, so v µL into V µL of
 solvent dilutes by v / (v + V), not v / V: 2 µL of the neat chemical into 2 mL is -3.0004.
 
 - **The neat chemical's volume** changes from odor to odor, within its limits (2 to 200

@@ -1,9 +1,9 @@
 """Serial dilutions of odors from their neat chemicals, as the Headspace calculator tab plans
 them: each odor to its concentration in the mixture (log10 v/v), in vials of its own.
 
-Into each vial, the same amount of solvent is weighed (``solvent_ml`` of it, by its
-density), then a volume of the odor's neat chemical (into the first vial) or of the vial
-before is pipetted into it. Volumes are taken as additive: v µL into V µL of solvent
+Into each vial, the same amount of solvent is put (``solvent_ml`` of it: paraffin oil
+weighed by its density, as it is viscous; water measured by volume), then a volume of the
+odor's neat chemical (into the first vial) or of the vial before is pipetted into it. Volumes are taken as additive: v µL into V µL of solvent
 dilutes by v / (v + V). The neat chemical's volume changes from odor to odor, within its
 limits; that of the dilutions is, where it can be, the same for every dilution of every
 odor, so that their pipette can be left on one setting. It is chosen, of round volumes
@@ -23,7 +23,7 @@ from __future__ import annotations
 import math
 from typing import Optional
 
-SOLVENT_ML = 2.0  # weighed into each vial, by default (mL)
+SOLVENT_ML = 2.0  # into each vial, by default (mL)
 NEAT_UL = (2.0, 200.0)  # the least and most of a neat chemical to pipette, by default (µL)
 DILUTION_UL = 100.0  # the least of a vial to pipette into the next, by default (µL)
 NICE = (1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8)  # mantissas of the round volumes of dilutions tried (µL)
@@ -101,7 +101,7 @@ def plan(targets: list[float], solvent_ml: float = SOLVENT_ML, neat_ul: tuple[fl
 
     Args:
         targets: each odor's concentration (log10 v/v, at most 0).
-        solvent_ml: of solvent weighed into each vial (mL).
+        solvent_ml: of solvent into each vial (mL).
         neat_ul: the least and the most of a neat chemical to pipette (µL).
         dilution_ul: the least and the most of a vial to pipette into the next (µL; None
             for the default: at least `DILUTION_UL`, or the most if less, and at most
