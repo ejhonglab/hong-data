@@ -9,7 +9,8 @@
    "value_label": "log10 concentration (arbitrary)",
    "row_label": "chemical",
    "col_label": "fruit",
-   "source": "synthetic"
+   "source": "synthetic",
+   "example": true
   },
   {
    "id": "example-pathway-presence",
@@ -20,7 +21,8 @@
    "value_label": "present",
    "row_label": "chemical",
    "col_label": "pathway",
-   "source": "synthetic"
+   "source": "synthetic",
+   "example": true
   }
  ]
 }

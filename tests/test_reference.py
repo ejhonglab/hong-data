@@ -163,6 +163,23 @@ def test_add_readable(env, tmp_path):
     assert imported and src.read_text() == "nothing,here\n"
 
 
+def test_examples(env, tmp_path):
+    # the built-in examples only while there is no other reference dataset, built in or added
+    (config.REFERENCE_DIR / "example.csv").write_text("chemical,banana\nethyl acetate,1\n")
+    examples = [{"id": "example", "title": "EXAMPLE", "file": "example.csv", "example": True}]
+    manifest = lambda datasets: (config.REFERENCE_DIR / "manifest.json").write_text(json.dumps({"datasets": datasets}))  # noqa: E731
+    ids = lambda: [d["id"] for d in call(env.reference_list)[1]["datasets"]]  # noqa: E731
+    manifest(examples)
+    assert ids() == ["example"] and call(env.reference_get, path_params={"ref_id": "example"})[0] == 200
+    manifest(examples + [{"id": "fruits", "title": "Fruits", "file": "fruits.csv"}])
+    assert ids() == ["fruits"] and call(env.reference_get, path_params={"ref_id": "example"})[0] == 404
+    manifest(examples)
+    src = write(tmp_path / "refs" / "volatiles.csv", "chemical,cid,banana\nlinalool,6549,1\n")
+    sandbox.activate({"read_dirs": [str(tmp_path / "refs")], "write_dirs": []})
+    assert call(env.admin_reference_add, body={"path": str(src), "title": "Volatiles"})[0] == 200
+    assert ids() == ["volatiles"]
+
+
 def test_add_outside(env, tmp_path):
     src = write(tmp_path / "elsewhere" / "presence.csv", "pathway,linalool,ea\ncid,6549,8857\nterpenes,1,0\n")
     other = write(tmp_path / "elsewhere" / "other.csv", "chemical,x\nlinalool,1\n")

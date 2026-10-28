@@ -691,9 +691,13 @@ def _builtin_state(entry: dict) -> dict:
 
 def entries(db) -> list[dict]:
     """Every reference dataset, built in then added: its settings, ``origin`` ('builtin' |
-    'admin') and `state` (built-in ones are read when asked for, and never pending)."""
-    out = [{**e, "origin": "builtin", "path": str(config.REFERENCE_DIR / e["file"]), **_builtin_state(e)} for e in manifest()]
-    out += [{**r, "origin": "admin", **state(r)} for r in db.list_references()]
+    'admin') and `state` (built-in ones are read when asked for, and never pending). The
+    built-in examples (``"example": true`` in the manifest) only while there is no other."""
+    builtin, added = manifest(), db.list_references()
+    if added or any(not e.get("example") for e in builtin):
+        builtin = [e for e in builtin if not e.get("example")]
+    out = [{**e, "origin": "builtin", "path": str(config.REFERENCE_DIR / e["file"]), **_builtin_state(e)} for e in builtin]
+    out += [{**r, "origin": "admin", **state(r)} for r in added]
     return out
 
 

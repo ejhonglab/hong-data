@@ -112,5 +112,6 @@ Coordinates:
     reference         (source) <U250 '1er Symp. Sci. Int. de Cognac, ...
 ```
 
-The two `example_*.csv` files are synthetic placeholders; delete them (and their
-manifest entries) once real data is in place.
+The two `example_*.csv` files are synthetic placeholders, marked `"example": true` in
+the manifest: they are shown only while there is no other reference dataset, built in
+or added in the Admin tab.

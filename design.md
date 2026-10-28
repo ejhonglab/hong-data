@@ -309,7 +309,8 @@ between the frontend and the server. Using the app is described in
   each response more than one of them has. By power, groups are made greedily in order
   of power, a dataset joining the first group it is close enough to every member of, so
   that no two in a group are further apart than allowed.
-- **Reference datasets** are built in (`reference_data/`, read when asked for) or added in
+- **Reference datasets** are built in (`reference_data/`, read when asked for; those
+  marked as examples only while there is no other, built in or added) or added in
   the Admin tab: a file anywhere on the server that the app only reads, into a copy in
   `data/references/<id>/` (its labels and identifiers as JSON, its numbers as float32),
   made again whenever the file's size or time changes; a failed read is kept too, so a

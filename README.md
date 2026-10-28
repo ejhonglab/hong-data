@@ -427,7 +427,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     lines stay vector in SVG/PDF.
 - **Reference data**: tables added in the Admin tab (below), and any in
   `reference_data/` listed in its `manifest.json` (format in
-  [reference_data/README.md](reference_data/README.md)). Their chemicals are labelled by
+  [reference_data/README.md](reference_data/README.md)); its two synthetic examples
+  only until there is any other. Their chemicals are labelled by
   their names in the Odors tab where they can be matched (or abbreviations, or as in the
   file: *Chemicals* in the viewer), the rest as in the file. A yellow warning is by a
   table with chemicals not identified by a CID or InChI (in the file, or through the
