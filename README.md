@@ -334,7 +334,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     glomeruli both have; no odor–odor similarity is shown, nor chemical structure.
   - *Show* each space as its data (by default) or its odor–odor similarity: one menu
     for the datasets, the reference data and the two side by side (chemical structure
-    only ever as similarity).
+    only ever as similarity). A similarity matrix's columns are always its rows, in
+    their order (a dataset's grouped by panel): sorting, moving or removing one moves or
+    removes both.
   - *Odor–odor similarity* within datasets (Pearson or Spearman correlation, or cosine
     similarity, of two odors' responses across the glomeruli or ROIs both have), and
     within reference data (Pearson correlation or cosine similarity, of their values

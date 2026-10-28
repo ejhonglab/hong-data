@@ -876,11 +876,12 @@ class MatrixViewer {
     odor.title = o.clusterCols ? 'odors are ordered by the clustering' : '';
     $('select[data-opt=metric]', tb).disabled = !(o.clusterRows || o.clusterCols);
     $('[data-role=rows-label]', tb).textContent = o.transpose ? 'Columns' : 'Rows';
-    // (an axis shared with a linked viewer keeps its order)
+    // (an axis shared with a linked viewer keeps its order; the columns of a square matrix, its rows')
     for (const [opt, axis] of [['sortRows', 'rows'], ['sortCols', 'cols']]) {
       const sel = $(`select[data-opt=${opt}]`, tb), shared = this._sharedAxis(this._editAxis(axis));
-      sel.disabled = shared;
-      sel.title = shared ? 'In the order of the matrix beside it' : '';
+      const mirrored = opt === 'sortCols' && !!this.data?.square;
+      sel.disabled = shared || mirrored;
+      sel.title = mirrored ? 'In the order of the rows (the same, in the same order)' : shared ? 'In the order of the matrix beside it' : '';
     }
   }
 
@@ -906,7 +907,9 @@ class MatrixViewer {
   }
 
   // ref: a reference dataset (as from /api/reference/<id>), or a matrix like one with its
-  // `values` (Float32Array) given; kind: of the viewer, for its transposing kept apart
+  // `values` (Float32Array) given, and `square` if its columns are its rows (e.g. odor–odor
+  // similarities: then in one order, the rows', grouped as they are, and moved or removed
+  // together); kind: of the viewer, for its transposing kept apart
   setGenericData(ref, { title = '', fileStem = 'heatmap', kind: viewerKind = 'generic', kc = false } = {}) {
     this._setKind(viewerKind);
     this.title = title;
@@ -916,7 +919,7 @@ class MatrixViewer {
       this.source = ref;
       this.hideBad = ref.cols.some((c) => c.bad);
       this._editsFor(ref);
-      const values = ref.values || decodeValues(ref.values_b64);
+      const values = ref.values || decodeValues(ref.values_b64), square = !!ref.square, nC = ref.cols.length;
       const hasGroups = ref.rows.some((r) => r.group != null);
       let rows = ref.rows.map((r, i) => ({ label: r.label, group: hasGroups ? (r.group ?? '') : null, chem: r.chem, detail: r.detail, i }));
       let vals = values;
@@ -924,23 +927,26 @@ class MatrixViewer {
         const first = new Map();
         rows.forEach((r) => { if (!first.has(r.group)) first.set(r.group, r.i); });
         rows = rows.slice().sort((a, b) => first.get(a.group) - first.get(b.group) || a.i - b.i);
-        const nC = ref.cols.length;
+      }
+      const colIdx = square ? rows.map((r) => r.i) : ref.cols.map((_, j) => j);
+      if (hasGroups || square) {
         vals = new Float32Array(values.length);
-        rows.forEach((r, k) => { vals.set(values.subarray(r.i * nC, (r.i + 1) * nC), k * nC); });
+        rows.forEach((r, k) => colIdx.forEach((j, l) => { vals[k * nC + l] = values[r.i * nC + j]; }));
       }
       this.data = {
+        square,
         meta: ref.meta,
         chemAxis: ref.chemicals?.matched ? ref.chemicals.axis : null,
         kcAxis: 'kcAxis' in ref ? ref.kcAxis : kcAxisOf(ref),
         model: {
           rows: rows.map((r) => ({ label: r.label, group: r.group, key: r.i, file: r.label, chem: r.chem, detail: r.detail })),
-          cols: ref.cols.map((c, j) => ({ label: c.label, group: null, sub: null, key: j, file: c.label, chem: c.chem, detail: c.detail, bad: c.bad })),
+          cols: colIdx.map((j, l) => { const c = ref.cols[j]; return { label: c.label, group: square ? rows[l].group : null, sub: null, key: j, file: c.label, chem: c.chem, detail: c.detail, bad: c.bad }; }),
           values: vals,
           cellText: ref.cellText, // (row, col) of the matrix as given: text to write in that cell
           rowTitle: ref.meta.row_label || 'row',
           rowGroupTitle: hasGroups ? 'group' : null,
           colTitle: ref.meta.col_label || 'column',
-          colGroupTitle: null,
+          colGroupTitle: square && hasGroups ? 'group' : null,
         },
       };
     }
@@ -1001,25 +1007,26 @@ class MatrixViewer {
   }
 
   // the matrix less the rows and columns removed, in the order they were dragged into,
-  // its chemicals labelled as chosen, and its KCs (those not removed) summed if chosen
+  // its chemicals labelled as chosen, and its KCs (those not removed) summed if chosen; the
+  // columns of a square matrix as its rows
   _genericModel() {
-    const b = this.data.model, nC = b.cols.length;
+    const b = this.data.model, nC = b.cols.length, square = this.data.square;
     const hidden = (j) => this.kc && this.hideBad && b.cols[j].bad;
     let rowIdx = b.rows.map((_, i) => i), colIdx = b.cols.map((_, j) => j);
     // sorted by their values over those of the other axis shown, as chosen for the axis they are shown on
-    const [byRows, byCols] = this.opts.transpose ? [this.opts.sortCols, this.opts.sortRows] : [this.opts.sortRows, this.opts.sortCols];
+    const [byRows, byCols] = square ? [this.opts.sortRows, 'file'] : this.opts.transpose ? [this.opts.sortCols, this.opts.sortRows] : [this.opts.sortRows, this.opts.sortCols];
     const keptRows = rowIdx.filter((i) => !this.edits.rows.removed.has(b.rows[i].key));
     const keptCols = colIdx.filter((j) => !this.edits.cols.removed.has(b.cols[j].key) && !hidden(j));
     if (byRows !== 'file' && !this._sharedAxis('rows')) rowIdx = sortedByValues(rowIdx, b.rows, keptCols, (i, j) => b.values[i * nC + j], byRows);
     if (byCols !== 'file' && !this._sharedAxis('cols')) colIdx = sortedByValues(colIdx, b.cols, keptRows, (j, i) => b.values[i * nC + j], byCols);
     const rows = arrange(rowIdx, (i) => b.rows[i].key, this.edits.rows);
-    const cols = arrange(colIdx, (j) => b.cols[j].key, this.edits.cols).filter((j) => !hidden(j));
+    const cols = square ? rows : arrange(colIdx, (j) => b.cols[j].key, this.edits.cols).filter((j) => !hidden(j));
     const values = new Float32Array(rows.length * cols.length);
     rows.forEach((i, r) => { cols.forEach((j, c) => { values[r * cols.length + c] = b.values[i * nC + j]; }); });
     const showAbbrev = abbrevShower([...b.rows, ...b.cols].map((it) => it.chem?.abbrev));
     const label = (it) => (it.chem ? { ...it, ...chemLabel(it, this.opts.chemLabels, showAbbrev) } : it);
     const m = { ...b, rows: rows.map((i) => label(b.rows[i])), cols: cols.map((j) => label(b.cols[j])), values,
-      cellText: b.cellText && ((r, c) => b.cellText(rows[r], cols[c])) };
+      cellText: b.cellText && ((r, c) => b.cellText(b.rows[rows[r]].key, b.cols[cols[c]].key)) };
     return this._summing() ? sumOverAxis(m, this.data.kcAxis) : m;
   }
 
@@ -1154,8 +1161,8 @@ class MatrixViewer {
     btn.title = `Show every ${nouns.join(' and ')} again, in the order chosen above (now: ${bits.join(', ')})`;
   }
 
-  // axis of the heatmap -> axis of the edits
-  _editAxis(axis) { return this.opts.transpose ? (axis === 'rows' ? 'cols' : 'rows') : axis; }
+  // axis of the heatmap -> axis of the edits (of a square matrix, its rows': its columns follow them)
+  _editAxis(axis) { return this.data?.square ? 'rows' : this.opts.transpose ? (axis === 'rows' ? 'cols' : 'rows') : axis; }
 
   _reorder(axis, keys) {
     this.edits[this._editAxis(axis)].order = keys;
@@ -4336,7 +4343,7 @@ function spaceSims(s, ids, rowOf, noun = 'odor', chems = noun === 'odor') {
   ids.forEach((a, i) => ids.forEach((b, j) => { values[i * m + j] = s.space.sim[at.get(a) * n + at.get(b)]; }));
   const rows = ids.map(rowOf);
   return { meta: { kind: 'diverging', row_label: noun, col_label: noun, value_label: s.simLabel }, rows, cols: rows, values,
-    chemicals: chems ? CHEM_ROWS : null };
+    chemicals: chems ? CHEM_ROWS : null, square: true };
 }
 
 // two linked viewers ({el, viewer}) side by side made level, the same height above their
@@ -4909,7 +4916,7 @@ class ComparePage {
             const nC = d.cols.length, rows = d.rows.map((_, i) => d.values.subarray(i * nC, (i + 1) * nC));
             const labels = d.rows.map((r) => ({ label: showOdor(r.odor), group: r.panel }));
             return { meta: { kind: 'diverging', row_label: 'odor', col_label: 'odor' }, rows: labels, cols: labels.map((l) => ({ label: l.label })),
-              values: similarityMatrix(rows, this.o.metric) };
+              values: similarityMatrix(rows, this.o.metric), square: true };
           }), `dataset_${d.id}_similarity`);
       }
     }
