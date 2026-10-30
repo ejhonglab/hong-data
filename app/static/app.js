@@ -5261,15 +5261,20 @@ class ComparePage {
 // ====================================================== headspace calculator
 const HS_KEY = 'olfdb.headspace';
 const HS_T = 298.15, HS_R = 8.314462618, HS_KB = 1.380649e-23, HS_ATM = 101325;
-// what the headspace can be shown in: [key, label, short label, of(partial pressure in Pa, molar mass in g/mol)]
+const hsVal = (v) => sigHtml(v, 4); // (a step of a calculation, as shown)
+const HS_RT = `(${HS_R.toPrecision(4)} J/(mol K) × ${HS_T} K)`;
+// what the headspace can be shown in: [key, label, short label, of(partial pressure in Pa, molar mass in g/mol),
+// the same as a formula of their values (HTML; null for Pa)]
 const HS_UNITS = [
-  ['ppm', 'ppm (by volume)', 'ppm', (pa) => (pa / HS_ATM) * 1e6],
-  ['ppb', 'ppb (by volume)', 'ppb', (pa) => (pa / HS_ATM) * 1e9],
-  ['log10', 'log₁₀ v/v of the air', 'log₁₀ v/v', (pa) => Math.log10(pa / HS_ATM)],
-  ['pa', 'Pa (partial pressure)', 'Pa', (pa) => pa],
-  ['mol_l', 'mol/L', 'mol/L', (pa) => pa / (HS_R * HS_T) / 1000],
-  ['molecules', 'molecules/cm³', 'molecules/cm³', (pa) => (pa / (HS_KB * HS_T)) * 1e-6],
-  ['ug_l', 'µg/L (= mg/m³)', 'µg/L', (pa, mw) => ((pa * mw) / (HS_R * HS_T)) * 1e3],
+  ['ppm', 'ppm (by volume)', 'ppm', (pa) => (pa / HS_ATM) * 1e6, (pa) => `${hsVal(pa)} Pa ÷ ${HS_ATM} Pa × 10<sup>6</sup>`],
+  ['ppb', 'ppb (by volume)', 'ppb', (pa) => (pa / HS_ATM) * 1e9, (pa) => `${hsVal(pa)} Pa ÷ ${HS_ATM} Pa × 10<sup>9</sup>`],
+  ['log10', 'log₁₀ v/v of the air', 'log₁₀ v/v', (pa) => Math.log10(pa / HS_ATM), (pa) => `log<sub>10</sub>(${hsVal(pa)} Pa ÷ ${HS_ATM} Pa)`],
+  ['pa', 'Pa (partial pressure)', 'Pa', (pa) => pa, null],
+  ['mol_l', 'mol/L', 'mol/L', (pa) => pa / (HS_R * HS_T) / 1000, (pa) => `${hsVal(pa)} Pa ÷ ${HS_RT} ÷ 1000 L/m³`],
+  ['molecules', 'molecules/cm³', 'molecules/cm³', (pa) => (pa / (HS_KB * HS_T)) * 1e-6,
+    (pa) => `${hsVal(pa)} Pa ÷ (${hsVal(HS_KB)} J/K × ${HS_T} K) × 10<sup>−6</sup> m³/cm³`],
+  ['ug_l', 'µg/L (= mg/m³)', 'µg/L', (pa, mw) => ((pa * mw) / (HS_R * HS_T)) * 1e3,
+    (pa, mw) => `${hsVal(pa)} Pa × ${mw.toFixed(2)} g/mol ÷ ${HS_RT} × 1000 mg/g`],
 ];
 const HS_PROPS = { molar_mass: 'molar mass', density: 'density', vapor_pressure: 'vapor pressure',
   est_vapor_pressure: 'estimated vapor pressure', k_henry: "Henry's law constant", k_henry_pfo: "Henry's law constant in oil" };
@@ -5362,6 +5367,31 @@ class HeadspacePage {
       this.components.splice(+b.dataset.remove, 1);
       this.changed();
     });
+
+    // how each headspace shown was calculated: while the pointer is on it (or it has the focus),
+    // and kept open by clicking it, until it is clicked again, or elsewhere, or Escape
+    this.derivations = new Map(); // value shown (its data-derive) -> {title, how, steps: [[what, formula], ...]}
+    this.anchor = null; // the value whose calculation is shown
+    this.pinned = false; // whether it is kept open
+    const results = $('#hs-results'), pop = $('#hs-derivation');
+    const valueOf = (e) => e.target.closest?.('[data-derive]');
+    const hover = (e) => { const b = valueOf(e); if (b && !this.pinned) this.showDerivation(b); };
+    const leave = (e) => { const b = valueOf(e); if (b && !this.pinned && !b.contains(e.relatedTarget)) this.hideDerivation(); };
+    results.addEventListener('mouseover', hover);
+    results.addEventListener('focusin', hover);
+    results.addEventListener('mouseout', leave);
+    results.addEventListener('focusout', leave);
+    results.addEventListener('click', (e) => {
+      const b = valueOf(e);
+      if (b && this.pinned && this.anchor === b) this.hideDerivation();
+      else if (b) this.showDerivation(b, true);
+    });
+    const close = () => { if (pop.contains(document.activeElement)) this.anchor?.focus(); this.hideDerivation(); };
+    pop.addEventListener('click', (e) => { if (e.target.closest('.hs-deriv-close')) close(); });
+    document.addEventListener('click', (e) => { if (this.pinned && !this.anchor.contains(e.target) && !pop.contains(e.target)) this.hideDerivation(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !pop.hidden) close(); });
+    document.addEventListener('scroll', () => this.placeDerivation(), true);
+    window.addEventListener('resize', () => this.placeDerivation());
   }
 
   invalidate() { this.odors = null; }
@@ -5567,12 +5597,18 @@ class HeadspacePage {
     if (this.cache.has(now)) this.shown = { res: this.cache.get(now), key: now };
     if (!this.shown) { box.hidden = true; box.innerHTML = ''; return; }
     const { res, key } = this.shown;
-    const [unit, unitLabel, unitShort, of] = HS_UNITS.find(([k]) => k === $('#hs-units').value) || HS_UNITS[0];
+    const units = HS_UNITS.find(([k]) => k === $('#hs-units').value) || HS_UNITS[0];
+    const [unit, unitLabel, unitShort, of] = units;
     const water = res.solvent === 'water', henry = water || res.model === 'henry';
     const showAbbrev = abbrevShower([...(this.odors?.values() || [])].map((o) => o.abbrev));
     const amount = (v) => (v == null ? '' : unit === 'log10' ? (v > 0 ? of(v).toFixed(2) : '−∞') : sigHtml(of(v)));
     const link = (c, p, html) => (c.links?.[p] ? `<a href="${esc(c.links[p])}" target="_blank" rel="noopener">${html}</a>` : html);
-    const rows = res.components.map((c) => {
+    // (a headspace shown, opening how it was calculated)
+    const derived = (i, html) => `<button type="button" class="hs-why" data-derive="${i}" aria-controls="hs-derivation" aria-expanded="false">${html}</button>`;
+    const at = `in ${esc(res.solvent)} at ${+res.temperature_c.toFixed(2)} °C`;
+    this.hideDerivation();
+    this.derivations.clear();
+    const rows = res.components.map((c, i) => {
       const o = this.odors?.get(c.odor_id) || { name: `odor #${c.odor_id}` };
       const pr = c.properties || {};
       const mw = pr.molar_mass;
@@ -5586,18 +5622,32 @@ class HeadspacePage {
         : '<span class="muted" title="Not by Henry\'s law: see its notes">—</span>';
       const dens = pr.density != null ? link(c, 'density', sigHtml(pr.density)) : '<span class="muted">1 (assumed)</span>';
       const hs = c.pa == null ? '' : unit === 'ug_l' ? sigHtml(of(c.pa, mw)) : amount(c.pa);
+      if (c.pa != null) {
+        this.derivations.set(String(i), { title: `${esc(o.name)}${o.abbrev ? ` (${esc(showAbbrev(o.abbrev))})` : ''}`,
+          how: `${at}, by ${c.law === 'henry' ? "Henry's law" : "Raoult's law (as an ideal solution)"}`,
+          steps: [...hsSteps(c, res), ...hsUnitSteps(units, c.pa, mw, hs)] });
+      }
       const notes = [...c.notes.map(esc), ...Object.entries(c.failed || {}).map(([p, e]) => `${esc(HS_PROPS[p] || p)} could not be looked up:
         <span class="muted" title="${esc(e)}">${esc(e.length > 90 ? `${e.slice(0, 90)}…` : e)}</span>`)];
       return `<tr><td><a href="#odors/${c.odor_id}">${esc(o.name)}</a>${o.abbrev ? ` <span class="muted">${esc(showAbbrev(o.abbrev))}</span>` : ''}</td>
         <td class="num">${esc(shortConc(c.log10_conc))}</td><td class="num">${mw != null ? link(c, 'molar_mass', mw.toFixed(2)) : ''}</td><td class="num">${dens}</td>
         <td class="num">${vp}</td>${henry ? `<td class="num">${k}</td>` : ''}
-        <td class="num">${sigHtml(c.mole_fraction)}</td><td class="num hs-amount">${hs}</td>
+        <td class="num">${sigHtml(c.mole_fraction)}</td><td class="num hs-amount">${c.pa == null ? '' : derived(i, hs)}</td>
         <td class="notes">${notes.length ? `<ul>${notes.map((t) => `<li>${t}</li>`).join('')}</ul>` : ''}</td></tr>`;
     }).join('');
     const computed = res.components.filter((c) => c.pa != null);
     const total = unit === 'ug_l' ? computed.reduce((t, c) => t + of(c.pa, c.properties.molar_mass), 0) : null;
+    const totalHs = computed.length ? (total != null ? sigHtml(total) : amount(res.total_pa)) : '';
+    if (computed.length && res.components.length > 1) {
+      const terms = (vs, u) => `${vs.map(hsVal).join(' + ')} ${u}`;
+      this.derivations.set('total', { title: 'All together', how: `of the ${computed.length < res.components.length ? 'odors that could be computed' : 'odors'}, ${at}`,
+        steps: unit === 'ug_l' ? [["Each odor's, added together (as each has its own molar mass)",
+          `${terms(computed.map((c) => of(c.pa, c.properties.molar_mass)), 'µg/L')} = <b>${totalHs}</b> µg/L`]]
+          : [["The odors' partial pressures, added together", `<i>p</i> = Σ<i>p</i> = ${terms(computed.map((c) => c.pa), 'Pa')} = ${hsVal(res.total_pa)} Pa`],
+            ...hsUnitSteps(units, res.total_pa, null, totalHs)] });
+    }
     const totalRow = res.components.length > 1 ? `<tr class="hs-total"><td colspan="${henry ? 7 : 6}">All together${computed.length < res.components.length ? ' (of those that could be computed)' : ''}</td>
-      <td class="num hs-amount">${computed.length ? (total != null ? sigHtml(total) : amount(res.total_pa)) : ''}</td><td></td></tr>` : '';
+      <td class="num hs-amount">${totalHs && derived('total', totalHs)}</td><td></td></tr>` : '';
     box.hidden = false;
     const how = water ? "by Henry's law" : res.model === 'henry' ? "by Henry's law, with constants estimated by chemutils" : "by Raoult's law only";
     const anyTag = res.components.some((c) => c.vapor_pressure_measured != null || (henry && c.k_henry_measured != null));
@@ -5616,14 +5666,96 @@ class HeadspacePage {
       <table class="odor-table hs-table${key !== now ? ' stale' : ''}"><thead><tr><th>Odor</th><th>log<sub>10</sub> conc.</th>
         <th>Molar mass (g/mol)</th><th>Density (g/mL)</th><th title="As used: from PubChem, else estimated from its structure; in oil by Henry's law, the one its constant was estimated with">Vapor pressure (kPa)</th>
         ${henry ? `<th title="Henry's law solubility constant at 25 °C (concentration in the ${water ? 'water' : 'oil'} over partial pressure above it)">K<sub>H</sub> in ${water ? 'water' : 'oil'} (mol/m³/Pa)</th>` : ''}
-        <th title="In the liquid">Mole fraction</th><th>Headspace (${esc(unitShort)})</th><th>Notes</th></tr></thead>
-      <tbody>${rows}${totalRow}</tbody></table>`;
+        <th title="In the liquid">Mole fraction</th><th title="Point at or click one for how it was calculated">Headspace (${esc(unitShort)})</th><th>Notes</th></tr></thead>
+      <tbody>${rows}${totalRow}</tbody></table>
+      ${computed.length ? '<p class="muted small hs-why-note">Point at a headspace (or click it, to keep it open) for how it was calculated, from every value used.</p>' : ''}`;
     // (the table of what is shown: its mixture, solvent and model, as calculated)
     const [solvent, model, comps] = JSON.parse(key);
     const query = `solvent=${encodeURIComponent(solvent)}${model ? `&model=${model}` : ''}`
       + `&odors=${comps.map(([id, c]) => `${id}:${c}`).join(',')}&units=${unit}${lowerQuery('&')}`;
     wireMenu($('#hs-download', box), ({ odorFormat }) => download(`/api/headspace.${odorFormat}?${query}`, $('#hs-dl-status', box)));
   }
+
+  // how a headspace shown (`b`, its value) was calculated, by it; with `pin`, kept open
+  showDerivation(b, pin = false) {
+    const d = this.derivations.get(b.dataset.derive), pop = $('#hs-derivation');
+    if (!d) return;
+    this.anchor?.setAttribute('aria-expanded', 'false');
+    this.anchor = b;
+    this.pinned = pin;
+    b.setAttribute('aria-expanded', String(pin));
+    pop.classList.toggle('pinned', pin);
+    pop.innerHTML = `<div class="hs-deriv-head"><b>${d.title}</b><span class="muted">${d.how}</span>
+        <button type="button" class="hs-deriv-close" aria-label="Close">×</button></div>
+      <ol>${d.steps.map(([what, formula]) => `<li><span class="muted">${what}</span><span class="hs-eq">${formula}</span></li>`).join('')}</ol>`;
+    pop.hidden = false;
+    this.placeDerivation();
+  }
+
+  hideDerivation() {
+    $('#hs-derivation').hidden = true;
+    this.anchor?.setAttribute('aria-expanded', 'false');
+    this.anchor = null;
+    this.pinned = false;
+  }
+
+  // the calculation shown under its value (else above it, if there is more room there), in the window
+  placeDerivation() {
+    const pop = $('#hs-derivation'), b = this.anchor;
+    if (!b || pop.hidden) return;
+    const r = b.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight, gap = 6, margin = 8;
+    const below = r.bottom + gap, above = r.top - gap - h;
+    const top = below + h <= innerHeight - margin || above < margin ? Math.max(margin, Math.min(below, innerHeight - margin - h)) : above;
+    pop.style.left = `${Math.max(margin, Math.min(r.right - w, innerWidth - margin - w))}px`;
+    pop.style.top = `${top}px`;
+  }
+}
+
+// the steps of an odor's headspace (Pa) as `headspace.calculate` took them (`c`, of `res`'s
+// components): each [what, its formula with the values used] (HTML)
+function hsSteps(c, res) {
+  const v = hsVal, oil = res.solvent !== 'water', solvent = oil ? 'oil' : 'water';
+  const mw = c.properties.molar_mass;
+  const steps = [
+    ['Its volume fraction (v/v), from its log₁₀ concentration',
+      `<i>φ</i> = 10<sup>${String(c.log10_conc).replace('-', '−')}</sup> = ${v(c.fraction)}`],
+    ['Its moles in each mL of the solution, from its density and molar mass',
+      `<i>n</i> = <i>φ</i> <i>ρ</i> ÷ <i>M</i> = ${v(c.fraction)} × ${v(c.density)} g/mL${c.properties.density == null ? ' (assumed)' : ''}
+        ÷ ${mw.toFixed(2)} g/mol = ${v(c.moles)} mol/mL`],
+  ];
+  if (c.law === 'henry') {
+    const conc = c.moles * 1e6;
+    steps.push([`Its concentration in the ${solvent}`, `<i>c</i> = <i>n</i> × 10<sup>6</sup> mL/m³ = ${v(conc)} mol/m³`],
+      [`Its partial pressure by Henry's law, from its solubility constant in the ${solvent}`,
+        `<i>p</i> = <i>c</i> ÷ <i>K</i><sub>H</sub> = ${v(conc)} mol/m³ ÷ ${v(c.k_henry)} mol/m³/Pa = ${v(c.henry_pa)} Pa`]);
+    if (c.henry_pa !== c.pa) {
+      steps.push([`More than its vapor pressure: more than the ${solvent} dissolves, so at its vapor pressure`,
+        `<i>p</i> = <i>p</i><sub>sat</sub> = ${v(c.vapor_pressure)} kPa × 1000 Pa/kPa = ${v(c.pa)} Pa`]);
+    }
+    return steps;
+  }
+  const fractions = res.components.reduce((t, d) => t + d.fraction, 0);
+  const moles = res.components.reduce((t, d) => t + (d.moles ?? 0), 0);
+  const all = res.components.length > 1 ? `the ${res.components.some((d) => d.moles == null) ? 'odors with a molar mass' : 'odors'}` : 'it';
+  steps.push(
+    [`The ${solvent}'s moles in each mL of the solution (the rest of it${oil ? ', as n-hexadecane' : ''})`,
+      `<i>n</i><sub>${solvent}</sub> = (1 − Σ<i>φ</i>) <i>ρ</i><sub>${solvent}</sub> ÷ <i>M</i><sub>${solvent}</sub>
+        = (1 − ${v(fractions)}) × ${v(res.solvent_density)} g/mL ÷ ${res.solvent_molar_mass} g/mol = ${v(res.solvent_moles)} mol/mL`],
+    [`All the moles in each mL: of the ${solvent}, and of ${all}`,
+      `<i>N</i> = <i>n</i><sub>${solvent}</sub> + Σ<i>n</i> = ${v(res.solvent_moles)} + ${v(moles)} mol/mL = ${v(res.total_moles)} mol/mL`],
+    ['Its mole fraction in the liquid', `<i>x</i> = <i>n</i> ÷ <i>N</i> = ${v(c.moles)} ÷ ${v(res.total_moles)} = ${v(c.mole_fraction)}`],
+    ["Its partial pressure by Raoult's law, from its vapor pressure",
+      `<i>p</i> = <i>x</i> <i>p</i><sub>sat</sub> = ${v(c.mole_fraction)} × ${v(c.vapor_pressure)} kPa × 1000 Pa/kPa = ${v(c.pa)} Pa`]);
+  return steps;
+}
+
+// the step from a headspace's partial pressure (Pa; of molar mass `mw`, g/mol) to `shown`
+// (HTML), in `units` (of HS_UNITS), if it is not in Pa
+function hsUnitSteps(units, pa, mw, shown) {
+  const [unit, label, short, , formula] = units;
+  if (!formula) return [];
+  const why = { mol_l: 'by the ideal gas law', molecules: 'by the ideal gas law', ug_l: 'by the ideal gas law, from its molar mass' }[unit] || 'at 1 atm';
+  return [[`In ${esc(label)}, ${why}`, `${formula(pa, mw)} = <b>${shown}</b>${unit === 'log10' ? '' : ` ${esc(short)}`}`]];
 }
 
 // serial dilutions of the mixture's odors from their neat chemicals, in the Headspace

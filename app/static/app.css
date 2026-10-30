@@ -691,6 +691,22 @@ dialog.player::backdrop { background: rgba(29,31,34,.55); }
 .hs-table .notes ul { margin: 0; padding-left: 16px; }
 .hs-table .hs-amount { font-weight: 600; }
 .hs-table tr.hs-total td { border-top: 1px solid var(--rule-strong); font-weight: 600; }
+/* a headspace, opening how it was calculated */
+.hs-table .hs-why { padding: 0; border: 0; background: none; font: inherit; color: inherit; cursor: pointer;
+  text-decoration: underline dotted var(--ink-muted); text-underline-offset: 3px; }
+.hs-table .hs-why:hover, .hs-table .hs-why[aria-expanded="true"] { color: var(--accent); text-decoration-color: currentColor; }
+.hs-why-note { margin: 6px 0 0; }
+.hs-derivation { position: fixed; z-index: 30; width: max-content; max-width: min(640px, calc(100vw - 16px)); max-height: min(70vh, 560px);
+  overflow: auto; padding: 10px 14px; background: var(--panel); border: 1px solid var(--rule-strong); border-radius: var(--radius);
+  box-shadow: 0 6px 22px rgba(0,0,0,.14); font-size: 13px; line-height: 1.45; }
+.hs-deriv-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding-right: 22px; }
+.hs-deriv-close { position: absolute; top: 6px; right: 8px; border: 0; background: none; padding: 0 4px; font-size: 18px; line-height: 1; color: var(--ink-muted); cursor: pointer; }
+.hs-deriv-close:hover { color: var(--ink); }
+.hs-derivation:not(.pinned) .hs-deriv-close { display: none; }
+.hs-derivation ol { margin: 8px 0 0; padding-left: 20px; }
+.hs-derivation li { margin: 6px 0 0; }
+.hs-derivation li > span { display: block; }
+.hs-derivation .hs-eq { font-variant-numeric: tabular-nums; }
 .hs-options { margin-top: 14px; max-width: 640px; }
 .hs-vcf-options { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); max-width: 960px; }
 #hs-vcf-results h3 { margin: 22px 0 6px; }

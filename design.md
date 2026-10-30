@@ -548,6 +548,11 @@ offline, a second or so each, the first time.)
   volume (p / 101325 Pa), log10 of that v/v, mol/L and molecules/cm³ by the ideal gas
   law, and µg/L (mg/m³) with the molar mass. These are computed in the browser, so that
   changing them asks the server nothing.
+- **How each was calculated**: `calculate` also gives the steps to each partial pressure
+  (each odor's v/v, density as used, moles, and its pressure by Henry's law before it is
+  at most p_sat; the solvent's moles, and all of them), which the browser shows by each
+  headspace, with the values used, to the value shown: what was computed, not computed
+  again (the browser itself computes only the units, c = n·10⁶, and the sums it shows).
 - **Kept in the browser**: each calculation since the page was opened, by its mixture,
   solvent and model, so that going back to one shows it at once (and asks nothing).
 - **Panels**: a mixture can start from a panel of the datasets: the odors presented in it
@@ -808,7 +813,8 @@ POST   /api/headspace                       {"solvent": "paraffin oil" or "water
                                             or "raoult" (oil only), "components": [{"odor_id",
                                             "log10_conc"}, ...]}: the partial pressure (Pa) above
                                             the mixture of each odor, with the properties used,
-                                            where they are from and whether measured
+                                            where they are from and whether measured, and the
+                                            steps to it
 GET    /api/headspace/panels                the panels of the datasets as mixtures
 POST   /api/headspace/dilutions             {"targets": [log10 v/v, ...], "solvent_ml", "neat_ul":
                                             [least, most], "dilution_ul": [least or null, most or

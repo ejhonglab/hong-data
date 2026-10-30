@@ -467,7 +467,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   (a vapor pressure estimated from the structure, a density of 1 g/mL). Vapor pressures
   and Henry's law constants are labelled *measured* or *estimate* (where chemutils says:
   every constant in oil is an estimate, with the vapor pressure it was estimated with
-  shown, labelled too). What was calculated since the page was opened is shown again at
+  shown, labelled too). Point at a headspace (or click it, to keep it open) for how it
+  was calculated: each step, from its concentration and every value used, to the value
+  shown. What was calculated since the page was opened is shown again at
   once, for another solvent or model too. "Download table" saves the results as a CSV
   (a row per odor, then one of them all together: what was used of each, whether
   measured, where from, and its headspace in every unit) or LaTeX (as shown, in the

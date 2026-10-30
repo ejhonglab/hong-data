@@ -119,7 +119,12 @@ def calculate(components: list[dict], solvent: str, model: str = MODELS[0]) -> d
         ``vapor_pressure_source`` (if not of the odor table's: that of a Henry's law
         constant estimated with it), ``k_henry`` (mol/m³/Pa, as used, by Henry's law),
         ``k_henry_measured`` and ``notes`` (what was assumed, or why it cannot be
-        computed); and ``total_pa`` (of those that can be computed).
+        computed), with the steps to its ``pa``: ``fraction`` (v/v), ``density`` (g/mL,
+        as used), ``moles`` (mol in a mL of the solution; None with no molar mass) and
+        ``henry_pa`` (by Henry's law, Pa, before it is at most its vapor pressure); and
+        ``total_pa`` (of those that can be computed), ``solvent_molar_mass`` (g/mol) and
+        ``solvent_density`` (g/mL) as taken, ``solvent_moles`` (mol in a mL of the
+        solution) and ``total_moles`` (of the solvent and the odors with a molar mass).
 
     Raises:
         ValueError: if the odors are more than the whole solution.
@@ -141,9 +146,11 @@ def calculate(components: list[dict], solvent: str, model: str = MODELS[0]) -> d
         if not mass:
             notes.append("no molar mass, so its headspace cannot be computed")
         out.append({"pa": None, "law": None, "mole_fraction": None, "vapor_pressure": None, "vapor_pressure_measured": None,
-                    "vapor_pressure_source": None, "k_henry": None, "k_henry_measured": None, "notes": notes})
+                    "vapor_pressure_source": None, "k_henry": None, "k_henry_measured": None, "notes": notes,
+                    "fraction": f, "density": rho, "moles": moles[-1], "henry_pa": None})
 
-    n_total = (1 - sum(fractions)) * rho_solvent / m_solvent + sum(n for n in moles if n is not None)
+    n_solvent = (1 - sum(fractions)) * rho_solvent / m_solvent
+    n_total = n_solvent + sum(n for n in moles if n is not None)
     if any(n is None for n in moles):
         for r, n in zip(out, moles):
             if n is not None:
@@ -154,13 +161,14 @@ def calculate(components: list[dict], solvent: str, model: str = MODELS[0]) -> d
         r["mole_fraction"] = n / n_total
         _law(c, solvent, henry, r)
         if r["law"] == "henry":
-            r["pa"] = n * 1e6 / r["k_henry"]  # mol/mL as mol/m³, over mol/m³/Pa
+            r["pa"] = r["henry_pa"] = n * 1e6 / r["k_henry"]  # mol/mL as mol/m³, over mol/m³/Pa
             if r["vapor_pressure"] is not None and r["pa"] > r["vapor_pressure"] * 1e3:
                 r["pa"] = r["vapor_pressure"] * 1e3
                 r["notes"].append(f"more than {solvent} dissolves by Henry's law, so at its vapor pressure")
         elif r["vapor_pressure"] is not None:
             r["pa"] = r["mole_fraction"] * r["vapor_pressure"] * 1e3
-    return {"components": out, "total_pa": sum(r["pa"] for r in out if r["pa"] is not None)}
+    return {"components": out, "total_pa": sum(r["pa"] for r in out if r["pa"] is not None), "solvent_molar_mass": m_solvent,
+            "solvent_density": rho_solvent, "solvent_moles": n_solvent, "total_moles": n_total}
 
 
 def sample(components: list[dict]) -> list[dict]:
@@ -225,8 +233,8 @@ def invert(components: list[dict], solvent: str = "paraffin oil", model: str = M
     Returns:
         dict with ``components``, one for each given, in order: ``log10_conc`` (its
         concentration, log10 v/v; None if it cannot be computed or reached), as
-        `calculate` gives them but ``pa`` (as given); and ``total`` (the v/v of those
-        computed, together; more than 1 if they cannot be).
+        `calculate` gives them but ``pa`` (as given) and without the steps to it; and
+        ``total`` (the v/v of those computed, together; more than 1 if they cannot be).
     """
     m_solvent, rho_solvent = SOLVENTS[solvent]
     a_solvent = rho_solvent / m_solvent  # (mol/mL, pure)

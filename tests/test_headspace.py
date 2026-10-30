@@ -30,6 +30,11 @@ def test_raoult():
     a, b = headspace.calculate([{"log10_conc": -1, **EA}, {"log10_conc": -1, **other}], "paraffin oil", "raoult")["components"]
     na, nb = 0.1 * 0.902 / 88.11, 0.1 * 0.789 / 46.07
     assert a["mole_fraction"] == pytest.approx(na / (na + nb + 0.8 * OIL_MOLES)) and b["pa"] == pytest.approx(nb / (na + nb + 0.8 * OIL_MOLES) * 7900)
+    # (with the steps to it, as the browser shows them)
+    res = headspace.calculate([{"log10_conc": -1, **EA}, {"log10_conc": -1, **other}], "paraffin oil", "raoult")
+    assert (res["solvent_molar_mass"], res["solvent_density"]) == (226.45, 0.770) and res["solvent_moles"] == pytest.approx(0.8 * OIL_MOLES)
+    assert res["total_moles"] == pytest.approx(na + nb + 0.8 * OIL_MOLES)
+    assert a["fraction"] == pytest.approx(0.1) and a["density"] == 0.902 and a["moles"] == pytest.approx(na) and a["henry_pa"] is None
     (r,) = headspace.calculate([{"log10_conc": 0, **EA}], "paraffin oil", "raoult")["components"]
     assert r["pa"] == pytest.approx(12600)
     with pytest.raises(ValueError, match="more than the whole solution"):
@@ -41,7 +46,7 @@ def test_assumptions():
     (r,) = headspace.calculate([{"log10_conc": -3, **EA, "vapor_pressure": None, "est_vapor_pressure": 10.0, "density": None}],
                                "paraffin oil", "raoult")["components"]
     n = 1e-3 / 88.11
-    assert r["pa"] == pytest.approx(n / (n + 0.999 * OIL_MOLES) * 10000) and r["vapor_pressure"] == 10.0
+    assert r["pa"] == pytest.approx(n / (n + 0.999 * OIL_MOLES) * 10000) and r["vapor_pressure"] == 10.0 and r["density"] == 1.0
     assert r["notes"] == ["no density found, so taken as 1 g/mL",
                           "no vapor pressure found, so estimated from its structure (SIMPOL.1)"]
     # with no vapor pressure or molar mass, none; the others' without it
@@ -52,15 +57,18 @@ def test_assumptions():
     assert a["notes"] == ["mole fraction without the odors with no molar mass", "no vapor pressure, so its headspace cannot be computed"]
     assert b["notes"] == ["no molar mass, so its headspace cannot be computed"]
     assert res["total_pa"] == c["pa"] and c["mole_fraction"] == pytest.approx(a["mole_fraction"])
+    assert b["moles"] is None and res["total_moles"] == pytest.approx(a["moles"] + c["moles"] + res["solvent_moles"])
+    assert res["solvent_moles"] == pytest.approx((1 - 3e-3) * OIL_MOLES)
 
 
 def test_henry():
     (r,) = headspace.calculate([{"log10_conc": -2, **EA}], "water")["components"]
     c = 1e-2 * 0.902 / 88.11 * 1e6  # mol/m³
-    assert r["law"] == "henry" and r["pa"] == pytest.approx(c / 5.9e-2) and r["notes"] == []
+    assert r["law"] == "henry" and r["pa"] == pytest.approx(c / 5.9e-2) and r["notes"] == [] and r["henry_pa"] == r["pa"]
     # more than water dissolves: its vapor pressure
     (r,) = headspace.calculate([{"log10_conc": -0.5, **EA}], "water")["components"]
     assert r["pa"] == 12600 and r["notes"] == ["more than water dissolves by Henry's law, so at its vapor pressure"]
+    assert r["henry_pa"] == pytest.approx(10 ** -0.5 * 0.902 / 88.11 * 1e6 / 5.9e-2) and r["henry_pa"] > r["pa"]
     # with no constant, as an ideal solution, said to be likely too low
     (r,) = headspace.calculate([{"log10_conc": -2, **EA, "k_henry": None}], "water")["components"]
     n = 1e-2 * 0.902 / 88.11
