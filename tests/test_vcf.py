@@ -9,7 +9,7 @@ from collections import OrderedDict
 import pytest
 
 from app import chemprops, config, headspace, reference, vcf
-from tests.test_headspace import EA, PFO, main  # noqa: F401 (fixture)
+from tests.test_headspace import EA, PFO, PFO_K, main  # noqa: F401 (fixture)
 from tests.test_tensor import call
 
 INCHI_EA = "1S/C4H8O2/c1-3-6-4(2)5/h3H2,1-2H3"
@@ -85,7 +85,7 @@ def test_invert():
         assert d["log10_conc"] is None and d["notes"] == [] and c["notes"][0] == "no density found, so taken as 1 g/mL"
     # by Henry's law, from its own headspace alone
     (a,) = headspace.invert([{**EA, **PFO, "pa": 50.0}])["components"]
-    assert a["law"] == "henry" and 10 ** a["log10_conc"] == pytest.approx(50 * 0.0977 / 1e6 * 88.11 / 0.902)
+    assert a["law"] == "henry" and 10 ** a["log10_conc"] == pytest.approx(50 * PFO_K / 1e6 * 88.11 / 0.902)
     # what cannot be reached: at its vapor pressure, or with none of it; Raoult's law with no vapor pressure
     hi, zero, novp = headspace.invert([{**EA, **PFO, "pa": 12610.0}, {**EA, **PFO, "pa": 0.0},
                                        {**EA, "vapor_pressure": None, "pa": 1.0}])["components"]

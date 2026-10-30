@@ -460,7 +460,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   says of the odors, unless one is chosen. The headspace is at equilibrium in a closed
   vial at 25 °C: over paraffin oil by Henry's law with constants chemutils estimates
   (`inchi2k_henry_pfo`, from activity coefficients in hexadecane by modified UNIFAC), or
-  by Raoult's law only (an ideal solution) if chosen; over water by Henry's law. What it
+  by Raoult's law only (an ideal solution) if chosen, either way for the oil at
+  0.85 g/mL; over water by Henry's law. What it
   needs of each odor (molar mass, density, vapor pressure, Henry's law constant) is
   looked up through chemutils the first time (a few seconds an odor) and kept with the
   odor table; where something is missing, what was assumed instead is noted by the odor

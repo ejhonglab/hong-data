@@ -7,12 +7,14 @@ converts them to other units), from the properties of each looked up through che
   each odor is its concentration in the oil over its Henry's law solubility constant
   there, as chemutils estimates it (`inchi2k_henry_pfo`: its activity coefficient in
   n-hexadecane by modified UNIFAC, and its vapor pressure; no measured solubilities in
-  oil). That is Raoult's law with the activity coefficient of the odor when dilute:
-  polar odors (alcohols, acids) are less soluble in oil than an ideal solution, so more
-  of them is in the headspace. With no constant estimated, or by choice ('raoult'), by
-  Raoult's law for an ideal solution: the partial pressure of each odor is its mole
-  fraction in the liquid times its vapor pressure. The moles of each are from its volume
-  (v/v), density and molar mass, and those of the oil from its density (0.85 g/mL), as if
+  oil), for the oil at its density (0.85 g/mL) rather than n-hexadecane's own, which
+  chemutils takes (`CHEMUTILS_OIL_DENSITY`): the constant is proportional to the oil's
+  moles in a volume. That is Raoult's law with the activity coefficient of the odor when
+  dilute: polar odors (alcohols, acids) are less soluble in oil than an ideal solution,
+  so more of them is in the headspace. With no constant estimated, or by choice
+  ('raoult'), by Raoult's law for an ideal solution: the partial pressure of each odor is
+  its mole fraction in the liquid times its vapor pressure. The moles of each are from
+  its volume (v/v), density and molar mass, and those of the oil from its density, as if
   its molecules were n-hexadecane's (a light paraffin oil's are about as large).
 - In water, by Henry's law: the partial pressure of each odor is its concentration in the
   water over its Henry's law solubility constant, else (with none found) by Raoult's law
@@ -37,8 +39,12 @@ P_ATM = 101325.0  # Pa: the air's total pressure, for parts of it by volume
 R = 8.314462618  # J/(mol K)
 K_B = 1.380649e-23  # J/K
 # solvent -> (molar mass in g/mol, density in g/mL at 25 °C): paraffin oil's molecules as if
-# n-hexadecane's, at the oil's density (that of n-hexadecane itself is 0.770 g/mL)
+# n-hexadecane's, at the oil's density
 SOLVENTS = {"paraffin oil": (226.45, 0.85), "water": (18.015, 0.997)}
+# the density (g/mL) of the oil that chemutils' Henry's law constants in it take: n-hexadecane's
+# own (`inchi2k_henry_pfo`'s c_solv, 3401.8 mol/m³, at SOLVENTS' molar mass), so that they are
+# taken to the oil's, times SOLVENTS' density over it (K_H = c_solv / (γ∞ p_sat))
+CHEMUTILS_OIL_DENSITY = 0.77033
 # how the headspace over paraffin oil is computed (see the module's docstring), the default first
 MODELS = ("henry", "raoult")
 # the property with each solvent's Henry's law constants (`chemprops.PROPERTIES`), with Henry's law
@@ -73,12 +79,17 @@ def _vapor_pressure(c: dict, notes: list[str]) -> tuple[Optional[float], Optiona
 def _law(c: dict, solvent: str, henry: Optional[str], r: dict) -> None:
     """How an odor's headspace over a solvent is computed, into `r` (as `calculate` gives
     it): ``law`` ('henry' if `henry`, the property with its Henry's law constant there, is
-    known of it, else 'raoult'), ``k_henry`` and ``k_henry_measured`` (by Henry's law),
-    the vapor pressure used and whether it was measured (by Henry's law, at most it), and
-    what was assumed (``notes``)."""
+    known of it, else 'raoult'), ``k_henry`` and ``k_henry_measured`` (by Henry's law; in
+    oil, for it at its density, from chemutils' ``k_henry_chemutils``, for it at
+    `CHEMUTILS_OIL_DENSITY`), the vapor pressure used and whether it was measured (by
+    Henry's law, at most it), and what was assumed (``notes``)."""
     details = (c.get(f"{henry}_details") or {}) if henry else {}
     if henry and c.get(henry):
-        r.update(law="henry", k_henry=c[henry], k_henry_measured=c.get(f"{henry}_measured"))
+        k = c[henry]
+        if solvent == "paraffin oil":
+            r["k_henry_chemutils"] = k
+            k *= SOLVENTS[solvent][1] / CHEMUTILS_OIL_DENSITY
+        r.update(law="henry", k_henry=k, k_henry_measured=c.get(f"{henry}_measured"))
         if details.get("vapor_pressure_kpa") is not None:  # (the one the constant was estimated with)
             r.update(vapor_pressure=details["vapor_pressure_kpa"], vapor_pressure_measured=details.get("vapor_pressure_measured"),
                      vapor_pressure_source=details.get("vapor_pressure_source"))
@@ -121,11 +132,14 @@ def calculate(components: list[dict], solvent: str, model: str = MODELS[0]) -> d
         constant estimated with it), ``k_henry`` (mol/m³/Pa, as used, by Henry's law),
         ``k_henry_measured`` and ``notes`` (what was assumed, or why it cannot be
         computed), with the steps to its ``pa``: ``fraction`` (v/v), ``density`` (g/mL,
-        as used), ``moles`` (mol in a mL of the solution; None with no molar mass) and
-        ``henry_pa`` (by Henry's law, Pa, before it is at most its vapor pressure); and
-        ``total_pa`` (of those that can be computed), ``solvent_molar_mass`` (g/mol) and
-        ``solvent_density`` (g/mL) as taken, ``solvent_moles`` (mol in a mL of the
-        solution) and ``total_moles`` (of the solvent and the odors with a molar mass).
+        as used), ``moles`` (mol in a mL of the solution; None with no molar mass),
+        ``k_henry_chemutils`` (by Henry's law in oil: chemutils' constant, for the oil at
+        ``chemutils_oil_density``) and ``henry_pa`` (by Henry's law, Pa, before it is at
+        most its vapor pressure); and ``total_pa`` (of those that can be computed),
+        ``solvent_molar_mass`` (g/mol) and ``solvent_density`` (g/mL) as taken,
+        ``chemutils_oil_density`` (`CHEMUTILS_OIL_DENSITY` in oil, else None),
+        ``solvent_moles`` (mol in a mL of the solution) and ``total_moles`` (of the solvent
+        and the odors with a molar mass).
 
     Raises:
         ValueError: if the odors are more than the whole solution.
@@ -148,7 +162,7 @@ def calculate(components: list[dict], solvent: str, model: str = MODELS[0]) -> d
             notes.append("no molar mass, so its headspace cannot be computed")
         out.append({"pa": None, "law": None, "mole_fraction": None, "vapor_pressure": None, "vapor_pressure_measured": None,
                     "vapor_pressure_source": None, "k_henry": None, "k_henry_measured": None, "notes": notes,
-                    "fraction": f, "density": rho, "moles": moles[-1], "henry_pa": None})
+                    "fraction": f, "density": rho, "moles": moles[-1], "k_henry_chemutils": None, "henry_pa": None})
 
     n_solvent = (1 - sum(fractions)) * rho_solvent / m_solvent
     n_total = n_solvent + sum(n for n in moles if n is not None)
@@ -169,7 +183,8 @@ def calculate(components: list[dict], solvent: str, model: str = MODELS[0]) -> d
         elif r["vapor_pressure"] is not None:
             r["pa"] = r["mole_fraction"] * r["vapor_pressure"] * 1e3
     return {"components": out, "total_pa": sum(r["pa"] for r in out if r["pa"] is not None), "solvent_molar_mass": m_solvent,
-            "solvent_density": rho_solvent, "solvent_moles": n_solvent, "total_moles": n_total}
+            "solvent_density": rho_solvent, "chemutils_oil_density": CHEMUTILS_OIL_DENSITY if solvent == "paraffin oil" else None,
+            "solvent_moles": n_solvent, "total_moles": n_total}
 
 
 def sample(components: list[dict]) -> list[dict]:
@@ -234,7 +249,8 @@ def invert(components: list[dict], solvent: str = "paraffin oil", model: str = M
     Returns:
         dict with ``components``, one for each given, in order: ``log10_conc`` (its
         concentration, log10 v/v; None if it cannot be computed or reached), as
-        `calculate` gives them but ``pa`` (as given) and without the steps to it; and
+        `calculate` gives them but ``pa`` (as given) and without the steps to it (but
+        ``k_henry_chemutils``); and
         ``total`` (the v/v of those computed, together; more than 1 if they cannot be).
     """
     m_solvent, rho_solvent = SOLVENTS[solvent]
@@ -244,7 +260,7 @@ def invert(components: list[dict], solvent: str = "paraffin oil", model: str = M
     for c in components:
         r = {"log10_conc": None, "pa": c.get("pa"), "law": None, "mole_fraction": None, "vapor_pressure": None,
              "vapor_pressure_measured": None, "vapor_pressure_source": None, "k_henry": None, "k_henry_measured": None,
-             "notes": []}
+             "k_henry_chemutils": None, "notes": []}
         out.append(r)
         pure.append(None)
         if r["pa"] is None:

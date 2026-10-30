@@ -516,12 +516,13 @@ offline, a second or so each, the first time.)
   K_oil/air = c_hexadecane·R·T / (γ∞·p_sat), γ∞ the activity coefficient of the odor when
   dilute in n-hexadecane by modified UNIFAC (from its functional groups), p_sat from
   `thermo`'s fits to measurements where it has them (else PubChem's, else estimates).
-  That is Raoult's law times γ∞ (e.g. ethyl acetate's is 2.8: at -3, 105 Pa, 1030 ppm;
-  ethanol's 30), for the oil as n-hexadecane itself, 0.770 g/mL. Raoult's law below takes
-  the oil at 0.85 g/mL, so it gives 0.770/0.85 (0.91×) of p/γ∞ by Henry's law. No
-  measured solubility in oil or alkanes is used (chemutils can take
-  one, but none is at hand), so each constant is an estimate, its vapor pressure
-  measured or not (both said in the table). Like Henry's law in water, it holds for
+  chemutils takes c_hexadecane as n-hexadecane's own (3401.8 mol/m³, 0.7703 g/mL), and
+  H_cp is in proportion to it, so each constant is multiplied by 0.85 / 0.7703 (×1.103)
+  for the oil at 0.85 g/mL (`headspace.CHEMUTILS_OIL_DENSITY`; a test checks chemutils'
+  against it). That is Raoult's law below times γ∞: e.g. ethyl acetate's is 2.8 (at -3,
+  95 Pa, 936 ppm) and ethanol's 30. No measured solubility in oil or alkanes is used
+  (chemutils can take one, but none is at hand), so each constant is an estimate, its
+  vapor pressure measured or not (both said in the table). Like Henry's law in water, it holds for
   dilute solutions: alcohols and acids associate as they get more concentrated, which
   lowers their headspace again (chemutils' note on them says so), and p is at most p_sat.
   With no constant estimated (no UNIFAC groups or parameters for it), Raoult's law.

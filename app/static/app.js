@@ -5665,7 +5665,8 @@ class HeadspacePage {
         constant is: no measured solubilities in oil or alkanes are used; the vapor pressure it was estimated with is shown, as measured or not)`}.</p>` : ''}
       <table class="odor-table hs-table${key !== now ? ' stale' : ''}"><thead><tr><th>Odor</th><th>log<sub>10</sub> conc.</th>
         <th>Molar mass (g/mol)</th><th>Density (g/mL)</th><th title="As used: from PubChem, else estimated from its structure; in oil by Henry's law, the one its constant was estimated with">Vapor pressure (kPa)</th>
-        ${henry ? `<th title="Henry's law solubility constant at 25 °C (concentration in the ${water ? 'water' : 'oil'} over partial pressure above it)">K<sub>H</sub> in ${water ? 'water' : 'oil'} (mol/m³/Pa)</th>` : ''}
+        ${henry ? `<th title="Henry's law solubility constant at 25 °C (concentration in the ${water ? 'water' : 'oil'} over partial pressure above it)${water ? ''
+          : `: chemutils' estimate, for the oil as n-hexadecane at its own density, taken to the oil's (× ${+res.solvent_density.toPrecision(4)} / ${+res.chemutils_oil_density.toPrecision(4)})`}">K<sub>H</sub> in ${water ? 'water' : 'oil'} (mol/m³/Pa)</th>` : ''}
         <th title="In the liquid">Mole fraction</th><th title="Point at or click one for how it was calculated">Headspace (${esc(unitShort)})</th><th>Notes</th></tr></thead>
       <tbody>${rows}${totalRow}</tbody></table>
       ${computed.length ? '<p class="muted small hs-why-note">Point at a headspace (or click it, to keep it open) for how it was calculated, from every value used.</p>' : ''}`;
@@ -5725,7 +5726,14 @@ function hsSteps(c, res) {
   ];
   if (c.law === 'henry') {
     const conc = c.moles * 1e6;
-    steps.push([`Its concentration in the ${solvent}`, `<i>c</i> = <i>n</i> × 10<sup>6</sup> mL/m³ = ${v(conc)} mol/m³`],
+    steps.push([`Its concentration in the ${solvent}`, `<i>c</i> = <i>n</i> × 10<sup>6</sup> mL/m³ = ${v(conc)} mol/m³`]);
+    if (c.k_henry_chemutils != null) {
+      steps.push([`Its solubility constant in the oil at its density: chemutils' is for n-hexadecane's own, and it is in
+          proportion to the oil's moles in a volume`,
+        `<i>K</i><sub>H</sub> = <i>K</i><sub>H, chemutils</sub> <i>ρ</i><sub>oil</sub> ÷ <i>ρ</i><sub>n-hexadecane</sub>
+          = ${v(c.k_henry_chemutils)} mol/m³/Pa × ${v(res.solvent_density)} g/mL ÷ ${v(res.chemutils_oil_density)} g/mL = ${v(c.k_henry)} mol/m³/Pa`]);
+    }
+    steps.push(
       [`Its partial pressure by Henry's law, from its solubility constant in the ${solvent}`,
         `<i>p</i> = <i>c</i> ÷ <i>K</i><sub>H</sub> = ${v(conc)} mol/m³ ÷ ${v(c.k_henry)} mol/m³/Pa = ${v(c.henry_pa)} Pa`]);
     if (c.henry_pa !== c.pa) {
@@ -6174,7 +6182,7 @@ class HeadspaceVcf {
       ${oil.pending ? `<p class="msg info">Looking up what is needed in oil of ${oil.pending} of them through chemutils, in the background:
         a few seconds each, the first time (kept). This updates as they come.</p>` : ''}
       <div class="hs-wide"><table class="odor-table hs-table"><thead><tr><th>Chemical</th><th>By</th>
-        <th class="num" title="Henry's law solubility constant in paraffin oil at 25 °C, estimated by chemutils">K<sub>H</sub> in oil (mol/m³/Pa)</th>
+        <th class="num" title="Henry's law solubility constant in paraffin oil at 25 °C, estimated by chemutils for the oil as n-hexadecane at its own density, taken to the oil's">K<sub>H</sub> in oil (mol/m³/Pa)</th>
         <th class="num" title="As used: from PubChem, else estimated from its structure; by Henry's law, the one its constant was estimated with">Vapor pressure (kPa)</th>
         <th class="num">Density (g/mL)</th><th class="num" title="Over the samples">Headspace (${esc(unitShort)})</th><th>log<sub>10</sub> conc. (v/v)</th><th>Notes</th></tr></thead>
         <tbody>${rows}${totalRow}</tbody></table></div>
