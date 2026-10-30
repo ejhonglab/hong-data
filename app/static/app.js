@@ -5368,19 +5368,25 @@ class HeadspacePage {
       this.changed();
     });
 
-    // how each headspace shown was calculated: while the pointer is on it (or it has the focus),
-    // and kept open by clicking it, until it is clicked again, or elsewhere, or Escape
+    // how each headspace shown was calculated: while the pointer is on it or on the calculation
+    // (or it has the focus), and kept open by clicking it, until it is clicked again, or
+    // elsewhere, or Escape
     this.derivations = new Map(); // value shown (its data-derive) -> {title, how, steps: [[what, formula], ...]}
     this.anchor = null; // the value whose calculation is shown
     this.pinned = false; // whether it is kept open
+    this.leaving = null; // (the timer hiding it, once the pointer has left both)
     const results = $('#hs-results'), pop = $('#hs-derivation');
     const valueOf = (e) => e.target.closest?.('[data-derive]');
     const hover = (e) => { const b = valueOf(e); if (b && !this.pinned) this.showDerivation(b); };
-    const leave = (e) => { const b = valueOf(e); if (b && !this.pinned && !b.contains(e.relatedTarget)) this.hideDerivation(); };
+    const leave = (e) => {
+      if (!this.pinned && valueOf(e) && !this.anchor?.contains(e.relatedTarget) && !pop.contains(e.relatedTarget)) this.hideSoon();
+    };
     results.addEventListener('mouseover', hover);
     results.addEventListener('focusin', hover);
     results.addEventListener('mouseout', leave);
     results.addEventListener('focusout', leave);
+    pop.addEventListener('mouseenter', () => clearTimeout(this.leaving));
+    pop.addEventListener('mouseleave', (e) => { if (!this.pinned && !this.anchor?.contains(e.relatedTarget)) this.hideSoon(); });
     results.addEventListener('click', (e) => {
       const b = valueOf(e);
       if (b && this.pinned && this.anchor === b) this.hideDerivation();
@@ -5681,33 +5687,61 @@ class HeadspacePage {
   showDerivation(b, pin = false) {
     const d = this.derivations.get(b.dataset.derive), pop = $('#hs-derivation');
     if (!d) return;
-    this.anchor?.setAttribute('aria-expanded', 'false');
-    this.anchor = b;
+    clearTimeout(this.leaving);
+    if (this.anchor !== b || pop.hidden) { // (else as it is, scrolled as it was)
+      this.anchor?.setAttribute('aria-expanded', 'false');
+      this.anchor = b;
+      pop.innerHTML = `<div class="hs-deriv-head"><b>${d.title}</b><span class="muted">${d.how}</span>
+          <button type="button" class="hs-deriv-close" aria-label="Close">×</button></div>
+        <ol>${d.steps.map(([what, formula]) => `<li><span class="muted">${what}</span><span class="hs-eq">${formula}</span></li>`).join('')}</ol>`;
+      pop.scrollTop = 0;
+      pop.hidden = false;
+    }
     this.pinned = pin;
     b.setAttribute('aria-expanded', String(pin));
     pop.classList.toggle('pinned', pin);
-    pop.innerHTML = `<div class="hs-deriv-head"><b>${d.title}</b><span class="muted">${d.how}</span>
-        <button type="button" class="hs-deriv-close" aria-label="Close">×</button></div>
-      <ol>${d.steps.map(([what, formula]) => `<li><span class="muted">${what}</span><span class="hs-eq">${formula}</span></li>`).join('')}</ol>`;
-    pop.hidden = false;
     this.placeDerivation();
   }
 
   hideDerivation() {
+    clearTimeout(this.leaving);
     $('#hs-derivation').hidden = true;
     this.anchor?.setAttribute('aria-expanded', 'false');
     this.anchor = null;
     this.pinned = false;
   }
 
-  // the calculation shown under its value (else above it, if there is more room there), in the window
+  // (the pointer has left the value and its calculation: hidden, unless it comes back to
+  // either first, e.g. crossing the gap between them)
+  hideSoon() {
+    clearTimeout(this.leaving);
+    this.leaving = setTimeout(() => { if (!this.pinned) this.hideDerivation(); }, 200);
+  }
+
+  // the calculation placed by its value, in the window, never over it (so that the pointer
+  // stays on the value, and clicks reach it): under it, else over it, else beside it, else
+  // where there is more room, scrolling in itself
   placeDerivation() {
     const pop = $('#hs-derivation'), b = this.anchor;
     if (!b || pop.hidden) return;
-    const r = b.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight, gap = 6, margin = 8;
-    const below = r.bottom + gap, above = r.top - gap - h;
-    const top = below + h <= innerHeight - margin || above < margin ? Math.max(margin, Math.min(below, innerHeight - margin - h)) : above;
-    pop.style.left = `${Math.max(margin, Math.min(r.right - w, innerWidth - margin - w))}px`;
+    const gap = 6, margin = 8, r = b.getBoundingClientRect();
+    pop.style.maxHeight = '';
+    const w = pop.offsetWidth, h = pop.offsetHeight;
+    const below = innerHeight - margin - gap - r.bottom, above = r.top - gap - margin;
+    let left = Math.max(margin, Math.min(r.right - w, innerWidth - margin - w)), top;
+    if (h <= below) top = r.bottom + gap;
+    else if (h <= above) top = r.top - gap - h;
+    else if (w <= r.left - gap - margin || w <= innerWidth - margin - gap - r.right) {
+      const fit = Math.min(h, innerHeight - 2 * margin);
+      pop.style.maxHeight = `${fit}px`;
+      left = w <= r.left - gap - margin ? r.left - gap - w : r.right + gap;
+      top = Math.max(margin, Math.min(r.top + r.height / 2 - fit / 2, innerHeight - margin - fit));
+    } else {
+      const room = Math.max(below, above, 60);
+      pop.style.maxHeight = `${room}px`;
+      top = below >= above ? r.bottom + gap : r.top - gap - Math.min(h, room);
+    }
+    pop.style.left = `${left}px`;
     pop.style.top = `${top}px`;
   }
 }

@@ -13,7 +13,8 @@ the first match.
     nav <url, or #hash of --base>
     wait <selector>             until it is visible (at most 2 min: a first calculation looks things up)
     wait-fn <JS expression>     until it is true (the rest of the line, as is)
-    click | hover | focus <selector>
+    click | hover | focus <selector>   (click and hover scroll it to an edge of the window first)
+    point <selector>            the mouse to its middle where it is, not scrolling it (unlike hover)
     fill <selector> <text>      types into an input, as typing does (input events)
     select <selector> <value>   chooses an option of a <select>
     press <key>                 e.g. Enter, Escape, ArrowDown, Tab
@@ -88,6 +89,11 @@ def main() -> int:
                     page.keyboard.press(a[0])
                 elif cmd == "move":
                     page.mouse.move(float(a[0]), float(a[1]))
+                elif cmd == "point":
+                    box = page.locator(a[0]).first.bounding_box()
+                    if box is None:
+                        raise ValueError(f"{a[0]} is not shown")
+                    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
                 elif cmd == "text":
                     print(page.inner_text(a[0]))
                 elif cmd == "visible":

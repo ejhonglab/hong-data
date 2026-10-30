@@ -58,7 +58,7 @@ EOF
 ```
 
 Screenshots go to `<out>/<name>.png`; **look at them**. The commands (`nav`, `wait`,
-`wait-fn`, `click`, `hover`, `focus`, `fill`, `select`, `press`, `move`, `text`,
+`wait-fn`, `click`, `hover`, `focus`, `fill`, `select`, `press`, `move`, `point`, `text`,
 `visible`, `attr`, `eval`, `viewport`, `ss`, `errors`) are listed in `driver.py`'s
 docstring. Arguments are split as a shell would split them, so quote selectors that
 contain spaces. The first failing command stops the run (exit 1) and saves
@@ -108,6 +108,12 @@ real data. Agents use `serve.sh` instead.
 - Each tab scrolls itself, not the document (`#tab-headspace { overflow: auto }`), so a
   full-page screenshot is just the window. Use `viewport 1400 2600` before `ss` to see a
   whole tab. Playwright scrolls an element into view itself before clicking or hovering.
+- `hover` and `click` scroll their target to an edge of the window first, and the default
+  window (1400×900) is tall, so they can hide bugs that depend on where something is in
+  the window: a popup by a value mid-window in a short window covered its value and hid
+  itself, which never showed this way. To test where something is, scroll its tab
+  (`eval document.querySelector('#tab-headspace').scrollTop = 400`), then `point
+  <selector>` (the mouse to it where it is), in a smaller `viewport` too (e.g. 1366 640).
 - Each driver run is a fresh browser, so whatever the page keeps in localStorage (the
   mixture, units, Settings) starts empty every time.
 - A script run from outside the repo that imports `app` needs `PYTHONPATH=.`.
