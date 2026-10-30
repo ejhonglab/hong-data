@@ -10,7 +10,7 @@ from tests.test_tensor import call
 
 # ethyl acetate, about as PubChem, and henrys-law.org, have it
 EA = {"vapor_pressure": 12.6, "est_vapor_pressure": None, "molar_mass": 88.11, "density": 0.902, "k_henry": 5.9e-2}
-OIL_MOLES = 0.770 / 226.45  # of n-hexadecane, per mL
+OIL_MOLES = 0.85 / 226.45  # of paraffin oil (at 0.85 g/mL, as if n-hexadecane), per mL
 # its Henry's law constant in paraffin oil, as chemutils estimates it (with thermo's vapor pressure)
 PFO = {"k_henry_pfo": 0.0977, "k_henry_pfo_measured": False,
        "k_henry_pfo_details": {"vapor_pressure_kpa": 12.61, "vapor_pressure_source": "thermo WAGNER_MCGARRY",
@@ -23,7 +23,7 @@ def test_raoult():
     x = n / (n + 0.999 * OIL_MOLES)
     assert r["law"] == "raoult" and r["mole_fraction"] == pytest.approx(x) and r["pa"] == pytest.approx(x * 12600) and total == r["pa"]
     assert r["notes"] == [] and r["vapor_pressure"] == 12.6
-    assert 30 < r["pa"] < 45  # (Pa: about 370 ppm)
+    assert 30 < r["pa"] < 45  # (Pa: about 340 ppm)
 
     # together: each lowers the others' mole fractions; pure, its vapor pressure
     other = {**EA, "molar_mass": 46.07, "density": 0.789, "vapor_pressure": 7.9}
@@ -32,7 +32,7 @@ def test_raoult():
     assert a["mole_fraction"] == pytest.approx(na / (na + nb + 0.8 * OIL_MOLES)) and b["pa"] == pytest.approx(nb / (na + nb + 0.8 * OIL_MOLES) * 7900)
     # (with the steps to it, as the browser shows them)
     res = headspace.calculate([{"log10_conc": -1, **EA}, {"log10_conc": -1, **other}], "paraffin oil", "raoult")
-    assert (res["solvent_molar_mass"], res["solvent_density"]) == (226.45, 0.770) and res["solvent_moles"] == pytest.approx(0.8 * OIL_MOLES)
+    assert (res["solvent_molar_mass"], res["solvent_density"]) == (226.45, 0.85) and res["solvent_moles"] == pytest.approx(0.8 * OIL_MOLES)
     assert res["total_moles"] == pytest.approx(na + nb + 0.8 * OIL_MOLES)
     assert a["fraction"] == pytest.approx(0.1) and a["density"] == 0.902 and a["moles"] == pytest.approx(na) and a["henry_pa"] is None
     (r,) = headspace.calculate([{"log10_conc": 0, **EA}], "paraffin oil", "raoult")["components"]
@@ -83,9 +83,10 @@ def test_henry_oil():
     assert r["law"] == "henry" and r["pa"] == pytest.approx(c / 0.0977) and (r["k_henry"], r["k_henry_measured"]) == (0.0977, False)
     assert (r["vapor_pressure"], r["vapor_pressure_measured"], r["vapor_pressure_source"]) == (12.61, True, "thermo WAGNER_MCGARRY")
     assert r["notes"] == []
-    # (Raoult's law, times its activity coefficient when dilute: 2.8)
+    # (Raoult's law, times its activity coefficient when dilute: 2.8, but of n-hexadecane at its own
+    # density, 0.770 g/mL, where Raoult's law takes the oil at 0.85 g/mL)
     raoult = headspace.calculate([{"log10_conc": -3, **EA, **PFO}], "paraffin oil", "raoult")["components"][0]
-    assert 2.5 < r["pa"] / raoult["pa"] < 3 and raoult["k_henry"] is None and raoult["vapor_pressure"] == 12.6
+    assert 2.5 < r["pa"] / raoult["pa"] * 0.770 / 0.85 < 3 and raoult["k_henry"] is None and raoult["vapor_pressure"] == 12.6
     # with chemutils' notes, and at most the vapor pressure
     details = {**PFO["k_henry_pfo_details"], "notes": "OH group: self-association lowers solubility at higher concentrations"}
     (r,) = headspace.calculate([{"log10_conc": -0.5, **EA, **PFO, "k_henry_pfo_details": details}], "paraffin oil")["components"]

@@ -12,8 +12,8 @@ converts them to other units), from the properties of each looked up through che
   of them is in the headspace. With no constant estimated, or by choice ('raoult'), by
   Raoult's law for an ideal solution: the partial pressure of each odor is its mole
   fraction in the liquid times its vapor pressure. The moles of each are from its volume
-  (v/v), density and molar mass, and those of the oil as if it were n-hexadecane (a light
-  paraffin oil's molecules are about as large).
+  (v/v), density and molar mass, and those of the oil from its density (0.85 g/mL), as if
+  its molecules were n-hexadecane's (a light paraffin oil's are about as large).
 - In water, by Henry's law: the partial pressure of each odor is its concentration in the
   water over its Henry's law solubility constant, else (with none found) by Raoult's law
   as above, which is too low for odors not very soluble in water.
@@ -36,8 +36,9 @@ T_K = 298.15
 P_ATM = 101325.0  # Pa: the air's total pressure, for parts of it by volume
 R = 8.314462618  # J/(mol K)
 K_B = 1.380649e-23  # J/K
-# solvent -> (molar mass in g/mol, density in g/mL at 25 °C), with n-hexadecane for paraffin oil
-SOLVENTS = {"paraffin oil": (226.45, 0.770), "water": (18.015, 0.997)}
+# solvent -> (molar mass in g/mol, density in g/mL at 25 °C): paraffin oil's molecules as if
+# n-hexadecane's, at the oil's density (that of n-hexadecane itself is 0.770 g/mL)
+SOLVENTS = {"paraffin oil": (226.45, 0.85), "water": (18.015, 0.997)}
 # how the headspace over paraffin oil is computed (see the module's docstring), the default first
 MODELS = ("henry", "raoult")
 # the property with each solvent's Henry's law constants (`chemprops.PROPERTIES`), with Henry's law

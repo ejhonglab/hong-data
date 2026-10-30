@@ -5738,7 +5738,7 @@ function hsSteps(c, res) {
   const moles = res.components.reduce((t, d) => t + (d.moles ?? 0), 0);
   const all = res.components.length > 1 ? `the ${res.components.some((d) => d.moles == null) ? 'odors with a molar mass' : 'odors'}` : 'it';
   steps.push(
-    [`The ${solvent}'s moles in each mL of the solution (the rest of it${oil ? ', as n-hexadecane' : ''})`,
+    [`The ${solvent}'s moles in each mL of the solution (the rest of it${oil ? ', its molecules as if n-hexadecane\'s' : ''})`,
       `<i>n</i><sub>${solvent}</sub> = (1 − Σ<i>φ</i>) <i>ρ</i><sub>${solvent}</sub> ÷ <i>M</i><sub>${solvent}</sub>
         = (1 − ${v(fractions)}) × ${v(res.solvent_density)} g/mL ÷ ${res.solvent_molar_mass} g/mol = ${v(res.solvent_moles)} mol/mL`],
     [`All the moles in each mL: of the ${solvent}, and of ${all}`,

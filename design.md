@@ -516,18 +516,20 @@ offline, a second or so each, the first time.)
   K_oil/air = c_hexadecane·R·T / (γ∞·p_sat), γ∞ the activity coefficient of the odor when
   dilute in n-hexadecane by modified UNIFAC (from its functional groups), p_sat from
   `thermo`'s fits to measurements where it has them (else PubChem's, else estimates).
-  That is Raoult's law times γ∞: e.g. ethyl acetate's is 2.8 (at -3, 105 Pa, 1030 ppm)
-  and ethanol's 30. No measured solubility in oil or alkanes is used (chemutils can take
+  That is Raoult's law times γ∞ (e.g. ethyl acetate's is 2.8: at -3, 105 Pa, 1030 ppm;
+  ethanol's 30), for the oil as n-hexadecane itself, 0.770 g/mL. Raoult's law below takes
+  the oil at 0.85 g/mL, so it gives 0.770/0.85 (0.91×) of p/γ∞ by Henry's law. No
+  measured solubility in oil or alkanes is used (chemutils can take
   one, but none is at hand), so each constant is an estimate, its vapor pressure
   measured or not (both said in the table). Like Henry's law in water, it holds for
   dilute solutions: alcohols and acids associate as they get more concentrated, which
   lowers their headspace again (chemutils' note on them says so), and p is at most p_sat.
   With no constant estimated (no UNIFAC groups or parameters for it), Raoult's law.
 - **Paraffin oil, by Raoult's law only** (if chosen): an ideal solution, p = x·p_sat. The
-  moles of each odor are from its volume, density and molar mass; those of the oil as if
-  it were n-hexadecane (226.45 g/mol, 0.770 g/mL), a light paraffin oil's molecules
-  being about as large. E.g. ethyl acetate at -3 (0.900 g/mL, 12.4 kPa): x = 0.0030,
-  37 Pa, 368 ppm.
+  moles of each odor are from its volume, density and molar mass; those of the oil from
+  its density, 0.85 g/mL (as the serial dilutions take it by default), as if its
+  molecules were n-hexadecane's (226.45 g/mol), a light paraffin oil's being about as
+  large. E.g. ethyl acetate at -3 (0.900 g/mL, 12.4 kPa): x = 0.0027, 34 Pa, 333 ppm.
 - **Water**: Henry's law, p = c / H_cp, with c from the odor's volume, density and molar
   mass, and H_cp (mol/m³/Pa) from henrys-law.org (Sander's compilation), else NIST, both
   at 25 °C. It holds for dilute solutions only, so p is at most the odor's vapor
