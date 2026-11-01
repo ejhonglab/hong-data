@@ -5649,7 +5649,9 @@ class HeadspacePage {
       this.derivations.set('total', { title: 'All together', how: `of the ${computed.length < res.components.length ? 'odors that could be computed' : 'odors'}, ${at}`,
         steps: unit === 'ug_l' ? [["Each odor's, added together (as each has its own molar mass)",
           `${terms(computed.map((c) => of(c.pa, c.properties.molar_mass)), 'µg/L')} = <b>${totalHs}</b> µg/L`]]
-          : [["The odors' partial pressures, added together", `<i>p</i> = Σ<i>p</i> = ${terms(computed.map((c) => c.pa), 'Pa')} = ${hsVal(res.total_pa)} Pa`],
+          : [["The odors' partial pressures, added together", `${hsSym('p', 'total')} = Σ${hsSym('p')} = ${terms(computed.map((c) => c.pa), 'Pa')} = ${hsVal(res.total_pa)} Pa`,
+            [[hsSym('p', 'total'), 'their partial pressure in the headspace, all together'],
+              [`Σ${hsSym('p')}`, "each odor's partial pressure in the headspace, as its own calculation gives it, added up"]]],
             ...hsUnitSteps(units, res.total_pa, null, totalHs)] });
     }
     const totalRow = res.components.length > 1 ? `<tr class="hs-total"><td colspan="${henry ? 7 : 6}">All together${computed.length < res.components.length ? ' (of those that could be computed)' : ''}</td>
@@ -5693,7 +5695,8 @@ class HeadspacePage {
       this.anchor = b;
       pop.innerHTML = `<div class="hs-deriv-head"><b>${d.title}</b><span class="muted">${d.how}</span>
           <button type="button" class="hs-deriv-close" aria-label="Close">×</button></div>
-        <ol>${d.steps.map(([what, formula]) => `<li><span class="muted">${what}</span><span class="hs-eq">${formula}</span></li>`).join('')}</ol>`;
+        <ol>${d.steps.map(([what, formula, symbols]) => `<li><span class="muted">${what}</span><span class="hs-eq">${formula}</span>${symbols?.length
+          ? `<span class="hs-where">${symbols.map(([symbol, meaning]) => `<span class="hs-sym">${symbol}</span>: ${meaning}`).join('; ')}</span>` : ''}</li>`).join('')}</ol>`;
       pop.scrollTop = 0;
       pop.hidden = false;
     }
@@ -5746,48 +5749,73 @@ class HeadspacePage {
   }
 }
 
+// a symbol of a calculation's formulas (HTML)
+const hsSym = (name, sub) => `<i>${name}</i>${sub ? `<sub>${sub}</sub>` : ''}`;
+
 // the steps of an odor's headspace (Pa) as `headspace.calculate` took them (`c`, of `res`'s
-// components): each [what, its formula with the values used] (HTML)
+// components): each [what, its formula with the values used, [[symbol, what it is], ...]
+// of the symbols it is the first to use] (HTML)
 function hsSteps(c, res) {
   const v = hsVal, oil = res.solvent !== 'water', solvent = oil ? 'oil' : 'water';
   const mw = c.properties.molar_mass;
+  const phi = hsSym('φ'), rho = hsSym('ρ'), M = hsSym('M'), n = hsSym('n'), p = hsSym('p'), pSat = hsSym('p', 'sat');
+  const rhoSolvent = hsSym('ρ', solvent);
+  const partial = [p, 'its partial pressure in the headspace'], saturated = [pSat, 'its vapor pressure when pure'];
+  const oilDensity = 'the density taken for paraffin oil';
   const steps = [
     ['Its volume fraction (v/v), from its log₁₀ concentration',
-      `<i>φ</i> = 10<sup>${String(c.log10_conc).replace('-', '−')}</sup> = ${v(c.fraction)}`],
+      `${phi} = 10<sup>${String(c.log10_conc).replace('-', '−')}</sup> = ${v(c.fraction)}`,
+      [[phi, 'its volume fraction, the volume of it (pure) in each volume of the solution']]],
     ['Its moles in each mL of the solution, from its density and molar mass',
-      `<i>n</i> = <i>φ</i> <i>ρ</i> ÷ <i>M</i> = ${v(c.fraction)} × ${v(c.density)} g/mL${c.properties.density == null ? ' (assumed)' : ''}
-        ÷ ${mw.toFixed(2)} g/mol = ${v(c.moles)} mol/mL`],
+      `${n} = ${phi} ${rho} ÷ ${M} = ${v(c.fraction)} × ${v(c.density)} g/mL${c.properties.density == null ? ' (assumed)' : ''}
+        ÷ ${mw.toFixed(2)} g/mol = ${v(c.moles)} mol/mL`,
+      [[n, 'its moles in each mL of the solution'], [rho, `its density${c.properties.density == null ? ' (none found, so assumed)' : ''}`],
+        [M, 'its molar mass']]],
   ];
   if (c.law === 'henry') {
-    const conc = c.moles * 1e6;
-    steps.push([`Its concentration in the ${solvent}`, `<i>c</i> = <i>n</i> × 10<sup>6</sup> mL/m³ = ${v(conc)} mol/m³`]);
+    const conc = c.moles * 1e6, C = hsSym('c'), K = hsSym('K', 'H'), kChemutils = hsSym('K', 'H, chemutils'), rhoC16 = hsSym('ρ', 'n-hexadecane');
+    const constant = [K, `its Henry's law solubility constant in the ${solvent} (its concentration there over its partial pressure above it)`];
+    steps.push([`Its concentration in the ${solvent}`, `${C} = ${n} × 10<sup>6</sup> mL/m³ = ${v(conc)} mol/m³`,
+      [[C, `its concentration in the ${solvent}`]]]);
     if (c.k_henry_chemutils != null) {
       steps.push([`Its solubility constant in the oil at its density: chemutils' is for n-hexadecane's own, and it is in
           proportion to the oil's moles in a volume`,
-        `<i>K</i><sub>H</sub> = <i>K</i><sub>H, chemutils</sub> <i>ρ</i><sub>oil</sub> ÷ <i>ρ</i><sub>n-hexadecane</sub>
-          = ${v(c.k_henry_chemutils)} mol/m³/Pa × ${v(res.solvent_density)} g/mL ÷ ${v(res.chemutils_oil_density)} g/mL = ${v(c.k_henry)} mol/m³/Pa`]);
+        `${K} = ${kChemutils} ${rhoSolvent} ÷ ${rhoC16}
+          = ${v(c.k_henry_chemutils)} mol/m³/Pa × ${v(res.solvent_density)} g/mL ÷ ${v(res.chemutils_oil_density)} g/mL = ${v(c.k_henry)} mol/m³/Pa`,
+        [constant, [kChemutils, "that constant as chemutils estimates it, for the oil as n-hexadecane"], [rhoSolvent, oilDensity],
+          [rhoC16, "n-hexadecane's own density, as chemutils takes it"]]]);
     }
     steps.push(
       [`Its partial pressure by Henry's law, from its solubility constant in the ${solvent}`,
-        `<i>p</i> = <i>c</i> ÷ <i>K</i><sub>H</sub> = ${v(conc)} mol/m³ ÷ ${v(c.k_henry)} mol/m³/Pa = ${v(c.henry_pa)} Pa`]);
+        `${p} = ${C} ÷ ${K} = ${v(conc)} mol/m³ ÷ ${v(c.k_henry)} mol/m³/Pa = ${v(c.henry_pa)} Pa`,
+        c.k_henry_chemutils != null ? [partial] : [partial, constant]]);
     if (c.henry_pa !== c.pa) {
       steps.push([`More than its vapor pressure: more than the ${solvent} dissolves, so at its vapor pressure`,
-        `<i>p</i> = <i>p</i><sub>sat</sub> = ${v(c.vapor_pressure)} kPa × 1000 Pa/kPa = ${v(c.pa)} Pa`]);
+        `${p} = ${pSat} = ${v(c.vapor_pressure)} kPa × 1000 Pa/kPa = ${v(c.pa)} Pa`, [saturated]]);
     }
     return steps;
   }
   const fractions = res.components.reduce((t, d) => t + d.fraction, 0);
   const moles = res.components.reduce((t, d) => t + (d.moles ?? 0), 0);
-  const all = res.components.length > 1 ? `the ${res.components.some((d) => d.moles == null) ? 'odors with a molar mass' : 'odors'}` : 'it';
+  const several = res.components.length > 1;
+  const odors = res.components.some((d) => d.moles == null) ? 'odors with a molar mass' : 'odors';
+  const nSolvent = hsSym('n', solvent), mSolvent = hsSym('M', solvent), N = hsSym('N'), x = hsSym('x');
   steps.push(
     [`The ${solvent}'s moles in each mL of the solution (the rest of it${oil ? ', its molecules as if n-hexadecane\'s' : ''})`,
-      `<i>n</i><sub>${solvent}</sub> = (1 − Σ<i>φ</i>) <i>ρ</i><sub>${solvent}</sub> ÷ <i>M</i><sub>${solvent}</sub>
-        = (1 − ${v(fractions)}) × ${v(res.solvent_density)} g/mL ÷ ${res.solvent_molar_mass} g/mol = ${v(res.solvent_moles)} mol/mL`],
-    [`All the moles in each mL: of the ${solvent}, and of ${all}`,
-      `<i>N</i> = <i>n</i><sub>${solvent}</sub> + Σ<i>n</i> = ${v(res.solvent_moles)} + ${v(moles)} mol/mL = ${v(res.total_moles)} mol/mL`],
-    ['Its mole fraction in the liquid', `<i>x</i> = <i>n</i> ÷ <i>N</i> = ${v(c.moles)} ÷ ${v(res.total_moles)} = ${v(c.mole_fraction)}`],
+      `${nSolvent} = (1 − Σ${phi}) ${rhoSolvent} ÷ ${mSolvent}
+        = (1 − ${v(fractions)}) × ${v(res.solvent_density)} g/mL ÷ ${res.solvent_molar_mass} g/mol = ${v(res.solvent_moles)} mol/mL`,
+      [[nSolvent, `the ${solvent}'s moles in each mL of the solution`],
+        [`Σ${phi}`, several ? `${phi} of each odor of the mixture, added up` : `its ${phi}, as the mixture's only odor`],
+        [rhoSolvent, oil ? oilDensity : "water's density"],
+        [mSolvent, oil ? "n-hexadecane's molar mass, as taken for paraffin oil" : "water's molar mass"]]],
+    [`All the moles in each mL: of the ${solvent}, and of ${several ? `the ${odors}` : 'it'}`,
+      `${N} = ${nSolvent} + Σ${n} = ${v(res.solvent_moles)} + ${v(moles)} mol/mL = ${v(res.total_moles)} mol/mL`,
+      [[N, 'all the moles in each mL of the solution'],
+        [`Σ${n}`, several ? `${n} of each of the ${odors}, added up` : `its ${n}, as the mixture's only odor`]]],
+    ['Its mole fraction in the liquid', `${x} = ${n} ÷ ${N} = ${v(c.moles)} ÷ ${v(res.total_moles)} = ${v(c.mole_fraction)}`,
+      [[x, 'its mole fraction in the liquid']]],
     ["Its partial pressure by Raoult's law, from its vapor pressure",
-      `<i>p</i> = <i>x</i> <i>p</i><sub>sat</sub> = ${v(c.mole_fraction)} × ${v(c.vapor_pressure)} kPa × 1000 Pa/kPa = ${v(c.pa)} Pa`]);
+      `${p} = ${x} ${pSat} = ${v(c.mole_fraction)} × ${v(c.vapor_pressure)} kPa × 1000 Pa/kPa = ${v(c.pa)} Pa`, [partial, saturated]]);
   return steps;
 }
 
