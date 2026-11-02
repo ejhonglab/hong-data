@@ -5279,6 +5279,10 @@ const HS_UNITS = [
 const HS_PROPS = { molar_mass: 'molar mass', density: 'density', vapor_pressure: 'vapor pressure',
   est_vapor_pressure: 'estimated vapor pressure', k_henry: "Henry's law constant", k_henry_pfo: "Henry's law constant in oil" };
 const HS_MODELS = ['henry', 'raoult']; // how the headspace over paraffin oil is computed (headspace.MODELS)
+// paraffin oil's properties as typed: [selector, saved and asked for as, default where blank, least, most, what
+// it is] (headspace.SOLVENTS, OIL_DENSITY_RANGE, OIL_MOLAR_MASS_RANGE)
+const HS_OIL_FIELDS = [['#hs-oil-density', 'oil_density', 0.85, 0.5, 1.2, "paraffin oil's density (g/mL)"],
+  ['#hs-oil-mass', 'oil_molar_mass', 450, 100, 2000, "paraffin oil's molar mass (g/mol)"]];
 // whether a value is from measurements (true), an estimate (false) or not known (null), as a label
 const measuredTag = (measured, title = '') => (measured == null ? ''
   : ` <span class="hs-tag ${measured ? 'measured' : 'estimate'}"${title ? ` title="${esc(title)}"` : ''}>${measured ? 'measured' : 'estimate'}</span>`);
@@ -5310,6 +5314,12 @@ class HeadspacePage {
     if (['paraffin oil', 'water'].includes(saved.solvent)) $('#hs-solvent').value = saved.solvent;
     if (HS_MODELS.includes(saved.model)) $('#hs-model').value = saved.model;
     $('#hs-model').addEventListener('change', () => this.changed({ rerender: false }));
+    const dilutionsDensity = LS.get(HS_DILUTE_KEY, {}).density; // (where its density was typed before)
+    for (const [id, key, dflt] of HS_OIL_FIELDS) {
+      const kept = saved[key] ?? (key === 'oil_density' ? dilutionsDensity : null);
+      $(id).value = typeof kept === 'string' ? kept : dflt;
+      $(id).addEventListener('input', () => this.changed({ rerender: false }));
+    }
     $('#hs-panel').addEventListener('change', (e) => {
       const i = e.target.value;
       e.target.value = '';
@@ -5446,15 +5456,32 @@ class HeadspacePage {
 
   save() {
     LS.set(HS_KEY, { components: this.components, solvent: $('#hs-solvent').value, model: $('#hs-model').value,
-      solventChosen: this.solventChosen, units: $('#hs-units').value });
+      solventChosen: this.solventChosen, units: $('#hs-units').value,
+      ...Object.fromEntries(HS_OIL_FIELDS.map(([id, key]) => [key, $(id).value])) });
   }
 
   // the model, for paraffin oil (null for water)
   _model() { return $('#hs-solvent').value === 'water' ? null : $('#hs-model').value; }
 
+  // paraffin oil's properties as typed, as the server takes them (each its default where blank), else {error}
+  _oil() {
+    const oil = {}, bad = [];
+    for (const [id, key, dflt, least, most, what] of HS_OIL_FIELDS) {
+      const el = $(id), typed = el.value.trim();
+      const v = typed === '' && !el.validity.badInput ? dflt : +typed;
+      const ok = Number.isFinite(v) && v >= least && v <= most;
+      el.classList.toggle('invalid', !ok);
+      if (!ok) bad.push(`${what} as a number from ${least} to ${most}`);
+      oil[key] = v;
+    }
+    return bad.length ? { error: `Give ${bad.join(', and ')}.` } : oil;
+  }
+
   // what a calculation would be of, as it is now
   _key() {
-    return JSON.stringify([$('#hs-solvent').value, this._model(), this.components.map((c) => [c.odor_id, hsConc(c.log10_conc)])]);
+    const oil = $('#hs-solvent').value === 'water' ? null : this._oil();
+    return JSON.stringify([$('#hs-solvent').value, this._model(), this.components.map((c) => [c.odor_id, hsConc(c.log10_conc)]),
+      oil && (oil.error ? 'invalid' : HS_OIL_FIELDS.map(([, key]) => oil[key]))]);
   }
 
   // the mixture changed: the solvent follows the odor table's (unless one was chosen), saved, shown
@@ -5556,11 +5583,13 @@ class HeadspacePage {
     let why = '';
     if (n && missing) why = `Give ${missing === n && n === 1 ? 'its' : missing === 1 ? 'one more' : `${missing} more`} concentration${missing === 1 ? '' : 's'} (log₁₀ v/v, at most 0) to calculate.`;
     else if (total > 1 + 1e-9) why = `The odors are more than the whole solution (their v/v sum to ${+total.toPrecision(3)}).`;
+    else if ($('#hs-solvent').value !== 'water' && this._oil().error) why = this._oil().error;
     $('#hs-calc').disabled = !n || !!why || this.busy;
     $('#hs-clear').disabled = !n;
     if (!this.busy) $('#hs-status').textContent = why;
     const water = $('#hs-solvent').value === 'water';
     $('#hs-model-field').hidden = water;
+    for (const el of $$('.hs-oil-field')) el.hidden = water;
     const other = this.components.map((c) => this.odors?.get(c.odor_id)).filter((o) => o?.solvent && isWater(o.solvent) !== water);
     const note = $('#hs-solvent-note');
     note.hidden = !other.length;
@@ -5571,7 +5600,7 @@ class HeadspacePage {
   }
 
   async calculate() {
-    const json = { solvent: $('#hs-solvent').value, model: this._model(),
+    const json = { solvent: $('#hs-solvent').value, model: this._model(), ...($('#hs-solvent').value === 'water' ? {} : this._oil()),
       components: this.components.map((c) => ({ odor_id: c.odor_id, log10_conc: hsConc(c.log10_conc) })) };
     const key = this._key();
     if (this.cache.has(key)) { this.shown = { res: this.cache.get(key), key }; this.renderResults(); return; }
@@ -5596,7 +5625,7 @@ class HeadspacePage {
   }
 
   // the calculation of the mixture as it is now, if there was one since the page was opened
-  // (of another solvent or model too), else the last one shown, as changed since
+  // (of another solvent, model or oil too), else the last one shown, as changed since
   renderResults() {
     const box = $('#hs-results');
     const now = this._key();
@@ -5650,16 +5679,17 @@ class HeadspacePage {
         steps: unit === 'ug_l' ? [["Each odor's, added together (as each has its own molar mass)",
           `${terms(computed.map((c) => of(c.pa, c.properties.molar_mass)), 'µg/L')} = <b>${totalHs}</b> µg/L`]]
           : [["The odors' partial pressures, added together", `${hsSym('p', 'total')} = Σ${hsSym('p')} = ${terms(computed.map((c) => c.pa), 'Pa')} = ${hsVal(res.total_pa)} Pa`,
-            [[hsSym('p', 'total'), 'their partial pressure in the headspace, all together'],
-              [`Σ${hsSym('p')}`, "each odor's partial pressure in the headspace, as its own calculation gives it, added up"]]],
+            [[hsSym('p', 'total'), 'their partial pressure in the headspace, all together', `${hsVal(res.total_pa)} Pa`],
+              [`Σ${hsSym('p')}`, "each odor's partial pressure in the headspace, as its own calculation gives it, added up", `${hsVal(res.total_pa)} Pa`]]],
             ...hsUnitSteps(units, res.total_pa, null, totalHs)] });
     }
     const totalRow = res.components.length > 1 ? `<tr class="hs-total"><td colspan="${henry ? 7 : 6}">All together${computed.length < res.components.length ? ' (of those that could be computed)' : ''}</td>
       <td class="num hs-amount">${totalHs && derived('total', totalHs)}</td><td></td></tr>` : '';
     box.hidden = false;
-    const how = water ? "by Henry's law" : res.model === 'henry' ? "by Henry's law, with constants estimated by chemutils" : "by Raoult's law only";
+    const how = water ? "by Henry's law" : res.model === 'henry' ? "by Henry's law, with constants estimated as chemutils does" : "by Raoult's law only";
+    const oilIs = water ? '' : ` (${+res.solvent_density.toPrecision(4)} g/mL, ${+res.solvent_molar_mass.toPrecision(5)} g/mol)`;
     const anyTag = res.components.some((c) => c.vapor_pressure_measured != null || (henry && c.k_henry_measured != null));
-    box.innerHTML = `<div class="step-head"><h2>Headspace</h2><span class="muted">in ${esc(res.solvent)} ${how}, at ${+res.temperature_c.toFixed(2)} °C, in ${esc(unitLabel)}</span>
+    box.innerHTML = `<div class="step-head"><h2>Headspace</h2><span class="muted">in ${esc(res.solvent)}${oilIs} ${how}, at ${+res.temperature_c.toFixed(2)} °C, in ${esc(unitLabel)}</span>
       <span class="hs-results-tools"><span class="dl-status" id="hs-dl-status"></span>
       <details class="menu menu-right" id="hs-download"><summary class="btn small">Download table</summary>
         <div class="menu-list">
@@ -5667,20 +5697,20 @@ class HeadspacePage {
           <button type="button" data-odor-format="tex">LaTeX (.tex)</button>
           <p class="menu-note">CSV: a row per odor, then one of them all together: what was used of each (and whether measured or an estimate, and where from), and its headspace in every unit.<br><br>LaTeX: a booktabs longtable to <code>\\input</code>, as here (in ${esc(unitShort)}), linked as here (hyperref), values marked as measured or estimates.</p>
         </div></details></span></div>
-      ${key !== now ? '<p class="msg warn">The mixture has changed since this was calculated: calculate it again to see it.</p>' : ''}
+      ${key !== now ? '<p class="msg warn">The mixture or its solvent has changed since this was calculated: calculate it again to see it.</p>' : ''}
       ${anyTag ? `<p class="muted small hs-legend"><span class="hs-tag measured">measured</span> from measurements of the compound;
         <span class="hs-tag estimate">estimate</span> estimated, with nothing measured of the compound itself${water ? '' : ` (in oil, every Henry's law
         constant is: no measured solubilities in oil or alkanes are used; the vapor pressure it was estimated with is shown, as measured or not)`}.</p>` : ''}
       <table class="odor-table hs-table${key !== now ? ' stale' : ''}"><thead><tr><th>Odor</th><th>log<sub>10</sub> conc.</th>
         <th>Molar mass (g/mol)</th><th>Density (g/mL)</th><th title="As used: from PubChem, else estimated from its structure; in oil by Henry's law, the one its constant was estimated with">Vapor pressure (kPa)</th>
         ${henry ? `<th title="Henry's law solubility constant at 25 °C (concentration in the ${water ? 'water' : 'oil'} over partial pressure above it)${water ? ''
-          : `: chemutils' estimate, for the oil as n-hexadecane at its own density, taken to the oil's (× ${+res.solvent_density.toPrecision(4)} / ${+res.chemutils_oil_density.toPrecision(4)})`}">K<sub>H</sub> in ${water ? 'water' : 'oil'} (mol/m³/Pa)</th>` : ''}
+          : `: estimated as chemutils does for n-hexadecane, but of this oil: its moles in a volume, and the activity coefficient of the odor in the n-alkane of about its molar mass (C${res.alkane_carbons})`}">K<sub>H</sub> in ${water ? 'water' : 'oil'} (mol/m³/Pa)</th>` : ''}
         <th title="In the liquid">Mole fraction</th><th title="Point at or click one for how it was calculated">Headspace (${esc(unitShort)})</th><th>Notes</th></tr></thead>
       <tbody>${rows}${totalRow}</tbody></table>
       ${computed.length ? '<p class="muted small hs-why-note">Point at a headspace (or click it, to keep it open) for how it was calculated, from every value used.</p>' : ''}`;
-    // (the table of what is shown: its mixture, solvent and model, as calculated)
-    const [solvent, model, comps] = JSON.parse(key);
-    const query = `solvent=${encodeURIComponent(solvent)}${model ? `&model=${model}` : ''}`
+    // (the table of what is shown: its mixture, solvent, model and oil, as calculated)
+    const [solvent, model, comps, oil] = JSON.parse(key);
+    const query = `solvent=${encodeURIComponent(solvent)}${model ? `&model=${model}` : ''}${oil ? `&oil_density=${oil[0]}&oil_molar_mass=${oil[1]}` : ''}`
       + `&odors=${comps.map(([id, c]) => `${id}:${c}`).join(',')}&units=${unit}${lowerQuery('&')}`;
     wireMenu($('#hs-download', box), ({ odorFormat }) => download(`/api/headspace.${odorFormat}?${query}`, $('#hs-dl-status', box)));
   }
@@ -5696,7 +5726,7 @@ class HeadspacePage {
       pop.innerHTML = `<div class="hs-deriv-head"><b>${d.title}</b><span class="muted">${d.how}</span>
           <button type="button" class="hs-deriv-close" aria-label="Close">×</button></div>
         <ol>${d.steps.map(([what, formula, symbols]) => `<li><span class="muted">${what}</span><span class="hs-eq">${formula}</span>${symbols?.length
-          ? `<span class="hs-where">${symbols.map(([symbol, meaning]) => `<span class="hs-sym">${symbol}</span>: ${meaning}`).join('; ')}</span>` : ''}</li>`).join('')}</ol>`;
+          ? `<span class="hs-where">${symbols.map(([symbol, meaning, value]) => `<span class="hs-sym">${symbol}</span>: ${meaning} (${value})`).join('; ')}</span>` : ''}</li>`).join('')}</ol>`;
       pop.scrollTop = 0;
       pop.hidden = false;
     }
@@ -5753,45 +5783,55 @@ class HeadspacePage {
 const hsSym = (name, sub) => `<i>${name}</i>${sub ? `<sub>${sub}</sub>` : ''}`;
 
 // the steps of an odor's headspace (Pa) as `headspace.calculate` took them (`c`, of `res`'s
-// components): each [what, its formula with the values used, [[symbol, what it is], ...]
+// components): each [what, its formula with the values used, [[symbol, what it is, its value], ...]
 // of the symbols it is the first to use] (HTML)
 function hsSteps(c, res) {
   const v = hsVal, oil = res.solvent !== 'water', solvent = oil ? 'oil' : 'water';
   const mw = c.properties.molar_mass;
   const phi = hsSym('φ'), rho = hsSym('ρ'), M = hsSym('M'), n = hsSym('n'), p = hsSym('p'), pSat = hsSym('p', 'sat');
-  const rhoSolvent = hsSym('ρ', solvent);
-  const partial = [p, 'its partial pressure in the headspace'], saturated = [pSat, 'its vapor pressure when pure'];
-  const oilDensity = 'the density taken for paraffin oil';
+  const rhoSolvent = hsSym('ρ', solvent), mSolvent = hsSym('M', solvent);
+  const solventDensity = [rhoSolvent, oil ? "paraffin oil's density, as given" : "water's density", `${v(res.solvent_density)} g/mL`];
+  const solventMass = [mSolvent, oil ? "paraffin oil's average molar mass, as given" : "water's molar mass", `${res.solvent_molar_mass} g/mol`];
+  const assumed = c.properties.density == null;
   const steps = [
     ['Its volume fraction (v/v), from its log₁₀ concentration',
       `${phi} = 10<sup>${String(c.log10_conc).replace('-', '−')}</sup> = ${v(c.fraction)}`,
-      [[phi, 'its volume fraction, the volume of it (pure) in each volume of the solution']]],
+      [[phi, 'its volume fraction, the volume of it (pure) in each volume of the solution', v(c.fraction)]]],
     ['Its moles in each mL of the solution, from its density and molar mass',
-      `${n} = ${phi} ${rho} ÷ ${M} = ${v(c.fraction)} × ${v(c.density)} g/mL${c.properties.density == null ? ' (assumed)' : ''}
+      `${n} = ${phi} ${rho} ÷ ${M} = ${v(c.fraction)} × ${v(c.density)} g/mL${assumed ? ' (assumed)' : ''}
         ÷ ${mw.toFixed(2)} g/mol = ${v(c.moles)} mol/mL`,
-      [[n, 'its moles in each mL of the solution'], [rho, `its density${c.properties.density == null ? ' (none found, so assumed)' : ''}`],
-        [M, 'its molar mass']]],
+      [[n, 'its moles in each mL of the solution', `${v(c.moles)} mol/mL`],
+        [rho, `its density${assumed ? ', none found so assumed' : ''}`, `${v(c.density)} g/mL`],
+        [M, 'its molar mass', `${mw.toFixed(2)} g/mol`]]],
   ];
   if (c.law === 'henry') {
-    const conc = c.moles * 1e6, C = hsSym('c'), K = hsSym('K', 'H'), kChemutils = hsSym('K', 'H, chemutils'), rhoC16 = hsSym('ρ', 'n-hexadecane');
-    const constant = [K, `its Henry's law solubility constant in the ${solvent} (its concentration there over its partial pressure above it)`];
+    const conc = c.moles * 1e6, C = hsSym('c'), K = hsSym('K', 'H');
+    const constant = [K, `its Henry's law solubility constant in the ${solvent}, its concentration there over its partial pressure above it`, `${v(c.k_henry)} mol/m³/Pa`];
+    const estimated = c.gamma_inf != null; // (in oil: else as found)
     steps.push([`Its concentration in the ${solvent}`, `${C} = ${n} × 10<sup>6</sup> mL/m³ = ${v(conc)} mol/m³`,
-      [[C, `its concentration in the ${solvent}`]]]);
-    if (c.k_henry_chemutils != null) {
-      steps.push([`Its solubility constant in the oil at its density: chemutils' is for n-hexadecane's own, and it is in
-          proportion to the oil's moles in a volume`,
-        `${K} = ${kChemutils} ${rhoSolvent} ÷ ${rhoC16}
-          = ${v(c.k_henry_chemutils)} mol/m³/Pa × ${v(res.solvent_density)} g/mL ÷ ${v(res.chemutils_oil_density)} g/mL = ${v(c.k_henry)} mol/m³/Pa`,
-        [constant, [kChemutils, "that constant as chemutils estimates it, for the oil as n-hexadecane"], [rhoSolvent, oilDensity],
-          [rhoC16, "n-hexadecane's own density, as chemutils takes it"]]]);
+      [[C, `its concentration in the ${solvent}`, `${v(conc)} mol/m³`]]]);
+    if (estimated) {
+      const cOil = hsSym('c', 'oil'), gamma = hsSym('γ', '∞'), oilConc = (res.solvent_density / res.solvent_molar_mass) * 1e6;
+      const carbons = res.alkane_carbons;
+      steps.push(
+        ["The oil's moles in each m³ of it (pure), from its density and molar mass",
+          `${cOil} = ${rhoSolvent} ÷ ${mSolvent} × 10<sup>6</sup> mL/m³ = ${v(res.solvent_density)} g/mL ÷ ${res.solvent_molar_mass} g/mol × 10<sup>6</sup> mL/m³ = ${v(oilConc)} mol/m³`,
+          [[cOil, "the oil's moles in each m³ of it", `${v(oilConc)} mol/m³`], solventDensity, solventMass]],
+        [`Its activity coefficient when dilute in the oil: by modified UNIFAC, from its functional groups, with the oil as the n-alkane of about its molar mass (chemutils' in n-hexadecane is ${v(c.gamma_inf_hexadecane)})`,
+          `${gamma} = UNIFAC(${esc(c.unifac_groups)}, in C<sub>${carbons}</sub>H<sub>${2 * carbons + 2}</sub>) = ${v(c.gamma_inf)}`,
+          [[gamma, 'its activity coefficient when dilute in the oil, how many times more of it is in the headspace than over an ideal solution', v(c.gamma_inf)]]],
+        ['Its solubility constant in the oil, from those and the vapor pressure it was estimated with',
+          `${K} = ${cOil} ÷ (${gamma} ${pSat}) = ${v(oilConc)} mol/m³ ÷ (${v(c.gamma_inf)} × ${v(c.vapor_pressure)} kPa × 1000 Pa/kPa) = ${v(c.k_henry)} mol/m³/Pa`,
+          [constant, [pSat, 'its vapor pressure when pure', `${v(c.vapor_pressure)} kPa`]]]);
     }
     steps.push(
       [`Its partial pressure by Henry's law, from its solubility constant in the ${solvent}`,
         `${p} = ${C} ÷ ${K} = ${v(conc)} mol/m³ ÷ ${v(c.k_henry)} mol/m³/Pa = ${v(c.henry_pa)} Pa`,
-        c.k_henry_chemutils != null ? [partial] : [partial, constant]]);
+        [[p, 'its partial pressure in the headspace', `${v(c.henry_pa)} Pa`], ...(estimated ? [] : [constant])]]);
     if (c.henry_pa !== c.pa) {
       steps.push([`More than its vapor pressure: more than the ${solvent} dissolves, so at its vapor pressure`,
-        `${p} = ${pSat} = ${v(c.vapor_pressure)} kPa × 1000 Pa/kPa = ${v(c.pa)} Pa`, [saturated]]);
+        `${p} = ${pSat} = ${v(c.vapor_pressure)} kPa × 1000 Pa/kPa = ${v(c.pa)} Pa`,
+        estimated ? [] : [[pSat, 'its vapor pressure when pure', `${v(c.vapor_pressure)} kPa`]]]);
     }
     return steps;
   }
@@ -5799,23 +5839,23 @@ function hsSteps(c, res) {
   const moles = res.components.reduce((t, d) => t + (d.moles ?? 0), 0);
   const several = res.components.length > 1;
   const odors = res.components.some((d) => d.moles == null) ? 'odors with a molar mass' : 'odors';
-  const nSolvent = hsSym('n', solvent), mSolvent = hsSym('M', solvent), N = hsSym('N'), x = hsSym('x');
+  const nSolvent = hsSym('n', solvent), N = hsSym('N'), x = hsSym('x');
   steps.push(
-    [`The ${solvent}'s moles in each mL of the solution (the rest of it${oil ? ', its molecules as if n-hexadecane\'s' : ''})`,
+    [`The ${solvent}'s moles in each mL of the solution (the rest of it)`,
       `${nSolvent} = (1 − Σ${phi}) ${rhoSolvent} ÷ ${mSolvent}
         = (1 − ${v(fractions)}) × ${v(res.solvent_density)} g/mL ÷ ${res.solvent_molar_mass} g/mol = ${v(res.solvent_moles)} mol/mL`,
-      [[nSolvent, `the ${solvent}'s moles in each mL of the solution`],
-        [`Σ${phi}`, several ? `${phi} of each odor of the mixture, added up` : `its ${phi}, as the mixture's only odor`],
-        [rhoSolvent, oil ? oilDensity : "water's density"],
-        [mSolvent, oil ? "n-hexadecane's molar mass, as taken for paraffin oil" : "water's molar mass"]]],
+      [[nSolvent, `the ${solvent}'s moles in each mL of the solution`, `${v(res.solvent_moles)} mol/mL`],
+        [`Σ${phi}`, several ? `${phi} of each odor of the mixture, added up` : `its ${phi}, as the mixture's only odor`, v(fractions)],
+        solventDensity, solventMass]],
     [`All the moles in each mL: of the ${solvent}, and of ${several ? `the ${odors}` : 'it'}`,
       `${N} = ${nSolvent} + Σ${n} = ${v(res.solvent_moles)} + ${v(moles)} mol/mL = ${v(res.total_moles)} mol/mL`,
-      [[N, 'all the moles in each mL of the solution'],
-        [`Σ${n}`, several ? `${n} of each of the ${odors}, added up` : `its ${n}, as the mixture's only odor`]]],
+      [[N, 'all the moles in each mL of the solution', `${v(res.total_moles)} mol/mL`],
+        [`Σ${n}`, several ? `${n} of each of the ${odors}, added up` : `its ${n}, as the mixture's only odor`, `${v(moles)} mol/mL`]]],
     ['Its mole fraction in the liquid', `${x} = ${n} ÷ ${N} = ${v(c.moles)} ÷ ${v(res.total_moles)} = ${v(c.mole_fraction)}`,
-      [[x, 'its mole fraction in the liquid']]],
+      [[x, 'its mole fraction in the liquid', v(c.mole_fraction)]]],
     ["Its partial pressure by Raoult's law, from its vapor pressure",
-      `${p} = ${x} ${pSat} = ${v(c.mole_fraction)} × ${v(c.vapor_pressure)} kPa × 1000 Pa/kPa = ${v(c.pa)} Pa`, [partial, saturated]]);
+      `${p} = ${x} ${pSat} = ${v(c.mole_fraction)} × ${v(c.vapor_pressure)} kPa × 1000 Pa/kPa = ${v(c.pa)} Pa`,
+      [[p, 'its partial pressure in the headspace', `${v(c.pa)} Pa`], [pSat, 'its vapor pressure when pure', `${v(c.vapor_pressure)} kPa`]]]);
   return steps;
 }
 
@@ -5832,9 +5872,9 @@ function hsUnitSteps(units, pa, mw, shown) {
 // calculator: each in vials of its own, of the same amount of solvent (/api/headspace/dilutions)
 const HS_DILUTE_KEY = 'olfdb.headspace.dilute';
 // its inputs: [selector, saved as, default where blank (null: the server's, dilution.DILUTION_UL for the dilutions'
-// least, or their most if less; else no limit)] (dilution.SOLVENT_ML, NEAT_UL); the density (g/mL) only of
-// paraffin oil, which is weighed as it is viscous (water is measured by volume)
-const HS_DILUTE_FIELDS = [['#hs-dilute-density', 'density', 0.85], ['#hs-dilute-ml', 'ml', 2], ['#hs-dilute-neat-min', 'neatMin', 2],
+// least, or their most if less; else no limit)] (dilution.SOLVENT_ML, NEAT_UL). Paraffin oil is weighed, as it is
+// viscous, at the density given with the mixture (water is measured by volume)
+const HS_DILUTE_FIELDS = [['#hs-dilute-ml', 'ml', 2], ['#hs-dilute-neat-min', 'neatMin', 2],
   ['#hs-dilute-neat-max', 'neatMax', 200], ['#hs-dilute-min', 'min', null], ['#hs-dilute-max', 'max', null]];
 const hsVolume = (v) => String(+v.toPrecision(3)); // (µL, as pipetted)
 const hsLog = (v) => v.toFixed(2).replace('-', '−');
@@ -5865,7 +5905,6 @@ class HeadspaceDilutions {
     if (solvent !== this.solvent) {
       this.solvent = solvent;
       $('#hs-dilute-solvent').textContent = solvent;
-      $('#hs-dilute-density').closest('label').hidden = solvent === 'water';
     }
     clearTimeout(this.timer);
     this.timer = setTimeout(() => this.ask(), 200);
@@ -5873,9 +5912,9 @@ class HeadspaceDilutions {
 
   // what is typed: each field's number (its default where blank), else why not
   _typed() {
-    const fields = HS_DILUTE_FIELDS.filter(([, key]) => key !== 'density' || this.solvent !== 'water');
-    const t = {}, bad = [];
-    for (const [id, key, dflt] of fields) {
+    const oil = this.solvent === 'water' ? {} : this.page._oil();
+    const t = { density: oil.oil_density ?? null }, bad = [];
+    for (const [id, key, dflt] of HS_DILUTE_FIELDS) {
       const el = $(id), typed = el.value.trim();
       const v = typed === '' && !el.validity.badInput ? dflt : +typed;
       const ok = v == null || (Number.isFinite(v) && v > 0);
@@ -5883,7 +5922,8 @@ class HeadspaceDilutions {
       if (!ok) bad.push(el.closest('label').querySelector('span').textContent);
       t[key] = v;
     }
-    if (bad.length) t.error = `Give ${bad.join(', ')} as a number more than 0.`;
+    if (oil.error) t.error = oil.error;
+    else if (bad.length) t.error = `Give ${bad.join(', ')} as a number more than 0.`;
     else if (t.neatMin > t.neatMax) t.error = "The neat chemical's least is more than its most.";
     else if (t.min != null && t.max != null && t.min > t.max) t.error = "The dilutions' least is more than their most.";
     else if (t.ml > 1000) t.error = 'At most 1,000 mL of solvent in each vial.'; // (main.DILUTION_MAX_ML)
@@ -5944,7 +5984,7 @@ class HeadspaceDilutions {
         <td class="hs-vials">${vials}</td><td class="notes">${hsNotes(o.notes.map(esc))}</td></tr>`;
     }).join('');
     const total = res.odors.reduce((sum, o) => sum + o.vials.length, 0);
-    const ml = +t.ml.toPrecision(4), weighed = t.density != null; // (paraffin oil)
+    const ml = +t.ml.toPrecision(4), weighed = t.density != null; // (paraffin oil, at the density given with the mixture)
     const amount = (vials) => (weighed ? `${(vials * t.ml * t.density).toPrecision(4)} g` : `${+(vials * t.ml).toPrecision(4)} mL`);
     $('#hs-dilute-out').innerHTML = `${outside}
       <p>Into each vial, <b>${amount(1)}</b> of ${esc(this.solvent)}${weighed ? ` (${ml} mL at ${+t.density.toPrecision(4)} g/mL, weighed)` : ''};
@@ -6012,6 +6052,7 @@ class HeadspaceVcf {
     q.addEventListener('input', () => this.renderState());
     q.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); this.search(); } });
     $('#hs-vcf-go').addEventListener('click', () => this.search());
+    for (const [id] of HS_OIL_FIELDS) $(id).addEventListener('change', () => { if (this.res?.oil && !page._oil().error) this.search(); });
   }
 
   save() {
@@ -6063,10 +6104,12 @@ class HeadspaceVcf {
     clearTimeout(this.timer);
     const s = this.source(), query = $('#hs-vcf-query').value.trim();
     if (!s || (!query && !poll)) return;
-    const json = poll ? this.asked : { source: s.id, query, across_references: $('#hs-vcf-refs').value,
-      across_products: $('#hs-vcf-products').value, model: $('#hs-vcf-model').value || null };
-    const seq = ++this.seq;
     const status = $('#hs-vcf-status');
+    const model = $('#hs-vcf-model').value || null, oil = model ? this.page._oil() : {};
+    if (!poll && oil.error) { status.textContent = oil.error; return; }
+    const json = poll ? this.asked : { source: s.id, query, across_references: $('#hs-vcf-refs').value,
+      across_products: $('#hs-vcf-products').value, model, ...oil };
+    const seq = ++this.seq;
     this.save();
     if (!poll) {
       this.busy = true;
@@ -6237,14 +6280,14 @@ class HeadspaceVcf {
     const totalRow = done.length > 1 ? `<tr class="hs-total"><td colspan="6">All together${done.length < shown.length ? ' (of those that could be computed)' : ''}</td>
       <td class="num hs-amount">${esc(shortConc(Math.log10(oil.total)))}</td><td class="notes">${oil.total > 1 ? 'more than the whole solution: they cannot all be in it' : `${sigHtml(oil.total * 100)}% of the solution`}</td></tr>` : '';
     const mix = this.mixable(byHeadspace);
-    const how = oil.model === 'henry' ? "by Henry's law, with constants estimated by chemutils" : "by Raoult's law only";
+    const how = oil.model === 'henry' ? "by Henry's law, with constants estimated as chemutils does" : "by Raoult's law only";
     return `<h3>In paraffin oil, for the same headspace</h3>
-      <p class="muted small">Every chemical with a headspace, together in paraffin oil ${how} (as the mixture above computes it, backwards).
+      <p class="muted small">Every chemical with a headspace, together in paraffin oil of ${+oil.solvent_density.toPrecision(4)} g/mL and ${+oil.solvent_molar_mass.toPrecision(5)} g/mol (as given with the mixture above, in paraffin oil) ${how} (as the mixture above computes it, backwards).
         The odors of the odor table among them can be made the mixture above, to see or change.</p>
       ${oil.pending ? `<p class="msg info">Looking up what is needed in oil of ${oil.pending} of them through chemutils, in the background:
         a few seconds each, the first time (kept). This updates as they come.</p>` : ''}
       <div class="hs-wide"><table class="odor-table hs-table"><thead><tr><th>Chemical</th><th>By</th>
-        <th class="num" title="Henry's law solubility constant in paraffin oil at 25 °C, estimated by chemutils for the oil as n-hexadecane at its own density, taken to the oil's">K<sub>H</sub> in oil (mol/m³/Pa)</th>
+        <th class="num" title="Henry's law solubility constant in paraffin oil at 25 °C: estimated as chemutils does for n-hexadecane, but of this oil: its moles in a volume, and the activity coefficient of the chemical in the n-alkane of about its molar mass">K<sub>H</sub> in oil (mol/m³/Pa)</th>
         <th class="num" title="As used: from PubChem, else estimated from its structure; by Henry's law, the one its constant was estimated with">Vapor pressure (kPa)</th>
         <th class="num">Density (g/mL)</th><th class="num" title="Over the samples">Headspace (${esc(unitShort)})</th><th>log<sub>10</sub> conc. (v/v)</th><th>Notes</th></tr></thead>
         <tbody>${rows}${totalRow}</tbody></table></div>
@@ -6300,7 +6343,8 @@ class HeadspaceVcf {
         ...products.map((p) => `mg_kg ${p.name}`), 'law', 'k_henry_mol_m3_pa', 'k_henry_from', 'k_henry_source', 'file_k_henry_mol_m3_pa',
         'vapor_pressure_kpa', 'vapor_pressure_from', 'vapor_pressure_source', 'file_vapor_pressure_kpa',
         ...HS_UNITS.map(([k]) => `headspace_${k}`), ...products.map((p) => `headspace_pa ${p.name}`), 'notes',
-        ...(withOil ? ['oil_law', 'oil_k_henry_mol_m3_pa', 'oil_vapor_pressure_kpa', 'oil_density_g_ml', 'oil_log10_conc', 'oil_notes'] : [])]];
+        ...(withOil ? ['oil_law', 'oil_k_henry_mol_m3_pa', 'oil_gamma_inf', 'oil_vapor_pressure_kpa', 'oil_density_g_ml', 'oil_log10_conc', 'oil_notes',
+          'paraffin_oil_density_g_ml', 'paraffin_oil_molar_mass_g_mol'] : [])]];
       chems.forEach((c, i) => {
         const per = new Map(c.per_product.map(([j, v], n) => [j, [v, c.per_product_pa[n]]]));
         const r = withOil ? oil.chemicals[i] : null;
@@ -6308,8 +6352,8 @@ class HeadspaceVcf {
           ...products.map((_, j) => per.get(j)?.[0] ?? ''), c.law ?? '', c.k_henry ?? '', c.k_henry_from ?? '', c.k_henry_source ?? '',
           c.file.k_henry ?? '', c.vapor_pressure ?? '', c.vapor_pressure_from ?? '', c.vapor_pressure_source ?? '', c.file.vapor_pressure ?? '', ...HS_UNITS.map(([, , , f]) => (c.pa == null ? '' : f(c.pa, c.molar_mass) ?? '')),
           ...products.map((_, j) => per.get(j)?.[1] ?? ''), [...c.notes, ...c.headspace_notes].join('; '),
-          ...(withOil ? (r ? [r.law ?? '', r.k_henry ?? '', r.vapor_pressure ?? '', r.properties?.density ?? '', r.log10_conc ?? '', r.notes.join('; ')]
-            : ['', '', '', '', '', '']) : [])]);
+          ...(withOil ? [...(r ? [r.law ?? '', r.k_henry ?? '', r.gamma_inf ?? '', r.vapor_pressure ?? '', r.properties?.density ?? '', r.log10_conc ?? '', r.notes.join('; ')]
+            : ['', '', '', '', '', '', '']), oil.solvent_density, oil.solvent_molar_mass] : [])]);
       });
     }
     saveBlob(new Blob([`${rows.map((l) => l.map(csvCell).join(',')).join('\n')}\n`], { type: 'text/csv' }), `${stem}_${which}.csv`);

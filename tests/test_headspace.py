@@ -10,12 +10,15 @@ from tests.test_tensor import call
 
 # ethyl acetate, about as PubChem, and henrys-law.org, have it
 EA = {"vapor_pressure": 12.6, "est_vapor_pressure": None, "molar_mass": 88.11, "density": 0.902, "k_henry": 5.9e-2}
-OIL_MOLES = 0.85 / 226.45  # of paraffin oil (at 0.85 g/mL, as if n-hexadecane), per mL
-# its Henry's law constant in paraffin oil, as chemutils estimates it (with thermo's vapor pressure)
+OIL_MOLES = 0.85 / 450  # of paraffin oil (by default, 0.85 g/mL and 450 g/mol), per mL
+# its Henry's law constant in n-hexadecane, as chemutils estimates it (with thermo's vapor pressure)
 PFO = {"k_henry_pfo": 0.0977, "k_henry_pfo_measured": False,
-       "k_henry_pfo_details": {"vapor_pressure_kpa": 12.61, "vapor_pressure_source": "thermo WAGNER_MCGARRY",
+       "k_henry_pfo_details": {"gamma_inf": 2.7604219705704907, "unifac_groups": "CH3:1 CH2:1 CH3COO:1", "unifac_parameters": "Dortmund 2016",
+                               "vapor_pressure_kpa": 12.61, "vapor_pressure_source": "thermo WAGNER_MCGARRY",
                                "vapor_pressure_measured": True, "notes": None}}
-PFO_K = 0.0977 * 0.85 / 0.77033  # (as used: for the oil at 0.85 g/mL, not n-hexadecane's own, as chemutils')
+# (as used: its activity coefficient in the n-alkane of about the oil's molar mass, C32, and the oil's moles in a volume)
+PFO_GAMMA = headspace._gamma_inf("CH3:1 CH2:1 CH3COO:1", "Dortmund 2016", 2.7604219705704907, 32)
+PFO_K = 0.85 / 450 * 1e6 / (PFO_GAMMA * 12610)
 
 
 def test_raoult():
@@ -24,7 +27,7 @@ def test_raoult():
     x = n / (n + 0.999 * OIL_MOLES)
     assert r["law"] == "raoult" and r["mole_fraction"] == pytest.approx(x) and r["pa"] == pytest.approx(x * 12600) and total == r["pa"]
     assert r["notes"] == [] and r["vapor_pressure"] == 12.6
-    assert 30 < r["pa"] < 45  # (Pa: about 340 ppm)
+    assert 60 < r["pa"] < 75  # (Pa: about 670 ppm)
 
     # together: each lowers the others' mole fractions; pure, its vapor pressure
     other = {**EA, "molar_mass": 46.07, "density": 0.789, "vapor_pressure": 7.9}
@@ -33,7 +36,7 @@ def test_raoult():
     assert a["mole_fraction"] == pytest.approx(na / (na + nb + 0.8 * OIL_MOLES)) and b["pa"] == pytest.approx(nb / (na + nb + 0.8 * OIL_MOLES) * 7900)
     # (with the steps to it, as the browser shows them)
     res = headspace.calculate([{"log10_conc": -1, **EA}, {"log10_conc": -1, **other}], "paraffin oil", "raoult")
-    assert (res["solvent_molar_mass"], res["solvent_density"]) == (226.45, 0.85) and res["solvent_moles"] == pytest.approx(0.8 * OIL_MOLES)
+    assert (res["solvent_molar_mass"], res["solvent_density"]) == (450.0, 0.85) and res["solvent_moles"] == pytest.approx(0.8 * OIL_MOLES)
     assert res["total_moles"] == pytest.approx(na + nb + 0.8 * OIL_MOLES)
     assert a["fraction"] == pytest.approx(0.1) and a["density"] == 0.902 and a["moles"] == pytest.approx(na) and a["henry_pa"] is None
     (r,) = headspace.calculate([{"log10_conc": 0, **EA}], "paraffin oil", "raoult")["components"]
@@ -78,19 +81,20 @@ def test_henry():
 
 
 def test_henry_oil():
-    # by default, Henry's law with the constant chemutils estimated, and the vapor pressure it was estimated with
+    # by default, Henry's law with the constant estimated as chemutils does, of the oil, and the vapor pressure it was estimated with
     (r,) = headspace.calculate([{"log10_conc": -3, **EA, **PFO}], "paraffin oil")["components"]
     c = 1e-3 * 0.902 / 88.11 * 1e6  # mol/m³
     assert r["law"] == "henry" and r["pa"] == pytest.approx(c / PFO_K) and r["k_henry"] == pytest.approx(PFO_K)
-    assert (r["k_henry_chemutils"], r["k_henry_measured"]) == (0.0977, False)
+    assert 1.9 < PFO_GAMMA < 2.1 and (r["gamma_inf"], r["k_henry_measured"]) == (PFO_GAMMA, False)
+    assert (r["gamma_inf_hexadecane"], r["unifac_groups"]) == (2.7604219705704907, "CH3:1 CH2:1 CH3COO:1")
     assert (r["vapor_pressure"], r["vapor_pressure_measured"], r["vapor_pressure_source"]) == (12.61, True, "thermo WAGNER_MCGARRY")
     assert r["notes"] == []
-    # (Raoult's law, times its activity coefficient when dilute: 2.8)
+    # (Raoult's law, times its activity coefficient when dilute)
     raoult = headspace.calculate([{"log10_conc": -3, **EA, **PFO}], "paraffin oil", "raoult")["components"][0]
-    assert 2.5 < r["pa"] / raoult["pa"] < 3 and raoult["k_henry"] is None and raoult["vapor_pressure"] == 12.6
+    assert r["pa"] / raoult["pa"] == pytest.approx(PFO_GAMMA, rel=0.01) and raoult["k_henry"] is None and raoult["vapor_pressure"] == 12.6
     # (in water, constants as found)
     (w,) = headspace.calculate([{"log10_conc": -3, **EA}], "water")["components"]
-    assert w["k_henry"] == 5.9e-2 and w["k_henry_chemutils"] is None
+    assert w["k_henry"] == 5.9e-2 and w["gamma_inf"] is None
     # with chemutils' notes, and at most the vapor pressure
     details = {**PFO["k_henry_pfo_details"], "notes": "OH group: self-association lowers solubility at higher concentrations"}
     (r,) = headspace.calculate([{"log10_conc": -0.5, **EA, **PFO, "k_henry_pfo_details": details}], "paraffin oil")["components"]
@@ -101,17 +105,61 @@ def test_henry_oil():
                                "paraffin oil")["components"]
     assert r["law"] == "raoult" and r["pa"] == pytest.approx(raoult["pa"])
     assert r["notes"] == ["no Henry's law constant could be estimated in oil (no UNIFAC groups), so as an ideal solution (Raoult's law)"]
+    # likewise if what it would be computed from cannot be read
+    for broken in ({"unifac_groups": None}, {"unifac_groups": "nonsense:1"}, {"unifac_groups": "CH3"}, {"unifac_parameters": "other"},
+                   {"gamma_inf": None}, {"vapor_pressure_kpa": None}):
+        (r,) = headspace.calculate([{"log10_conc": -3, **EA, **PFO, "k_henry_pfo_details": {**PFO["k_henry_pfo_details"], **broken}}],
+                                   "paraffin oil")["components"]
+        assert r["law"] == "raoult" and r["pa"] == pytest.approx(raoult["pa"]) and "UNIFAC groups could not be read" in r["notes"][0]
 
 
-def test_chemutils_oil_density(tmp_path, monkeypatch):
-    # chemutils' constants in oil are for it as n-hexadecane at its own density (its c_solv), as CHEMUTILS_OIL_DENSITY says
+def test_oil_given():
+    comps = [{"log10_conc": -3, **EA, **PFO}]
+    # by Raoult's law, the oil's moles from what is given
+    (r,) = headspace.calculate(comps, "paraffin oil", "raoult", oil_molar_mass=300.0, oil_density=0.8)["components"]
+    n = 1e-3 * 0.902 / 88.11
+    assert r["mole_fraction"] == pytest.approx(n / (n + 0.999 * 0.8 / 300))
+    # by Henry's law, the constant from them too, and the activity coefficient of about that molar mass
+    res = headspace.calculate(comps, "paraffin oil", oil_molar_mass=300.0, oil_density=0.8)
+    (r,) = res["components"]
+    assert (res["solvent_molar_mass"], res["solvent_density"], res["alkane_carbons"]) == (300.0, 0.8, 21)
+    gamma = headspace._gamma_inf("CH3:1 CH2:1 CH3COO:1", "Dortmund 2016", 2.7604219705704907, 21)
+    assert PFO_GAMMA < gamma < 2.7604 and r["gamma_inf"] == gamma and r["k_henry"] == pytest.approx(0.8 / 300 * 1e6 / (gamma * 12610))
+    # the constant in proportion to the density, but falling less than the oil's moles in a volume as its molar mass rises
+    at = lambda **oil: headspace.calculate(comps, "paraffin oil", **oil)["components"][0]["k_henry"]
+    assert at(oil_density=0.7) / at(oil_density=0.85) == pytest.approx(0.7 / 0.85)
+    assert 0.5 * at(oil_molar_mass=226.45) < at(oil_molar_mass=450.0) < 0.85 * at(oil_molar_mass=226.45)
+    # the same by Henry's and Raoult's laws, but for the activity coefficient, whatever the oil
+    for oil in ({"oil_molar_mass": 150.0, "oil_density": 0.75}, {"oil_molar_mass": 450.0, "oil_density": 0.85}, {"oil_molar_mass": 1500.0, "oil_density": 0.9}):
+        (h,) = headspace.calculate(comps, "paraffin oil", "henry", **oil)["components"]
+        (o,) = headspace.calculate([{**comps[0], "vapor_pressure": 12.61}], "paraffin oil", "raoult", **oil)["components"]
+        assert h["pa"] == pytest.approx(h["gamma_inf"] * o["pa"], rel=0.02)
+    # (water's are its own)
+    res = headspace.calculate(comps, "water", oil_molar_mass=300.0, oil_density=0.8)
+    assert (res["solvent_molar_mass"], res["solvent_density"], res["alkane_carbons"]) == (18.015, 0.997, None)
+
+
+def test_gamma_inf():
+    # by modified UNIFAC in a longer n-alkane, less than in n-hexadecane (and exactly chemutils' there)
+    assert headspace.alkane_carbons(226.45) == 16 and headspace.alkane_carbons(450) == 32
+    assert headspace._gamma_inf("CH3:1 CH2:1 CH3COO:1", "Dortmund 2016", 2.76, 16) == pytest.approx(2.76)
+    assert 2.0 < PFO_GAMMA < 2.05
+    # 'CHO' is an aldehyde's and an ether's: which is told from chemutils' value in n-hexadecane
+    assert headspace._gamma_inf("CH3:1 CH2:4 CHO:1", "Dortmund 2016", 2.4833697033909417, 32) == pytest.approx(1.831, abs=0.001)  # (hexanal)
+    assert headspace._gamma_inf("CH3:4 CH:1 CHO:1", "Dortmund 2016", 0.9725214132423241, 32) == pytest.approx(0.766, abs=0.001)  # (diisopropyl ether)
+
+
+def test_constant_as_chemutils(tmp_path, monkeypatch):
+    # of n-hexadecane's own molar mass and density (its c_solv, 3401.8 mol/m³), the constant is chemutils'
     monkeypatch.setenv("CHEMUTILS_CACHE", str(tmp_path / "cache"))
     monkeypatch.setenv("CHEMUTILS_LOG", str(tmp_path / "chemutils.log"))
     chemutils = pytest.importorskip("chemutils")
     r = chemutils.inchi2k_henry_pfo("InChI=1S/C4H8O2/c1-3-6-4(2)5/h3H2,1-2H3", vapor_pressure_kpa=12.6)  # (ethyl acetate)
-    c_solv = r["k_henry_pfo"] * r["gamma_inf"] * 12600  # mol/m³ (K_H = c_solv / (γ∞ p_sat))
     assert r["solvent_surrogate"] == "hexadecane"
-    assert c_solv * headspace.SOLVENTS["paraffin oil"][0] / 1e6 == pytest.approx(headspace.CHEMUTILS_OIL_DENSITY, rel=1e-4)
+    details = {k: r[k] for k in ("gamma_inf", "unifac_groups", "unifac_parameters", "vapor_pressure_kpa")}
+    (mine,) = headspace.calculate([{"log10_conc": -3, **EA, "k_henry_pfo": r["k_henry_pfo"], "k_henry_pfo_details": details}], "paraffin oil",
+                                  oil_molar_mass=226.45, oil_density=0.77033)["components"]
+    assert mine["gamma_inf"] == pytest.approx(r["gamma_inf"]) and mine["k_henry"] == pytest.approx(r["k_henry_pfo"], rel=1e-4)
 
 
 def test_measured():
@@ -190,6 +238,12 @@ def test_endpoint(main):
     o = next(o for o in main.db.list_odors() if o["cid"] == 8857)
     assert (o["k_henry_pfo_measured"], o["vapor_pressure_measured"], o["k_henry_pfo_details"]) == (False, True, PFO["k_henry_pfo_details"])
 
+    # paraffin oil's properties as given, by default those of `headspace.SOLVENTS`
+    assert (r["solvent_density"], r["solvent_molar_mass"], r["alkane_carbons"]) == (0.85, 450.0, 32)
+    status, oil = call(main.headspace_calc, body={**body, "oil_density": 0.8, "oil_molar_mass": 300})
+    assert status == 200 and (oil["solvent_density"], oil["solvent_molar_mass"], oil["alkane_carbons"]) == (0.8, 300, 21)
+    assert oil["components"][0]["pa"] != ea["pa"] and len(main.asked) == 1
+
     # Raoult's law only, if asked: nothing more to look up
     status, r = call(main.headspace_calc, body={**body, "model": "raoult"})
     assert status == 200 and r["model"] == "raoult" and [c["law"] for c in r["components"]] == ["raoult", "raoult", None]
@@ -216,6 +270,10 @@ def test_endpoint(main):
     ({"solvent": "water", "components": [{"odor_id": 1, "log10_conc": -1}, {"odor_id": 1, "log10_conc": -2}]}, "more than once"),
     ({"solvent": "water", "components": [{"odor_id": 1, "log10_conc": 0}, {"odor_id": 2, "log10_conc": 0}]}, "more than the whole solution"),
     ({"solvent": "paraffin oil", "model": "unifac", "components": [{"odor_id": 1, "log10_conc": -3}]}, "the model is one of"),
+    ({"solvent": "paraffin oil", "oil_density": 0, "components": [{"odor_id": 1, "log10_conc": -3}]}, "paraffin oil's density (g/mL) is a number from 0.5 to 1.2"),
+    ({"solvent": "paraffin oil", "oil_density": True, "components": [{"odor_id": 1, "log10_conc": -3}]}, "paraffin oil's density (g/mL)"),
+    ({"solvent": "paraffin oil", "oil_molar_mass": "x", "components": [{"odor_id": 1, "log10_conc": -3}]}, "paraffin oil's molar mass (g/mol) is a number from 100 to 2000"),
+    ({"solvent": "paraffin oil", "oil_molar_mass": 5000, "components": [{"odor_id": 1, "log10_conc": -3}]}, "paraffin oil's molar mass (g/mol)"),
 ])
 def test_endpoint_errors(main, body, error):
     status, r = call(main.headspace_calc, body=body)
@@ -265,7 +323,9 @@ def test_download(main):
     ea, etoh, total = df.to_dict("records")
     assert ea["k_henry_mol_m3_pa"] == pytest.approx(PFO_K)
     assert (ea["k_henry_measured"], ea["vapor_pressure_kpa"], ea["vapor_pressure_measured"]) == (False, 12.61, True)
-    assert ea["vapor_pressure_source"] == "thermo WAGNER_MCGARRY" and ea["k_henry_source"] == "UNIFAC estimate"
+    assert ea["vapor_pressure_source"] == "thermo WAGNER_MCGARRY"
+    assert ea["k_henry_source"] == "for the oil's molar mass and density, from: UNIFAC estimate" and ea["gamma_inf"] == pytest.approx(PFO_GAMMA)
+    assert (ea["solvent_density_g_ml"], ea["solvent_molar_mass_g_mol"]) == (0.85, 450) and total["solvent_molar_mass_g_mol"] == 450
     assert (etoh["vapor_pressure_kpa"], etoh["vapor_pressure_measured"]) == (7.0, False) and "SIMPOL" in etoh["notes"]
     assert "density could not be looked up" in etoh["notes"]
     assert total["headspace_pa"] == pytest.approx(ea["headspace_pa"] + etoh["headspace_pa"])
@@ -277,10 +337,17 @@ def test_download(main):
     lines = tex.splitlines()
     assert any(l.startswith(r"\href{https://pubchem.ncbi.nlm.nih.gov/compound/8857}{ethyl acetate} & ea & $-3$ & ") for l in lines)
     ea_line = next(l for l in lines if "{ethyl acetate}" in l)
-    assert r"12.6$^{m}$" in ea_line and r"0.108$^{e}$" in ea_line and r"8857\#section=Molecular-Weight}{88.11}" in ea_line
+    assert r"12.6$^{m}$" in ea_line and r"0.0742$^{e}$" in ea_line and r"8857\#section=Molecular-Weight}{88.11}" in ea_line
     assert r"$K_H$ in oil\\(mol/m$^3$/Pa)" in tex and r"Headspace\\($\log_{10}$ v/v)" in tex
     assert any(l.startswith("All together &") for l in lines)
     assert r"$^{e}$ estimated, with nothing measured of the compound itself (in oil, every $K_H$ is" in tex
+    assert "in paraffin oil (0.85 g/mL, 450 g/mol)" in tex
+    # of the oil given
+    df = pd.read_csv(io.StringIO(get("csv", oil_density="0.8", oil_molar_mass="300").body.decode()))
+    assert (df["solvent_density_g_ml"][0], df["solvent_molar_mass_g_mol"][0]) == (0.8, 300)
+    assert df["k_henry_mol_m3_pa"][0] == pytest.approx(0.8 / 300 * 1e6 / (df["gamma_inf"][0] * 12610))
+    assert "in paraffin oil (0.8 g/mL, 300 g/mol)" in get("tex", oil_density="0.8", oil_molar_mass="300").body.decode()
+    assert get("csv", oil_density="x").status_code == 400 and get("csv", oil_molar_mass="1").status_code == 400
     assert get("tex", model="raoult").body.decode().count("$K_H$") == 0  # (none, by Raoult's law)
     # errors
     assert get("csv", odors="x").status_code == 400 and get("tex", units="ppt").status_code == 400

@@ -458,10 +458,11 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   odor table with a CID, but solvents, each at the highest concentration presented (what
   was left out is said). The solvent (paraffin oil or water) follows what the odor table
   says of the odors, unless one is chosen. The headspace is at equilibrium in a closed
-  vial at 25 °C: over paraffin oil by Henry's law with constants chemutils estimates
-  (`inchi2k_henry_pfo`, from activity coefficients in hexadecane by modified UNIFAC), or
-  by Raoult's law only (an ideal solution) if chosen, either way for the oil at
-  0.85 g/mL; over water by Henry's law. What it
+  vial at 25 °C: over paraffin oil by Henry's law with constants estimated as chemutils
+  does (`inchi2k_henry_pfo`, from activity coefficients by modified UNIFAC), or by Raoult's
+  law only (an ideal solution) if chosen, either way for the oil's density and molar mass,
+  which can be given (by default 0.85 g/mL and 450 g/mol, those of a viscous oil, and
+  also used for the serial dilutions and VCF's foods below); over water by Henry's law. What it
   needs of each odor (molar mass, density, vapor pressure, Henry's law constant) is
   looked up through chemutils the first time (a few seconds an odor) and kept with the
   odor table; where something is missing, what was assumed instead is noted by the odor
@@ -470,18 +471,18 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   every constant in oil is an estimate, with the vapor pressure it was estimated with
   shown, labelled too). Point at a headspace (or click it, to keep it open) for how it
   was calculated: each step, from its concentration and every value used, to the value
-  shown, saying what each symbol is where it is first used. What was calculated since the page was opened is shown again at
-  once, for another solvent or model too. "Download table" saves the results as a CSV
-  (a row per odor, then one of them all together: what was used of each, whether
+  shown, saying what each symbol is, and its value, where it is first used. What was calculated since the page was opened is shown again at
+  once, for another solvent, model or oil too. "Download table" saves the results as a CSV
+  (a row per odor, then one of them all together: what was used of each and of the oil, whether
   measured, where from, and its headspace in every unit) or LaTeX (as shown, in the
   units chosen, linked, measured values and estimates marked). The mixture, solvent,
-  model and units are kept in this browser. How it is computed, and what it leaves out:
+  model, oil and units are kept in this browser. How it is computed, and what it leaves out:
   [design.md](design.md#headspace-calculator).
   - *Serial dilutions*: for each odor of the mixture with a concentration, the µL of its
     neat chemical into the first of its vials, how many dilutions of how many µL of each
     vial into the next, and each vial's concentration, in the mixture's solvent: each vial
-    gets the same amount of it (2 mL by default; paraffin oil weighed, at 0.85 g/mL as
-    typed; water by volume); then how many vials (aliquots of solvent) they take in all,
+    gets the same amount of it (2 mL by default; paraffin oil weighed, at the density
+    given with the mixture; water by volume); then how many vials (aliquots of solvent) they take in all,
     and how much solvent.
     The neat chemical's volume is kept from 2 to 200 µL (as typed), and the dilutions are
     of one volume for every odor where they can be, with the fewest dilutions, then as
@@ -508,7 +509,7 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     (⚠). *Sort the tables by* quantity (the default), headspace or name. With up to 8
     products, each product's values are columns too. If
     chosen, also the v/v of each in paraffin oil, all together, that gives the same
-    headspace (by Henry's law with chemutils' estimated constants, or Raoult's law only);
+    headspace (by Henry's law with constants estimated as chemutils does, or Raoult's law only);
     what that needs of each chemical is looked up through chemutils in the background
     the first time (a few seconds a chemical, at most 500 chemicals a search), and the
     table fills in as it comes. *Make them the mixture* puts those that are odors of the

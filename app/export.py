@@ -611,6 +611,7 @@ def headspace_download(result: dict, odors: dict[int, dict], fmt: str, units: st
     solvent, model = result["solvent"], result["model"]
     water, henry = solvent == "water", solvent == "water" or model == "henry"
     k_prop = "k_henry" if water else "k_henry_pfo"
+    oil_mass, oil_density = result["solvent_molar_mass"], result["solvent_density"]
     rows = []
     for c in result["components"]:
         o = odors.get(c["odor_id"], {})
@@ -624,12 +625,14 @@ def headspace_download(result: dict, odors: dict[int, dict], fmt: str, units: st
         notes = [*c["notes"], *(f"{p.replace('_', ' ')} could not be looked up: {e}" for p, e in (c.get("failed") or {}).items())]
         rows.append({
             "name": o.get("name"), "abbrev": names.get(o.get("abbrev"), o.get("abbrev")), "cid": o.get("cid"),
-            "log10_conc": c["log10_conc"], "solvent": solvent, "model": model, "law": c["law"],
+            "log10_conc": c["log10_conc"], "solvent": solvent, "solvent_molar_mass_g_mol": oil_mass, "solvent_density_g_ml": oil_density,
+            "model": model, "law": c["law"],
             "molar_mass_g_mol": pr.get("molar_mass"), "density_g_ml": pr.get("density"),
             "vapor_pressure_kpa": c["vapor_pressure"], "vapor_pressure_measured": c["vapor_pressure_measured"],
             "vapor_pressure_source": vp_from,
-            "k_henry_mol_m3_pa": c["k_henry"], "k_henry_measured": c["k_henry_measured"],
-            "k_henry_source": sources.get(k_prop) if c["k_henry"] is not None else None,
+            "k_henry_mol_m3_pa": c["k_henry"], "k_henry_measured": c["k_henry_measured"], "gamma_inf": c.get("gamma_inf"),
+            "k_henry_source": None if c["k_henry"] is None else sources.get(k_prop) if water
+            else f"for the oil's molar mass and density, from: {sources.get(k_prop)}",
             "mole_fraction": c["mole_fraction"],
             **{f"headspace_{k}": (None if c["pa"] is None else u[3](c["pa"], pr.get("molar_mass"))) for k, u in headspace.UNITS.items()},
             "notes": "; ".join(notes) or None,
@@ -640,8 +643,9 @@ def headspace_download(result: dict, odors: dict[int, dict], fmt: str, units: st
     total = {f"headspace_{k}": (sum(r["headspace_ug_l"] for r in computed if r["headspace_ug_l"] is not None) if k == "ug_l"
                                 else u[3](result["total_pa"], None)) if computed else None for k, u in headspace.UNITS.items()}
     if len(rows) > 1:
-        rows.append({**dict.fromkeys(rows[0]), "name": "All together", "solvent": solvent, "model": model, **total, "_links": {}})
-    how = "by Henry's law" if water else "by Henry's law, constants estimated by chemutils" if model == "henry" else "by Raoult's law only"
+        rows.append({**dict.fromkeys(rows[0]), "name": "All together", "solvent": solvent, "solvent_molar_mass_g_mol": oil_mass,
+                     "solvent_density_g_ml": oil_density, "model": model, **total, "_links": {}})
+    how = "by Henry's law" if water else "by Henry's law, constants estimated as chemutils does" if model == "henry" else "by Raoult's law only"
     stem = f"headspace_{solvent.replace(' ', '-')}{f'_{model}' if model else ''}"
 
     def tex() -> str:
@@ -676,7 +680,8 @@ def headspace_download(result: dict, odors: dict[int, dict], fmt: str, units: st
                                r"vapor pressure is the one it was estimated with)" if henry and not water else "")
                   + r". Headspace at equilibrium, at 25\,\textdegree{}C"
                   r" and 1 atm.\par")
-        caption = f"Headspace of {len(odor_rows)} odor{'s' if len(odor_rows) != 1 else ''} in {solvent}, {how}, in {label}"
+        solvent_as = solvent if water else f"{solvent} ({oil_density:g} g/mL, {oil_mass:g} g/mol)"
+        caption = f"Headspace of {len(odor_rows)} odor{'s' if len(odor_rows) != 1 else ''} in {solvent_as}, {how}, in {label}"
         return _tex_longtable(odor_rows, columns, caption, f"tab:{stem}", last=last, notes=legend)
 
     return _download([{k: v for k, v in r.items() if k != "_links"} for r in rows], fmt, stem, tex)

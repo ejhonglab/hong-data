@@ -1624,7 +1624,7 @@ def _headspace_properties(odor: dict, solvent: str, model: Optional[str]) -> lis
     return props + [headspace.HENRY_PROPERTIES[solvent]] * henry
 
 
-def _headspace(solvent: str, comps: list[dict], model: Optional[str] = None) -> dict:
+def _headspace(solvent: str, comps: list[dict], model: Optional[str] = None, oil: Optional[dict] = None) -> dict:
     """The headspace of odors diluted together (`headspace.calculate`), with the properties
     it needs of each looked up through chemutils first, where they have not been (but those
     that could not be in the last `HEADSPACE_RETRY_S`).
@@ -1632,6 +1632,7 @@ def _headspace(solvent: str, comps: list[dict], model: Optional[str] = None) -> 
     Args:
         comps: ``odor_id`` (in the odor table) and ``log10_conc`` of each.
         model: of `headspace.MODELS`, for paraffin oil (the default if None).
+        oil: paraffin oil's ``oil_molar_mass`` and ``oil_density``, if given (`_checked_oil`).
 
     Returns:
         `headspace.calculate`'s, with each component's ``odor_id``, ``log10_conc``,
@@ -1674,7 +1675,7 @@ def _headspace(solvent: str, comps: list[dict], model: Optional[str] = None) -> 
         extra.append({"odor_id": o["id"], "log10_conc": c["log10_conc"], "properties": values,
                       "sources": {p: o[f"{p}_source"] for p in props}, "links": {p: odormeta.property_link(o, p) for p in props},
                       "failed": failed, "notes": notes})
-    result = headspace.calculate(inputs, solvent, model or headspace.MODELS[0])
+    result = headspace.calculate(inputs, solvent, model or headspace.MODELS[0], **(oil or {}))
     for r, e in zip(result["components"], extra):
         r.update({**e, "notes": e["notes"] + r["notes"]})
     return {**result, "solvent": solvent, "model": model, "temperature_c": headspace.T_K - 273.15}
@@ -1723,13 +1724,29 @@ async def headspace_panels(request: Request) -> Response:
     return JSONResponse({"panels": await run_in_threadpool(_headspace_panels)})
 
 
-async def _checked_headspace(body) -> tuple[str, Optional[str], list[dict]] | Response:
-    """A Headspace calculation asked for (as `headspace_calc` takes it): its solvent, model and
-    components, else the error to answer with."""
+def _checked_oil(body: dict) -> dict | Response:
+    """Paraffin oil's ``oil_molar_mass`` and ``oil_density`` asked for, as `headspace.calculate`
+    takes them (None if not given), else the error to answer with."""
+    oil = {}
+    for key, what, (least, most) in (("oil_molar_mass", "molar mass (g/mol)", headspace.OIL_MOLAR_MASS_RANGE),
+                                     ("oil_density", "density (g/mL)", headspace.OIL_DENSITY_RANGE)):
+        v = body.get(key)
+        if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float)) or not least <= v <= most):
+            return json_error(400, f"paraffin oil's {what} is a number from {least:g} to {most:g}")
+        oil[key] = v
+    return oil
+
+
+async def _checked_headspace(body) -> tuple[str, Optional[str], list[dict], dict] | Response:
+    """A Headspace calculation asked for (as `headspace_calc` takes it): its solvent, model,
+    components and paraffin oil's properties, else the error to answer with."""
     if not isinstance(body, dict) or body.get("solvent") not in headspace.SOLVENTS or not isinstance(body.get("components"), list):
         return json_error(400, f'expected {{"solvent": one of {", ".join(headspace.SOLVENTS)}, "components": [{{"odor_id", "log10_conc"}}, ...]}}')
     if body.get("model") is not None and body["model"] not in headspace.MODELS:
         return json_error(400, f"the model is one of {', '.join(headspace.MODELS)}")
+    oil = _checked_oil(body)
+    if isinstance(oil, Response):
+        return oil
     comps = body["components"]
     if not 1 <= len(comps) <= HEADSPACE_MAX_ODORS:
         return json_error(400, f"a mixture needs from 1 to {HEADSPACE_MAX_ODORS} odors")
@@ -1742,40 +1759,44 @@ async def _checked_headspace(body) -> tuple[str, Optional[str], list[dict]] | Re
             return json_error(400, "each odor's log10 concentration (v/v) is a number from -50 to 0")
     if len({c["odor_id"] for c in comps}) < len(comps):
         return json_error(400, "an odor is in the mixture more than once")
-    return body["solvent"], body.get("model"), comps
+    return body["solvent"], body.get("model"), comps, oil
 
 
 async def headspace_calc(request: Request) -> Response:
     """The Headspace calculator's: {"solvent" (of `headspace.SOLVENTS`), "model" (of
-    `headspace.MODELS`, for paraffin oil; optional), "components": [{"odor_id", "log10_conc"},
-    ...]} -> `_headspace`."""
+    `headspace.MODELS`, for paraffin oil; optional), "oil_molar_mass" and "oil_density" (for
+    paraffin oil; optional), "components": [{"odor_id", "log10_conc"}, ...]} -> `_headspace`."""
     checked = await _checked_headspace(await request.json())
     if isinstance(checked, Response):
         return checked
-    solvent, model, comps = checked
+    solvent, model, comps, oil = checked
     try:
-        return JSONResponse(await run_in_threadpool(_headspace, solvent, comps, model))
+        return JSONResponse(await run_in_threadpool(_headspace, solvent, comps, model, oil))
     except ValueError as e:
         return json_error(400, str(e))
 
 
 async def headspace_file(request: Request) -> Response:
     """A Headspace calculation's table as a file to save, a CSV or a LaTeX table
-    (`export.headspace_download`): ``solvent``, ``model`` (optional), ``odors``
-    (``<odor id>:<log10 conc>,...``), ``units`` (of `headspace.UNITS`, for LaTeX) and
-    ``lower=1`` for abbreviations in lowercase."""
+    (`export.headspace_download`): ``solvent``, ``model``, ``oil_molar_mass`` and
+    ``oil_density`` (optional), ``odors`` (``<odor id>:<log10 conc>,...``), ``units`` (of
+    `headspace.UNITS`, for LaTeX) and ``lower=1`` for abbreviations in lowercase."""
     q = request.query_params
     try:
         comps = [{"odor_id": int(i), "log10_conc": float(c)} for i, c in (x.split(":") for x in q.get("odors", "").split(",") if x)]
     except ValueError:
         return json_error(400, "expected odors=<odor id>:<log10 concentration>,...")
-    checked = await _checked_headspace({"solvent": q.get("solvent"), "model": q.get("model") or None, "components": comps})
+    try:
+        given = {k: float(q[k]) for k in ("oil_molar_mass", "oil_density") if q.get(k)}
+    except ValueError:
+        return json_error(400, "expected oil_molar_mass and oil_density as numbers")
+    checked = await _checked_headspace({"solvent": q.get("solvent"), "model": q.get("model") or None, "components": comps, **given})
     if isinstance(checked, Response):
         return checked
-    solvent, model, comps = checked
+    solvent, model, comps, oil = checked
 
     def run() -> tuple[str, str, str]:
-        result = _headspace(solvent, comps, model)
+        result = _headspace(solvent, comps, model, oil)
         return export.headspace_download(result, {o["id"]: o for o in db.list_odors()}, request.path_params["fmt"],
                                          q.get("units") or "ppm", lower=_lower(request))
 
@@ -1904,23 +1925,24 @@ def _vcf_needs(c: dict, looked: dict[str, dict], now: float) -> dict[str, int]:
     return {p: pr for p, pr in out.items() if now - _props_failed.get((c["cid"], p), (0, ""))[0] > 3600}
 
 
-def _vcf_oil(chemicals: list[dict], model: str, looked: dict[int, dict]) -> dict:
+def _vcf_oil(chemicals: list[dict], model: str, looked: dict[int, dict], oil: Optional[dict] = None) -> dict:
     """The paraffin oil that would give the headspace over VCF's samples (`vcf.search`'s
     ``chemicals``, each with its ``pa``: `vcf.add_headspace`): the v/v of each in it
     (`headspace.invert`, of them all together, with its molar mass from its InChI), from
     what is known of each (`looked`, as `db.vcf_properties` gives it), the rest asked to be
-    looked up through chemutils in the background (`_vcf_ask`).
+    looked up through chemutils in the background (`_vcf_ask`); `oil` as `_headspace` takes it.
 
     Returns:
         ``model``, ``chemicals`` (of each given, in order: `headspace.invert`'s, with
         ``properties``, ``sources``, ``links`` and ``failed`` as `_headspace` gives them, and
         ``pending``: whether its properties are being looked up; None for those with no
-        headspace), ``total`` (v/v, of those computed), ``pending`` (how many are being
-        looked up) and ``error`` (if there are too many to compute).
+        headspace), ``total`` (v/v, of those computed), ``solvent_molar_mass`` and
+        ``solvent_density`` (of the oil, as taken), ``pending`` (how many are being looked
+        up) and ``error`` (if there are too many to compute).
     """
     targets = [c for c in chemicals if c["pa"] is not None]
     if len(targets) > VCF_MAX_OIL:
-        return {"model": model, "chemicals": [None] * len(chemicals), "total": None, "pending": 0,
+        return {"model": model, "chemicals": [None] * len(chemicals), "total": None, "solvent_molar_mass": None, "solvent_density": None, "pending": 0,
                 "error": f"{len(targets):,} chemicals with a headspace, and at most {VCF_MAX_OIL} are calculated in oil: narrow the search"}
     rows = {c["cid"]: _vcf_row(c["cid"], c["inchi"], looked.get(c["cid"], {})) for c in targets if c["cid"] and c["inchi"]}
     now = time.time()
@@ -1951,11 +1973,12 @@ def _vcf_oil(chemicals: list[dict], model: str, looked: dict[int, dict]) -> dict
         extra.append({"properties": values, "sources": {p: row[f"{p}_source"] for p in props},
                       "links": {p: odormeta.property_link(row, p) for p in props}, "failed": failed, "pending": waiting,
                       "notes": ["being looked up through chemutils"] if waiting else []})
-    result = headspace.invert(inputs, "paraffin oil", model)
+    result = headspace.invert(inputs, "paraffin oil", model, **(oil or {}))
     out = []
     for r, e in zip(result["components"], extra):
         out.append(None if e is None else {**r, **e, "notes": e["notes"] + r["notes"]})
-    return {"model": model, "chemicals": out, "total": result["total"], "pending": len(pending), "error": None}
+    return {"model": model, "chemicals": out, "total": result["total"], "solvent_molar_mass": result["solvent_molar_mass"],
+            "solvent_density": result["solvent_density"], "pending": len(pending), "error": None}
 
 
 def _vcf_sources() -> list[dict]:
@@ -1988,7 +2011,8 @@ def _vcf_search(body: dict) -> dict:
     have something being looked up (``pending``) and differ from the file (``mismatches``,
     by more than ``tolerance``, `vcf.MISMATCH`).
     With ``model`` (of `headspace.MODELS`), the paraffin oil to match its headspace
-    (``oil``: `_vcf_oil`). With its ``source`` (``id``, ``title``).
+    (``oil``: `_vcf_oil`, of ``oil_molar_mass`` and ``oil_density``, if given). With its
+    ``source`` (``id``, ``title``).
 
     Raises:
         vcf.VcfError: if there is no such VCF reference dataset, or for `vcf.search`'s.
@@ -2012,14 +2036,15 @@ def _vcf_search(body: dict) -> dict:
     res["lookups"] = {"pending": sum(bool(c["pending"]) for c in chems), "mismatches": sum(bool(c["mismatches"]) for c in chems),
                       "tolerance": vcf.MISMATCH}
     if body.get("model"):
-        res["oil"] = _vcf_oil(chems, body["model"], looked)
+        res["oil"] = _vcf_oil(chems, body["model"], looked, {k: body.get(k) for k in ("oil_molar_mass", "oil_density")})
     return {**res, "source": {"id": source["id"], "title": source["title"]}, "temperature_c": headspace.T_K - 273.15}
 
 
 async def headspace_vcf(request: Request) -> Response:
     """GET: the VCF reference datasets to search (`_vcf_listing`). POST: a search of one
     ({"source", "query", "across_references", "across_products" (of `vcf.STATS`), "model"
-    (of `headspace.MODELS`, or null)}) -> `_vcf_search`."""
+    (of `headspace.MODELS`, or null), "oil_molar_mass" and "oil_density" (optional)}) ->
+    `_vcf_search`."""
     if request.method == "GET":
         return JSONResponse({"sources": await run_in_threadpool(_vcf_listing), "stats": vcf.STATS, "max_oil": VCF_MAX_OIL})
     body = await request.json()
@@ -2027,6 +2052,8 @@ async def headspace_vcf(request: Request) -> Response:
         return json_error(400, 'expected {"source", "query", "across_references", "across_products", "model"}')
     if body.get("model") is not None and body["model"] not in headspace.MODELS:
         return json_error(400, f"the model is one of {', '.join(headspace.MODELS)}")
+    if isinstance(oil := _checked_oil(body), Response):
+        return oil
     try:
         return JSONResponse(await run_in_threadpool(_vcf_search, body))
     except vcf.VcfError as e:

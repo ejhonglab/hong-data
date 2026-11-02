@@ -92,6 +92,16 @@ def test_invert():
     assert hi["log10_conc"] is None and "at least its vapor pressure" in hi["notes"][-1]
     assert zero["log10_conc"] is None and zero["notes"] == ["no headspace, so none of it"]
     assert novp["log10_conc"] is None and novp["notes"][-1] == "no vapor pressure, so its headspace cannot be computed"
+    # (of the oil given too)
+    oil = {"oil_molar_mass": 300.0, "oil_density": 0.8}
+    res = headspace.invert([{**EA, **PFO, "pa": 50.0}], "paraffin oil", "henry", **oil)
+    assert (res["solvent_molar_mass"], res["solvent_density"]) == (300.0, 0.8)
+    (back,) = headspace.calculate([{**EA, **PFO, "log10_conc": res["components"][0]["log10_conc"]}], "paraffin oil", "henry", **oil)["components"]
+    assert back["pa"] == pytest.approx(50.0)
+    res = headspace.invert([{**EA, "pa": 900.0}, {**EA, "pa": 90.0, "vapor_pressure": 5.0}], "paraffin oil", "raoult", **oil)
+    back = headspace.calculate([{**EA, "log10_conc": res["components"][0]["log10_conc"]},
+                                {**EA, "vapor_pressure": 5.0, "log10_conc": res["components"][1]["log10_conc"]}], "paraffin oil", "raoult", **oil)["components"]
+    assert [b["pa"] for b in back] == pytest.approx([900.0, 90.0])
     # more than the whole solution, by Raoult's law: none of those
     (x, y) = headspace.invert([{**EA, "pa": 9000.0}, {**other, "pa": 6000.0}], "paraffin oil", "raoult")["components"]
     assert x["log10_conc"] is None and "more than the whole solution" in y["notes"][-1]

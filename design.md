@@ -512,15 +512,21 @@ with the odor's CID, so that a calculation needing nothing new does not start ch
 offline, a second or so each, the first time.)
 
 - **Paraffin oil, by Henry's law** (the default): p = c / H_cp, with c from the odor's
-  volume, density and molar mass, and H_cp estimated by chemutils (`inchi2k_henry_pfo`):
-  K_oil/air = c_hexadecane·R·T / (γ∞·p_sat), γ∞ the activity coefficient of the odor when
-  dilute in n-hexadecane by modified UNIFAC (from its functional groups), p_sat from
-  `thermo`'s fits to measurements where it has them (else PubChem's, else estimates).
-  chemutils takes c_hexadecane as n-hexadecane's own (3401.8 mol/m³, 0.7703 g/mL), and
-  H_cp is in proportion to it, so each constant is multiplied by 0.85 / 0.7703 (×1.103)
-  for the oil at 0.85 g/mL (`headspace.CHEMUTILS_OIL_DENSITY`; a test checks chemutils'
-  against it). That is Raoult's law below times γ∞: e.g. ethyl acetate's is 2.8 (at -3,
-  95 Pa, 936 ppm) and ethanol's 30. No measured solubility in oil or alkanes is used
+  volume, density and molar mass, and H_cp = c_oil / (γ∞·p_sat), as chemutils estimates it
+  for n-hexadecane (`inchi2k_henry_pfo`, with K_oil/air = c_solv·R·T / (γ∞·p_sat), and
+  n-hexadecane's own c_solv, 3401.8 mol/m³), but of the oil (`headspace._law`): c_oil is
+  its moles in a volume, from its density and molar mass, and γ∞ the activity coefficient
+  of the odor when dilute by the same modified UNIFAC (from its functional groups,
+  `unifac_groups`, kept with chemutils' constant), in the n-alkane of about the oil's
+  molar mass (`headspace._gamma_inf`, with `thermo`, a millisecond or so; C32 at 450
+  g/mol), and p_sat the one chemutils used, from `thermo`'s fits to measurements where it
+  has them (else PubChem's, else estimates). A test checks that of n-hexadecane's own
+  molar mass and density (226.45 g/mol, 0.7703 g/mL) it is chemutils' constant.
+  γ∞ cannot stay n-hexadecane's when the molar mass changes: a larger solvent lowers both
+  c_oil and γ∞, which mostly cancel, as K_oil/air is by volume. From C16 to C32, by
+  UNIFAC, c_oil halves, but H_cp falls only to 0.64-0.79× of what it was (at one density).
+  Halving H_cp would overestimate the headspace by 1.3-1.6×. That is Raoult's law below
+  times γ∞: e.g. ethyl acetate's is 2.0 (at -3, 138 Pa, 1360 ppm) and ethanol's 20. No measured solubility in oil or alkanes is used
   (chemutils can take one, but none is at hand), so each constant is an estimate, its
   vapor pressure measured or not (both said in the table). Like Henry's law in water, it holds for
   dilute solutions: alcohols and acids associate as they get more concentrated, which
@@ -528,9 +534,22 @@ offline, a second or so each, the first time.)
   With no constant estimated (no UNIFAC groups or parameters for it), Raoult's law.
 - **Paraffin oil, by Raoult's law only** (if chosen): an ideal solution, p = x·p_sat. The
   moles of each odor are from its volume, density and molar mass; those of the oil from
-  its density, 0.85 g/mL (as the serial dilutions take it by default), as if its
-  molecules were n-hexadecane's (226.45 g/mol), a light paraffin oil's being about as
-  large. E.g. ethyl acetate at -3 (0.900 g/mL, 12.4 kPa): x = 0.0027, 34 Pa, 333 ppm.
+  its density and molar mass. E.g. ethyl acetate at -3 (0.900 g/mL, 12.4 kPa): x = 0.0054,
+  67 Pa, 660 ppm. An ideal solution takes molecules of about one size, which a viscous
+  oil's and an odor's are not: x rises in proportion to the oil's molar mass, without the
+  fall in γ∞ below 1 that comes with it (limonene's 1.05 in n-hexadecane, 0.78 at C32), so
+  it overestimates more the larger the molar mass, and is above Henry's law for odors
+  with γ∞ below 1.
+- **Paraffin oil's density and molar mass**: given with the mixture (`oil_density`,
+  `oil_molar_mass`; `headspace.SOLVENTS` where blank), for the mixture, the serial
+  dilutions and the oil to match VCF's foods. By default 0.85 g/mL, within what is sold as
+  viscous paraffin oil (e.g. Sigma's 18512: 0.827-0.890 g/mL and 110-230 mPa·s at 20 °C, as
+  Ph. Eur. has liquid paraffin), and 450 g/mol: such an oil is a mixture, and its suppliers
+  do not give an average. JECFA's classes of mineral oil have averages of 300-400 g/mol at
+  3-7 mm²/s at 100 °C, 400-480 at 7-8.5, 480-500 at 8.5-11 and over 500 above; 110-230
+  mPa·s at 20 °C is roughly 7-11 mm²/s at 100 °C (by typical white oils' viscosity
+  indices: not measured), so 400-500 g/mol, and 450 its middle. Between those ends, the
+  headspace changes by about ±5% by Henry's law and ±11% by Raoult's law.
 - **Water**: Henry's law, p = c / H_cp, with c from the odor's volume, density and molar
   mass, and H_cp (mol/m³/Pa) from henrys-law.org (Sander's compilation), else NIST, both
   at 25 °C. It holds for dilute solutions only, so p is at most the odor's vapor
@@ -555,9 +574,10 @@ offline, a second or so each, the first time.)
   (each odor's v/v, density as used, moles, and its pressure by Henry's law before it is
   at most p_sat; the solvent's moles, and all of them), which the browser shows by each
   headspace, with the values used, to the value shown: what was computed, not computed
-  again (the browser itself computes only the units, c = n·10⁶, and the sums it shows).
+  again (the browser itself computes only the units, c = n·10⁶, c_oil, and the sums it
+  shows). What each symbol is, and its value, is said where it is first used.
 - **Kept in the browser**: each calculation since the page was opened, by its mixture,
-  solvent and model, so that going back to one shows it at once (and asks nothing).
+  solvent, model and oil, so that going back to one shows it at once (and asks nothing).
 - **Panels**: a mixture can start from a panel of the datasets: the odors presented in it
   (over every dataset with it, matched to the odor table as in Browse) that are in the
   odor table with a CID, but solvents (`headspace.SOLVENT_NAMES`), each at the highest
@@ -565,9 +585,12 @@ offline, a second or so each, the first time.)
   IaA -3.7, ea -4.2 and eb -3.5 (not pfo, nor the mixture kmix), as in its YAML.
 
 What is left out: UNIFAC is within about 2× of measured oil/air partitioning for simple
-functional groups, less sure for acids (which dimerize); Raoult's law only leaves out
-that polar odors are less soluble in oil than an ideal solution, so it is too low for
-them. Neither models air flowing over the vial (which depletes the headspace) or
+functional groups, less sure for acids (which dimerize); how it changes with the oil's
+size has not been checked against measurements here, and it takes the oil as an n-alkane,
+with no rings or branches (squalane, C30 and branched, gives about what a straight C30
+does); Raoult's law only leaves out that polar odors are less soluble in oil than an ideal
+solution, so it is too low for them, and the size of the oil's molecules, so it is too
+high for odors with little else to tell them from oil. Neither models air flowing over the vial (which depletes the headspace) or
 diluting it before it reaches the fly.
 
 ### Serial dilutions
@@ -576,7 +599,7 @@ Below the mixture, how to make each of its odors at its concentration from the n
 chemical (`dilution.py`, in the server, so that it is tested; `POST
 /api/headspace/dilutions` as typed), in the mixture's solvent, each in vials of its own:
 into each vial the same amount of solvent (2 mL by default; paraffin oil weighed, as it
-is viscous, by its density, 0.85 g/mL as typed; water measured by volume, with no
+is viscous, by the density given with the mixture; water measured by volume, with no
 density), then the neat chemical (into the first) or some of the vial before. Volumes are taken as additive, so v µL into V µL of
 solvent dilutes by v / (v + V), not v / V: 2 µL of the neat chemical into 2 mL is -3.0004.
 
@@ -813,7 +836,8 @@ GET    /api/odors/template.csv              config/odor_sheet_template.csv
 GET    /api/odors.csv, /api/odors.tex       the odor table as a file (?q= as the Odors tab's
                                             filter; ?lower=1 for abbreviations in lowercase)
 POST   /api/headspace                       {"solvent": "paraffin oil" or "water", "model": "henry"
-                                            or "raoult" (oil only), "components": [{"odor_id",
+                                            or "raoult" (oil only), "oil_density", "oil_molar_mass"
+                                            (oil only; optional), "components": [{"odor_id",
                                             "log10_conc"}, ...]}: the partial pressure (Pa) above
                                             the mixture of each odor, with the properties used,
                                             where they are from and whether measured, and the
@@ -826,13 +850,15 @@ POST   /api/headspace/dilutions             {"targets": [log10 v/v, ...], "solve
 GET    /api/headspace/vcf                   the VCF reference datasets to search, with the names of
                                             their products, categories and groups
 POST   /api/headspace/vcf                   {"source", "query", "across_references", "across_products",
-                                            "model": null, "henry" or "raoult"}: the matching lines,
+                                            "model": null, "henry" or "raoult", "oil_density",
+                                            "oil_molar_mass" (optional)}: the matching lines,
                                             one quantity per chemical, the headspace over the samples
                                             (constants and vapor pressures as chemutils finds them,
                                             else the file's, else estimates; where they differ), and
                                             (with a model) the v/v in paraffin oil for it, with how
                                             many are still being looked up
 GET    /api/headspace.csv, .tex             a calculation's table as a file: ?solvent=, model=,
+                                            oil_density=, oil_molar_mass=,
                                             odors=<odor id>:<log10 conc>,... (calculated again, from
                                             what was looked up for it), units= (for LaTeX), lower=1
 GET    /api/reference                       every reference dataset: whether it can be read (why
