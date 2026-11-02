@@ -2259,6 +2259,15 @@ function filterByUnit(datasets, sel, unit) {
 const uploadedText = (d, group) => (['uploader', 'uploaded'].includes(group) && d.created_at ? `, uploaded ${esc(d.created_at.slice(0, 10))}` : '');
 // a diagnostics panel (e.g. glomeruli_diagnostics), listed last
 const isDiagnostics = (panel) => /diag/i.test(panel);
+// panels in the order of a list by panel: by name but for case, diagnostics last
+const byPanelOrder = (a, b) => isDiagnostics(a) - isDiagnostics(b) || a.localeCompare(b, undefined, { sensitivity: 'base' });
+// All of a dataset's panels, each once and in that order, as a line of its item in a list
+// not grouped by panel (HTML; nothing if it has none). Comma-separated, wrapping after a comma.
+function panelsLine(d, group) {
+  if (group === 'panel' || !d.panels.length) return '';
+  const names = [...new Set(d.panels.map((p) => p.panel))].sort(byPanelOrder);
+  return `<span class="s panels">${names.map(esc).join(',<wbr>')}</span>`;
+}
 
 // Datasets in the groups of a list (`group`: 'panel', by the panels the form gave, else
 // the file's, diagnostics last (and `diag`); 'date', by the month of their last fly;
@@ -2287,7 +2296,7 @@ function datasetGroups(datasets, group) {
   }
   return [...groups.values()]
     .map((g) => ({ ...g, datasets: newest(g.datasets), diag: isDiagnostics(g.label) }))
-    .sort((a, b) => a.diag - b.diag || a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
+    .sort((a, b) => byPanelOrder(a.label, b.label));
 }
 
 class Browse {
@@ -2448,6 +2457,7 @@ class Browse {
         <input type="checkbox" class="pick" data-id="${d.id}" aria-label="Select dataset #${d.id} for download">
         <button type="button" class="list-item" data-id="${d.id}">
           <span class="t">${datasetName(d)}</span>
+          ${panelsLine(d, this.group)}
           <span class="s">${fliesText(d)}, ${d.n_units.toLocaleString()} ROIs, ${d.n_odors} odors${lastFlyText(d)}</span>
           <span class="s">#${d.id}, ${esc(d.uploader_name)}${d.recording_system ? ', ' + esc(d.recording_system) : ''}${uploadedText(d, this.group)}</span>
         </button>
@@ -4601,6 +4611,7 @@ class ComparePage {
         <input type="checkbox" class="pick" data-id="${d.id}"${picked.has(d.id) ? ' checked' : ''}>
         <span class="list-item">
           <span class="t">${datasetName(d)}</span>
+          ${panelsLine(d, this.o.group)}
           <span class="s">${fliesText(d)}, ${d.n_units.toLocaleString()} ROIs, ${d.n_odors} odors${lastFlyText(d)}</span>
           <span class="s">#${d.id}, ${esc(d.uploader_name)}${uploadedText(d, this.o.group)}</span>
         </span></label>`;

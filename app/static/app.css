@@ -391,6 +391,7 @@ table.diff .new { color: var(--ok); }
 .list-item .s { color: var(--ink-muted); font-size: 12px; display: block; }
 .list-item .s.warn { color: var(--warn); }
 .list-item .s.bad { color: var(--danger); }
+.list-item .s.panels { overflow-wrap: anywhere; }
 .list-group label { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
 .list-group input, .ds-item .pick { margin: 0; }
 .ds-item { display: flex; align-items: flex-start; border-left: 3px solid transparent; }

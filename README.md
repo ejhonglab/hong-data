@@ -241,8 +241,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
 - **Browse** (and the Compare tab's list): datasets grouped by panel (the panels the
   upload form gave, else the file's; those named with "diag" last, in light gray), by
   the month of their last fly, by uploader (each one's newest upload first) or by the
-  month they were uploaded (the last two saying when each was). Each dataset has a
-  thesis-style odor table (with each odor's CID, InChI, vapor pressure and molar mass),
+  month they were uploaded (the last two saying when each was). Outside the grouping by
+  panel, each dataset's item lists all its panels, in the same order (e.g.
+  `megamat,validation2,glomeruli_diagnostics`). Each dataset has a thesis-style odor table (with each odor's CID, InChI, vapor pressure and molar mass),
   its odors matched to the Odors tab through its odor YAML when it has one, otherwise by
   abbreviation. Those not in the odor table, or that more than one odor there could be,
   are listed above it and highlighted in it; a button copies rows for the odor sheet for
