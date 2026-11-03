@@ -58,7 +58,7 @@ EOF
 ```
 
 Screenshots go to `<out>/<name>.png`; **look at them**. The commands (`nav`, `wait`,
-`wait-fn`, `click`, `hover`, `focus`, `fill`, `select`, `press`, `move`, `point`, `text`,
+`wait-fn`, `click`, `hover`, `focus`, `fill`, `select`, `files`, `press`, `move`, `point`, `text`,
 `visible`, `attr`, `eval`, `viewport`, `ss`, `errors`) are listed in `driver.py`'s
 docstring. Arguments are split as a shell would split them, so quote selectors that
 contain spaces. The first failing command stops the run (exit 1) and saves
@@ -82,7 +82,7 @@ Stop it:
 OLFDB_DATA_DIR=<scratch>/olfdb-test ./venv/bin/python -m pytest tests/ -q
 ```
 
-261 pass in about 40 s. For internals, call a module directly (e.g.
+267 pass in about 25 s. For internals, call a module directly (e.g.
 `headspace.calculate`), as `tests/test_headspace.py` does.
 
 ## Run (human path)

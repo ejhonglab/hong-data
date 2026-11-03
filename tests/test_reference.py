@@ -157,7 +157,7 @@ def test_add_readable(env, tmp_path):
     assert item["state"] == "error" and "no rows" in item["error"]
     # deleting: its import goes, its file stays
     status, r = call(env.admin_reference_delete, path_params={"ref_id": "fruit-volatiles-2024"})
-    assert status == 200 and r == {"ok": True, "revoked": None} and not cache.exists() and src.exists()
+    assert status == 200 and r == {"ok": True, "revoked": None, "moved": None} and not cache.exists() and src.exists()
     assert call(env.reference_get, path_params={"ref_id": "fruit-volatiles-2024"})[0] == 404
     assert call(env.admin_reference_delete, path_params={"ref_id": "fruits"})[0] == 409
     assert call(env.admin_reference_delete, path_params={"ref_id": "nothing"})[0] == 404
@@ -203,7 +203,7 @@ def test_add_outside(env, tmp_path):
     item = next(d for d in call(env.reference_list)[1]["datasets"] if d["id"] == "other")
     assert item["state"] == "error" and item["error"].startswith("not in the folders the server may read")
     # deleting takes its file off the folders it may read again
-    assert call(env.admin_reference_delete, path_params={"ref_id": "pathways"})[1] == {"ok": True, "revoked": str(src)}
+    assert call(env.admin_reference_delete, path_params={"ref_id": "pathways"})[1] == {"ok": True, "revoked": str(src), "moved": None}
     assert sandbox.load()["read_dirs"] == [str(config.TENSOR_ROOT)] and src.exists()
 
 

@@ -458,7 +458,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   *Sum over KCs* in the viewer (here and in the Compare tab) shows each glomerulus's
   values summed over them (those not removed; missing values left out), as one row or
   column.
-  *MetaCyc* (a bundle of its tables, see [Scripting](#scripting)) is shown over the odor
+  *MetaCyc* (a bundle of its tables, imported in the Admin tab or made by a script, see
+  [Scripting](#scripting)) is shown over the odor
   table's chemicals that are in it (made again whenever the odor table changes), as
   either of two datasets: *compounds by the pathways they are in* (1 in the pathway
   itself, 0.5 only through a class it is of, such as "an alcohol", if it is in none
@@ -610,6 +611,15 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     InChI given. Deleting one deletes the copy (never the file), and takes its file off
     the folders the server may read if it was added there for it. When one cannot be
     read, it says why, with a red dot on the Admin tab.
+    *Import MetaCyc*, below it, does what the script does ([Scripting](#scripting)) from
+    the folder of MetaCyc's SmartTables (as `BioCyc/raw`) or a `.zip`/`.tar.gz` of it:
+    choosing the folder lists the files the script reads (what each is, and which are
+    missing), and only those are uploaded. The server checks them first (each there, with
+    the columns it needs) and refuses them saying what is missing or not as expected;
+    else it keeps them in `data/metacyc/<when>/raw/`, builds the bundle there (about
+    20 s, its progress shown) and adds its two reference datasets. Imports are listed
+    with their folders and datasets; the folder is moved to `data/deleted/metacyc/` with
+    the last of its datasets deleted. Backups include them.
   - *Delete datasets*: every dataset, newest upload first (with a filter), each with a
     Delete button that asks first. A deleted dataset is gone from the site at once; its
     files (as uploaded, with `metadata.json` holding every detail entered) are moved to
@@ -644,7 +654,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
 
 MetaCyc: its SmartTables (as exported from BioCyc, e.g. `BioCyc/raw`, MetaCyc 27.0 by
 default) are read into one bundle, whose two reference datasets are then added through
-the Admin tab's API (or add the bundle in the Admin tab by hand):
+the Admin tab's API (or add the bundle in the Admin tab by hand; or upload the folder in
+its *Import MetaCyc*, which does all this on the server):
 
 ```bash
 python -m app.metacyc_build /mnt/d0/Scraped-Databases-Copy/BioCyc/raw /local/olfdb/metacyc-27.0.sqlite --register http://localhost:8000
@@ -652,7 +663,9 @@ python -m app.metacyc_build /mnt/d0/Scraped-Databases-Copy/BioCyc/raw /local/olf
 
 It takes about 20 s. The server must be able to read the bundle: one outside the folders
 it may read is added to them, and read after a restart (the script prints what that
-takes). `--file <role>=<path>` reads another export for a table (`--help` lists them).
+takes). `--file <role>=<path>` reads another export for a table (`--help` lists them). Files
+missing or without the columns it needs are said, with what was expected, before
+anything is read.
 Bundles hold MetaCyc's data: keep them out of this repository, and check MetaCyc's
 license terms before sharing one.
 

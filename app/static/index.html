@@ -732,7 +732,7 @@ try {
       <div class="step" id="admin-refs">
         <div class="step-head"><h2>Reference data</h2></div>
         <p class="muted">Tables shown in the Reference data tab, each a CSV, TSV or parquet file on the server, which the app never changes: it reads it into its data folder, and again whenever it changes. Deleting one deletes only that copy. The file has row labels in its first column, an optional <code>group</code> column, then one column of numbers per matrix column (blank: missing). Its chemicals are shown by their names in the Odors tab, matched by CID (a column such as <code>cid</code> or <code>pubchem_cid</code>), else InChI (<code>inchi</code>), else CAS, MetaCyc or LOTUS ID, name or abbreviation (columns of these, or the labels themselves). When its columns are the chemicals, give these as rows instead (labelled <code>cid</code>, ...).
-          Or a bundle of MetaCyc or LOTUS (<code>.sqlite</code>, made by <code>app/metacyc_build.py</code> or <code>app/lotus_build.py</code>), shown over the odor table's chemicals in it, its settings chosen below once it is read (those of LOTUS can be changed after, by <i>Change settings…</i>).
+          Or a bundle of MetaCyc or LOTUS (<code>.sqlite</code>, made by <code>app/metacyc_build.py</code> or <code>app/lotus_build.py</code>; MetaCyc's can be made here, below), shown over the odor table's chemicals in it, its settings chosen below once it is read (those of LOTUS can be changed after, by <i>Change settings…</i>).
           Or an xarray DataArray of two dimensions saved as netCDF (<code>.nc</code>, by <code>DataArray.to_netcdf</code>): rows its first dimension,
           missing values taken as 0, each item labelled by its coordinate named <code>name</code> (or e.g. <code>product_name</code>), and those labelled
           alike told apart by its other coordinates that differ among them (all of them shown on hover); coordinates named as the columns above
@@ -762,6 +762,23 @@ try {
         <div id="ref-result" aria-live="polite"></div>
         <div class="actions"><button type="button" class="btn primary" id="ref-add">Add</button>
           <button type="button" class="btn" id="ref-cancel" hidden>Cancel</button></div>
+        <h3 class="subhead" id="mc-import-head">Import MetaCyc</h3>
+        <p class="muted">From MetaCyc's SmartTables as exported from metacyc.org: its compounds, pathways and reactions, each exported by frame IDs and again by common names
+          (and its organisms, pathway summaries and pathway class tree, if there). Choose the folder of them that <code>app/metacyc_build.py</code> reads
+          (as <code>BioCyc/raw</code>, with its subfolders), or a <code>.zip</code> or <code>.tar.gz</code> of it. Only the files it reads are uploaded and kept,
+          in the data folder, with the bundle it builds of them there. Two reference datasets of the bundle are then added, as <i>Add one</i> above
+          would add them: the odor table's chemicals by the pathways they are in, and the pathway LCA distance between them.</p>
+        <div class="actions mc-import-pick">
+          <input type="file" id="mc-import-folder" webkitdirectory multiple hidden>
+          <input type="file" id="mc-import-archive" accept=".zip,.tar,.tar.gz,.tgz,.tar.bz2,.tbz2,.tar.xz,.txz" hidden>
+          <button type="button" class="btn" id="mc-import-folder-btn">Choose the folder…</button>
+          <button type="button" class="btn" id="mc-import-archive-btn">or an archive of it…</button>
+          <label class="check">of MetaCyc <input id="mc-import-version" value="27.0" spellcheck="false" autocomplete="off" aria-label="MetaCyc version" title="MetaCyc's version the tables were exported from, shown in the titles"></label>
+        </div>
+        <div id="mc-import-files"></div>
+        <div id="mc-import-msg" aria-live="polite"></div>
+        <div class="actions"><button type="button" class="btn primary" id="mc-import-btn" disabled>Import</button></div>
+        <div id="mc-import-list"></div>
       </div>
 
       <div class="step" id="admin-datasets">

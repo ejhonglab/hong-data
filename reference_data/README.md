@@ -134,7 +134,8 @@ An odor is matched by the LOTUS ID the odor table gives it (then by the stereoch
 setting from that structure), else its InChI, else its CID.
 
 A file can also be a MetaCyc bundle (`.sqlite`), made from MetaCyc's SmartTables by
-`python -m app.metacyc_build <raw folder> <bundle>` (README, "Scripting"): its compounds,
+`python -m app.metacyc_build <raw folder> <bundle>` (README, "Scripting"), or by the
+Admin tab's *Import MetaCyc* from the folder uploaded: its compounds,
 pathways, reactions, species and BioCyc's genomes of them, in one SQLite file. It is
 shown over the chemicals of the odor table that are in it (matched by the MetaCyc ID the
 odor table gives, else InChI, InChIKey, CID, the first block of the InChIKey, as MetaCyc

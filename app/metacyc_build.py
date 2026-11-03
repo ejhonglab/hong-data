@@ -10,6 +10,9 @@ compounds by the pathways they are in, and the pathway LCA distance between them
 Each table is a SmartTable exported twice, by frame IDs and by common names, in the same
 row order: IDs are taken from the first, the names of what they list from the second (by
 position). Which files are read can be changed with ``--file <role>=<path>`` (see `FILES`).
+They are checked before anything is read (`problems`): each there, with the columns it needs.
+
+The Admin tab can do all this too, from the folder uploaded (see metacyc_import.py).
 """
 from __future__ import annotations
 
@@ -44,6 +47,32 @@ FILES = {
     "pathway_ontology": ["ontology/pathway_ontology.txt"],
 }
 REQUIRED = ("compounds", "compound_names", "pathways", "pathway_names", "reactions", "reaction_names")
+ABOUT = {  # role -> what the file is (as said when it is missing or not as expected)
+    "compounds": "MetaCyc's SmartTable of all compounds with their pathways, exported by frame IDs",
+    "compound_names": "MetaCyc's SmartTable of all compounds with their pathways, exported by common names",
+    "pathways": "MetaCyc's SmartTable of all pathways, exported by frame IDs",
+    "pathway_names": "MetaCyc's SmartTable of all pathways, exported by common names",
+    "reactions": "MetaCyc's SmartTable of all reactions, exported by frame IDs",
+    "reaction_names": "MetaCyc's SmartTable of all reactions, exported by common names",
+    "species": "MetaCyc's SmartTable of its species",
+    "genomes": "BioCyc's SmartTable of all its organism databases (their environments, hosts, ...)",
+    "summaries": "MetaCyc's SmartTable of pathways' summaries",
+    "pathway_extra": "MetaCyc's SmartTable of pathways with their taxonomic ranges and whether engineered",
+    "pathway_ontology": "MetaCyc's pathway class tree as text, each level indented by 4 more spaces, from 'Pathways'",
+}
+_COMPOUND_COLS = ("Compound", "Common-Name", "Pathways of compound", "Ontology - direct parents of entity")
+_PATHWAY_COLS = ("Object ID", "Common-Name", "Reactions of pathway", "Reactants of pathway", "Products of pathway")
+COLUMNS = {  # role -> the columns its file must have (others it reads are used if there)
+    "compounds": _COMPOUND_COLS, "compound_names": _COMPOUND_COLS, "pathways": _PATHWAY_COLS, "pathway_names": _PATHWAY_COLS,
+    "reactions": ("Object ID", "Reactants of reaction", "Products of reaction", "In-Pathway"),
+    "reaction_names": ("Object ID", "Reaction"), "species": ("Object ID",), "genomes": ("Organism name",),
+    "summaries": ("Object ID", "Summary"), "pathway_extra": ("Object ID", "Taxonomic-Range", "Engineered?"),
+}
+
+
+class BuildError(ValueError):
+    """The SmartTables are not as the build reads them (what it expects said)."""
+
 
 SCHEMA = """
 CREATE TABLE about (key TEXT PRIMARY KEY, value TEXT);
@@ -108,19 +137,28 @@ def _lines(path: Path) -> list[str]:
     return out
 
 
-def _records(path: Path, id_field: int, ids: set[str]) -> dict[str, list[str]]:
+def _header(path: Path) -> list[str]:
+    """A tab-separated file's first line, as its columns."""
+    with open(path, "rb") as f:
+        return f.readline(1 << 16).decode("utf-8", errors="replace").rstrip("\r\n").split("\t")
+
+
+def _records(path: Path, ids: set[str]) -> tuple[list[str], dict[str, list[str]]]:
     """A SmartTable whose last column runs over several lines (unquoted, as pathway summaries
-    are): each record by its ID (field `id_field` of the line it starts on, one of `ids`), its
-    fields, the last with the lines after it joined to it."""
+    are): its columns, and each record by its ID (its "Object ID" on the line it starts on,
+    one of `ids`), its fields, the last with the lines after it joined to it."""
+    lines = _lines(path)
+    header = lines[0].split("\t") if lines else []
+    id_field = header.index("Object ID")
     out: dict[str, list[str]] = {}
     current = None
-    for line in _lines(path)[1:]:
+    for line in lines[1:]:
         fields = line.split("\t")
         if len(fields) > id_field and fields[id_field] in ids and fields[id_field] not in out:
             current = out[fields[id_field]] = fields
         elif current is not None:
             current[-1] += "\n" + line
-    return out
+    return header, out
 
 
 def _named(ids: list[str], names: list[str], into: dict[str, str]) -> None:
@@ -166,7 +204,8 @@ def direction(equation: str) -> str:
 
 
 def resolve(raw: Path, overrides: Optional[dict[str, str]] = None) -> dict[str, Optional[Path]]:
-    """The file read for each role (`FILES`): as given in `overrides`, else the first that exists."""
+    """The file read for each role (`FILES`): as given in `overrides`, else the first that
+    exists (None if none does)."""
     out = {}
     for role, candidates in FILES.items():
         given = (overrides or {}).get(role)
@@ -175,10 +214,60 @@ def resolve(raw: Path, overrides: Optional[dict[str, str]] = None) -> dict[str, 
             out[role] = p if p.is_absolute() else raw / p
             continue
         out[role] = next((raw / c for c in candidates if (raw / c).is_file()), None)
-    missing = [r for r in REQUIRED if not out[r] or not out[r].is_file()]
-    if missing:
-        raise SystemExit(f"not found in {raw}: {', '.join(f'{r} ({FILES[r][0]})' for r in missing)} (give it with --file {missing[0]}=<path>)")
     return out
+
+
+def expected(role: str) -> str:
+    """What the file of a role is, and where in the raw folder it is read from."""
+    return f"{ABOUT[role]}, as {' or '.join(FILES[role])}"
+
+
+def problems(files: dict[str, Optional[Path]], raw: Optional[Path] = None) -> list[str]:
+    """Why the files of `resolve` cannot be read as MetaCyc's SmartTables (empty if they can):
+    those required missing, and any without the columns it needs (`COLUMNS`), or that are not
+    as the class tree is (by their first lines). Each says what was expected."""
+    out = []
+
+    def shown(p: Path) -> str:
+        try:
+            return p.relative_to(raw).as_posix() if raw else str(p)
+        except ValueError:
+            return str(p)
+
+    for role in FILES:
+        p = files.get(role)
+        if p is None or not p.is_file():
+            if role in REQUIRED or p is not None:
+                out.append(f"{'missing' if p is None else f'{p} is not a file'}: {expected(role)}")
+            continue
+        try:
+            if role == "pathway_ontology":
+                with open(p, "rb") as f:
+                    head = f.read(1 << 16).decode("utf-8", errors="replace")
+                if "Pathways" not in (x.strip() for x in head.splitlines()[:5]):
+                    out.append(f"{shown(p)} is not {ABOUT[role]} (its first lines have no 'Pathways')")
+                continue
+            header = _header(p)
+        except OSError as e:
+            out.append(f"{shown(p)} cannot be read ({e.strerror or e})")
+            continue
+        lacking = [c for c in COLUMNS[role] if c not in header]
+        if lacking:
+            has = ", ".join(header[:12]) + (", …" if len(header) > 12 else "") if len(header) > 1 else "none: it is not tab-separated"
+            out.append(f"{shown(p)} is not {ABOUT[role]}: it lacks the column{'s' if len(lacking) > 1 else ''} "
+                       f"{', '.join(lacking)} (its columns: {has})")
+    return out
+
+
+_FRAME = re.compile(r"^[^\s&<>(),';]+$")  # (all frame IDs are; two thirds of names are not)
+
+
+def _frames(cells: Iterable[str], what: str, file: Path) -> None:
+    """Check that the values of a column of a table exported by frame IDs are frame IDs."""
+    ids = [i for c in cells for i in split(c)]
+    if ids and sum(bool(_FRAME.match(i)) for i in ids) < 0.9 * len(ids):
+        raise BuildError(f"{file.name}: its {what} are names, not frame IDs: give the SmartTable exported by frame IDs as it, "
+                         "and the one exported by common names as the other")
 
 
 def build(raw: Path, out: Path, version: Optional[str] = None, overrides: Optional[dict[str, str]] = None,
@@ -189,12 +278,15 @@ def build(raw: Path, out: Path, version: Optional[str] = None, overrides: Option
         its ``about`` (as stored), with ``counts`` of what it has.
     """
     files = resolve(raw, overrides)
+    if found := problems(files, raw):
+        raise BuildError(f"the SmartTables in {raw} are not as expected:\n" + "\n".join(f"- {x}" for x in found))
     names: dict[str, str] = {}
 
     # ------------------------------------------------------------- compounds
     c, cn = read_table(files["compounds"]), read_table(files["compound_names"])
     if len(c) != len(cn):
-        raise SystemExit(f"{files['compounds'].name} and {files['compound_names'].name} differ in rows: give the two exports of one table")
+        raise BuildError(f"{files['compounds'].name} and {files['compound_names'].name} differ in rows: give the two exports of one table")
+    _frames(c["Compound"], "compounds", files["compounds"])
     compounds = []
     for (_, r), (_, n) in zip(c.iterrows(), cn.iterrows()):
         cid = re.sub(r"\D", "", _link_text(r.get("PubChem", "")))
@@ -210,7 +302,8 @@ def build(raw: Path, out: Path, version: Optional[str] = None, overrides: Option
     # -------------------------------------------------------------- pathways
     p, pn = read_table(files["pathways"]), read_table(files["pathway_names"])
     if len(p) != len(pn) or not (p["Object ID"].to_numpy() == pn["Object ID"].to_numpy()).all():
-        raise SystemExit(f"{files['pathways'].name} and {files['pathway_names'].name} differ in rows: give the two exports of one table")
+        raise BuildError(f"{files['pathways'].name} and {files['pathway_names'].name} differ in rows: give the two exports of one table")
+    _frames(p["Reactions of pathway"], "reactions", files["pathways"])
     classes: dict[str, str] = {}
     species_names: dict[str, str] = {}
     pw: dict[str, dict] = {}
@@ -235,12 +328,17 @@ def build(raw: Path, out: Path, version: Optional[str] = None, overrides: Option
             if q != s and rs and rs <= rsets[s] and "Super-Pathways" not in pw[q]["types"]:
                 v["subs"].append(q)
                 pw[q]["super"].append(s)
+    listed = {q for row in compounds for q in json.loads(row[9])}
+    if listed and not listed & set(pw):
+        raise BuildError(f"none of the pathways of {files['compounds'].name} is in {files['pathways'].name}: give the two of one "
+                         "MetaCyc, exported by frame IDs")
     log(f"pathways: {len(pw):,} ({files['pathways'].name})")
 
     # ------------------------------------------------------------- reactions
     x, xn = read_table(files["reactions"]), read_table(files["reaction_names"])
     if len(x) != len(xn) or not (x["Object ID"].to_numpy() == xn["Object ID"].to_numpy()).all():
-        raise SystemExit(f"{files['reactions'].name} and {files['reaction_names'].name} differ in rows: give the two exports of one table")
+        raise BuildError(f"{files['reactions'].name} and {files['reaction_names'].name} differ in rows: give the two exports of one table")
+    _frames(x["Reactants of reaction"], "reactants", files["reactions"])
     reactions = []
     for (_, r), (_, n) in zip(x.iterrows(), xn.iterrows()):
         for col in ("Reactants of reaction", "Products of reaction"):
@@ -254,17 +352,19 @@ def build(raw: Path, out: Path, version: Optional[str] = None, overrides: Option
 
     # ------------------------------------------- pathways' summaries and more
     if files["summaries"]:
-        recs = _records(files["summaries"], 1, set(pw))
+        header, recs = _records(files["summaries"], set(pw))
+        at = header.index("Summary")
         for pid, fields in recs.items():
-            if len(fields) >= 4:
-                pw[pid]["summary"] = _summary("\t".join(fields[3:]), {**species_names, **classes, **names}) or None
+            if len(fields) > at:
+                pw[pid]["summary"] = _summary("\t".join(fields[at:]), {**species_names, **classes, **names}) or None
         log(f"summaries: {len(recs):,} ({files['summaries'].name})")
     if files["pathway_extra"]:
-        recs = _records(files["pathway_extra"], 2, set(pw))
+        header, recs = _records(files["pathway_extra"], set(pw))
+        tr, en = header.index("Taxonomic-Range"), header.index("Engineered?")
         for pid, fields in recs.items():
-            if len(fields) >= 12:
-                pw[pid]["taxonomic_range"] = [plain(t) for t in split(fields[10])]
-                pw[pid]["engineered"] = {"T": 1, "NIL": 0}.get(fields[11].strip().upper())
+            if len(fields) > max(tr, en):
+                pw[pid]["taxonomic_range"] = [plain(t) for t in split(fields[tr])]
+                pw[pid]["engineered"] = {"T": 1, "NIL": 0}.get(fields[en].strip().upper())
         log(f"taxonomic ranges: {sum(bool(v['taxonomic_range']) for v in pw.values()):,} ({files['pathway_extra'].name})")
     class_parents = _ontology_parents(files["pathway_ontology"]) if files["pathway_ontology"] else {}
 
@@ -343,15 +443,19 @@ VIEWS = [
 ]
 
 
+def views(bundle: Path, version: Optional[str]) -> list[dict]:
+    """The bundle's two reference datasets, as the Admin tab adds them (POST /api/admin/references)."""
+    v = f" {version}" if version else ""
+    return [{"path": str(bundle.resolve()), "title": spec["title"].format(v=v), "description": spec["description"],
+             "source": f"MetaCyc{v} (metacyc.org), SmartTables read by app/metacyc_build.py", "kind": spec["kind"],
+             "chemical_axis": "detect", "value_label": spec["value_label"], "row_label": spec["row_label"],
+             "col_label": spec["col_label"], "fields": {"layout": "metacyc", "view": spec["view"]}} for spec in VIEWS]
+
+
 def register(server: str, bundle: Path, version: Optional[str], log=print) -> int:
     """Add the bundle's reference datasets to the app at `server` (its Admin tab's API): 0 if all were added."""
-    v = f" {version}" if version else ""
     failed = 0
-    for spec in VIEWS:
-        body = {"path": str(bundle.resolve()), "title": spec["title"].format(v=v), "description": spec["description"],
-                "source": f"MetaCyc{v} (metacyc.org), SmartTables read by app/metacyc_build.py", "kind": spec["kind"],
-                "chemical_axis": "detect", "value_label": spec["value_label"], "row_label": spec["row_label"],
-                "col_label": spec["col_label"], "fields": {"layout": "metacyc", "view": spec["view"]}}
+    for body in views(bundle, version):
         req = urllib.request.Request(server.rstrip("/") + "/api/admin/references", data=json.dumps(body).encode(),
                                      headers={"Content-Type": "application/json"}, method="POST")
         try:
@@ -389,7 +493,13 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         if role not in FILES or not path:
             ap.error(f"--file {f}: give ROLE=PATH, ROLE one of {', '.join(FILES)}")
         overrides[role] = path
-    build(args.raw, args.out, args.version or None, overrides)
+    try:
+        build(args.raw, args.out, args.version or None, overrides)
+    except BuildError as e:
+        print(f"error: {e}", file=sys.stderr)
+        if not overrides and "missing:" in str(e):
+            print("(a file elsewhere, or named otherwise: give it with --file ROLE=PATH)", file=sys.stderr)
+        return 2
     return register(args.register, args.out, args.version or None) if args.register else 0
 
 

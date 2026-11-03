@@ -391,6 +391,21 @@ between the frontend and the server. Using the app is described in
     each compound, ordered by the mean position of their neighbours (sweeps down and up),
     and wrap when wider than 1,100 px. No graph library: none is used elsewhere, and
     pathways are small (a superpathway's tens of reactions).
+  - *Imported in the Admin tab* (`metacyc_import.py`): the input is what the script's
+    is, the raw folder (or an archive of it), so its files are found as the script finds
+    them (by the paths it reads, here by name, as a browser sends no folders) and checked
+    as it checks them (`metacyc_build.problems`: each required file there, with the
+    columns it needs; then, building, frame IDs where they should be and the compounds'
+    pathways among the pathways), each problem saying what was expected. The browser
+    lists them from the folder chosen and uploads only those (89 MB of `BioCyc/raw`'s
+    283), so a folder of anything else is refused before it is sent. They are kept, laid
+    out as the script reads them (it can be run on them again), with the bundle, in
+    `data/metacyc/<when>/` (backed up), and only what was built and added from: an upload
+    refused or failing keeps nothing. The build (about 20 s, 340 MB of memory) runs in a
+    thread, one at a time, polled by the tab; its datasets are added as the Admin tab adds
+    any (`reference.add`). The folder goes to `data/deleted/` with the last dataset of its
+    bundle, as a deleted dataset's files do, so nothing uploaded is left unused and
+    unlisted.
 - **LOTUS** (`lotus_build.py`, `lotus.py`, `static/lotus.js`) is a bundle too, read as
   MetaCyc's is (`reference.bundle_kind`: by the kind its `about` says, as both are
   `.sqlite`), for the same reason: 220,823 structures by 36,800 organisms, of which only
@@ -807,8 +822,9 @@ app/db.py          SQLite schema and queries
 app/reference.py   reference datasets: built-in and added ones, reading them, matching their chemicals
 app/metacyc.py     MetaCyc bundles as reference data: odors matched to compounds, compounds × pathways, the
                    pathway LCA distance, pathways, compounds and searches for the Reference data tab
-app/metacyc_build.py  MetaCyc's SmartTables read into a bundle (python -m app.metacyc_build), and its two
-                   reference datasets added through the Admin tab's API
+app/metacyc_build.py  MetaCyc's SmartTables checked and read into a bundle (python -m app.metacyc_build), and
+                   its two reference datasets added through the Admin tab's API
+app/metacyc_import.py MetaCyc imported in the Admin tab: the raw folder uploaded, kept, built and added
 app/lotus.py       LOTUS bundles as reference data: its view's settings (and how they are said), odors matched to
                    structures, chemicals × taxa, a cell's organisms and papers
 app/lotus_build.py LOTUS's frozen records and metadata read into a bundle (python -m app.lotus_build), and its
@@ -1030,7 +1046,16 @@ PATCH  /api/admin/references/{id}           any of those adding it takes but "pa
                                             a LOTUS bundle's settings) → changed, its file read
                                             again by them
 DELETE /api/admin/references/{id}           its copy deleted (never its file) → {"revoked": the path
-                                            taken off the folders it may read, if any}
+                                            taken off the folders it may read, if any; "moved": where
+                                            MetaCyc imported for it was moved, if it was the last of it}
+GET    /api/admin/metacyc                   MetaCyc imported here: what an upload is to have (each
+                                            role's files and what it is), the import under way or the
+                                            last ({"running", "stage", "log", "error", "added"}), and
+                                            those kept (folder, size, their reference datasets)
+POST   /api/admin/metacyc                   multipart 'file' (repeatable: the files of the raw folder,
+                                            or archives of it), 'version' → 422 {"errors": what is
+                                            missing or not as expected}, 409 while one is under way,
+                                            else {"job"}: built and added in the background
 ```
 
 Matrix payloads carry `values_b64`: little-endian float32, row-major

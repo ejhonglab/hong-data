@@ -4,15 +4,20 @@ OLFDB_DATA_DIR=<a scratch folder> python -m pytest tests/"""
 from __future__ import annotations
 
 import asyncio
+import io
 import json
+import shutil
 import sqlite3
+import tarfile
+import time
+import zipfile
 
 import numpy as np
 import pytest
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
 
-from app import metacyc, metacyc_build, odormeta, sandbox
+from app import config, metacyc, metacyc_build, metacyc_import, odormeta, sandbox
 from tests.test_reference import INCHI_LIN, env  # noqa: F401 (fixtures)
 from tests.test_tensor import call, main, root  # noqa: F401 (fixtures)
 
@@ -151,8 +156,32 @@ def test_build(bundle_path):
 
 
 def test_build_errors(tmp_path):
-    with pytest.raises(SystemExit, match="not found"):
+    with pytest.raises(metacyc_build.BuildError, match="missing: MetaCyc's SmartTable of all compounds") as e:
         metacyc_build.build(tmp_path, tmp_path / "x.sqlite", log=lambda *a: None)
+    assert str(e.value).count("missing:") == len(metacyc_build.REQUIRED)  # (those not required: not said)
+    raw = make_raw(tmp_path / "raw")
+    files = metacyc_build.resolve(raw)
+    assert metacyc_build.problems(files, raw) == []
+    # a file without the columns needed, one not tab-separated, a class tree that is not one
+    cpd = raw / metacyc_build.FILES["compounds"][0]
+    tsv(cpd, ["Compound", "Common-Name", "SMILES"], [["X", "x", ""]])
+    (raw / metacyc_build.FILES["genomes"][0]).write_text("a,b,c\n1,2,3\n")
+    (raw / metacyc_build.FILES["pathway_ontology"][0]).write_text("something else\n")
+    found = metacyc_build.problems(files, raw)
+    assert len(found) == 3 and found[0].startswith(f"{metacyc_build.FILES['compounds'][0]} is not MetaCyc's SmartTable of all compounds")
+    assert "lacks the columns Pathways of compound, Ontology - direct parents of entity (its columns: Compound, Common-Name, SMILES)" in found[0]
+    assert "it lacks the column Organism name (its columns: none: it is not tab-separated)" in found[1]
+    assert "pathway class tree" in found[2]
+    with pytest.raises(metacyc_build.BuildError, match="not as expected"):
+        metacyc_build.build(raw, tmp_path / "x.sqlite", log=lambda *a: None)
+    assert not (tmp_path / "x.sqlite").exists()
+    # the two exports of the compounds swapped: names where frame IDs are expected
+    raw = make_raw(tmp_path / "raw2")
+    a, b = (raw / metacyc_build.FILES[role][0] for role in ("compounds", "compound_names"))
+    a.write_bytes(b.read_bytes())
+    with pytest.raises(metacyc_build.BuildError, match="its compounds are names, not frame IDs"):
+        metacyc_build.build(raw, tmp_path / "x.sqlite", log=lambda *a: None)
+    assert metacyc_build.main([str(tmp_path / "none"), str(tmp_path / "x.sqlite")]) == 2
     with pytest.raises(metacyc.MetacycError):
         metacyc.read_about(tmp_path / "x.sqlite")  # (none)
     sqlite3.connect(tmp_path / "other.db").execute("CREATE TABLE about (key TEXT, value TEXT)").connection.commit()
@@ -336,3 +365,140 @@ def test_register(monkeypatch, tmp_path):
     assert [u for u, _ in sent] == ["http://olfdb:8000/api/admin/references"] * 2
     assert [b["fields"] for _, b in sent] == [{"layout": "metacyc", "view": "pathways"}, {"layout": "metacyc", "view": "lca"}]
     assert sent[1][1]["title"] == "MetaCyc 27.0: pathway LCA distance between odors" and len(logged) == 2
+
+
+# ------------------------------------------------------------- imported in the Admin tab
+
+def post_form(endpoint, files: list[tuple[str, bytes]], version: str = "99.0") -> tuple[int, dict]:
+    """Status and JSON of a POST of `files` (name as uploaded, bytes; field 'file') and 'version', as a form (multipart)."""
+    boundary = "olfdbtestboundary"
+    part = lambda head, data: f"--{boundary}\r\nContent-Disposition: form-data; {head}\r\n\r\n".encode() + data + b"\r\n"  # noqa: E731
+    body = b"".join(part(f'name="file"; filename="{n}"', data) for n, data in files) + part('name="version"', version.encode())
+    body += f"--{boundary}--\r\n".encode()
+    scope = {"type": "http", "method": "POST", "path": "/", "query_string": b"", "path_params": {},
+             "headers": [(b"content-type", f"multipart/form-data; boundary={boundary}".encode())]}
+
+    async def receive():
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    response = asyncio.run(endpoint(Request(scope, receive)))
+    return response.status_code, json.loads(response.body)
+
+
+def finished(timeout=60) -> dict:
+    """The import under way, once it has ended."""
+    t = time.monotonic()
+    while metacyc_import.JOB["running"]:
+        assert time.monotonic() - t < timeout, "the import did not end"
+        time.sleep(0.05)
+    return metacyc_import.job()
+
+
+@pytest.fixture
+def imports(env, tmp_path, monkeypatch):  # noqa: F811
+    """main, with MetaCyc's imports (and things deleted) in tmp_path, and none under way."""
+    monkeypatch.setattr(config, "METACYC_DIR", tmp_path / "data" / "metacyc")
+    monkeypatch.setattr(config, "DELETED_DIR", tmp_path / "data" / "deleted")
+    monkeypatch.setattr(metacyc_import, "JOB", {**metacyc_import.JOB, "running": False, "id": None, "log": [], "added": []})
+    return env
+
+
+def test_pick():
+    rel = metacyc_build.FILES["compounds"][0]
+    names = ["raw/x/all_metacyc_compounds_with_gen_pathways__frame_ids__2024-02-05.tsv", f"raw/{rel}", "raw/notes.txt",
+             "species-from-metacyc_species.txt"]
+    assert metacyc_import.pick(names) == {1: rel, 3: "organisms/species-from-metacyc_species.txt"}
+    assert metacyc_import.pick(names[:1]) == {0: rel}  # (elsewhere, but named so)
+
+
+def test_import(imports, tmp_path):
+    """The folder uploaded (as the Admin tab uploads it: only the files the build reads) is
+    kept, built into a bundle, and its two reference datasets added; the folder is moved to
+    deleted/ with the last of them."""
+    main = imports
+    raw = make_raw(tmp_path / "raw")
+    picked = [(f"raw/{p.relative_to(raw).as_posix()}", p.read_bytes()) for p in sorted(raw.rglob("*")) if p.is_file()]
+    status, r = post_form(main.admin_metacyc_import, picked)
+    assert status == 200 and r["ok"] and r["job"]["running"] and r["job"]["version"] == "99.0", r
+    assert r["files"]["compounds"] == metacyc_build.FILES["compounds"][0] and len(r["files"]) == len(metacyc_build.FILES)
+    job = finished()
+    assert job["error"] is None and [a["title"] for a in job["added"]] == [
+        "MetaCyc 99.0: compounds by the pathways they are in", "MetaCyc 99.0: pathway LCA distance between odors"], job
+    assert all(a["state"] == "ok" for a in job["added"]) and any(line.startswith("compounds: 7") for line in job["log"])
+    d = config.METACYC_DIR / job["id"]
+    assert (d / "raw" / metacyc_build.FILES["compounds"][0]).read_bytes() == (raw / metacyc_build.FILES["compounds"][0]).read_bytes()
+    assert metacyc.read_about(d / "metacyc-99.0.sqlite")["counts"]["pathways"] == 4
+    refs = {x["id"]: x for x in main.db.list_references()}
+    ids = [a["id"] for a in job["added"]]
+    assert set(refs) == set(ids) and all(refs[i]["path"] == str((d / "metacyc-99.0.sqlite").resolve()) for i in ids)
+    assert call(main.reference_get, path_params={"ref_id": ids[1]})[1]["pairwise"] == "distance"
+    s = call(main.admin_metacyc)[1]
+    assert not s["job"]["running"] and [e["role"] for e in s["expected"]] == list(metacyc_build.FILES)
+    assert len(s["imports"]) == 1 and s["imports"][0]["refs"] == ids and s["imports"][0]["files"] == r["files"]
+    # again, while one is under way: refused
+    metacyc_import.JOB["running"] = True
+    status, r = post_form(main.admin_metacyc_import, picked)
+    assert status == 409 and "being imported already" in r["errors"][0]
+    metacyc_import.JOB["running"] = False
+    # its reference datasets deleted: the folder with the last
+    delete = lambda i: asyncio.run(main.admin_reference_delete(Request(  # noqa: E731
+        {"type": "http", "method": "DELETE", "path": "/", "query_string": b"", "headers": [], "path_params": {"ref_id": i}})))
+    assert json.loads(delete(ids[0]).body)["moved"] is None and d.is_dir()
+    moved = json.loads(delete(ids[1]).body)["moved"]
+    assert moved == str(config.DELETED_DIR / "metacyc" / d.name) and not d.exists()
+    assert (config.DELETED_DIR / "metacyc" / d.name / "metacyc-99.0.sqlite").is_file()
+    assert call(main.admin_metacyc)[1]["imports"] == []
+
+
+def test_import_archives(imports, tmp_path):
+    """The folder as a zip or tar.gz, with more than the build reads: only what it reads kept."""
+    main = imports
+    raw = make_raw(tmp_path / "BioCyc" / "raw")
+    (raw / "compounds" / "all_metacyc_compounds.sdf").write_text("not read")
+    shutil.copy(raw / metacyc_build.FILES["reactions"][0], raw / "reactions" / "all_metacyc_reactions__frame_ids (copy).tsv")
+    zipped, tarred = io.BytesIO(), io.BytesIO()
+    with zipfile.ZipFile(zipped, "w") as z:
+        for p in sorted(raw.parent.rglob("*")):
+            z.write(p, p.relative_to(tmp_path).as_posix())
+    with tarfile.open(fileobj=tarred, mode="w:gz") as t:
+        t.add(raw, "raw")
+    for name, data in (("BioCyc.zip", zipped.getvalue()), ("raw.tar.gz", tarred.getvalue())):
+        status, r = post_form(main.admin_metacyc_import, [(name, data)], version="")
+        assert status == 200 and r["ok"] and r["job"]["version"] is None, r
+        job = finished()
+        assert job["error"] is None and len(job["added"]) == 2 and job["added"][0]["title"] == "MetaCyc: compounds by the pathways they are in"
+        d = config.METACYC_DIR / job["id"]
+        kept = sorted(p.relative_to(d).as_posix() for p in d.rglob("*") if p.is_file())
+        assert kept == sorted(["import.json", "metacyc.sqlite", *(f"raw/{v}" for v in r["files"].values())])
+        assert not any("copy" in k or k.endswith(".sdf") for k in kept)
+    assert len(call(main.admin_metacyc)[1]["imports"]) == 2
+
+
+def test_import_refused(imports, tmp_path):
+    """Uploads that are not MetaCyc's SmartTables as the build reads them: refused, saying what
+    was expected, nothing kept."""
+    main = imports
+    status, r = post_form(main.admin_metacyc_import, [("a.csv", b"x,y\n1,2\n"), ("b.txt", b"")])
+    assert status == 422 and not r["ok"] and r["errors"][0].startswith("none of the 2 files uploaded is one of MetaCyc's SmartTables")
+    assert sum(e.startswith("missing: ") for e in r["errors"]) == len(metacyc_build.REQUIRED)
+    assert r["errors"][-1].endswith(f"exported by common names, as {metacyc_build.FILES['reaction_names'][0]}")
+    # a file of the right name, but not the table
+    raw = make_raw(tmp_path / "raw")
+    (raw / metacyc_build.FILES["pathways"][0]).write_text("Pathways\tObject ID\nPWY-A\tPWY-A\n")
+    files = [(p.name, p.read_bytes()) for p in sorted(raw.rglob("*")) if p.is_file()]
+    status, r = post_form(main.admin_metacyc_import, files)
+    assert status == 422 and len(r["errors"]) == 1 and "lacks the columns Common-Name, Reactions of pathway" in r["errors"][0]
+    # not an archive, though named as one
+    status, r = post_form(main.admin_metacyc_import, [("raw.zip", b"not a zip")])
+    assert status == 422 and r["errors"] == ["raw.zip is not a zip or tar archive"]
+    assert call(main.admin_metacyc)[1]["imports"] == [] and not any(config.METACYC_DIR.iterdir())
+    assert not metacyc_import.JOB["running"]
+    # the build refusing what was checked (the compounds' two exports swapped): nothing kept
+    raw = make_raw(tmp_path / "raw2")
+    a, b = (raw / metacyc_build.FILES[role][0] for role in ("compounds", "compound_names"))
+    a.write_bytes(b.read_bytes())
+    status, r = post_form(main.admin_metacyc_import, [(p.name, p.read_bytes()) for p in sorted(raw.rglob("*")) if p.is_file()])
+    assert status == 200
+    job = finished()
+    assert "names, not frame IDs" in job["error"] and job["added"] == [] and not any(config.METACYC_DIR.iterdir())
+    assert main.db.list_references() == []

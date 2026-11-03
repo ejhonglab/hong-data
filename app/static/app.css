@@ -506,6 +506,16 @@ svg.tex { overflow: visible; }
 #admin-refs-list code { word-break: break-all; }
 #admin-refs-list .bad { color: var(--danger); }
 #admin-refs-list .warn { color: var(--warn); }
+.mc-import-pick .check input { width: 90px; }
+.mc-expected { margin: 10px 0 0; }
+.mc-expected summary { cursor: pointer; color: var(--ink-muted); }
+.mc-files { margin: 8px 0; }
+.mc-files td { vertical-align: top; }
+.mc-files code, #mc-import-list code { word-break: break-all; }
+.mc-files .bad { color: var(--danger); }
+#mc-import-files > p { margin: 10px 0 0; }
+#mc-import-list h4 { margin: 16px 0 6px; font-size: 13.5px; }
+#mc-import-list td { vertical-align: top; }
 .ref-axis-labels { gap: 14px 16px; }
 #ref-check, #ref-result { margin-top: 10px; }
 #ref-check p { margin: 0; }

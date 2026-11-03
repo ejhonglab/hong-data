@@ -17,6 +17,8 @@ the first match.
     point <selector>            the mouse to its middle where it is, not scrolling it (unlike hover)
     fill <selector> <text>      types into an input, as typing does (input events)
     select <selector> <value>   chooses an option of a <select>
+    files <selector> <path>...  chooses files for an <input type=file> (hidden is fine), as picking them does;
+                                for a folder input (webkitdirectory), give the folder
     press <key>                 e.g. Enter, Escape, ArrowDown, Tab
     move <x> <y>                the mouse, e.g. away from what it hovers
     text <selector>             prints its text
@@ -85,6 +87,8 @@ def main() -> int:
                     page.fill(a[0], a[1])
                 elif cmd == "select":
                     page.select_option(a[0], a[1])
+                elif cmd == "files":
+                    page.set_input_files(a[0], a[1:])
                 elif cmd == "press":
                     page.keyboard.press(a[0])
                 elif cmd == "move":

@@ -37,8 +37,8 @@ from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, R
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import (backup, chemprops, compare, config, dilution, export, filelog, headspace, lotus, merge, metacyc, movies,
-               odormeta, reference, sandbox, tensor, thorimage, vcf, yamlcheck)
+from . import (backup, chemprops, compare, config, dilution, export, filelog, headspace, lotus, merge, metacyc, metacyc_import,
+               movies, odormeta, reference, sandbox, tensor, thorimage, vcf, yamlcheck)
 from .db import PANEL_RENAMES, PROPERTY_COLUMNS, Database, rename_panel
 from .glomeruli import load_glomeruli
 from .ingest import (ParsedData, ValidationError, combine, extra_text, files_text, fly_key, kc_id_problems, load_file,
@@ -2754,12 +2754,92 @@ async def admin_reference_update(request: Request) -> Response:
 
 
 async def admin_reference_delete(request: Request) -> Response:
-    """Delete a reference dataset added in the Admin tab (its import, not its file), see `reference.delete`."""
+    """Delete a reference dataset added in the Admin tab (its import, not its file), see
+    `reference.delete`; the last of a MetaCyc import's, its folder moved to deleted/ (see
+    `metacyc_import.release`: then ``moved``, where to)."""
     ref_id = request.path_params["ref_id"]
-    status, result = await run_in_threadpool(reference.delete, db, ref_id)
+
+    def run() -> tuple[int, dict]:
+        refs = db.list_references()
+        status, result = reference.delete(db, ref_id)
+        ref = next((r for r in refs if r["id"] == ref_id), None)
+        if status == 200 and ref:
+            moved = metacyc_import.release(ref["path"], [r["path"] for r in refs if r["id"] != ref_id])
+            result["moved"] = filelog.server_paths()[0](str(moved)) if moved else None
+        return status, result
+
+    status, result = await run_in_threadpool(run)
     if status == 200:
         log.info("reference dataset %s deleted in the Admin tab", ref_id)
     return JSONResponse(result, status_code=status)
+
+
+def _metacyc_imports() -> dict:
+    """MetaCyc imported in the Admin tab: what an upload is to have, the import under way
+    (or the last one), and those kept (see metacyc_import.py)."""
+    to_server, _ = filelog.server_paths()
+    kept = metacyc_import.imports(db.list_references())
+    return {"expected": metacyc_import.expected(), "archives": metacyc_import.ARCHIVES, "max_upload_mb": config.MAX_UPLOAD_MB,
+            "job": _metacyc_job(), "dir": to_server(str(config.METACYC_DIR)), "deleted_dir": to_server(str(config.DELETED_DIR / "metacyc")),
+            "imports": [{**i, "dir": to_server(i["dir"]), "uploaded_at": _aware(i.get("uploaded_at")),
+                         "built_at": _aware(i.get("built_at"))} for i in kept]}
+
+
+def _metacyc_job() -> dict:
+    """`metacyc_import.job`, its times `_aware`."""
+    j = metacyc_import.job()
+    return {**j, "started_at": _aware(j["started_at"]), "finished_at": _aware(j["finished_at"])}
+
+
+async def admin_metacyc(request: Request) -> Response:
+    """MetaCyc imported in the Admin tab (see `_metacyc_imports`)."""
+    return JSONResponse(await run_in_threadpool(_metacyc_imports))
+
+
+async def admin_metacyc_import(request: Request) -> Response:
+    """Import MetaCyc: its SmartTables uploaded (multipart 'file', repeatable: the files of
+    the folder app/metacyc_build.py reads, or an archive of it; 'version', MetaCyc's), kept
+    with the bundle built of them, whose two reference datasets are added (in the
+    background: the job, as GET /api/admin/metacyc gives it). 422 with what is missing or
+    not as expected, 409 while another import is under way (see metacyc_import.py)."""
+    try:
+        d = metacyc_import.claim()
+    except metacyc_import.UploadError as e:
+        return JSONResponse({"ok": False, "errors": e.errors}, status_code=409)
+    max_bytes = int(config.MAX_UPLOAD_MB * 1024 * 1024)
+    try:
+        form = await request.form()
+        uploads = [up for up in form.getlist("file") if isinstance(up, UploadFile)]
+        if not uploads:
+            raise metacyc_import.UploadError("no file in the request (field 'file'): upload the folder of MetaCyc's SmartTables, "
+                                             "or an archive of it")
+        version = re.sub(r"\s+", " ", str(form.get("version") or "")).strip()[:40] or None
+        archives = [up for up in uploads if metacyc_import.is_archive(up.filename)]
+        files = [up for up in uploads if not metacyc_import.is_archive(up.filename)]
+        for k, rel in metacyc_import.pick([up.filename or "" for up in files]).items():
+            (d / "raw" / rel).parent.mkdir(parents=True, exist_ok=True)
+            await _save_upload(files[k], d / "raw" / rel, max_bytes=max_bytes)
+        for i, up in enumerate(archives):
+            dest = d / f"upload-{i}{''.join(Path(up.filename).suffixes[-2:])}"
+            await _save_upload(up, dest, max_bytes=max_bytes)
+            try:
+                await run_in_threadpool(metacyc_import.extract, dest, up.filename, d / "raw", max_bytes)
+            finally:
+                dest.unlink(missing_ok=True)
+        found = await run_in_threadpool(metacyc_import.check, d / "raw", len(uploads))
+    except metacyc_import.UploadError as e:
+        metacyc_import.abandon(d)
+        return JSONResponse({"ok": False, "errors": e.errors}, status_code=422)
+    except HTTPException as e:
+        metacyc_import.abandon(d)
+        return JSONResponse({"ok": False, "errors": [e.detail]}, status_code=e.status_code)
+    except BaseException:
+        metacyc_import.abandon(d)
+        raise
+    metacyc_import.start(db, d, version, found, _odor_index, _supervisor)
+    job = _metacyc_job()
+    log.info("MetaCyc %s uploaded in the Admin tab (%d files), being imported into %s", version, len(uploads), d)
+    return JSONResponse({"ok": True, "job": job, "files": found})
 
 
 async def admin_dataset_delete(request: Request) -> Response:
@@ -2872,6 +2952,8 @@ routes = [
     Route("/api/admin/references", admin_reference_add, methods=["POST"]),
     Route("/api/admin/references/{ref_id}", admin_reference_delete, methods=["DELETE"]),
     Route("/api/admin/references/{ref_id}", admin_reference_update, methods=["PATCH"]),
+    Route("/api/admin/metacyc", admin_metacyc),
+    Route("/api/admin/metacyc", admin_metacyc_import, methods=["POST"]),
     Mount("/static", RevalidatedStaticFiles(directory=str(config.STATIC_DIR)), name="static"),
 ]
 

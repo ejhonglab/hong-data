@@ -17,6 +17,7 @@ EXPORTS_DIR = DATA_DIR / "exports"  # downloads being sent (deleted once sent)
 ODOR_PREVIEWS_DIR = DATA_DIR / "odor_previews"  # parsed sheets awaiting confirmation, by fingerprint
 DELETED_DIR = DATA_DIR / "deleted"  # the files of datasets deleted in the Admin tab, by id
 REFERENCE_CACHE_DIR = DATA_DIR / "references"  # reference datasets added in the Admin tab, as imported, by id
+METACYC_DIR = DATA_DIR / "metacyc"  # MetaCyc imported in the Admin tab: the files uploaded and the bundle built, by import
 TMP_DIR = DATA_DIR / "tmp"  # the server's temporary files (uploads being received), so it writes nothing outside DATA_DIR
 ADMIN_FILE = DATA_DIR / "admin.json"  # folders the server may read and write (Admin tab, see sandbox.py)
 CHEMUTILS_CACHE = DATA_DIR / "chemutils_cache.sqlite"  # chemutils' cache of what it looked up (chemprops.py)
