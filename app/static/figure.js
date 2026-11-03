@@ -6,19 +6,23 @@
 //
 // model: as for Heatmap (rows, cols, values, rowTitle, rowGroupTitle, rowDendro, colDendro)
 // (either way round)
-// opts: { cellW, cellH, lut, norm, nanColor, valueLabel, title }
+// opts: { cellW, cellH, lut, norm, nanColor, valueLabel, title }, valueLabel the colorbar's
+// label: text, or its parts (as `labelParts` gives them: its math drawn as MathJax's paths)
 import { fmtNum } from './colormaps.js';
 import { CELL_TEXT_MIN, cellLines, parseColor, textOn } from './heatmap.js';
+import { MATH_EX, fmt, geometrySvg, invert, labelGeometry, mul, pdfPath } from './latex.js';
 
 const FONT = 'Helvetica, Arial, sans-serif';
 const INK = '#1d1f22', INK_MUTED = '#5c6066', RULE = '#cfd1cf', SURFACE = '#ffffff', LINE = '#444444';
 const GROUP_FONT = 11, SUB_FONT = 9, TICK_FONT = 10;
 const MID = 0.36; // baseline offset (in em) that centres Helvetica text on a line
 const MARGIN = 10;
+const HELVETICA_EX = 0.523; // its x-height (in em), to which math in labels is scaled
 const PNG_SCALE = 3, MAX_IMAGE_SIDE = 16384, MAX_PNG_PIXELS = 120e6, MAX_SVG_IMAGE_PIXELS = 40e6;
 
 export async function exportFigure(format, model, opts) {
-  const L = layoutFigure(model, opts);
+  const label = await labelRuns(typeof opts.valueLabel === 'string' ? [{ text: opts.valueLabel }] : opts.valueLabel || [], TICK_FONT);
+  const L = layoutFigure(model, opts, label);
   let fig, note = '';
   if (format === 'svg') fig = new SvgFigure(L.width, L.height, opts.title);
   else if (format === 'pdf') fig = new PdfFigure(L.width, L.height, opts.title);
@@ -63,6 +67,29 @@ function textWidth(s, size) {
   return (w * size) / 1000;
 }
 
+// a label's parts in runs along its baseline, from its start: text (in Helvetica) and math
+// (MathJax's geometry, `g`, scaled by `k` from em to the figure's units, to Helvetica's
+// x-height), any MathJax could not read as written; with its width, ascent and descent (null
+// if empty)
+async function labelRuns(parts, size) {
+  const runs = [];
+  let x = 0, ascent = 0.75 * size, descent = 0.25 * size;
+  for (const p of await labelGeometry(parts.filter((q) => q.tex != null || q.text))) {
+    if (p.g && !p.g.error) {
+      const k = (size * HELVETICA_EX) / MATH_EX;
+      runs.push({ x, g: p.g, k });
+      x += p.g.w * k;
+      ascent = Math.max(ascent, p.g.a * k);
+      descent = Math.max(descent, p.g.d * k);
+    } else { // (spaces at its ends as room, not text: SVG would drop them)
+      const text = p.tex != null ? `$${p.tex}$` : p.text, trimmed = text.trim();
+      if (trimmed) runs.push({ x: x + textWidth(text.slice(0, text.indexOf(trimmed)), size), text: trimmed });
+      x += textWidth(text, size);
+    }
+  }
+  return runs.length ? { runs, width: x, ascent, descent } : null;
+}
+
 function ellipsize(s, maxW, size) {
   if (maxW <= 0) return '';
   if (textWidth(s, size) <= maxW) return s;
@@ -77,7 +104,7 @@ function ellipsize(s, maxW, size) {
 
 // --------------------------------------------------------------------- layout
 // Same bands and sizes as the on-screen heatmap, but labels are allowed to be longer.
-function layoutFigure(model, o) {
+function layoutFigure(model, o, label) {
   const { cellW, cellH } = o;
   const L = { cellW, cellH, nR: model.rows.length, nC: model.cols.length };
   const widest = (strs, size) => { let w = 0; for (const s of strs) w = Math.max(w, textWidth(String(s ?? ''), size)); return Math.ceil(w); };
@@ -122,7 +149,14 @@ function layoutFigure(model, o) {
     .map((t) => ({ t: t.t, label: fmtNum(t.value) }));
   let right = L.cbX + L.cbW + 6 + widest(L.ticks.map((t) => t.label), TICK_FONT);
   let bottom = L.cbY + L.cbH + 4;
-  if (o.valueLabel) { right = Math.max(right, L.cbX + textWidth(o.valueLabel, TICK_FONT)); bottom += 16; }
+  L.label = label;
+  if (label) {
+    // its baseline under the colorbar, and the room below it (as for text, unless its math is taller)
+    L.labelUp = Math.max(12, Math.ceil(label.ascent + 4.5));
+    L.labelDown = Math.max(4, Math.ceil(label.descent + 1));
+    right = Math.max(right, L.cbX + label.width);
+    bottom += L.labelUp + L.labelDown;
+  }
   if (L.hasNaN) { right = Math.max(right, L.cbX + 16 + textWidth('missing', TICK_FONT)); bottom += 16; }
   L.width = Math.ceil(right + MARGIN);
   L.height = Math.ceil(Math.max(L.gy + L.gh, bottom) + MARGIN);
@@ -223,8 +257,15 @@ function drawFigure(f, L, model, o) {
     f.lines([[cbX + cbW, y, cbX + cbW + 3, y]], INK, 0.75);
     f.text(t.label, cbX + cbW + 6, y + MID * TICK_FONT, { size: TICK_FONT, color: INK });
   }
-  let y = cbY + cbH + 16;
-  if (o.valueLabel) { f.text(o.valueLabel, cbX, y, { size: TICK_FONT, color: INK }); y += 16; }
+  let y = cbY + cbH + 4;
+  if (L.label) {
+    y += L.labelUp;
+    for (const r of L.label.runs) {
+      if (r.g) f.math(r.g, cbX + r.x, y, r.k, INK); else f.text(r.text, cbX + r.x, y, { size: TICK_FONT, color: INK });
+    }
+    y += L.labelDown;
+  }
+  y += 12;
   if (L.hasNaN) {
     f.rect(cbX, y - 9, 10, 10, o.nanColor);
     f.text('missing', cbX + 16, y, { size: TICK_FONT, color: INK });
@@ -273,7 +314,8 @@ function runs(keys) {
 // Each draws in figure units (CSS px = PDF pt), y down, text positioned by baseline:
 // rect(x, y, w, h, fill), lines([[x1, y1, x2, y2], ...], color, width),
 // text(s, x, y, {size, color, anchor: start|middle|end, rotate: reads upwards}),
-// image(rgba, iw, ih, x, y, w, h, {crisp}); finish() -> Promise<Blob>
+// image(rgba, iw, ih, x, y, w, h, {crisp}), math(g, x, y, k, color): MathJax's geometry
+// (`texGeometry`) with its baseline at y, scaled by k; finish() -> Promise<Blob>
 const num = (v) => String(Math.round(v * 100) / 100);
 const xmlEsc = (s) => String(s).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
 
@@ -329,6 +371,7 @@ class SvgFigure {
       this.parts[i] = `<image x="${num(x)}" y="${num(y)}" width="${num(w)}" height="${num(h)}" preserveAspectRatio="none"${style} xlink:href="${url}"/>`;
     })());
   }
+  math(g, x, y, k, color) { this.parts.push(`<g transform="translate(${num(x)} ${num(y)}) scale(${fmt(k)})">${geometrySvg(g.items, color)}</g>`); }
   async finish() {
     await Promise.all(this.pending);
     const svg = [
@@ -388,6 +431,27 @@ class PdfFigure {
     for (let i = 0, j = 0; i < px.length; i += 4) { rgb[j++] = px[i]; rgb[j++] = px[i + 1]; rgb[j++] = px[i + 2]; }
     this.images.push({ rgb, iw, ih, crisp });
     this.ops.push(`q ${num(w)} 0 0 ${num(h)} ${num(x)} ${num(this.h - y - h)} cm /Im${this.images.length} Do Q`);
+  }
+  math(g, x, y, k, color) {
+    const fig = [k, 0, 0, k, x, y], page = mul([1, 0, 0, -1, 0, this.h], fig), cm = (m) => `${m.map(fmt).join(' ')} cm`;
+    const draw = (items) => {
+      for (const it of items) {
+        const m = mul(page, it.m);
+        if (it.clip) { // (the clip kept, its matrix undone)
+          this.ops.push(`q ${cm(m)} ${it.clip.map(fmt).join(' ')} re W n ${cm(invert(m))}`);
+          draw(it.items);
+          this.ops.push('Q');
+        } else if (it.text != null) { // (in Helvetica, the one font this has)
+          const t = mul(fig, it.m);
+          this.text(it.text, t[4], t[5], { size: it.size * Math.sqrt(Math.abs(t[0] * t[3] - t[1] * t[2])), color });
+        } else {
+          this.ops.push(`q ${cm(m)} ${pdfPath(it.path)}${it.stroke ? ` ${fmt(it.stroke)} w` : ''} ${it.fill && it.stroke ? 'B' : it.stroke ? 'S' : 'f'} Q`);
+        }
+      }
+    };
+    this.ops.push(`q ${pdfColor(color)} rg ${pdfColor(color)} RG`);
+    draw(g.items);
+    this.ops.push('Q');
   }
   async finish() {
     const stream = (dict, data) => concatBytes([latin1(`<< ${dict} /Length ${data.length} /Filter /FlateDecode >>\nstream\n`), data, latin1('\nendstream')]);
@@ -456,6 +520,34 @@ class CanvasFigure {
     this.ctx.imageSmoothingEnabled = !crisp;
     this.ctx.drawImage(rgbaCanvas(px, iw, ih), x, y, w, h);
     this.ctx.imageSmoothingEnabled = true;
+  }
+  math(g, x, y, k, color) {
+    const c = this.ctx, t = c.getTransform(), base = mul([t.a, t.b, t.c, t.d, t.e, t.f], [k, 0, 0, k, x, y]);
+    const draw = (items) => {
+      for (const it of items) {
+        c.save();
+        c.setTransform(...mul(base, it.m));
+        if (it.clip) {
+          c.beginPath();
+          c.rect(...it.clip);
+          c.clip();
+          draw(it.items);
+        } else if (it.text != null) {
+          c.font = `${it.italic ? 'italic ' : ''}${it.bold ? 'bold ' : ''}${it.size}px serif`;
+          c.fillText(it.text, 0, 0);
+        } else {
+          const path = new Path2D(it.path);
+          if (it.fill) c.fill(path);
+          if (it.stroke) { c.lineWidth = it.stroke; c.stroke(path); }
+        }
+        c.restore();
+      }
+    };
+    c.save();
+    c.fillStyle = color;
+    c.strokeStyle = color;
+    draw(g.items);
+    c.restore();
   }
   finish() { return canvasBlob(this.canvas); }
 }

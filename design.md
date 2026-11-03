@@ -12,7 +12,8 @@ between the frontend and the server. Using the app is described in
   in SQLite plus files under `data/`, in one container. The server parses, validates,
   stores and serves matrices; displaying, clustering and figure export all happen in the
   browser. The frontend is plain JavaScript modules, with no build step and no
-  dependencies (the figure export writes its PDFs itself for that reason).
+  dependencies (the figure export writes its PDFs itself for that reason), but MathJax,
+  for labels' math (below), vendored as its one self-contained file.
 - **Intranet only, no login.** The network is trusted and nothing secret is entered, so
   users are just names: a user's tensor folders are saved on the server under their
   name, upload form defaults in the browser (localStorage). It is plain HTTP unless a
@@ -152,7 +153,10 @@ between the frontend and the server. Using the app is described in
   manipulation is of a whole dataset, not of its flies: a fly is still its (date,
   fly_num) in it. A fly here is its ROIs' other column levels too
   (`ingest.fly_key`): each side of a fly's brain uploaded apart is not the other's
-  duplicate.
+  duplicate. How the responses were calculated (`datasets.response_calc`) does not set
+  a dataset of the same flies apart, for now: the error says when only that differs
+  (`main._same_flies_error`), as the same recordings calculated two ways are not yet
+  anything the app keeps apart (in Merge, Compare or downloads).
 - **Panels are renamed when read, not stored so.** The Admin tab's renames (the setting
   `panel_renames`) are applied wherever a stored dataset's panels are read (`Database`:
   its trials, panels, title, metadata and summary), so every display and download has
@@ -299,6 +303,19 @@ between the frontend and the server. Using the app is described in
   volume (as hong2p reads them, ROIs being drawn on per-plane average images).
 - **Figure export** embeds the cells as an image drawn without smoothing, so they stay
   crisp at any zoom, while text and lines stay vector in SVG and PDF.
+- **Labels with LaTeX math** (a dataset's response calculation, its colorbar's label:
+  `static/latex.js`) are written as matplotlib's are (`$\Delta F/F$`), as the lab's
+  analysis code writes them. Their math is typeset by MathJax 3.2.2
+  (`static/vendor/mathjax/tex-svg-full.js`, Apache 2.0: every TeX extension and the SVG
+  font in one file, so nothing more is fetched; 2 MB, loaded only once a label has
+  math), as SVG, which is read into paths, rectangles, clips (MathJax's nested `<svg>`,
+  which crop stretched glyphs) and the odd character its fonts lack: the page's SVG of a
+  label is made again from those (a label is entered by anyone, and MathJax's own output
+  may carry links, classes and styles), and so is a figure's, in SVG, PDF (quadratic
+  curves as cubic ones, the clips by `W n`) or PNG (`Path2D`). Its `require`, `autoload`,
+  `html` and `action` extensions are left out, and errors are thrown rather than drawn,
+  to be shown under the field, which cannot be saved with one. The server keeps the label
+  as written: only the browser can typeset it.
 - **Downloads** are built in `data/exports/` and deleted once sent. Across datasets,
   trials are matched on panel, odor components and repeat.
 - **Merged downloads scale whole groups, by one factor each** (`app/merge.py`): fitted
@@ -817,7 +834,8 @@ app/static/        frontend: index.html, app.js, heatmap.js, colormaps.js (+ mpl
                    player.js (movie player), similarity.js (odor similarities, and between them;
                    pvalue-worker.js their p-values), metacyc.js (MetaCyc below its matrices: pathways
                    drawn, compounds, LCA paths, search), lotus.js (LOTUS with its matrices: how
-                   made, a cell's organisms and papers)
+                   made, a cell's organisms and papers), latex.js (labels with LaTeX math, by
+                   MathJax: vendor/mathjax/)
 manage.py          list / show / export / delete datasets from the server
 deploy/            systemd units; Dockerfile + docker-compose.yml at the top level
 tests/             pytest tests

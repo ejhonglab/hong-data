@@ -132,6 +132,7 @@ try {
         </label>
         <label class="field"><span>Panel name(s) <span class="muted">(comma-separated)</span></span><input name="panel_names" list="dl-panels" placeholder="e.g. megamat"></label>
         <label class="field"><span>Analysis source code (link)</span><input name="source_code_url" type="url" placeholder="https://github.com/…"></label>
+        <label class="field"><span>Response calculation <span class="muted">(colorbar label; LaTeX math in $…$)</span></span><input name="response_calc" list="dl-response-calcs" placeholder="e.g. $\Delta F/F$" spellcheck="false"><span class="tex-preview" hidden></span></label>
         <label class="field"><span>Raw data path on tensor <span class="muted">(from its top)</span></span><input name="raw_data_path" placeholder="e.g. tom/raw_data/2023-11-19" spellcheck="false"><span class="path-msg" data-msg-for="raw_data_path"></span></label>
         <label class="field"><span>Motion-corrected data path on tensor <span class="muted">(from its top)</span></span><input name="mocorr_data_path" placeholder="e.g. tom/analysis/2023-11-19" spellcheck="false"><span class="path-msg" data-msg-for="mocorr_data_path"></span></label>
 
@@ -166,6 +167,7 @@ try {
       <datalist id="dl-drivers"></datalist>
       <datalist id="dl-genotypes"></datalist>
       <datalist id="dl-panels"></datalist>
+      <datalist id="dl-response-calcs"></datalist>
       <datalist id="dl-manip-keys"></datalist>
       <datalist id="dl-manip-values"></datalist>
     </form>
@@ -305,7 +307,7 @@ try {
             <label class="field"><span>Recording system</span><input name="recording_system" list="dl-systems"></label>
             <label class="field"><span>Panel name(s) <span class="muted">(comma-separated)</span></span><input name="panel_names" list="dl-panels" placeholder="e.g. megamat"></label>
             <label class="field"><span>Analysis source code (link)</span><input name="source_code_url" type="url" placeholder="https://github.com/…"></label>
-            <span></span>
+            <label class="field"><span>Response calculation <span class="muted">(colorbar label; LaTeX math in $…$)</span></span><input name="response_calc" list="dl-response-calcs" placeholder="e.g. $\Delta F/F$" spellcheck="false"><span class="tex-preview" hidden></span></label>
             <label class="field"><span>Raw data path on tensor <span class="muted">(from its top)</span></span><input name="raw_data_path" placeholder="e.g. tom/raw_data/2023-11-19" spellcheck="false"><span class="path-msg"></span></label>
             <label class="field"><span>Motion-corrected data path on tensor <span class="muted">(from its top)</span></span><input name="mocorr_data_path" placeholder="e.g. tom/analysis/2023-11-19" spellcheck="false"><span class="path-msg"></span></label>
             <label class="field span2"><span>Notes</span><textarea name="notes" rows="4"></textarea></label>
@@ -1008,7 +1010,7 @@ try {
       <label data-role="scale" title="Log: of positive values (0 and below the lowest color). Auto: log when they are none negative and span 3 or more orders of magnitude">Scale <select data-opt="scale"><option value="auto">auto</option><option value="linear">linear</option><option value="log">log</option></select></label>
       <label class="check"><input type="checkbox" data-opt="clip"> clip to 0.5–99.5th pct</label>
     </div>
-    <div class="vt-group vt-legend"><canvas class="colorbar" width="220" height="30"></canvas></div>
+    <div class="vt-group vt-legend"><canvas class="colorbar" width="220" height="30"></canvas><span class="colorbar-label" hidden></span></div>
     <!-- a line of its own: its texts change, and are cut short rather than move a control -->
     <div class="vt-status">
       <span class="vt-stats" data-role="stats"></span>

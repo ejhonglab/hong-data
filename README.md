@@ -174,7 +174,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   anyone: the same file (whatever its name, alone or among others), or the same data in
   another (the same flies, ROIs, trials and values). Once your name and the coding unit are entered (when the README is made, and
   again when saving), it is refused too if its flies (each `date` and `fly_num`) are
-  exactly those of a dataset of yours of that coding unit and the same manipulations;
+  exactly those of a dataset of yours of that coding unit and the same manipulations,
+  however their responses were calculated (for now: two calculations of the same flies
+  cannot be kept apart, and the error says so when only that differs);
   one sharing only some flies with one is accepted with a warning saying which of the two
   may need to be deleted if they are the same recordings. Each names that dataset and who
   uploaded it: to replace one, delete it first (Admin tab). Other uploaders' datasets,
@@ -186,6 +188,13 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   after the dataset's name (`[drug=CNO; starved]`: in Browse and Compare, its title and
   README, and the names of its downloads). Names and values seen before are suggested;
   they are matched in any case and order.
+  *Response calculation* (optional): how the responses were calculated, shown as the
+  label of their colorbar (in Browse, Compare and exported figures), written as a
+  matplotlib label is: text, with LaTeX math between `$` signs (`$\Delta F/F$`,
+  `$\frac{\Delta F}{F_0}$ (z-scored)`; `\$` for a dollar sign), or all math if it has a
+  TeX command and no `$` (`\Delta F/F`). It is drawn under the field as you type, with
+  anything MathJax cannot read, which must be fixed to save. Ones used before are
+  suggested.
   An optional odor YAML must have every odor in the matrix, with the same
   abbreviation and concentration. Each YAML added is also checked on its own, as a
   warning only: its odors against the odor table (missing, or named, abbreviated or with

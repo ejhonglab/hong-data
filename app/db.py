@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS datasets (
     panel_names TEXT,
     recording_system TEXT,
     manipulations TEXT,
+    response_calc TEXT,
     notes TEXT,
     readme_md TEXT NOT NULL,
     readme_edited INTEGER NOT NULL DEFAULT 0,
@@ -225,7 +226,8 @@ CREATE TABLE IF NOT EXISTS file_log (  -- files the server has read or written i
 PROPERTY_COLUMNS = {"vapor_pressure": "vapor_pressure_kpa", "est_vapor_pressure": "est_vapor_pressure_kpa",
                     "molar_mass": "molar_mass_g_mol", "density": "density_g_ml", "k_henry": "k_henry_mol_m3_pa",
                     "k_henry_pfo": "k_henry_pfo_mol_m3_pa"}
-ADDED_COLUMNS = [("datasets", "mocorr_data_path", "TEXT"), ("datasets", "data_files", "TEXT"), ("datasets", "manipulations", "TEXT"), ("reference_datasets", "fields", "TEXT"), ("units", "bad", "INTEGER"),
+ADDED_COLUMNS = [("datasets", "mocorr_data_path", "TEXT"), ("datasets", "data_files", "TEXT"), ("datasets", "manipulations", "TEXT"), ("datasets", "response_calc", "TEXT"),
+                 ("reference_datasets", "fields", "TEXT"), ("units", "bad", "INTEGER"),
                  ("units", "extra_json", "TEXT"),
                  *(c for p, col in PROPERTY_COLUMNS.items()
                    for c in (("pubchem", col, "REAL"), ("pubchem", f"{p}_source", "TEXT"), ("pubchem", f"{p}_at", "TEXT"),
@@ -264,6 +266,7 @@ def _metadata_columns(metadata: dict) -> dict:
         "panel_names": ", ".join(panels) if panels else None,
         "recording_system": metadata.get("recording_system"),
         "manipulations": json.dumps(metadata["manipulations"]) if metadata.get("manipulations") else None,
+        "response_calc": metadata.get("response_calc"),
         "notes": metadata.get("notes"),
         "metadata_json": json.dumps(metadata),
     }
@@ -442,7 +445,7 @@ class Database:
         with self.connect() as con:
             rows = con.execute(
                 """SELECT id, created_at, title, uploader_name, indicator, driver, coding_unit, panel_names,
-                          recording_system, manipulations, n_flies, n_units, n_trials, n_odors, repeats_min, repeats_max,
+                          recording_system, manipulations, response_calc, n_flies, n_units, n_trials, n_odors, repeats_min, repeats_max,
                           first_fly_date, last_fly_date, roi_kind, data_file, data_sha256, data_files
                    FROM datasets ORDER BY last_fly_date DESC, id DESC"""
             ).fetchall()
@@ -601,6 +604,7 @@ class Database:
                 "recording_systems": distinct("SELECT DISTINCT recording_system FROM datasets ORDER BY recording_system"),
                 "uploaders": distinct("SELECT DISTINCT uploader_name FROM datasets ORDER BY uploader_name"),
                 "genotypes": distinct("SELECT DISTINCT genotype FROM datasets ORDER BY genotype"),
+                "response_calcs": distinct("SELECT response_calc FROM datasets GROUP BY response_calc ORDER BY count(*) DESC, response_calc"),
                 **self._manipulation_options(con),
             }
 

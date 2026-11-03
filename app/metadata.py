@@ -44,6 +44,12 @@ def same_manipulations(a: Optional[list[dict]], b: Optional[list[dict]]) -> bool
     return {(_norm(m["key"]), _norm(m.get("value"))) for m in a or []} == {(_norm(m["key"]), _norm(m.get("value"))) for m in b or []}
 
 
+def same_response_calc(a: Optional[str], b: Optional[str]) -> bool:
+    """Whether two datasets' response calculations (`Metadata.response_calc`) are the same,
+    whatever their spacing (not case: TeX's \\Delta is not \\delta)."""
+    return " ".join((a or "").split()) == " ".join((b or "").split())
+
+
 class Metadata(BaseModel):
     uploader_name: str = Field(min_length=1)
     indicator: str = Field(min_length=1)
@@ -65,11 +71,14 @@ class Metadata(BaseModel):
     # anything done to the flies that sets this dataset apart from others of the same flies
     # (e.g. a drug, before and after): [{key, value (None for a key alone)}]
     manipulations: list[dict] = Field(default_factory=list)
+    # how the responses were calculated, as the label of their colorbar: text, with LaTeX math
+    # between $ signs as in matplotlib's labels (e.g. '$\Delta F/F$'), drawn by MathJax
+    response_calc: Optional[str] = None
     notes: Optional[str] = None
 
     @field_validator(
         "uploader_name", "indicator", "driver", "coding_unit", "genotype", "source_code_url",
-        "raw_data_path", "mocorr_data_path", "recording_system", "notes", mode="before",
+        "raw_data_path", "mocorr_data_path", "recording_system", "response_calc", "notes", mode="before",
     )
     @classmethod
     def _strip(cls, v):
@@ -196,6 +205,7 @@ def generate_readme(m: Metadata, summary: dict, files: dict[str, Any], *, create
         ("Full genotype", m.genotype),
         ("Manipulations", manipulations_text(m.manipulations) or None),
         ("Coding unit", m.coding_unit),
+        ("Response calculation", m.response_calc.replace("|", "\\|") if m.response_calc else None),
         ("Fly age", _age_str(m)),
         ("Excitation", (f"{m.wavelength_nm:g} nm" if m.wavelength_nm else None)),
         ("Power", _power_str(m)),

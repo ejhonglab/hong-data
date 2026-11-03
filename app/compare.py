@@ -32,7 +32,8 @@ def dataset(db, ds_id: int, datasets_dir: Path) -> Optional[dict]:
     """A dataset as the Compare tab shows it (see the module's docstring); None if there is none.
 
     Returns:
-        dict with ``id``, ``title``, ``coding_unit``, ``driver``, ``kind`` ('glomeruli': a column per
+        dict with ``id``, ``title``, ``coding_unit``, ``driver``, ``response_calc`` (as entered at
+        upload: the label of its values, or None), ``kind`` ('glomeruli': a column per
         glomerulus, the mean of the flies that have it (and of the sides of their brains, as
         other column levels may tell apart), but ROIs marked bad; 'rois': a column per ROI of
         each fly, labelled with its other levels too), ``rows`` (each odor, in the order shown in Browse: ``panel``, ``odor``,
@@ -93,7 +94,7 @@ def dataset(db, ds_id: int, datasets_dir: Path) -> Optional[dict]:
         matrix, kind = means.T, "rois"  # odors × ROIs
     return {
         "id": ds_id, "title": ds["title"], "coding_unit": ds["metadata"].get("coding_unit"), "driver": ds["metadata"].get("driver"),
-        "kind": kind,
+        "response_calc": ds["metadata"].get("response_calc"), "kind": kind,
         "rows": rows, "cols": cols, "shape": [len(rows), len(cols)],
         "values_b64": base64.b64encode(np.ascontiguousarray(matrix, dtype="<f4").tobytes()).decode("ascii"),
     }

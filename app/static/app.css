@@ -479,6 +479,10 @@ dialog.mismatches::backdrop { background: rgba(29,31,34,.45); }
 .path-msg.bad { color: var(--danger); }
 .field input.invalid, .data-edit input.invalid { border-color: var(--danger); background: var(--danger-soft); }
 .field input.path-warn, .data-edit input.path-warn { border-color: var(--warn-strong); }
+/* a label with LaTeX math (latex.js): its math as SVG, as large as the text's x-height says */
+svg.tex { overflow: visible; }
+.tex-error, .tex-preview .tex-msg { color: var(--danger); }
+.tex-preview .tex-label { color: var(--ink); font-size: 14px; }
 .data-entries { list-style: none; margin: 0 10px 6px; padding: 6px 0 0; border-top: 1px solid var(--rule); columns: 2; column-gap: 20px; font-size: 12.5px; }
 .data-entries li { break-inside: avoid; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .data-entries li.dir { font-weight: 600; }
@@ -550,6 +554,7 @@ dialog.mismatches::backdrop { background: rgba(29,31,34,.45); }
 .vt-status .reset { flex: none; }
 .vt-hint { padding: 3px 12px; border-top: 1px solid var(--rule); background: var(--surface); color: var(--ink-muted); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .colorbar { width: 220px; height: 30px; color: var(--ink); }
+.colorbar-label { color: var(--ink); font-size: 13.5px; white-space: nowrap; }
 .vt-legend { align-self: stretch; }
 .hm-wrap { flex: 1; min-height: 0; position: relative; }
 /* controls hidden: only the colorbar and the status line (with the buttons) stay */

@@ -54,6 +54,7 @@ from .metadata import (
     dataset_title,
     generate_readme,
     same_manipulations,
+    same_response_calc,
 )
 from .odors import odor_names
 
@@ -174,6 +175,7 @@ async def options(request: Request) -> Response:
             "panels": existing["panels"],
             "uploaders": existing["uploaders"],
             "genotypes": existing["genotypes"],
+            "response_calcs": existing["response_calcs"],
             "manipulation_keys": existing["manipulation_keys"],
             "manipulation_values": existing["manipulation_values"],
             "default_wavelength_nm": DEFAULT_WAVELENGTH_NM,
@@ -305,14 +307,31 @@ def _same_unit(a: Optional[str], b: Optional[str]) -> bool:
     return (is_kc(a) and is_kc(b)) or _same_name(a, b)
 
 
-def _duplicates(parsed: ParsedData, files: list[dict], uploader: Optional[str] = None,
-                coding_unit: Optional[str] = None, manipulations: Optional[list[dict]] = None) -> tuple[list[str], list[str]]:
+def _same_flies_error(flies: set[tuple], d: dict, response_calc: Optional[str]) -> str:
+    """Why an upload or edit of a dataset with the same flies (`flies`) as `d` (of the same
+    uploader, coding unit and manipulations) is refused: also when only their response
+    calculations (`metadata.Metadata.response_calc`) differ, which, for now, does not make
+    two datasets of the same flies."""
+    which = f"dataset #{d['id']} ({d['title']}), uploaded by {d['uploader_name']} on {d['created_at'][:10]}"
+    same = f"its flies ({_flies_text(flies)}) are exactly those of {which}, also of {d['coding_unit']}"
+    if same_response_calc(d.get("response_calc"), response_calc):
+        return (f"{same}: one person's datasets of a coding unit cannot have the same flies, but for other manipulations "
+                "(e.g. after a drug: enter them under Manipulations)")
+    said = lambda c: f"'{c}'" if c else "none given"
+    return (f"{same}, and only their response calculations differ ({said(response_calc)} here, {said(d.get('response_calc'))} "
+            "there): datasets of the same flies calculated otherwise cannot be kept apart yet"
+            + (f" (to give #{d['id']} one, edit its details in Browse)" if not d.get("response_calc") else ""))
+
+
+def _duplicates(parsed: ParsedData, files: list[dict], uploader: Optional[str] = None, coding_unit: Optional[str] = None,
+                manipulations: Optional[list[dict]] = None, response_calc: Optional[str] = None) -> tuple[list[str], list[str]]:
     """An upload (its data, and its files: [{name, sha256}]) against the datasets stored:
     errors (refusing it) if any of its files is one of theirs (byte for byte), or its data
     is (the same flies, ROIs, trials and values), whoever uploaded it. With its uploader,
     coding unit and manipulations (once entered), errors too if its flies (date, fly_num,
     and their ROIs' other levels: `ingest.fly_key`) are all and only those of a dataset of
-    theirs of that coding unit and those manipulations, and warnings if it shares only
+    theirs of that coding unit and those manipulations, whatever its response calculation
+    (saying so if only that differs: `_same_flies_error`), and warnings if it shares only
     some with one, saying which dataset may need to be deleted. Datasets of other
     uploaders, coding units or manipulations may have the same flies: one person's fly 1
     of a day is not another's, a fly may be recorded in two places (as may each side of
@@ -336,9 +355,7 @@ def _duplicates(parsed: ParsedData, files: list[dict], uploader: Optional[str] =
         elif same_flies and (m := db.get_matrix_arrays(d["id"])) is not None and _same_data(parsed, m, db.panel_renames()):
             errors.append(f"this is the data of {which}, already (the same ROIs, trials and values, in another file). {delete}")
         elif mine and same_flies:
-            errors.append(f"its flies ({_flies_text(flies)}) are exactly those of {which}, also of {d['coding_unit']}: "
-                          f"one person's datasets of a coding unit cannot have the same flies, but for other manipulations "
-                          f"(e.g. after a drug: enter them under Manipulations). {delete}")
+            errors.append(f"{_same_flies_error(flies, d, response_calc)}. {delete}")
         elif mine and flies & theirs:
             shared = flies & theirs
             if theirs < flies:
@@ -607,6 +624,7 @@ _FIELD_LABELS = {
     "panel_names": "panel name(s)", "recording_system": "recording system", "source_code_url": "analysis code link",
     "raw_data_path": "raw data path", "mocorr_data_path": "motion-corrected data path", "genotype": "genotype",
     "notes": "notes", "power_measured_same_day": "power measured on the day", "manipulations": "manipulations",
+    "response_calc": "response calculation",
 }
 
 
@@ -705,7 +723,7 @@ async def stage_readme(request: Request) -> Response:
     if kc:
         return JSONResponse({"ok": False, "errors": [kc]}, status_code=422)
     errors, warnings = await run_in_threadpool(_duplicates, parsed, _stage_files(meta), m.uploader_name, m.coding_unit,
-                                               m.manipulations)
+                                               m.manipulations, m.response_calc)
     if errors:
         return JSONResponse({"ok": False, "errors": errors}, status_code=422)
     summary = parsed.summary()
@@ -737,7 +755,7 @@ def _commit(d: Path, meta: dict, m: Metadata, readme: str, readme_edited: bool) 
     # consistency checks that must pass before anything is written
     problems = [p for p in [_kc_problem(parsed.units, m.coding_unit)] if p]
     files = _stage_files(meta)
-    problems += _duplicates(parsed, files, m.uploader_name, m.coding_unit, m.manipulations)[0]
+    problems += _duplicates(parsed, files, m.uploader_name, m.coding_unit, m.manipulations, m.response_calc)[0]
     if meta["odor_yamls"]:
         check = _run_yaml_check(d, meta)
         if not check["ok"]:
@@ -1000,17 +1018,14 @@ _metadata_lock = threading.Lock()
 def _same_flies_problems(ds_id: int, m: Metadata) -> list[str]:
     """Why a dataset's metadata as edited is refused, as an upload with it would be
     (`_duplicates`): its flies all and only those of another dataset of its uploader, coding
-    unit and manipulations."""
+    unit and manipulations (whatever its response calculation)."""
     stored = db.dataset_flies()
     flies = stored.get(ds_id, set())
     out = []
     for d in sorted(db.list_datasets(), key=lambda d: d["id"]):
         if (d["id"] != ds_id and flies and stored.get(d["id"], set()) == flies and _same_name(d["uploader_name"], m.uploader_name)
                 and _same_unit(d["coding_unit"], m.coding_unit) and same_manipulations(d["manipulations"], m.manipulations)):
-            out.append(f"its flies ({_flies_text(flies)}) are exactly those of dataset #{d['id']} ({d['title']}), uploaded by "
-                       f"{d['uploader_name']} on {d['created_at'][:10]}, also of {d['coding_unit']}: one person's datasets of a "
-                       "coding unit cannot have the same flies, but for other manipulations (e.g. after a drug: enter them "
-                       "under Manipulations)")
+            out.append(_same_flies_error(flies, d, m.response_calc))
     return out
 
 

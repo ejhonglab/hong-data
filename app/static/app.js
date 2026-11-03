@@ -1,8 +1,9 @@
-// Odor response database — frontend (no build step, no dependencies).
+// Odor response database — frontend (no build step; no dependencies but MathJax, vendored, for labels' math).
 import { Heatmap } from './heatmap.js';
 import { COLORMAPS, colormapsOfKind, makeNorm, drawColorbar, fmtNum } from './colormaps.js';
 import { MAX_CLUSTER_ITEMS, CLUSTER_VERSION, ClusterPool, layoutDendrogram } from './cluster.js';
 import { exportFigure } from './figure.js';
+import { labelParts, renderLabel } from './latex.js';
 import { MoviePlayer } from './player.js';
 import { SIMILARITIES, similarityMatrix, tanimoto, correlateSimilarities, sharedSimilarities, holm } from './similarity.js';
 import { MetacycPanel } from './metacyc.js';
@@ -707,6 +708,8 @@ class MatrixViewer {
     this.heatmap.scroll.addEventListener('scroll', () => this._linkScroll(), { passive: true });
     this.colorbar = $('.colorbar', container);
     window.addEventListener('olfdb-theme', () => { if (this.lut) drawColorbar(this.colorbar, this.lut, this.norm); });
+    this.colorbarLabel = $('.colorbar-label', container);
+    this.responseCalc = null; // how the responses shown were calculated (as entered at upload), the colorbar's label
     const saved = LS.get('olfdb.viewer', {});
     this.opts = Object.assign(
       {
@@ -891,11 +894,13 @@ class MatrixViewer {
   }
 
   // title: for the exported figure's metadata; fileStem: its file name; kc: whether it is of KCs;
-  // serverCache: where its clusterings are kept (as serverClusterCache's: of a stored dataset)
-  setNeuralData(payload, { title = '', fileStem = 'heatmap', kc = false, serverCache = null } = {}) {
+  // serverCache: where its clusterings are kept (as serverClusterCache's: of a stored dataset);
+  // responseCalc: how its responses were calculated (`setResponseCalc`)
+  setNeuralData(payload, { title = '', fileStem = 'heatmap', kc = false, serverCache = null, responseCalc = null } = {}) {
     this._setKind('neural');
     this.kc = kc;
     this.serverCache = serverCache;
+    this.setResponseCalc(responseCalc);
     if (payload !== this.source) {
       this.source = payload;
       this.hideBad = payload.units.some((u) => u.bad);
@@ -914,12 +919,14 @@ class MatrixViewer {
   // ref: a reference dataset (as from /api/reference/<id>), or a matrix like one with its
   // `values` (Float32Array) given, and `square` if its columns are its rows (e.g. odor–odor
   // similarities: then in one order, the rows', grouped as they are, and moved or removed
-  // together); kind: of the viewer, for its transposing kept apart
-  setGenericData(ref, { title = '', fileStem = 'heatmap', kind: viewerKind = 'generic', kc = false } = {}) {
+  // together); kind: of the viewer, for its transposing kept apart; responseCalc: of a
+  // dataset's responses, how they were calculated (`setResponseCalc`)
+  setGenericData(ref, { title = '', fileStem = 'heatmap', kind: viewerKind = 'generic', kc = false, responseCalc = null } = {}) {
     this._setKind(viewerKind);
     this.title = title;
     this.fileStem = fileStem;
     this.kc = kc;
+    this.setResponseCalc(responseCalc);
     if (ref !== this.source) {
       this.source = ref;
       this.hideBad = ref.cols.some((c) => c.bad);
@@ -1149,6 +1156,27 @@ class MatrixViewer {
     return this.model?.summed ? `${label ? `${label}, ` : ''}summed over ${this.model.summed.toLocaleString()} KCs` : label;
   }
 
+  // How the responses shown were calculated (as entered at upload: text with LaTeX math, see
+  // latex.js), the label of the colorbar (and of an exported figure's); null for none.
+  setResponseCalc(calc) {
+    calc = calc?.trim() || null;
+    if (calc === this.responseCalc) return;
+    this.responseCalc = calc;
+    const el = this.colorbarLabel;
+    el.hidden = !calc;
+    el.title = calc ? `How the responses were calculated (as entered at upload): ${calc}` : '';
+    if (!calc) el.replaceChildren();
+    else renderLabel(el, calc).then(() => { if (this.model) this.onShow?.(); }); // (its height may have changed)
+  }
+
+  // the label of an exported figure's colorbar (parts, as `labelParts` gives them): how the
+  // responses were calculated, if said, else what the values are (`_valueLabel`)
+  _figureLabel() {
+    if (!this.responseCalc) return [{ text: this._valueLabel() }];
+    const summed = this.model?.summed ? [{ text: `, summed over ${this.model.summed.toLocaleString()} KCs` }] : [];
+    return [...labelParts(this.responseCalc), ...summed];
+  }
+
   _setNote(note) {
     const el = $('[data-role=stats]', this.toolbar);
     el.textContent = note ? `${this.statsText} · ${note}` : this.statsText;
@@ -1287,7 +1315,7 @@ class MatrixViewer {
     try {
       const { blob, note } = await exportFigure(format, this.model, {
         cellW: this.opts.cellW, cellH: this.opts.cellH, lut: this.lut, norm: this.norm, nanColor: this.heatmap.options.nanColor,
-        valueLabel: this._valueLabel(), title: this.title,
+        valueLabel: this._figureLabel(), title: this.title,
       });
       const suffix = this.kind === 'neural' && this.opts.mode === 'trials' ? '_trials' : '';
       saveBlob(blob, `${this.fileStem}${suffix}.${format}`);
@@ -1358,6 +1386,32 @@ function manipRow(m = {}) {
   row.querySelector('.manip-key').value = m.key || '';
   row.querySelector('.manip-value').value = m.value ?? '';
   return row;
+}
+
+// A field of a label that may have LaTeX math (latex.js), as the upload form and the Edit
+// panel have the response calculation: shown under it as it will be drawn (in its
+// `.tex-preview`), with what MathJax could not read. Returns {show: to call after its value is
+// set otherwise than by typing, errors: what MathJax could not read in it, when last shown}.
+function texPreview(input) {
+  const out = input.parentElement.querySelector('.tex-preview');
+  out.innerHTML = 'Colorbar label: <span class="tex-label"></span> <span class="tex-msg"></span>';
+  const label = $('.tex-label', out), msg = $('.tex-msg', out);
+  let seq = 0;
+  const state = {
+    errors: [],
+    async show() {
+      const v = input.value.trim(), mine = ++seq;
+      out.hidden = !v;
+      state.errors = [];
+      if (!v) return;
+      const errors = await renderLabel(label, v);
+      if (mine !== seq) return;
+      state.errors = errors;
+      msg.textContent = errors.length ? `MathJax could not read it: ${errors.join('; ')}` : '';
+    },
+  };
+  input.addEventListener('input', () => state.show());
+  return state;
 }
 
 // the manipulations entered in rows (of `manipRow`): [{key, value (null if none)}], rows with neither left out
@@ -1472,6 +1526,7 @@ class UploadFlow {
     sys.innerHTML = '<option value="">—</option>' + o.recording_systems.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join('') + '<option value="__other__">Other…</option>';
     const dl = (id, values) => { $(id).innerHTML = values.map((v) => `<option value="${esc(v)}">`).join(''); };
     dl('#dl-uploaders', o.uploaders); dl('#dl-drivers', o.drivers); dl('#dl-genotypes', o.genotypes); dl('#dl-panels', o.panels);
+    dl('#dl-response-calcs', o.response_calcs || []);
     dl('#dl-manip-keys', o.manipulation_keys || []); dl('#dl-manip-values', o.manipulation_values || []);
     dl('#dl-indicators', o.indicators); dl('#dl-coding-units', o.coding_units); dl('#dl-systems', o.recording_systems);
     $('#step-meta').wavelength_nm.value = o.default_wavelength_nm ?? 925;
@@ -1516,6 +1571,9 @@ class UploadFlow {
     form.addEventListener('change', (e) => this._changedByUser(e.target), true);
     form.uploader_name.addEventListener('change', () => { if (this.stage) this.lookup(); });
     for (const el of COMBOS.coding_unit) $(el).addEventListener('change', () => this.viewer?.setKc(this._kc()));
+    // the preview's colorbar labelled with it as it is typed
+    this.calcPreview = texPreview(form.response_calc);
+    form.response_calc.addEventListener('input', () => this.viewer?.setResponseCalc(form.response_calc.value));
     // checked on the server when left, as folders are in the Settings tab
     for (const key of DATASET_FIELDS) {
       form[key].addEventListener('change', async () => {
@@ -1903,7 +1961,7 @@ class UploadFlow {
     $('#preview').hidden = false;
     $('#preview-caption').textContent = 'This is exactly what will be shown after saving. Hover a cell for its value.';
     if (!this.viewer) this.viewer = new MatrixViewer($('#preview-viewer'), { asUploaded: true });
-    this.viewer.setNeuralData(this.data, { title: name, fileStem: filesStem(names), kc: this._kc() });
+    this.viewer.setNeuralData(this.data, { title: name, fileStem: filesStem(names), kc: this._kc(), responseCalc: $('#step-meta').response_calc.value });
     $('#step-meta').hidden = false;
   }
 
@@ -1948,6 +2006,8 @@ class UploadFlow {
     }
     for (const [sel, other] of Object.values(COMBOS)) $(other).hidden = $(sel).value !== '__other__';
     this._setManipulations(saved.manipulations || []);
+    this.calcPreview.show();
+    this.viewer?.setResponseCalc(form.response_calc.value);
     this.manual = new Set(saved.manual);
     this.xmlAuto = !!saved.xml_auto;
     this._syncPower();
@@ -2178,6 +2238,7 @@ class UploadFlow {
       panel_names: f.panel_names.value,
       recording_system: other('#system-select', '#system-other') || null,
       manipulations: this._manipulations(),
+      response_calc: f.response_calc.value.trim() || null,
       notes: f.notes.value.trim() || null,
     };
   }
@@ -2189,6 +2250,7 @@ class UploadFlow {
     if (!meta.driver) errs.push('driver is required');
     if (!meta.coding_unit) errs.push('coding unit is required');
     if (meta.age_min_days != null && meta.age_max_days != null && meta.age_max_days < meta.age_min_days) errs.push('fly age range: max is smaller than min');
+    if (this.calcPreview.errors.length) errs.push(`response calculation: MathJax could not read its math (${this.calcPreview.errors.join('; ')})`);
     if (this.yamlCheck && !this.yamlCheck.ok) errs.push('the odor YAML check has not passed');
     const upper = this.odorCheck?.case?.uppercase || [];
     if (upper.length) errs.push(`${upper.length} of its odor names ${upper.length === 1 ? 'has' : 'have'} capital letters, and new ones must be lowercase (see under the odor YAML)`);
@@ -2356,6 +2418,7 @@ class Browse {
       $('#ds-edit-toggle').setAttribute('aria-expanded', 'false');
     });
     edit.power_mw.addEventListener('input', () => this._syncEditPower());
+    this.editCalc = texPreview(edit.response_calc);
     for (const key of DATASET_FIELDS) edit[key].addEventListener('change', () => checkPathInput(edit[key], edit[key].nextElementSibling));
     $('[data-role=manip-add]', edit).addEventListener('click', () => {
       const row = manipRow();
@@ -2520,7 +2583,7 @@ class Browse {
     $('#ds-files').innerHTML = d.files.map((f) => `<a href="/api/datasets/${id}/files/${encodeURI(f)}" download>${esc(f)}</a>`).join('');
     if (!this.viewer) this.viewer = new MatrixViewer($('#dataset-viewer'));
     this.viewer.setNeuralData(m, { title: d.title, fileStem: `olfdb_dataset-${id}`, kc: isKcData(md.coding_unit, d.summary?.col_levels),
-      serverCache: serverClusterCache(id) });
+      serverCache: serverClusterCache(id), responseCalc: md.response_calc });
     if (!$('#ds-odors').hidden) this.showOdors(id);
     if (!$('#ds-edit').hidden && this.editOf?.id !== id) this._fillEdit(id);
     this.showDataPaths(id);
@@ -2536,6 +2599,7 @@ class Browse {
       else f[key].value = v == null ? '' : Array.isArray(v) ? v.join(', ') : String(v);
     }
     for (const key of DATASET_FIELDS) showPathCheck(f[key], f[key].nextElementSibling, null);
+    this.editCalc.show();
     $('[data-role=errors]', f).replaceChildren();
     setStatus($('#ds-edit-status'), '');
     this._syncEditPower();
@@ -2578,6 +2642,10 @@ class Browse {
     const changed = this._editChanged();
     errors.replaceChildren();
     if (!changed.length) { setStatus(status, 'Nothing was changed.'); return; }
+    if (this.editCalc.errors.length) {
+      errors.replaceChildren(msgBox('error', `Not saved: response calculation: MathJax could not read its math (${esc(this.editCalc.errors.join('; '))})`));
+      return;
+    }
     const { d } = this.cache.get(id);
     $('#edit-confirm-q').textContent = `Are you sure you want to save these changes to dataset #${id}?`;
     $('#edit-confirm-detail').textContent = `Changed: ${changed.map((k) => EDIT_FIELDS[k]).join(', ')}. `
@@ -2821,7 +2889,7 @@ const EDIT_FIELDS = {
   manipulations: 'manipulations', age_min_days: 'fly age (min)', age_max_days: 'fly age (max)', wavelength_nm: 'wavelength',
   power_mw: 'power', power_tolerance_mw: 'power tolerance', power_measured_same_day: 'whether power was measured on the day',
   recording_system: 'recording system', panel_names: 'panel names', source_code_url: 'analysis code link',
-  raw_data_path: 'raw data path', mocorr_data_path: 'motion-corrected data path', notes: 'notes',
+  response_calc: 'response calculation', raw_data_path: 'raw data path', mocorr_data_path: 'motion-corrected data path', notes: 'notes',
 };
 
 const DATA_LINKS = { raw: 'Raw data', mocorr: 'Motion corrected / traces' };
@@ -5150,8 +5218,9 @@ class ComparePage {
 
   // a viewer of the page, kept while it is shown again (by key): on its own (fitted to what
   // it shows) until linked again. cells: its own cell size to start with, table: the CSV its
-  // export menu offers (else the matrix as shown), onCellClick: as the heatmap's
-  _viewer(key, payload, title, fileStem, { cells = null, table = null, onCellClick = null, kc = false } = {}) {
+  // export menu offers (else the matrix as shown), onCellClick: as the heatmap's, responseCalc:
+  // of a dataset's responses, how they were calculated (its colorbar's label)
+  _viewer(key, payload, title, fileStem, { cells = null, table = null, onCellClick = null, kc = false, responseCalc = null } = {}) {
     let b = this.blocks.get(key);
     if (!b) {
       const el = document.createElement('div');
@@ -5169,7 +5238,7 @@ class ComparePage {
     v.heatmap.options.minHeaderH = 0;
     v.toolbar.style.minHeight = '';
     v.onShow = () => fitViewer(b.el, v);
-    return { el: b.el, viewer: v, show: () => v.setGenericData(payload, { title, fileStem, kind: 'compare', kc }) };
+    return { el: b.el, viewer: v, show: () => v.setGenericData(payload, { title, fileStem, kind: 'compare', kc, responseCalc }) };
   }
 
   // a block of the page: a viewer under its title
@@ -5274,7 +5343,8 @@ class ComparePage {
         const across = d.kind === 'glomeruli' ? `${d.cols.length} glomeruli, each the mean of the flies with it` : roisLeft(d);
         if (show !== 'sim') {
           block(`dsp:${d.id}`, `#${d.id} ${d.title}`, `${esc(d.coding_unit || '')}: the ${ids.length} odors of ${esc(pname)} it has × ${across}; every trial averaged`,
-            this._memo(`panelvals:${d.id}:${state}`, () => spaceData(s, ids, rowOf, 'odor', false)), `dataset_${d.id}_${stem}_mean`);
+            this._memo(`panelvals:${d.id}:${state}`, () => spaceData(s, ids, rowOf, 'odor', false)), `dataset_${d.id}_${stem}_mean`,
+            { responseCalc: d.response_calc });
         } else {
           block(`simp:${d.id}`, `#${d.id} ${d.title}: odor–odor similarity`, `${metric} of their responses across its ${d.kind === 'glomeruli' ? 'glomeruli' : 'ROIs'};
             the ${ids.length} odors of ${esc(pname)} it has`,
@@ -5289,7 +5359,7 @@ class ComparePage {
         if (show !== 'sim') {
           block(`dsg:${d.id}`, `#${d.id} ${d.title}`, `${esc(d.coding_unit || '')}: ${ids.length} glomeruli, each the mean of the flies with it, × ${d.rows.length} odors;
             every trial averaged`, this._memo(`glomdata:${d.id}:${display.lowerOdors}`, () => spaceData(s, ids, rowOf, 'glomerulus')),
-          `dataset_${d.id}_mean_by_glomerulus`);
+          `dataset_${d.id}_mean_by_glomerulus`, { responseCalc: d.response_calc });
         } else {
           block(`simg:${d.id}`, `#${d.id} ${d.title}: glomerulus–glomerulus similarity`, `${metric} of their responses across its ${d.rows.length} odors`,
             this._memo(`glomsim:${d.id}:${this.o.metric}`, () => spaceSims(s, ids, rowOf, 'glomerulus')), `dataset_${d.id}_glomerulus_similarity`);
@@ -5306,7 +5376,7 @@ class ComparePage {
           meta: { kind: 'diverging', row_label: 'odor', col_label: d.kind === 'glomeruli' ? 'glomerulus' : 'ROI' },
           rows: d.rows.map((r) => ({ label: showOdor(r.odor), group: r.panel })), cols: d.all.cols.map((c) => ({ label: c.label, bad: c.bad })),
           values: d.all.values,
-        })), `dataset_${d.id}_mean`, { kc: d.kind === 'rois' && isKcData(d.coding_unit) });
+        })), `dataset_${d.id}_mean`, { kc: d.kind === 'rois' && isKcData(d.coding_unit), responseCalc: d.response_calc });
       }
       if (show !== 'data') {
         block(`sim:${d.id}`, `#${d.id} ${d.title}: odor–odor similarity`, `${metric} of their responses across its ${d.kind === 'glomeruli' ? 'glomeruli' : 'ROIs'}`,
