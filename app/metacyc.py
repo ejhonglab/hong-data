@@ -38,7 +38,7 @@ DEFAULTS = {"pathways": {"classes": "fallback"},
             "lca": {"via": "reactions", "classes": "fallback", "max_pathways": None}}
 MAX_PATHWAYS_DEFAULT = 240  # of the network through pathways, as O'Connell's thesis (ch. 2, Methods) says
 # left out of the network of the LCA distance: the currency metabolites left out of it for
-# O'Connell's thesis (MetaCyc 27.0, February 2024), by frame ID as then
+# O'Connell's thesis (MetaCyc 27.1, February 2024, though it says 27.0), by frame ID as then
 BLACKLIST = ("ADP", "ATP", "CO-A", "GDP", "GTP", "NAD", "NADH", "NADP", "NADPH", "OXYGEN-MOLECULE", "PPI", "PROTON",
              "Pi", "UDP", "WATER")
 # drawn beside a reaction's arrow, not as compounds of a pathway's graph (as are compounds

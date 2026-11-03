@@ -516,6 +516,9 @@ svg.tex { overflow: visible; }
 .imp-chosen > p { margin: 10px 0 0; }
 .imp-list h4 { margin: 16px 0 6px; font-size: 13.5px; }
 .imp-list td { vertical-align: top; }
+#mc-import-version { width: 150px; }
+.imp-note summary { cursor: pointer; }
+.imp-note p { margin: 4px 0 0; max-width: 60ch; white-space: normal; }
 .imp-list td:nth-child(-n+2) { white-space: nowrap; }
 .ref-axis-labels { gap: 14px 16px; }
 #ref-check, #ref-result { margin-top: 10px; }

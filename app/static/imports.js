@@ -181,23 +181,25 @@ export class BundleImport {
     const { esc, msgBox, fmtBytes } = this, c = this.chosen, out = this.$('msg');
     if (!c) return;
     this.$('btn').disabled = true;
-    const form = new FormData();
+    const form = new FormData(), mtimes = {}; // (when each was last changed, kept as theirs)
     try {
       if (c.archive) form.append('file', c.archive, c.archive.name);
       for (const f of c.archive ? [] : [...Object.values(c.picked), ...c.notes]) {
-        if (!this._gzipHere(f)) { form.append('file', f, rel(f)); continue; }
+        if (!this._gzipHere(f)) { form.append('file', f, rel(f)); mtimes[rel(f)] = f.lastModified; continue; }
         let shown = -1;
         const blob = await gzipFile(f, (n) => {
           const pct = Math.floor((100 * n) / (f.size || 1));
           if (pct !== shown) out.replaceChildren(msgBox('info', `<b>Gzipping ${esc(f.name)} before it is uploaded…</b> ${fmtBytes(n)} of ${fmtBytes(f.size)} (${shown = pct}%)`));
         });
         form.append('file', blob, `${rel(f)}.gz`);
+        mtimes[`${rel(f)}.gz`] = f.lastModified;
       }
     } catch (e) {
       out.replaceChildren(msgBox('error', `<b>Not imported</b> (nothing was uploaded): a file could not be read here (${esc(e.message)})`));
       this._syncButton();
       return;
     }
+    form.append('mtimes', JSON.stringify(mtimes));
     this.fields?.(form);
     out.replaceChildren(msgBox('info', '<b>Uploading…</b>'));
     let res;
@@ -226,7 +228,7 @@ export class BundleImport {
       this.watched = job.id;
       const stage = { uploading: 'Its files are being uploaded', building: 'Building its bundle', adding: 'Adding it to the Reference data tab' }[job.stage];
       out.replaceChildren(msgBox('info', `<b>Importing ${esc(name)}${v}: ${stage || 'under way'}…</b> (started ${esc(this.fmtWhen(job.started_at))})${
-        job.log.length ? listHtml(job.log.slice(-3)) : ''}`));
+        job.note ? `<p class="small">${esc(job.note)}</p>` : ''}${job.log.length ? listHtml(job.log.slice(-3)) : ''}`));
       this.timer = setTimeout(() => this.poll(), 1500);
       return;
     }
@@ -241,7 +243,8 @@ export class BundleImport {
     const links = job.added.map((a) => `<a href="#reference/${esc(a.id)}">${esc(a.title)}</a>${a.state === 'ok' ? ''
       : ` (${a.state === 'pending' ? 'read once the server restarts' : `but it cannot be read: ${esc(a.error)}`})`}`);
     out.replaceChildren(msgBox(errors.length ? 'warn' : 'ok', `<b>Imported ${esc(name)}${v}</b>: ${links.join(' and ')}, in the Reference data tab.${
-      imp ? ` The files uploaded and its bundle are kept in <code>${esc(imp.dir)}</code>.` : ''}${this.done}${errors.length ? listHtml(errors) : ''}`));
+      imp ? ` The files uploaded and its bundle are kept in <code>${esc(imp.dir)}</code>.` : ''}${this.done}${
+      job.note ? `<p class="small">${esc(job.note)}</p>` : ''}${errors.length ? listHtml(errors) : ''}`));
     this.onAdded?.();
   }
 
@@ -261,7 +264,8 @@ export class BundleImport {
     const { esc } = this, box = this.$('list'), list = this.state?.imports || [];
     if (!list.length) { box.replaceChildren(); return; }
     box.innerHTML = `<h4>Imported here</h4><table class="odor-table"><thead><tr><th>${esc(this.state.name)}</th><th>Uploaded</th><th>Kept in</th><th>Its reference datasets</th></tr></thead>
-      <tbody>${list.map((i) => `<tr><td>${esc(i.label || this.noLabel)}</td><td>${esc(this.fmtWhen(i.uploaded_at))}</td>
+      <tbody>${list.map((i) => `<tr><td>${i.note ? `<details class="imp-note"><summary>${esc(i.label || this.noLabel)}</summary><p class="small">${esc(i.note)}</p></details>`
+        : esc(i.label || this.noLabel)}</td><td>${esc(this.fmtWhen(i.uploaded_at))}</td>
         <td><code>${esc(i.dir)}</code> <span class="muted">(${this.fmtBytes(i.size)})</span></td>
         <td>${i.refs.length ? i.refs.map((id) => `<a href="#reference/${esc(id)}">${esc(this.refTitle(id))}</a>`).join('<br>') : '<span class="muted">none</span>'}</td></tr>`).join('')}</tbody></table>`;
   }

@@ -161,7 +161,7 @@ network of compounds and either reactions (a reaction's reactants its parents, i
 products its children) or pathways (a pathway's reactants its parents, its products and
 every compound of its reactions its children), without 15 currency metabolites (ATP,
 NADH, H₂O, ...). Through reactions, with classes as fallback, it gives the matrix of
-O'Connell's thesis (ch. 2; MetaCyc 27.0, February 2024) exactly. 0 on the diagonal;
+O'Connell's thesis (ch. 2; MetaCyc 27.1, February 2024, though it says 27.0) exactly. 0 on the diagonal;
 missing where there is no common ancestor.
 
 The two `example_*.csv` files are synthetic placeholders, marked `"example": true` in

@@ -617,8 +617,13 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     choosing the folder lists the files the script reads (what each is, and which are
     missing), and only those are uploaded. The server checks them first (each there, with
     the columns it needs) and refuses them saying what is missing or not as expected;
-    else it keeps them in `data/metacyc/<when>/raw/`, builds the bundle there (about
-    20 s, its progress shown) and adds its two reference datasets. Imports are listed
+    else it keeps them in `data/metacyc/<when>/raw/` (with the times they were last
+    changed), builds the bundle there (about 20 s, its progress shown) and adds its two
+    reference datasets. Its version, unless given, is told from the files (SmartTables do
+    not say it): by how many pathways (not counting super-pathways) and compounds they
+    have, against how many each release's notes say it has (e.g. `BioCyc/raw`'s, of
+    January 2024, are 27.1's: more than 27.1 had, fewer than 28.0). How it was told is
+    shown, and kept; a version given that is another release's is refused. Imports are listed
     with their folders and datasets; the folder is moved to `data/deleted/metacyc/` with
     the last of its datasets deleted. Backups include them.
     *Import LOTUS* does the same for LOTUS, from the folder `LOTUS/raw` (or a
@@ -661,20 +666,21 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
 
 ## Scripting
 
-MetaCyc: its SmartTables (as exported from BioCyc, e.g. `BioCyc/raw`, MetaCyc 27.0 by
+MetaCyc: its SmartTables (as exported from BioCyc, e.g. `BioCyc/raw`, MetaCyc 27.1 by
 default) are read into one bundle, whose two reference datasets are then added through
 the Admin tab's API (or add the bundle in the Admin tab by hand; or upload the folder in
 its *Import MetaCyc*, which does all this on the server):
 
 ```bash
-python -m app.metacyc_build /mnt/d0/Scraped-Databases-Copy/BioCyc/raw /local/olfdb/metacyc-27.0.sqlite --register http://localhost:8000
+python -m app.metacyc_build /mnt/d0/Scraped-Databases-Copy/BioCyc/raw /local/olfdb/metacyc-27.1.sqlite --register http://localhost:8000
 ```
 
 It takes about 20 s. The server must be able to read the bundle: one outside the folders
 it may read is added to them, and read after a restart (the script prints what that
 takes). `--file <role>=<path>` reads another export for a table (`--help` lists them). Files
 missing or without the columns it needs are said, with what was expected, before
-anything is read.
+anything is read. Which MetaCyc they are of is told from them (as *Import MetaCyc* tells
+it), unless `--version` is given (refused if another release's).
 Bundles hold MetaCyc's data: keep them out of this repository, and check MetaCyc's
 license terms before sharing one.
 

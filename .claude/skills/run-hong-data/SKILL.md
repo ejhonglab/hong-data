@@ -82,7 +82,7 @@ Stop it:
 OLFDB_DATA_DIR=<scratch>/olfdb-test ./venv/bin/python -m pytest tests/ -q
 ```
 
-272 pass in about 30 s. For internals, call a module directly (e.g.
+275 pass in about 30 s. For internals, call a module directly (e.g.
 `headspace.calculate`), as `tests/test_headspace.py` does.
 
 ## Run (human path)
@@ -92,6 +92,10 @@ real data. Agents use `serve.sh` instead.
 
 ## Gotchas
 
+- `wait-fn` and `eval` take the rest of the line as is: don't quote it (`wait-fn
+  "x.includes('y')"` is a string, so true at once).
+- The Admin tab first asks whether you are one of its admins: `click "button:has-text('Yes')"`
+  after `nav #admin`.
 - **`OLFDB_DATA_DIR` must always be set**: for the server, pytest, and any script that
   imports `app`. Without it, `app/config.py` uses `./data`, the real database. `serve.sh`
   and `seed.py` refuse to run without it or when it points at `data/`.

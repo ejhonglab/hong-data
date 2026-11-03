@@ -7,7 +7,8 @@ bundle's reference datasets added (as the script's ``--register`` adds them).
 Each import is a folder ``<kind>/<id>/`` of the data folder (`Importer.dir`): ``raw/``, the
 files the build reads, laid out as it reads them (the script can be run on it again); the
 bundle; and ``import.json``: when it was uploaded, the files and the reference datasets
-added. Files uploaded that the build does not read are not kept, nor anything of an upload
+added. The files keep the times they were last changed (as the browser gives them, or the
+archive has them). Files uploaded that the build does not read are not kept, nor anything of an upload
 refused or of a build that failed. Once the last of its reference datasets is deleted, the
 folder is moved to ``deleted/<kind>/<id>`` (`Importer.release`).
 
@@ -28,6 +29,7 @@ import subprocess
 import sys
 import tarfile
 import threading
+import time
 import zipfile
 import zlib
 from pathlib import Path
@@ -57,12 +59,20 @@ def _now() -> str:
     return dt.datetime.now().isoformat(timespec="seconds")
 
 
+def _zip_time(info: zipfile.ZipInfo) -> Optional[float]:
+    """When a file in a zip was last changed (as a POSIX time; its local time as zipped), if it can be told."""
+    try:
+        return time.mktime((*info.date_time, 0, 0, -1))
+    except (OverflowError, ValueError):
+        return None
+
+
 def is_archive(name: str) -> bool:
     return (name or "").lower().endswith(ARCHIVES)
 
 
 def _idle() -> dict:
-    return {"running": False, "id": None, "stage": None, "label": None, "started_at": None, "finished_at": None,
+    return {"running": False, "id": None, "stage": None, "label": None, "note": None, "started_at": None, "finished_at": None,
             "log": [], "error": None, "added": []}
 
 
@@ -120,6 +130,19 @@ class Importer:
         """Its options, from the form uploaded (MetaCyc's version), kept in its record."""
         return {}
 
+    def settle(self, raw: Path, opts: dict) -> dict:
+        """Its options, from those given (`options`) and the files checked (in `raw`): MetaCyc's
+        version, told from them if not given.
+
+        Raises:
+            UploadError: if they are not as those given say.
+        """
+        return opts
+
+    def note(self, opts: dict) -> Optional[str]:
+        """What is said of its label, as said (how MetaCyc's version was told)."""
+        return None
+
     def label(self, raw: Path, opts: dict) -> Optional[str]:
         """What tells its imports apart, as said (MetaCyc's version, LOTUS's release)."""
         return None
@@ -166,9 +189,10 @@ class Importer:
         shutil.rmtree(d, ignore_errors=True)
         self._job.update(running=False, id=None, stage=None)
 
-    def save(self, src: IO[bytes], raw: Path, rel: str, max_bytes: int, what: str) -> None:
+    def save(self, src: IO[bytes], raw: Path, rel: str, max_bytes: int, what: str, mtime: Optional[float] = None) -> None:
         """Keep a file of an upload (`src`) in `raw`, at `rel` (gzipped, at ``<rel>.gz``, if it
-        is to be: `gzipped`). `what`: the file, as said.
+        is to be: `gzipped`), last changed at `mtime` (as the file uploaded was, if given: a
+        POSIX time). `what`: the file, as said.
 
         Raises:
             UploadError: if more than `max_bytes` would be written.
@@ -186,6 +210,11 @@ class Importer:
             finally:
                 if gz:
                     out.close()
+        if mtime is not None:
+            try:
+                os.utime(dest, (mtime, mtime))
+            except (OverflowError, ValueError, OSError):
+                pass  # (a time out of range: as written)
 
     def extract(self, archive: Path, name: str, raw: Path, max_bytes: int) -> list[str]:
         """Take the files the build reads (see `pick`) out of an archive uploaded (zip or tar;
@@ -197,14 +226,14 @@ class Importer:
                     chosen = self.pick([i.filename for i in members])
                     for k, rel in chosen.items():
                         with z.open(members[k]) as src:
-                            self.save(src, raw, rel, max_bytes, f"{name}: {members[k].filename}")
+                            self.save(src, raw, rel, max_bytes, f"{name}: {members[k].filename}", _zip_time(members[k]))
             elif tarfile.is_tarfile(archive):
                 with tarfile.open(archive) as t:
                     members = [m for m in t.getmembers() if m.isfile()]
                     chosen = self.pick([m.name for m in members])
                     for k, rel in chosen.items():
                         with t.extractfile(members[k]) as src:
-                            self.save(src, raw, rel, max_bytes, f"{name}: {members[k].name}")
+                            self.save(src, raw, rel, max_bytes, f"{name}: {members[k].name}", members[k].mtime or None)
             else:
                 raise UploadError(f"{name} is not a zip or tar archive")
         except (zipfile.BadZipFile, zipfile.LargeZipFile, tarfile.TarError, EOFError, zlib.error, RuntimeError, OSError) as e:
@@ -216,7 +245,7 @@ class Importer:
         reference datasets, in the background: the job, as started. `index` and `supervisor`:
         the odor index and what restarts the server (as `reference.add` takes them), when they
         are added."""
-        self._job.update(stage="building", label=self.label(d / "raw", opts))
+        self._job.update(stage="building", label=self.label(d / "raw", opts), note=self.note(opts))
         threading.Thread(target=self._run, args=(db, d, opts, files, index, supervisor), name=f"{self.key}-import",
                          daemon=True).start()
         return self.job()
@@ -263,7 +292,8 @@ class Importer:
             bundle = d / self.bundle_name(d / "raw", opts)
             self.build(d / "raw", bundle, opts, say)
             about = self.read_about(bundle)
-            record = {"id": d.name, "kind": self.key, "label": job["label"], **opts, "uploaded_at": job["started_at"],
+            record = {"id": d.name, "kind": self.key, "label": job["label"], "note": job["note"], **opts,
+                      "uploaded_at": job["started_at"],
                       "built_at": about.get("built_at"), "files": files, "bundle": bundle.name, "counts": about.get("counts"),
                       "added": []}
             if about.get("release"):

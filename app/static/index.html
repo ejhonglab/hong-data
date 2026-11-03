@@ -767,13 +767,15 @@ try {
           (and its organisms, pathway summaries and pathway class tree, if there). Choose the folder of them that <code>app/metacyc_build.py</code> reads
           (as <code>BioCyc/raw</code>, with its subfolders), or a <code>.zip</code> or <code>.tar.gz</code> of it. Only the files it reads are uploaded and kept,
           in the data folder, with the bundle it builds of them there. Two reference datasets of the bundle are then added, as <i>Add one</i> above
-          would add them: the odor table's chemicals by the pathways they are in, and the pathway LCA distance between them.</p>
+          would add them: the odor table's chemicals by the pathways they are in, and the pathway LCA distance between them.
+          SmartTables do not say which MetaCyc they are of, so unless a version is given, it is told from how many pathways and compounds they have
+          (against how many each release's notes say it has).</p>
         <div class="actions imp-pick">
           <input type="file" id="mc-import-folder" webkitdirectory multiple hidden>
           <input type="file" id="mc-import-archive" accept=".zip,.tar,.tar.gz,.tgz,.tar.bz2,.tbz2,.tar.xz,.txz" hidden>
           <button type="button" class="btn" id="mc-import-folder-btn">Choose the folder…</button>
           <button type="button" class="btn" id="mc-import-archive-btn">or an archive of it…</button>
-          <label class="check">of MetaCyc <input id="mc-import-version" value="27.0" spellcheck="false" autocomplete="off" aria-label="MetaCyc version" title="MetaCyc's version the tables were exported from, shown in the titles"></label>
+          <label class="check">MetaCyc version <input id="mc-import-version" value="" placeholder="told from the files" spellcheck="false" autocomplete="off" title="MetaCyc's version the tables were exported from, shown in the titles. Leave it blank, and it is told from them: by how many pathways and compounds they have, against how many each release's notes say it has. A version given that is another release's than theirs is refused."></label>
         </div>
         <div class="imp-chosen" id="mc-import-files"></div>
         <div id="mc-import-msg" aria-live="polite"></div>

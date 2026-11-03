@@ -2,7 +2,7 @@
 ``BioCyc/raw``: compounds, pathways, reactions, organisms) read into one SQLite file, which
 the app reads as a reference dataset (see metacyc.py and reference_data/README.md). Run:
 
-  python -m app.metacyc_build <raw folder> <bundle.sqlite> [--version 27.0] [--register http://<server>:<port>]
+  python -m app.metacyc_build <raw folder> <bundle.sqlite> [--version 27.1] [--register http://<server>:<port>]
 
 ``--register`` adds its two reference datasets to the app (as the Admin tab does): its
 compounds by the pathways they are in, and the pathway LCA distance between them.
@@ -11,6 +11,10 @@ Each table is a SmartTable exported twice, by frame IDs and by common names, in 
 row order: IDs are taken from the first, the names of what they list from the second (by
 position). Which files are read can be changed with ``--file <role>=<path>`` (see `FILES`).
 They are checked before anything is read (`problems`): each there, with the columns it needs.
+
+SmartTables do not say which MetaCyc they are of: that is told from how many pathways and
+compounds they have, against how many each release's notes say it has (`identify`), unless
+``--version`` is given (and refused if it is another release's).
 
 The Admin tab can do all this too, from the folder uploaded (see metacyc_import.py).
 """
@@ -70,8 +74,27 @@ COLUMNS = {  # role -> the columns its file must have (others it reads are used 
 }
 
 
+# MetaCyc's releases (biocyc.org/meta/release-notes.shtml): its version, when it was released, and how many pathways (not
+# counting super-pathways) and compounds its notes say it has, as the SmartTables of a folder are told by (`identify`)
+RELEASES = [
+    ("24.1", "2020-09-08", 2847, 16631), ("24.5", "2021-01-07", 2859, 16861), ("25.0", "2021-05-19", 2937, 17314),
+    ("25.1", "2021-08-05", 2969, 17572), ("25.5", "2021-12-15", 2980, 17656), ("26.0", "2022-04-13", 3006, 18124),
+    ("26.1", "2022-08-24", 3063, 18622), ("26.5", "2022-12-13", 3085, 18785), ("27.0", "2023-04-12", 3105, 18973),
+    ("27.1", "2023-08-28", 3128, 19173), ("28.0", "2024-04-02", 3153, 19372), ("28.1", "2024-08-12", 3190, 19569),
+    ("28.5", "2024-12-11", 3215, 19834), ("29.0", "2025-04-10", 3231, 20072), ("29.1", "2025-09-22", 3264, 20490),
+    ("29.5", "2025-12-15", 3270, 20553), ("29.6", "2026-02-26", 3284, 20642), ("30.0", "2026-08-06", 3305, 20791),
+]
+# how near a release's counts (pathways, compounds) those of its SmartTables are (27.0's, exported in July 2023: the
+# same; 28.0's, in May 2024: 1 and 4 fewer)
+NEAR = (2, 10)
+
+
 class BuildError(ValueError):
     """The SmartTables are not as the build reads them (what it expects said)."""
+
+
+class VersionError(BuildError):
+    """The version given is another release's than the SmartTables are of (`contradicts`)."""
 
 
 SCHEMA = """
@@ -270,12 +293,106 @@ def _frames(cells: Iterable[str], what: str, file: Path) -> None:
                          "and the one exported by common names as the other")
 
 
-def build(raw: Path, out: Path, version: Optional[str] = None, overrides: Optional[dict[str, str]] = None,
-          log=print) -> dict:
-    """Read MetaCyc's SmartTables in `raw` into the bundle `out` (replaced if it exists).
+def _newest_on(day: str) -> Optional[str]:
+    """MetaCyc's newest release on a day (YYYY-MM-DD), of `RELEASES` (None if before them)."""
+    out = None
+    for v, released, *_ in RELEASES:
+        if released <= day:
+            out = v
+    return out
+
+
+def _dated(files: dict[str, Optional[Path]], roles: Iterable[str]) -> Optional[tuple[str, str]]:
+    """The first and last of the dates (YYYY-MM-DD) the files of `roles` were last changed."""
+    days = sorted(dt.date.fromtimestamp(files[r].stat().st_mtime).isoformat() for r in roles if files.get(r) and files[r].is_file())
+    return (days[0], days[-1]) if days else None
+
+
+def identify(files: dict[str, Optional[Path]], p: Optional[pd.DataFrame] = None, c: Optional[pd.DataFrame] = None) -> dict:
+    """Which of MetaCyc's releases (`RELEASES`) its SmartTables are of (as `resolve` gives
+    them; `p`, `c`: its pathways and compounds, if read already), told by how many pathways
+    (not counting super-pathways) and compounds they have, against how many its notes say each
+    has: the release they have as many as (as `NEAR`), else the last they have more than,
+    if they have fewer than the next (as metacyc.org had it before the next: 27.1's, in
+    January 2024, 5 pathways and 17 compounds more than its notes say).
 
     Returns:
-        its ``about`` (as stored), with ``counts`` of what it has.
+        ``version`` (None if it cannot be told); ``pathways``, ``super_pathways`` and
+        ``compounds``, as counted; ``dated``: when the files of its tables were last
+        changed (first, last), if they are; and ``basis``: how it was told, or why it could not
+        be, as said.
+    """
+    p = read_table(files["pathways"]) if p is None else p
+    c = read_table(files["compounds"]) if c is None else c
+    told = {"version": None, "pathways": None, "super_pathways": None, "compounds": len(c), "dated": _dated(files, REQUIRED)}
+    if "Ontology - pathway type" not in p:
+        return {**told, "basis": f"{files['pathways'].name} has no column 'Ontology - pathway type', to tell its super-pathways by"}
+    sup = int(p["Ontology - pathway type"].map(lambda s: "Super-Pathways" in split(s)).sum())
+    n = (len(p) - sup, len(c))
+    told.update(pathways=n[0], super_pathways=sup)
+    # for each count, the last release it is as many as, or more than (-1: none), and whether as many
+    at = [max((i for i, r in enumerate(RELEASES) if r[2 + k] <= n[k] + NEAR[k]), default=-1) for k in (0, 1)]
+    same = [at[k] >= 0 and abs(RELEASES[at[k]][2 + k] - n[k]) <= NEAR[k] for k in (0, 1)]
+    supers = f"not counting {sup:,} super-pathway{'s' if sup != 1 else ''}"
+    has = f"Its {n[0]:,} pathways ({supers}) and {n[1]:,} compounds"
+    of = lambda r: f"{r[0]} had ({r[2]:,} and {r[3]:,}; released {r[1]})"  # noqa: E731
+
+    def stands(k: int) -> str:  # how count k stands to the releases'
+        if at[k] < 0:
+            return f"fewer than any release's ({RELEASES[0][0]}: {RELEASES[0][2 + k]:,})"
+        r = RELEASES[at[k]]
+        return f"{'as many as' if same[k] else 'more than'} {r[0]}'s ({r[2 + k]:,})"
+
+    if at[0] != at[1]:
+        basis = (f"Its {n[0]:,} pathways ({supers}) are {stands(0)}, but its {n[1]:,} compounds "
+                 f"{stands(1)}, as MetaCyc's notes count them")
+    elif at[0] < 0:
+        basis = f"{has} are fewer than MetaCyc {of(RELEASES[0])}, the oldest release known here"
+    elif all(same):
+        told["version"] = RELEASES[at[0]][0]
+        basis = f"{has} are as many as MetaCyc {of(RELEASES[at[0]])}, as its notes count them"
+    elif at[0] == len(RELEASES) - 1:
+        basis = f"{has} are more than MetaCyc {of(RELEASES[-1])}, the newest release known here"
+    else:
+        r, nxt = RELEASES[at[0]], RELEASES[at[0] + 1]
+        told["version"] = r[0]
+        basis = (f"{has} are more than MetaCyc {of(r)}, and fewer than {of(nxt)}, as their notes count "
+                 f"them: so {r[0]}, as metacyc.org had it before {nxt[0]}")
+
+    def when(dated: tuple[str, str]) -> str:
+        out = list(dict.fromkeys(filter(None, (_newest_on(dated[0]), _newest_on(dated[1])))))
+        return (f"{dated[0]}{f' to {dated[1]}' if dated[1] != dated[0] else ''}, when MetaCyc's newest release was "
+                f"{' then '.join(out) or f'older than {RELEASES[0][0]}'}")
+
+    if told["dated"]:
+        basis += f". The files of its tables were last changed {when(told['dated'])}"
+        others = _dated(files, [r for r in FILES if r not in REQUIRED])
+        if others and {_newest_on(d) for d in others} != {_newest_on(d) for d in told["dated"]}:
+            basis += f"; the others it reads, {when(others)}"
+    return {**told, "basis": basis}
+
+
+def contradicts(given: Optional[str], told: dict) -> Optional[str]:
+    """Why a version given is not the one the SmartTables are of (`identify`): if it is
+    another release's (of `RELEASES`) than they are told to be of, as said. None if not, or if
+    which they are of cannot be told."""
+    if not given or not told.get("version") or given == told["version"] or given not in {r[0] for r in RELEASES}:
+        return None
+    return f"these are MetaCyc {told['version']}'s SmartTables, not {given}'s. {told['basis']}"
+
+
+def build(raw: Path, out: Path, version: Optional[str] = None, overrides: Optional[dict[str, str]] = None,
+          log=print) -> dict:
+    """Read MetaCyc's SmartTables in `raw` into the bundle `out` (replaced if it exists), of
+    MetaCyc `version` (else as told from them: `identify`).
+
+    Returns:
+        its ``about`` (as stored), with ``counts`` of what it has, and ``identified``: which
+        release they were told to be of (`identify`).
+
+    Raises:
+        BuildError: if they are not as it reads them (VersionError: if `version` is another
+            release's than they are of).
     """
     files = resolve(raw, overrides)
     if found := problems(files, raw):
@@ -333,6 +450,12 @@ def build(raw: Path, out: Path, version: Optional[str] = None, overrides: Option
         raise BuildError(f"none of the pathways of {files['compounds'].name} is in {files['pathways'].name}: give the two of one "
                          "MetaCyc, exported by frame IDs")
     log(f"pathways: {len(pw):,} ({files['pathways'].name})")
+    told = identify(files, p, c)
+    if why := contradicts(version, told):
+        raise VersionError(why)
+    version = version or told["version"]
+    log(f"version: {version} ({'as given' if version != told['version'] else 'told from them'}: {told['basis']})" if version
+        else f"version: not given, nor told from them ({told['basis']})")
 
     # ------------------------------------------------------------- reactions
     x, xn = read_table(files["reactions"]), read_table(files["reaction_names"])
@@ -398,7 +521,7 @@ def build(raw: Path, out: Path, version: Optional[str] = None, overrides: Option
     log(f"species: {len(species):,}; genome databases: {len(genomes):,} ({sum(g[2] is not None for g in genomes):,} of a species of MetaCyc's)")
 
     # ------------------------------------------------------------------ write
-    about = {"kind": "metacyc", "version": version, "built_at": dt.datetime.now().isoformat(timespec="seconds"),
+    about = {"kind": "metacyc", "version": version, "identified": told, "built_at": dt.datetime.now().isoformat(timespec="seconds"),
              "sources": {role: {"path": str(f), "mtime": dt.datetime.fromtimestamp(f.stat().st_mtime).isoformat(timespec="seconds")}
                          for role, f in files.items() if f},
              "counts": {"compounds": len(compounds), "pathways": len(pw), "reactions": len(reactions), "species": len(species),
@@ -480,9 +603,9 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m app.metacyc_build", description=__doc__.split("\n\n")[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("raw", type=Path, help="the folder of MetaCyc's SmartTables (e.g. .../BioCyc/raw)")
-    ap.add_argument("out", type=Path, help="the bundle to write (e.g. metacyc-27.0.sqlite)")
-    ap.add_argument("--version", default="27.0", help="MetaCyc's version the tables are of, shown in titles (default: 27.0, "
-                    "as the files read by default are)")
+    ap.add_argument("out", type=Path, help="the bundle to write (e.g. metacyc-27.1.sqlite)")
+    ap.add_argument("--version", help="MetaCyc's version the tables are of, shown in titles (default: told from them, by how many "
+                    "pathways and compounds they have: refused if another release's)")
     ap.add_argument("--file", action="append", default=[], metavar="ROLE=PATH",
                     help=f"a file to read for a role instead (relative to the raw folder, or absolute): {', '.join(FILES)}")
     ap.add_argument("--register", metavar="URL", help="then add its two reference datasets to the app at URL (e.g. http://localhost:8000)")
@@ -494,13 +617,15 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             ap.error(f"--file {f}: give ROLE=PATH, ROLE one of {', '.join(FILES)}")
         overrides[role] = path
     try:
-        build(args.raw, args.out, args.version or None, overrides)
+        about = build(args.raw, args.out, args.version or None, overrides)
     except BuildError as e:
         print(f"error: {e}", file=sys.stderr)
-        if not overrides and "missing:" in str(e):
+        if isinstance(e, VersionError):
+            print("(leave out --version, and it is told from them)", file=sys.stderr)
+        elif not overrides and "missing:" in str(e):
             print("(a file elsewhere, or named otherwise: give it with --file ROLE=PATH)", file=sys.stderr)
         return 2
-    return register(args.register, args.out, args.version or None) if args.register else 0
+    return register(args.register, args.out, about["version"]) if args.register else 0
 
 
 if __name__ == "__main__":

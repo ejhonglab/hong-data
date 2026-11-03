@@ -355,8 +355,8 @@ between the frontend and the server. Using the app is described in
   `square`), compared by its own values negated (the nearer, the more alike), as a
   distance between two odors is not a vector to correlate. What is drawn and listed below
   the matrix is asked of the bundle when needed (`/api/reference/{id}/metacyc/...`).
-  - *Its tables*: `BioCyc/raw` holds SmartTables of MetaCyc 27.0 (January–February 2024,
-    as the thesis used), each exported twice, by frame IDs and by names, in the same row
+  - *Its tables*: `BioCyc/raw` holds SmartTables of MetaCyc 27.1 (January–February 2024,
+    as the thesis used, though it says 27.0), each exported twice, by frame IDs and by names, in the same row
     order: IDs come from the first and the names of what each cell lists from the second,
     by position. Reaction directions come from their equations' arrows (`->` and `<-`
     both run from the reactants to the products as listed by ID; `<-->` reversible).
@@ -449,7 +449,17 @@ between the frontend and the server. Using the app is described in
   `data/deleted/` with the last dataset of its bundle, as a deleted dataset's files do,
   so nothing uploaded is left unused and unlisted.
   - *MetaCyc's* files are found by name (the paths it reads them from are fixed): 89 MB
-    of `BioCyc/raw`'s 283.
+    of `BioCyc/raw`'s 283. Its version is told from them (`metacyc_build.identify`), as
+    SmartTables do not say it and one typed by hand is easily wrong (the thesis says
+    27.0 of tables that are 27.1's): MetaCyc's release notes say how many pathways (not
+    counting super-pathways) and compounds each release has, and exports match them (27.0's
+    of July 2023 exactly; 28.0's of May 2024 within 1 and 4), so the release is the one
+    they match, else the last they have more than and fewer than the next (as metacyc.org
+    had it between releases: January 2024's has 5 pathways more than 27.1's notes say).
+    When the files were last changed (kept from the browser's, or the archive's) is said
+    beside it, as a check, not a basis: a copy changes it. A version given that is another
+    release's is refused; one that isn't a release's (or of tables whose release cannot be
+    told) is taken as given. `RELEASES` needs each new release's counts added.
   - *LOTUS's* are found by their paths (sent as the files' names), with the script's
     globs (`lotus_build.FILES`, each gzipped or not), and kept at the part of the path a
     glob matched: the release's dates are in the folders' names (`metadata_2022-09-16/`),
@@ -841,7 +851,8 @@ app/metacyc_build.py  MetaCyc's SmartTables checked and read into a bundle (pyth
                    its two reference datasets added through the Admin tab's API
 app/bundle_import.py  bundles imported in the Admin tab: the raw folder uploaded, kept, built (by the build
                    script, in a process of its own) and its reference datasets added
-app/metacyc_import.py MetaCyc's files of an upload, found by name, checked as metacyc_build.py checks them
+app/metacyc_import.py MetaCyc's files of an upload, found by name, checked as metacyc_build.py checks them, its
+                   version told from them
 app/lotus.py       LOTUS bundles as reference data: its view's settings (and how they are said), odors matched to
                    structures, chemicals × taxa, a cell's organisms and papers
 app/lotus_build.py LOTUS's frozen records and metadata checked and read into a bundle (python -m
@@ -1075,9 +1086,12 @@ GET    /api/admin/metacyc                   MetaCyc imported here: what an uploa
                                             "stage", "label", "log", "error", "added"}), and those kept
                                             (folder, size, their reference datasets)
 POST   /api/admin/metacyc                   multipart 'file' (repeatable: the files of the raw folder,
-                                            or archives of it), 'version' → 422 {"errors": what is
-                                            missing or not as expected}, 409 while one is under way,
-                                            else {"job"}: built and added in the background
+                                            or archives of it), 'mtimes' (JSON: each file's
+                                            lastModified, by name), 'version' (else told from them)
+                                            → 422 {"errors": what is missing or not as expected, or a
+                                            version not theirs}, 409 while one is under way, else
+                                            {"job"} (its "label" and "note": how the version was
+                                            told): built and added in the background
 GET    /api/admin/lotus                     LOTUS imported here, as /api/admin/metacyc
 POST   /api/admin/lotus                     multipart 'file' (repeatable: the files of LOTUS/raw,
                                             gzipped or not, named by their paths in it; or archives

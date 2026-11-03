@@ -4,8 +4,10 @@ OLFDB_DATA_DIR=<a scratch folder> python -m pytest tests/"""
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import io
 import json
+import os
 import shutil
 import sqlite3
 import tarfile
@@ -189,6 +191,68 @@ def test_build_errors(tmp_path):
         metacyc.read_about(tmp_path / "other.db")
 
 
+# made up, as the made-up MetaCyc's counts stand to them: 3 pathways (not counting 1 super-pathway), 7 compounds
+FAKE_RELEASES = [("1.0", "2024-01-01", 2, 5), ("1.1", "2024-06-01", 3, 7), ("2.0", "2025-01-01", 30, 70)]
+
+
+def test_identify(tmp_path, monkeypatch):
+    """Which release SmartTables are of, by how many pathways and compounds they have."""
+    monkeypatch.setattr(metacyc_build, "NEAR", (0, 0))
+    raw = make_raw(tmp_path / "raw")
+    files = metacyc_build.resolve(raw)
+    day = dt.datetime(2024, 3, 1, 12).timestamp()
+    for role in metacyc_build.REQUIRED:
+        os.utime(files[role], (day, day))
+
+    def told(releases):
+        monkeypatch.setattr(metacyc_build, "RELEASES", releases)
+        return metacyc_build.identify(files)
+
+    t = told(FAKE_RELEASES)
+    assert (t["version"], t["pathways"], t["super_pathways"], t["compounds"], t["dated"]) == ("1.1", 3, 1, 7, ("2024-03-01", "2024-03-01"))
+    assert t["basis"].startswith("Its 3 pathways (not counting 1 super-pathway) and 7 compounds are as many as MetaCyc 1.1 had (3 and 7; "
+                                 "released 2024-06-01)")
+    assert "last changed 2024-03-01, when MetaCyc's newest release was 1.0;" in t["basis"]  # (the others' dates: today's)
+    t = told([FAKE_RELEASES[0], FAKE_RELEASES[2]])  # between two: the first
+    assert t["version"] == "1.0" and "more than MetaCyc 1.0 had (2 and 5; released 2024-01-01), and fewer than 2.0 had" in t["basis"]
+    t = told(FAKE_RELEASES[:1])  # more than the newest
+    assert t["version"] is None and "the newest release known here" in t["basis"]
+    t = told(FAKE_RELEASES[2:])  # fewer than the oldest
+    assert t["version"] is None and "fewer than MetaCyc 2.0 had (30 and 70; released 2025-01-01), the oldest" in t["basis"]
+    t = told([("1.0", "2024-01-01", 3, 70)])  # the pathways one release's, the compounds none's
+    assert t["version"] is None and "are as many as 1.0's (3), but its 7 compounds fewer than any release's (1.0: 70)" in t["basis"]
+    monkeypatch.setattr(metacyc_build, "NEAR", (2, 10))
+    assert told([("1.0", "2024-01-01", 4, 15)])["version"] == "1.0"  # (as near as exports are)
+    # a version given: refused if another release's
+    t = told(FAKE_RELEASES)
+    assert metacyc_build.contradicts("1.0", t).startswith("these are MetaCyc 1.1's SmartTables, not 1.0's. Its 3 pathways")
+    assert [metacyc_build.contradicts(v, t) for v in ("1.1", "1.1 (my own)", "", None)] == [None] * 4
+    assert metacyc_build.contradicts("1.0", {**t, "version": None}) is None
+    # no pathway types, to tell super-pathways by
+    pwy = files["pathways"]
+    pwy.write_text(pwy.read_text().replace("Ontology - pathway type", "Types"))
+    t = metacyc_build.identify(files)
+    assert t["version"] is None and t["basis"].endswith("has no column 'Ontology - pathway type', to tell its super-pathways by")
+
+
+def test_build_version(tmp_path, monkeypatch, capsys):
+    """The version told from the SmartTables, unless given; refused if another release's."""
+    raw = make_raw(tmp_path / "raw")
+    quiet = lambda *a: None  # noqa: E731
+    assert metacyc_build.build(raw, tmp_path / "a.sqlite", log=quiet)["version"] is None  # (as no release: fewer than any)
+    monkeypatch.setattr(metacyc_build, "RELEASES", FAKE_RELEASES)
+    about = metacyc_build.build(raw, tmp_path / "b.sqlite", log=quiet)
+    assert about["version"] == "1.1" and about["identified"]["version"] == "1.1" and metacyc.read_about(tmp_path / "b.sqlite")["version"] == "1.1"
+    assert metacyc_build.build(raw, tmp_path / "c.sqlite", version="1.1 (web)", log=quiet)["version"] == "1.1 (web)"
+    with pytest.raises(metacyc_build.VersionError, match="these are MetaCyc 1.1's SmartTables, not 1.0's"):
+        metacyc_build.build(raw, tmp_path / "d.sqlite", version="1.0", log=quiet)
+    assert not (tmp_path / "d.sqlite").exists()
+    assert metacyc_build.main([str(raw), str(tmp_path / "d.sqlite"), "--version", "1.0"]) == 2
+    assert "leave out --version, and it is told from them" in capsys.readouterr().err
+    assert metacyc_build.main([str(raw), str(tmp_path / "d.sqlite")]) == 0
+    assert "version: 1.1 (told from them: Its 3 pathways" in capsys.readouterr().out
+
+
 def test_match_odors(bundle_path):
     b = metacyc.bundle(bundle_path)
     got = [(m["odor"]["name"], m["compound"], m["how"]) for m in metacyc.match_odors(b, ODORS)]
@@ -369,11 +433,12 @@ def test_register(monkeypatch, tmp_path):
 
 # ------------------------------------------------------------- imported in the Admin tab
 
-def post_form(endpoint, files: list[tuple[str, bytes]], version: str = "99.0") -> tuple[int, dict]:
-    """Status and JSON of a POST of `files` (name as uploaded, bytes; field 'file') and 'version', as a form (multipart)."""
+def post_form(endpoint, files: list[tuple[str, bytes]], version: str = "99.0", **fields: str) -> tuple[int, dict]:
+    """Status and JSON of a POST of `files` (name as uploaded, bytes; field 'file'), 'version' and `fields`, as a form (multipart)."""
     boundary = "olfdbtestboundary"
     part = lambda head, data: f"--{boundary}\r\nContent-Disposition: form-data; {head}\r\n\r\n".encode() + data + b"\r\n"  # noqa: E731
     body = b"".join(part(f'name="file"; filename="{n}"', data) for n, data in files) + part('name="version"', version.encode())
+    body += b"".join(part(f'name="{k}"', v.encode()) for k, v in fields.items())
     body += f"--{boundary}--\r\n".encode()
     scope = {"type": "http", "method": "POST", "path": "/", "query_string": b"", "path_params": {},
              "headers": [(b"content-type", f"multipart/form-data; boundary={boundary}".encode())]}
@@ -450,10 +515,42 @@ def test_import(imports, tmp_path):
     assert call(main.admin_metacyc)[1]["imports"] == []
 
 
+def test_import_version(imports, tmp_path, monkeypatch):
+    """Its version told from the files uploaded if not given (and said how), refused if another
+    release's; the files kept as last changed when uploaded."""
+    main = imports
+    monkeypatch.setattr(metacyc_build, "RELEASES", FAKE_RELEASES)
+    raw = make_raw(tmp_path / "raw")
+    picked = [(f"raw/{p.relative_to(raw).as_posix()}", p.read_bytes()) for p in sorted(raw.rglob("*")) if p.is_file()]
+    status, r = post_form(main.admin_metacyc_import, picked, version="1.0")
+    assert status == 422 and len(r["errors"]) == 1, r
+    assert r["errors"][0].startswith("these are MetaCyc 1.1's SmartTables, not 1.0's. Its 3 pathways")
+    assert r["errors"][0].endswith(". Leave the version blank, and it is told from them")
+    assert not any(config.METACYC_DIR.iterdir())
+    when = dt.datetime(2024, 1, 29, 10, 47).timestamp()
+    status, r = post_form(main.admin_metacyc_import, picked, version="", mtimes=json.dumps({n: when * 1000 for n, _ in picked}))
+    assert status == 200 and r["job"]["label"] == "1.1" and r["job"]["note"].startswith("Its version, 1.1, was told from its files. Its 3 "), r
+    assert "last changed 2024-01-29, when MetaCyc's newest release was 1.0." in r["job"]["note"]
+    job = finished()
+    assert job["error"] is None and job["added"][0]["title"] == "MetaCyc 1.1: compounds by the pathways they are in", job
+    d = config.METACYC_DIR / job["id"]
+    assert {(d / "raw" / v).stat().st_mtime for v in r["files"].values()} == {when}
+    rec = call(main.admin_metacyc)[1]["imports"][0]
+    assert (rec["label"], rec["given"], rec["identified"]["version"], rec["note"]) == ("1.1", None, "1.1", job["note"])
+    assert metacyc.read_about(d / "metacyc-1.1.sqlite")["version"] == "1.1"
+    # given as no release's (nor told): as given
+    status, r = post_form(main.admin_metacyc_import, picked, version="1.1 (web)")
+    assert status == 200 and r["job"]["note"].startswith("Its version, 1.1 (web), was given; its files say 1.1. "), r
+    assert finished()["added"][0]["title"] == "MetaCyc 1.1 (web): compounds by the pathways they are in"
+
+
 def test_import_archives(imports, tmp_path):
     """The folder as a zip or tar.gz, with more than the build reads: only what it reads kept."""
     main = imports
     raw = make_raw(tmp_path / "BioCyc" / "raw")
+    when = dt.datetime(2024, 1, 29, 10, 47, 30).timestamp()
+    for p in raw.rglob("*"):
+        os.utime(p, (when, when))
     (raw / "compounds" / "all_metacyc_compounds.sdf").write_text("not read")
     shutil.copy(raw / metacyc_build.FILES["reactions"][0], raw / "reactions" / "all_metacyc_reactions__frame_ids (copy).tsv")
     zipped, tarred = io.BytesIO(), io.BytesIO()
@@ -471,6 +568,8 @@ def test_import_archives(imports, tmp_path):
         kept = sorted(p.relative_to(d).as_posix() for p in d.rglob("*") if p.is_file())
         assert kept == sorted(["import.json", "metacyc.sqlite", *(f"raw/{v}" for v in r["files"].values())])
         assert not any("copy" in k or k.endswith(".sdf") for k in kept)
+        assert {(d / "raw" / v).stat().st_mtime for v in r["files"].values()} == {when}  # (as the archive has them)
+        assert job["label"] is None and job["note"].startswith("It has no version: none was given, nor could it be told from its files. ")
     assert len(call(main.admin_metacyc)[1]["imports"]) == 2
 
 

@@ -2800,10 +2800,12 @@ def _import_job(imp: bundle_import.Importer) -> dict:
 
 async def _admin_import(request: Request, imp: bundle_import.Importer) -> Response:
     """Import a bundle: its files uploaded (multipart 'file', repeatable: the files of the
-    folder its build script reads, or an archive of it; and its options, as MetaCyc's
-    'version'), kept with the bundle built of them, whose reference datasets are added (in
-    the background: the job, as GET /api/admin/<kind> gives it). 422 with what is missing or
-    not as expected, 409 while another of its kind is under way (see bundle_import.py)."""
+    folder its build script reads, or an archive of it; 'mtimes', if given: a JSON object of
+    when each was last changed, by its name as uploaded, in ms since 1970, kept as theirs; and
+    its options, as MetaCyc's 'version'), kept with the bundle built of them, whose reference
+    datasets are added (in the background: the job, as GET /api/admin/<kind> gives it). 422
+    with what is missing or not as expected, 409 while another of its kind is under way (see
+    bundle_import.py)."""
     try:
         d = imp.claim()
     except bundle_import.UploadError as e:
@@ -2816,10 +2818,16 @@ async def _admin_import(request: Request, imp: bundle_import.Importer) -> Respon
             raise bundle_import.UploadError(f"no file in the request (field 'file'): upload the folder of {imp.what}, "
                                             "or an archive of it")
         opts = imp.options(form)
+        try:
+            mtimes = json.loads(str(form.get("mtimes") or "{}"))
+        except ValueError:
+            mtimes = {}
+        mtimes = ({k: v / 1000 for k, v in mtimes.items() if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0}
+                  if isinstance(mtimes, dict) else {})
         archives = [up for up in uploads if bundle_import.is_archive(up.filename)]
         files = [up for up in uploads if not bundle_import.is_archive(up.filename)]
         for k, rel in imp.pick([up.filename or "" for up in files]).items():
-            await run_in_threadpool(imp.save, files[k].file, d / "raw", rel, max_bytes, files[k].filename)
+            await run_in_threadpool(imp.save, files[k].file, d / "raw", rel, max_bytes, files[k].filename, mtimes.get(files[k].filename))
         for i, up in enumerate(archives):
             dest = d / f"upload-{i}{''.join(Path(up.filename).suffixes[-2:])}"
             await _save_upload(up, dest, max_bytes=max_bytes)
@@ -2828,6 +2836,7 @@ async def _admin_import(request: Request, imp: bundle_import.Importer) -> Respon
             finally:
                 dest.unlink(missing_ok=True)
         found = await run_in_threadpool(imp.check, d / "raw", len(uploads))
+        opts = await run_in_threadpool(imp.settle, d / "raw", opts)
     except bundle_import.UploadError as e:
         imp.abandon(d)
         return JSONResponse({"ok": False, "errors": e.errors}, status_code=422)
@@ -2850,7 +2859,8 @@ async def admin_metacyc(request: Request) -> Response:
 
 async def admin_metacyc_import(request: Request) -> Response:
     """Import MetaCyc: its SmartTables uploaded (the files of the folder app/metacyc_build.py
-    reads, or an archive of it; 'version', MetaCyc's), see `_admin_import`."""
+    reads, or an archive of it; 'version', MetaCyc's, else told from them: refused if another
+    release's), see `_admin_import`."""
     return await _admin_import(request, metacyc_import.importer)
 
 
