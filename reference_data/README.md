@@ -112,6 +112,27 @@ Coordinates:
     reference         (source) <U250 '1er Symp. Sci. Int. de Cognac, ...
 ```
 
+A file can also be a LOTUS bundle (`.sqlite`), made by `python -m app.lotus_build <LOTUS
+folder> <bundle>` (README, "Scripting"): LOTUS's structure–organism–paper records, with
+the structures' identifiers, names and CIDs, each organism's lineage in every taxonomy
+source that has it, and the papers' titles. It is shown over the chemicals of the odor
+table that are in it, made again whenever the odor table changes, as its `"fields"` say
+(each can be changed in the Admin tab, and is said above its matrix):
+
+```json
+"fields": {"layout": "lotus",
+           "level": "family",       // columns: "organism" (as LOTUS names them), "species", "genus", "family",
+                                    // "order", "class", "phylum" or "kingdom"
+           "value": "organisms",    // a cell: how many of the column's organisms it is reported in; "papers"
+                                    // reporting it in any of them; "presence" (1 or 0)
+           "stereo": "enantiomers", // which structures an odor is: "enantiomers" (its InChI but for tetrahedral
+                                    // stereo), "exact", or "skeleton" (its InChIKey's first block)
+           "taxonomy": "GBIF Backbone Taxonomy"}  // the source of lineages used first (then the others in turn)
+```
+
+An odor is matched by the LOTUS ID the odor table gives it (then by the stereochemistry
+setting from that structure), else its InChI, else its CID.
+
 A file can also be a MetaCyc bundle (`.sqlite`), made from MetaCyc's SmartTables by
 `python -m app.metacyc_build <raw folder> <bundle>` (README, "Scripting"): its compounds,
 pathways, reactions, species and BioCyc's genomes of them, in one SQLite file. It is

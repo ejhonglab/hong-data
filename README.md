@@ -445,7 +445,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   adding one in the Admin tab); these are left out of its matrix unless a box by the
   warning is ticked. One that cannot be read is listed by its name alone, with why.
   A table of glomeruli (by their labels) has no chemicals, and so no warning: it says it
-  can be compared with datasets on their glomeruli.
+  can be compared with datasets on their glomeruli. Its other axis is taken to be KCs:
+  *Sum over KCs* in the viewer (here and in the Compare tab) shows each glomerulus's
+  values summed over them (those not removed; missing values left out), as one row or
+  column.
   *MetaCyc* (a bundle of its tables, see [Scripting](#scripting)) is shown over the odor
   table's chemicals that are in it (made again whenever the odor table changes), as
   either of two datasets: *compounds by the pathways they are in* (1 in the pathway
@@ -459,10 +462,24 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   (with the environments, oxygen and hosts of BioCyc's genomes of each) and summary; or,
   of the LCA distance, the paths from the two odors' lowest common ancestors. Click a
   compound for its structure, identifiers, classes and pathways, or find any pathway or
-  compound by name or MetaCyc ID. Its other axis is taken to be KCs:
-  *Sum over KCs* in the viewer (here and in the Compare tab) shows each glomerulus's
-  values summed over them (those not removed; missing values left out), as one row or
-  column.
+  compound by name or MetaCyc ID.
+  *LOTUS* (a bundle of its records of natural products: which papers report which
+  structure in which organism, see [Scripting](#scripting)) is shown over the odor
+  table's chemicals that are in it (made again whenever the odor table changes) by the
+  taxa of the organisms they are reported in: by default, *chemicals by the families of
+  organisms they are reported in*, each cell how many of the family's organisms (as
+  LOTUS names them) the chemical is reported in. Above its matrix, *How this matrix was
+  made* says each choice behind it, and which can be changed in the Admin tab: the
+  columns (organisms as LOTUS names them, or their species, genera, families, orders,
+  classes, phyla or kingdoms), the cells (organisms, papers, or presence), the
+  stereochemistry (by default, LOTUS's structures that are the odor's but for R/S:
+  enantiomers, diastereomers and unspecified stereocenters merged, cis/trans isomers kept
+  apart; or exactly the odor's; or any of its skeleton) and the taxonomy used first (GBIF's
+  backbone by default, then the Catalogue of Life, the Open Tree of Life, NCBI and the rest
+  in turn, where those before give an organism none). Below it, click a cell for the
+  organisms it is of, each with its lineage and the papers reporting the chemical there
+  (year, first author, title linked to its DOI, journal; those checked by hand by LOTUS
+  marked), and the structures of LOTUS its row is (with links to LOTUS and Wikidata).
   *Sort rows* and *columns* order each by its values over those of the other axis shown
   (by mean or largest value, highest first, those with none last, within its group;
   remove columns to sort by some of them, e.g. one product of VCF's). Sequential colors
@@ -572,6 +589,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     pathway LCA distance (through reactions, as computed for the thesis, or through
     pathways, as its Methods describe, optionally without compounds in more than so many
     pathways), and whether chemicals in no pathway are taken as the classes they are of.
+    A LOTUS bundle is added with its settings (columns, cells, stereochemistry, taxonomy
+    first: each value said, the defaults marked, what each makes shown before it is
+    added), and these are changed later by its *Change settings…* in the list (the form
+    filled in with them, then *Save changes*): its matrix is made again by them.
     The app never changes the file: it reads a copy into `data/references/`, again
     whenever the file changes. A file outside the folders the server may read is added
     to them (itself, to read only), and read once the server restarts, with what that
@@ -625,6 +646,21 @@ it may read is added to them, and read after a restart (the script prints what t
 takes). `--file <role>=<path>` reads another export for a table (`--help` lists them).
 Bundles hold MetaCyc's data: keep them out of this repository, and check MetaCyc's
 license terms before sharing one.
+
+LOTUS: its frozen export of its Wikidata records (`230106_frozen/230106_frozen.csv`), the
+metadata of their structures, organisms and papers (Zenodo record 7534077,
+`metadata_2022-09-16/`) and its 2021 release's SDF (for LOTUS IDs), as laid out in
+`LOTUS/raw`, are read into one bundle, whose reference dataset (chemicals by families) is
+then added through the Admin tab's API (or add the bundle in the Admin tab by hand):
+
+```bash
+python -m app.lotus_build /mnt/d0/Scraped-Databases-Copy/LOTUS/raw /local/olfdb/lotus-2023-01-06.sqlite --register http://localhost:8000
+```
+
+It takes about a minute, and the bundle is about 280 MB. As for MetaCyc, the server must
+be able to read it, `--file <role>=<path>` reads another file for a role (`--help`), and
+bundles are kept out of this repository. (`LOTUS/raw/NPOC2021`, the MongoDB dump of the
+2021 release that `LOTUS/processed` was made from, is not read.)
 
 Downloads: `/api/download?ids=1,2&format=files|wide|long` (as from the Browse tab).
 Datasets: `/api/datasets`, and each one's matrix at `/api/datasets/{id}/matrix`; the

@@ -6,6 +6,7 @@ import { exportFigure } from './figure.js';
 import { MoviePlayer } from './player.js';
 import { SIMILARITIES, similarityMatrix, tanimoto, correlateSimilarities, sharedSimilarities, holm } from './similarity.js';
 import { MetacycPanel } from './metacyc.js';
+import { LotusPanel, decisionsHtml } from './lotus.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -3258,6 +3259,25 @@ class Reference {
     if (!this.viewer) this.viewer = new MatrixViewer($('#reference-viewer'), { kind: 'generic' });
     this.viewer.setGenericData(this._shown(ref), { title: m.title, fileStem: `olfdb_reference-${id}` });
     this._metacyc(id, ref);
+    this._lotus(id, ref);
+  }
+
+  // a LOTUS bundle's view: under the matrix, how it was made, and a cell clicked looked into
+  _lotus(id, ref) {
+    const box = $('#ref-lotus');
+    box.hidden = $('#ref-lotus-made').hidden = !ref.meta.lotus;
+    if (!ref.meta.lotus) return; // (the handlers left as _metacyc set them)
+    const v = this.viewer, el = $('#reference-viewer');
+    v.onShow = () => fitViewer(el, v);
+    fitViewer(el, v);
+    if (!this.lotus) this.lotus = new LotusPanel(box, $('#ref-lotus-made'), { api, esc, msgBox });
+    this.lotus.setRef(id, ref);
+    const item = (axis, k) => v.source[axis][k]; // (of the matrix shown: some may be left out, see _shown)
+    v.heatmap.options.onCellClick = (info) => {
+      const cell = v.givenCell(info);
+      if (cell) this.lotus.show(item('rows', cell.row), item('cols', cell.col));
+    };
+    v.labelMenuExtra = null;
   }
 
   // a MetaCyc bundle's view: its panel under the matrix, shown what a cell or a label is of
@@ -3664,9 +3684,9 @@ function showRefCheck(c) {
   input.classList.toggle('invalid', !!c && !c.ok);
   input.classList.toggle('path-warn', !!c?.restart);
   msg.className = `path-msg${c && !c.checking ? (c.ok ? (c.restart ? ' warn' : ' ok') : ' bad') : ''}`;
+  if (c?.checking) { msg.textContent = 'Checking…'; return; } // (what was checked kept till then: the form does not jump)
   box.replaceChildren();
   if (!c) { msg.textContent = ''; return; }
-  if (c.checking) { msg.textContent = 'Checking…'; return; }
   if (!c.ok) { msg.textContent = c.error; return; }
   if (c.restart) {
     msg.textContent = c.grant ? 'outside the folders the server may read now: adding it adds this file to them (to read only)'
@@ -3678,11 +3698,16 @@ function showRefCheck(c) {
   msg.textContent = `✓ read: ${p.shape[0].toLocaleString()} rows × ${p.shape[1].toLocaleString()} columns, ${p.kind}`;
   const lines = [];
   if (p.metacyc) lines.push(`Its values: ${esc(p.metacyc.described)}.`);
+  if (p.lotus) lines.push(esc(p.lotus.summary));
   if (ch.axis) lines.push(`Its ${ch.axis === 'rows' ? 'rows' : 'columns'} are chemicals: ${ch.matched} of ${ch.n} matched to the Odors table, ${ch.identified} identified by CID or InChI.`);
   const g = p.glomeruli;
   if (g?.axis) lines.push(`Its ${g.axis === 'rows' ? 'rows' : 'columns'} are glomeruli (${g.matched} of ${g.n}, by name): it can be compared with datasets on their glomeruli.`);
   lines.push(...p.notes.map((n) => `${esc(n[0].toUpperCase() + n.slice(1))}.`));
   if (lines.length) box.appendChild(Object.assign(document.createElement('p'), { className: 'muted small', innerHTML: lines.join(' ') }));
+  if (p.lotus) {
+    box.appendChild(Object.assign(document.createElement('div'), { className: 'lt-check',
+      innerHTML: `<b>How its matrix is made</b> (shown with it in the Reference data tab):${decisionsHtml(p.lotus, esc)}` }));
+  }
   if (p.warning) {
     box.appendChild(unidentifiedBox(p.warning, ch.unidentified || [], 'It can be added anyway, with a warning by it in the Reference data tab, where they are listed too.'));
   }
@@ -3784,10 +3809,13 @@ class AdminPage {
     $('#ref-path').addEventListener('input', () => { this.refFields = null; }); // another file: as suggested for it
     $('#ref-fields').addEventListener('change', () => { this.refFields = this._readFields(); this.checkRef(); });
     for (const sel of ['#ref-axis', '#ref-kind']) $(sel).addEventListener('change', () => this.checkRef());
-    $('#ref-add').addEventListener('click', () => this.addRef());
+    $('#ref-add').addEventListener('click', () => (this.editing ? this.saveRef() : this.addRef()));
+    $('#ref-cancel').addEventListener('click', () => { this._resetRefForm(); $('#ref-result').replaceChildren(); });
     $('#admin-refs-list').addEventListener('click', (e) => {
       const b = e.target.closest('[data-delete-ref]');
       if (b) this.deleteRef(b.dataset.deleteRef);
+      const c = e.target.closest('[data-edit-ref]');
+      if (c) this.editRef(c.dataset.editRef);
     });
     $('#admin-ds-filter').addEventListener('input', () => this._showDatasets());
     $('#admin-ds-list').addEventListener('click', (e) => {
@@ -4192,12 +4220,20 @@ class AdminPage {
     $('#admin-refs-list').innerHTML = `<table class="odor-table"><thead><tr><th>Title</th><th>File</th><th>State</th><th></th></tr></thead><tbody>
       ${listed.map((r) => `<tr><td><a href="#reference/${esc(r.id)}">${esc(r.title)}</a></td>
         <td><code>${esc(r.path)}</code>${r.origin === 'builtin' ? ' <span class="muted">(built in)</span>' : ''}</td><td>${stateHtml(r)}</td>
-        <td>${r.origin === 'admin' ? `<button type="button" class="btn small" data-delete-ref="${esc(r.id)}">Delete…</button>`
+        <td>${r.origin === 'admin' ? `${r.lotus ? `<button type="button" class="btn small" data-edit-ref="${esc(r.id)}">Change settings…</button> ` : ''}<button type="button" class="btn small" data-delete-ref="${esc(r.id)}">Delete…</button>`
           : '<span class="muted small" title="Remove it from reference_data/manifest.json on the server">built in</span>'}</td></tr>`).join('')}</tbody></table>`;
   }
 
   _refBody() {
     const v = (id) => $(id).value.trim(), f = this.refFields, chosen = f && f.layout !== 'matrix';
+    if (f?.layout === 'lotus') { // (labels left empty: as suggested for its settings, see _lotusSuggest)
+      return {
+        path: v('#ref-path'), title: v('#ref-title'), description: v('#ref-description'), source: v('#ref-source') || this._ltSource || '',
+        chemical_axis: $('#ref-axis').value, kind: $('#ref-kind').value, fields: f,
+        value_label: v('#ref-value-label') || this._ltValueLabel || '', row_label: v('#ref-row-label') || 'chemical',
+        col_label: v('#ref-col-label') || f.level || '',
+      };
+    }
     if (f?.layout === 'metacyc') {
       const lca = f.view === 'lca';
       return {
@@ -4230,6 +4266,7 @@ class AdminPage {
     if (key === this._fieldsKey) return;
     this._fieldsKey = key;
     if (f.kind === 'metacyc') { this._renderMetacyc(box, f); return; }
+    if (f.kind === 'lotus') { this._renderLotus(box, f); return; }
     const u = f.used, dims = f.dims || [];
     const named = (x) => `${esc(x.name)} <span class="muted">(${x.distinct.toLocaleString()}${x.numeric ? `, ${Math.round(x.numeric * 100)}% numbers` : ''})</span>`;
     const tip = (x) => esc(x.samples.length ? `e.g. ${x.samples.join(' · ')}` : 'empty');
@@ -4290,6 +4327,46 @@ class AdminPage {
     this._mcTitle = $('#ref-title').value;
   }
 
+  // A LOTUS bundle (lotus.py): its view's settings, each value of each said (as the server
+  // says them, `choices`), the defaults marked; its title suggested once checked
+  _renderLotus(box, f) {
+    const u = f.used, a = f.about || {}, n = a.counts || {}, r = a.release || {}, ch = f.choices;
+    this._ltChoices = ch;
+    const opts = (key) => ch[key].map((o) => `<option value="${esc(o.value)}"${u[key] === o.value ? ' selected' : ''}>${esc(o.label)}${o.default ? ' (default)' : ''}</option>`).join('');
+    const num = (x) => (x || 0).toLocaleString();
+    box.innerHTML = `<div class="ref-fields"><h4>LOTUS${r.pairs ? ` ${esc(r.pairs)}` : ''}</h4>
+      <p class="muted small">A bundle of LOTUS (app/lotus_build.py) of ${num(n.records)} structure–organism–paper records (${num(n.structures)} structures,
+        ${num(n.organisms)} organisms, ${num(n.papers)} papers): its frozen export of Wikidata${r.pairs ? ` of ${esc(r.pairs)}` : ''}${r.metadata ? `, with its metadata of ${esc(r.metadata)}` : ''}${r.lts ? `,
+        and LOTUS IDs from its release of ${esc(r.lts)}` : ''}; built ${esc(fmtWhen(a.built_at))}. It is shown over the odor table's chemicals that are in it
+        (made again whenever the odor table changes), a cell clicked for the papers behind it. These settings are shown with its matrix, and can be
+        changed once it is added (<i>Change settings…</i>, in the list above).</p>
+      <div class="ref-role"><b>Columns</b> <select data-lt="level" aria-label="Columns">${opts('level')}</select></div>
+      <div class="ref-role"><b>Cells</b> <select data-lt="value" aria-label="Cells">${opts('value')}</select></div>
+      <div class="ref-role"><b>Stereochemistry</b> ${ch.stereo.map((o) => `<label class="chip"><input type="radio" name="ref-lt-stereo" value="${esc(o.value)}"${u.stereo === o.value ? ' checked' : ''}> ${esc(o.label)}${o.default ? ' (default)' : ''}</label>`).join('')}
+        <p class="muted small lt-stereo-detail"></p></div>
+      <div class="ref-role"><b>Taxonomy</b> <select data-lt="taxonomy" aria-label="Taxonomy first">${opts('taxonomy')}</select>
+        <span class="muted small">first: its lineage of each organism, the others after it in turn where it has none (or none at the level)</span></div></div>`;
+    this._ltSource = `LOTUS (lotus.naturalproducts.net; Rutz et al., eLife 2022)${r.pairs ? `, its frozen Wikidata export of ${r.pairs}` : ''}`;
+    this._syncLotus(box);
+  }
+
+  // of organisms, how many is presence: not offered; the stereochemistry chosen said in full
+  _syncLotus(box) {
+    const val = $('[data-lt=value]', box), organism = $('[data-lt=level]', box).value === 'organism';
+    $('option[value=organisms]', val).disabled = organism;
+    if (organism && val.value === 'organisms') { val.value = 'papers'; this._ltAuto = true; }
+    else if (!organism && this._ltAuto) { if (val.value === 'papers') val.value = 'organisms'; this._ltAuto = false; }
+    const st = $('input[name=ref-lt-stereo]:checked', box)?.value;
+    $('.lt-stereo-detail', box).textContent = this._ltChoices.stereo.find((o) => o.value === st)?.detail || '';
+  }
+
+  // as checked: the title (unless typed over) and value label suggested for its settings
+  _lotusSuggest(lt) {
+    if (!$('#ref-title').value.trim() || $('#ref-title').value === this._ltTitle) $('#ref-title').value = lt.title;
+    this._ltTitle = lt.title;
+    this._ltValueLabel = lt.value_label;
+  }
+
   _metacycTitle(view, version) {
     const v = version ? ` ${version}` : '';
     return view === 'lca' ? `MetaCyc${v}: pathway LCA distance between odors` : `MetaCyc${v}: compounds by the pathways they are in`;
@@ -4298,6 +4375,11 @@ class AdminPage {
   // the choices of fields as the controls say
   _readFields() {
     const box = $('#ref-fields'), layout = $('input[name=ref-layout]:checked', box)?.value;
+    if ($('[data-lt=level]', box)) {
+      this._syncLotus(box);
+      return { layout: 'lotus', level: $('[data-lt=level]', box).value, value: $('[data-lt=value]', box).value,
+        stereo: $('input[name=ref-lt-stereo]:checked', box)?.value, taxonomy: $('[data-lt=taxonomy]', box).value };
+    }
     if ($('input[name=ref-mc-view]', box)) {
       const view = $('input[name=ref-mc-view]:checked', box).value, lca = view === 'lca';
       $('.mc-lca-opts', box).hidden = !lca;
@@ -4328,7 +4410,11 @@ class AdminPage {
     showRefCheck({ ok: true, checking: true });
     let c;
     try { c = await api('/api/admin/references/check', { method: 'POST', json: body }); } catch (e) { c = { ok: false, error: e.message }; }
-    if (seq === this._refSeq && $('#ref-path').value.trim() === body.path) { showRefCheck(c); this._renderFields(c); }
+    if (seq === this._refSeq && $('#ref-path').value.trim() === body.path) {
+      showRefCheck(c);
+      this._renderFields(c);
+      if (c.preview?.lotus) this._lotusSuggest(c.preview.lotus);
+    }
   }
 
   async addRef() {
@@ -4353,12 +4439,70 @@ class AdminPage {
     } else {
       out.replaceChildren(msgBox('error', `Added “${title}”, but it cannot be read: ${esc(res.error)}`));
     }
+    this._resetRefForm();
+    reference.invalidate();
+    this._reloadState();
+    this.loadRefs();
+  }
+
+  // the form above emptied, to add another (no longer changing one)
+  _resetRefForm() {
     for (const id of ['#ref-path', '#ref-title', '#ref-description', '#ref-source', '#ref-value-label', '#ref-row-label', '#ref-col-label']) $(id).value = '';
+    for (const id of ['#ref-axis', '#ref-kind']) $(id).value = 'detect';
     showRefCheck(null);
     this._renderFields(null);
     this.refFields = null;
+    this.editing = null;
+    this._ltTitle = this._ltValueLabel = this._ltSource = null;
+    $('#ref-path').readOnly = false;
+    $('#ref-add').textContent = 'Add';
+    $('#ref-cancel').hidden = true;
+    $('#ref-form-head').textContent = 'Add one';
+  }
+
+  // an added LOTUS reference dataset's settings, in the form to change (Save changes) or not
+  // (Cancel); labels as suggested for its settings left empty, to follow them
+  editRef(id) {
+    const r = this.refs.find((x) => x.id === id), lt = r?.lotus;
+    if (!r) return;
+    this._resetRefForm();
+    this.editing = id;
+    $('#ref-path').value = r.path;
+    $('#ref-path').readOnly = true;
+    $('#ref-title').value = r.title || '';
+    this._ltTitle = lt && r.title === lt.title ? r.title : null;
+    $('#ref-description').value = r.description || '';
+    $('#ref-source').value = r.source || '';
+    $('#ref-value-label').value = r.value_label && r.value_label !== lt?.value_label ? r.value_label : '';
+    $('#ref-row-label').value = r.row_label && r.row_label !== 'chemical' ? r.row_label : '';
+    $('#ref-col-label').value = r.col_label && r.col_label !== lt?.level ? r.col_label : '';
+    $('#ref-axis').value = r.chemical_axis || 'detect';
+    $('#ref-kind').value = r.kind_setting || 'detect';
+    this.refFields = lt ? { layout: 'lotus', level: lt.level, value: lt.value, stereo: lt.stereo, taxonomy: lt.taxonomy } : null;
+    $('#ref-add').textContent = 'Save changes';
+    $('#ref-cancel').hidden = false;
+    $('#ref-form-head').textContent = `Change “${r.title}”`;
+    $('#ref-form-head').scrollIntoView({ block: 'start', behavior: 'smooth' });
+    this.checkRef();
+  }
+
+  async saveRef() {
+    const id = this.editing, out = $('#ref-result'), { path, ...body } = this._refBody();
+    let res;
+    try { res = await api(`/api/admin/references/${encodeURIComponent(id)}`, { method: 'PATCH', json: body }); } catch (e) {
+      out.replaceChildren(msgBox('error', `Not changed: ${esc(e.message)}`));
+      return;
+    }
+    if (!res.ok) {
+      if (res.check) showRefCheck(res.check);
+      out.replaceChildren(msgBox('error', `Not changed:${listHtml(res.errors)}`));
+      return;
+    }
+    const title = esc(body.title);
+    out.replaceChildren(res.state === 'ok' ? msgBox('ok', `Changed “${title}”: <a href="#reference/${esc(id)}">see it in the Reference data tab</a>.`)
+      : msgBox(res.state === 'pending' ? 'warn' : 'error', `Changed “${title}”, but ${res.state === 'pending' ? 'it is read once the server restarts' : `it cannot be read: ${esc(res.error)}`}.`));
+    this._resetRefForm();
     reference.invalidate();
-    this._reloadState();
     this.loadRefs();
   }
 

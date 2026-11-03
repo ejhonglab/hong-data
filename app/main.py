@@ -37,8 +37,8 @@ from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, R
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import (backup, chemprops, compare, config, dilution, export, filelog, headspace, merge, metacyc, movies, odormeta,
-               reference, sandbox, tensor, thorimage, vcf, yamlcheck)
+from . import (backup, chemprops, compare, config, dilution, export, filelog, headspace, lotus, merge, metacyc, movies,
+               odormeta, reference, sandbox, tensor, thorimage, vcf, yamlcheck)
 from .db import PANEL_RENAMES, PROPERTY_COLUMNS, Database, rename_panel
 from .glomeruli import load_glomeruli
 from .ingest import (ParsedData, ValidationError, combine, extra_text, files_text, fly_key, kc_id_problems, load_file,
@@ -2352,6 +2352,37 @@ async def metacyc_structure(request: Request) -> Response:
     return Response(svg, media_type="image/svg+xml", headers={"cache-control": "max-age=86400"})
 
 
+async def lotus_cell(request: Request) -> Response:
+    """What a cell of a LOTUS reference dataset is of (`lotus.cell`): its row's structures
+    (``structures``: IDs, as the row's ``lotus``) and its column's taxon (``name`` and
+    ``kingdom``, or ``organism``: an ID, as the column's ``lotus``), as its view's options say."""
+    q = request.query_params
+    try:
+        structures = [int(x) for x in q.get("structures", "").split(",") if x.strip()]
+        organism = int(q["organism"]) if q.get("organism") else None
+    except ValueError:
+        return json_error(400, "structures: IDs separated by commas; organism: an ID")
+    if not structures:
+        return json_error(400, "give the row's structures: ?structures=1,2&name=...&kingdom=...")
+
+    def get():
+        try:
+            src = reference.bundle_source(db, request.path_params["ref_id"], "lotus")
+        except reference.ReferenceError as e:
+            raise HTTPException(409, str(e)) from None
+        if src is None:
+            raise HTTPException(404, "no such reference dataset of LOTUS")
+        try:
+            b = lotus.bundle(src[0])
+            return lotus.cell(b, src[1], structures, {"name": q.get("name"), "kingdom": q.get("kingdom") or None,
+                                                      "organism": organism})
+        except OSError as e:
+            raise HTTPException(409, f"its LOTUS bundle cannot be read: {e}") from None
+        except lotus.LotusError as e:
+            raise HTTPException(404, str(e)) from None
+    return JSONResponse(await run_in_threadpool(get))
+
+
 async def reference_get(request: Request) -> Response:
     """A reference dataset for the viewer (`reference.load`): gzipped, if large and the browser takes it."""
     data = await run_in_threadpool(lambda: reference.load(db, request.path_params["ref_id"], _odor_index()))
@@ -2695,6 +2726,18 @@ async def admin_reference_add(request: Request) -> Response:
     return JSONResponse(result, status_code=status)
 
 
+async def admin_reference_update(request: Request) -> Response:
+    """Change a reference dataset's settings (any of those adding it takes but "path"), see `reference.update`."""
+    body = await request.json()
+    if not isinstance(body, dict):
+        return json_error(400, 'expected {"title": ..., "fields": ...}')
+    ref_id = request.path_params["ref_id"]
+    status, result = await run_in_threadpool(lambda: reference.update(db, ref_id, body, _odor_index(), _supervisor()))
+    if status == 200:
+        log.info("reference dataset %s changed in the Admin tab: %s", ref_id, json.dumps(body.get("fields")))
+    return JSONResponse(result, status_code=status)
+
+
 async def admin_reference_delete(request: Request) -> Response:
     """Delete a reference dataset added in the Admin tab (its import, not its file), see `reference.delete`."""
     ref_id = request.path_params["ref_id"]
@@ -2794,6 +2837,7 @@ routes = [
     Route("/api/reference/{ref_id}/metacyc/structure/{frame:path}", metacyc_structure),
     Route("/api/reference/{ref_id}/metacyc/lca", metacyc_lca),
     Route("/api/reference/{ref_id}/metacyc/search", metacyc_search),
+    Route("/api/reference/{ref_id}/lotus/cell", lotus_cell),
     Route("/api/admin", admin_get),
     Route("/api/admin", admin_save, methods=["POST"]),
     Route("/api/admin/check", admin_check, methods=["POST"]),
@@ -2812,6 +2856,7 @@ routes = [
     Route("/api/admin/references/check", admin_reference_check, methods=["POST"]),
     Route("/api/admin/references", admin_reference_add, methods=["POST"]),
     Route("/api/admin/references/{ref_id}", admin_reference_delete, methods=["DELETE"]),
+    Route("/api/admin/references/{ref_id}", admin_reference_update, methods=["PATCH"]),
     Mount("/static", RevalidatedStaticFiles(directory=str(config.STATIC_DIR)), name="static"),
 ]
 

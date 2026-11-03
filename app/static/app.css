@@ -738,6 +738,7 @@ dialog.player::backdrop { background: rgba(29,31,34,.55); }
 .mc-panel { flex: none; margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--rule); }
 /* (the matrix as high as it needs above it, up to most of the window, the tab scrolling to it) */
 #reference-view:has(#ref-metacyc:not([hidden])) #reference-viewer { flex: none; }
+#reference-view:has(#ref-lotus:not([hidden])) #reference-viewer { flex: none; }
 .mc-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .mc-head h3 { margin: 0; }
 .mc-search { flex: 1; min-width: 220px; max-width: 520px; }
@@ -808,3 +809,15 @@ dialog.player::backdrop { background: rgba(29,31,34,.55); }
   .topbar { gap: 12px; padding: 0 12px; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } .progress:indeterminate { animation: none; } }
+
+/* LOTUS, under a matrix of its in the Reference data tab (lotus.js), and its settings in the Admin tab */
+#ref-lotus-made { margin: 4px 0 10px; font-size: 13px; }
+.lt-made { margin-bottom: 8px; }
+.lt-made summary { font-weight: 600; cursor: pointer; }
+.lt-dl { margin: 6px 0; max-width: 110ch; }
+.lt-dl dd { line-height: 1.45; }
+.lt-check { margin: 6px 0; font-size: 13px; }
+.lt-table td:first-child { min-width: 16em; }
+.lt-papers { margin: 0; padding-left: 1.4em; font-size: 13px; }
+.lt-papers li { margin: 2px 0; }
+.lt-stereo-detail { margin: 4px 0 0; max-width: 100ch; }

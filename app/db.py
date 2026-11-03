@@ -842,6 +842,13 @@ class Database:
             con.execute(f"INSERT INTO reference_datasets ({', '.join(REFERENCE_COLUMNS)}) VALUES ({', '.join('?' * len(REFERENCE_COLUMNS))})",
                         [ref.get(c) for c in REFERENCE_COLUMNS])
 
+    def update_reference(self, ref: dict) -> None:
+        """Change a reference dataset's settings (a dict with `REFERENCE_COLUMNS`, by its id)."""
+        cols = [c for c in REFERENCE_COLUMNS if c != "id"]
+        with self.connect() as con:
+            con.execute(f"UPDATE reference_datasets SET {', '.join(f'{c} = ?' for c in cols)} WHERE id = ?",
+                        [ref.get(c) for c in cols] + [ref["id"]])
+
     def delete_reference(self, ref_id: str) -> bool:
         with self.connect() as con:
             return con.execute("DELETE FROM reference_datasets WHERE id = ?", (ref_id,)).rowcount > 0

@@ -374,6 +374,44 @@ between the frontend and the server. Using the app is described in
     each compound, ordered by the mean position of their neighbours (sweeps down and up),
     and wrap when wider than 1,100 px. No graph library: none is used elsewhere, and
     pathways are small (a superpathway's tens of reactions).
+- **LOTUS** (`lotus_build.py`, `lotus.py`, `static/lotus.js`) is a bundle too, read as
+  MetaCyc's is (`reference.bundle_kind`: by the kind its `about` says, as both are
+  `.sqlite`), for the same reason: 220,823 structures by 36,800 organisms, of which only
+  the odor table's chemicals can be compared with datasets. Its one view is made over
+  them, by the settings in its `fields`; unlike MetaCyc's views, these are changed in place
+  (`PATCH /api/admin/references/{id}`, `reference.update`, which any reference dataset
+  added in the Admin tab could use), the import made again as for any change to `fields`.
+  The settings and what the bundle was made from are said above the matrix
+  (`lotus.describe`: each with whether the Admin tab changes it), as they were chosen
+  for, not read off, the data.
+  - *Which release*: `LOTUS/raw` holds two. The 2021 one (`NPOC2021`, the MongoDB dump of
+    lotus.naturalproducts.net, from which `LOTUS/processed` was made) has 668k
+    structure–organism pairs, LOTUS IDs, and every organism's lineage in each of 9
+    taxonomy sources, but no CIDs; the frozen export of Wikidata of 2023-01-06
+    (`230106_frozen`, 533k pairs with their papers) with the metadata of 2022-09-16 (Zenodo
+    7534077: every structure's CID, names, and lineages in 13 sources, order included)
+    has all 64 odors of the thesis template with a CID, where the 2021 one has 58. It is
+    not a superset (247k pairs are only in 2021's), but is the one LOTUS curates; the
+    bundle is made of it, with LOTUS IDs joined from the 2021 SDF by InChIKey (90% of
+    structures), as the odor table links odors to lotus.naturalproducts.net by them.
+  - *Stereochemistry*: LOTUS gives each record a structure as its source drew it, often
+    an enantiomer the paper did not determine, or none: (−)-α-pinene is in 116 organisms
+    as its exact structure, 1,152 as any α-pinene. By default an odor is every structure
+    of its InChI without tetrahedral stereo (`/t`, `/m`, `/s` layers): enantiomers,
+    diastereomers and unspecified stereocenters merged (so menthol with neomenthol), but
+    not cis/trans isomers (`/b`), which are other odors (geraniol, nerol). Exact and
+    skeleton (InChIKey's first block) are options, kept as keys of each structure.
+  - *Taxonomy*: LOTUS gives an organism's lineage in each source that has it, and they
+    differ (kingdoms by other names: Viridiplantae, Chloroplastida; families of two names;
+    homonyms across kingdoms, 35 genera in GBIF alone, e.g. *Crambe*, a plant and a moth).
+    One source is used first (GBIF's backbone, of 32,798 of the 36,800 organisms), then
+    the others in turn where those before give the organism nothing at the level; kingdoms
+    are kept as GBIF names them (`kingdom_of`), as are the eight families conserved under
+    two names (`FAMILY_NAMES`: EUNIS has Compositae), and taxa are told apart by name and
+    kingdom. Columns are ordered by lineage, kingdoms with the most organisms first.
+  - *A cell* (`lotus.cell`, `/api/reference/{id}/lotus/cell`): the organisms of its taxon
+    that its row's structures are reported in, each with its papers (titles as plain
+    text: Crossref's markup, in 17k of them, dropped with the spaces it ran over kept).
 
 ## Statistical testing
 
@@ -754,6 +792,10 @@ app/metacyc.py     MetaCyc bundles as reference data: odors matched to compounds
                    pathway LCA distance, pathways, compounds and searches for the Reference data tab
 app/metacyc_build.py  MetaCyc's SmartTables read into a bundle (python -m app.metacyc_build), and its two
                    reference datasets added through the Admin tab's API
+app/lotus.py       LOTUS bundles as reference data: its view's settings (and how they are said), odors matched to
+                   structures, chemicals × taxa, a cell's organisms and papers
+app/lotus_build.py LOTUS's frozen records and metadata read into a bundle (python -m app.lotus_build), and its
+                   reference dataset added through the Admin tab's API
 app/export.py      downloads: zips of dataset files, concatenated wide/long matrices
 app/merge.py       merged downloads of a coding unit: grouping datasets, scaling groups to each other
 app/compare.py     datasets averaged for the Compare tab (odors × glomeruli or ROIs); ECFP fingerprints (RDKit)
@@ -774,7 +816,8 @@ app/static/        frontend: index.html, app.js, heatmap.js, colormaps.js (+ mpl
                    app.css, cluster.js (+ cluster-worker.js), figure.js (SVG/PDF/PNG export),
                    player.js (movie player), similarity.js (odor similarities, and between them;
                    pvalue-worker.js their p-values), metacyc.js (MetaCyc below its matrices: pathways
-                   drawn, compounds, LCA paths, search)
+                   drawn, compounds, LCA paths, search), lotus.js (LOTUS with its matrices: how
+                   made, a cell's organisms and papers)
 manage.py          list / show / export / delete datasets from the server
 deploy/            systemd units; Dockerfile + docker-compose.yml at the top level
 tests/             pytest tests
@@ -928,6 +971,10 @@ GET    /api/reference/{id}/metacyc/structure/{frame}  its structure from its InC
 GET    /api/reference/{id}/metacyc/lca      ?a=, b= (frame IDs) → their pathway LCA distance in its
                                             view's network, and the paths from their LCAs
 GET    /api/reference/{id}/metacyc/search   ?q= → pathways and compounds by name or frame ID
+GET    /api/reference/{id}/lotus/cell       ?structures= (its row's lotus), name=, kingdom= (its
+                                            column's; or organism=) → of a LOTUS bundle's: the
+                                            organisms of the taxon the structures are reported in,
+                                            each with its papers
 GET    /api/admin                           the folders the server may read and write (saved, in
                                             effect since it started, checked), the odor sheet's
                                             link; Landlock, restarts
@@ -961,6 +1008,9 @@ POST   /api/admin/references/check          {"path", "chemical_axis", "kind"} �
 POST   /api/admin/references                {"path", "title", "description", "source", "kind",
                                             "chemical_axis", "value_label", "row_label", "col_label"}
                                             → added (its file to the folders it may read, if need be)
+PATCH  /api/admin/references/{id}           any of those adding it takes but "path" (e.g. "fields":
+                                            a LOTUS bundle's settings) → changed, its file read
+                                            again by them
 DELETE /api/admin/references/{id}           its copy deleted (never its file) → {"revoked": the path
                                             taken off the folders it may read, if any}
 ```
