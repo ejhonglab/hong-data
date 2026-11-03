@@ -367,8 +367,9 @@ table.diff .new { color: var(--ok); }
 .ref-list[hidden] { display: none; }
 .ref-list p { margin: 0; }
 .unidentified { margin-top: 8px; }
-.ref-unidentified { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-weight: 500; }
-.ref-unidentified input { width: auto; margin: 0; }
+.ref-unidentified, .ref-only-odors { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-weight: 500; }
+.ref-unidentified input, .ref-only-odors input { width: auto; margin: 0; }
+.ref-only-odors { margin: 0 0 8px; }
 .unidentified summary { cursor: pointer; font-weight: 500; }
 .unidentified .actions { margin: 6px 0; }
 .unidentified ol { max-height: 260px; overflow: auto; margin: 0; padding: 6px 8px 6px 3em; font-size: 12.5px; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; }

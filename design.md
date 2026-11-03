@@ -332,8 +332,9 @@ between the frontend and the server. Using the app is described in
 - **Reference datasets** are built in (`reference_data/`, read when asked for; those
   marked as examples only while there is no other, built in or added) or added in
   the Admin tab: a file anywhere on the server that the app only reads, into a copy in
-  `data/references/<id>/` (its labels and identifiers as JSON, its numbers as float32),
-  made again whenever the file's size or time changes; a failed read is kept too, so a
+  `data/references/<id>/` (its labels and identifiers as JSON, its numbers as float32,
+  or of a matrix most of whose cells are 0, its other cells: `sparse.Sparse`, as
+  `values.npz`), made again whenever the file's size or time changes; a failed read is kept too, so a
   broken file is not read on every listing. A file outside the folders the server may
   read is added to them as itself (Landlock takes a rule on a single file), not its
   folder, and read after the next restart, like any other change to them; deleting the
@@ -341,20 +342,34 @@ between the frontend and the server. Using the app is described in
   the odor table when it is served, not when it is read, so that the names shown follow
   the Odors tab: by CID, else InChI, else CAS, MetaCyc or LOTUS ID, name or
   abbreviation, never against a CID or InChI given (a name alone can name another
-  isomer).
+  isomer). A MetaCyc view's are matched as `metacyc.match_odors` matched them when it
+  was made (its record's `matched`), each identified by its frame ID: matched again by
+  label or CID, a second compound of one odor (its other stereoisomer, or the acid of
+  the anion MetaCyc keeps) would be it too.
 - **MetaCyc** (`metacyc_build.py`, `metacyc.py`, `static/metacyc.js`) is a reference
   dataset of a kind of its own: a bundle (one SQLite file, read only and immutable, so no
-  locks on NFS) built by a script from MetaCyc's SmartTables, not a matrix. MetaCyc has
-  19,190 compounds by 3,519 pathways (67 million cells), more than a browser can be sent,
-  and only the chemicals of the odor table can be compared with datasets, so each view is
-  made over those (in about a second) when it is imported, and imported again whenever
-  the odor table changes (its fingerprint is kept with the import, as the file's size
-  and time are). Two views, each its own reference dataset (added once for each): a
-  binary-ish matrix of compounds by pathways, compared as any other by the similarity of
-  its rows, and a pairwise one (`pairwise: "distance"`: its columns its rows, served
-  `square`), compared by its own values negated (the nearer, the more alike), as a
-  distance between two odors is not a vector to correlate. What is drawn and listed below
-  the matrix is asked of the bundle when needed (`/api/reference/{id}/metacyc/...`).
+  locks on NFS) built by a script from MetaCyc's SmartTables, not a matrix. Two views,
+  each its own reference dataset (added once for each), made when it is imported (in
+  about a second) and imported again whenever the odor table changes, as which compounds
+  are its chemicals does (its fingerprint is kept with the import, as the file's size and
+  time are):
+  - *Compounds by pathways*: every compound in a pathway, the odor table's chemicals
+    first (of MetaCyc 27.1, classes as fallback: 12,121 by 3,514, 43 million cells, of
+    which 87 thousand, 0.2%, are not 0). It is kept and sent as its cells other than 0
+    (`sparse.Sparse`; `values.npz`, 1 MB, not 170 MB; `values_sparse` in the payload),
+    and made whole only in the browser (170 MB, in 60 ms; the viewer shows it as given,
+    not copied, while nothing is removed or moved). The Reference data tab can show only
+    the odor table's chemicals, and the pathways they are in (`refSubset`), as the view
+    was made before; the Compare tab compares its odors only along those pathways, as
+    pathways none of them is in would add agreement of 0s to every correlation.
+  - *Pathway LCA distance*: pairwise (`pairwise: "distance"`: its columns its rows,
+    served `square`) between the odor table's chemicals alone: of every compound it would
+    be 147 million cells (590 MB), from a breadth-first search of the whole network for
+    each of 12 thousand compounds and, for each pair, a sum over every node. Compared by
+    its own values negated (the nearer, the more alike), as a distance between two odors
+    is not a vector to correlate.
+  - *Looked into*: what is drawn and listed below the matrix is asked of the bundle when
+    needed (`/api/reference/{id}/metacyc/...`).
   - *Its tables*: `BioCyc/raw` holds SmartTables of MetaCyc 27.1 (January–February 2024,
     as the thesis used, though it says 27.0), each exported twice, by frame IDs and by names, in the same row
     order: IDs come from the first and the names of what each cell lists from the second,
@@ -1099,4 +1114,7 @@ POST   /api/admin/lotus                     multipart 'file' (repeatable: the fi
 ```
 
 Matrix payloads carry `values_b64`: little-endian float32, row-major
-`(n_units, n_trials)`; `NaN` marks missing cells.
+`(n_units, n_trials)`; `NaN` marks missing cells. A reference dataset's of a matrix most
+of whose cells are 0 (MetaCyc's compounds by pathways) carries `values_sparse` instead:
+`index_b64` (little-endian uint32: the flat, row-major indices of its other cells) and
+`values_b64` (theirs, as above).

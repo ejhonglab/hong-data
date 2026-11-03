@@ -5,7 +5,8 @@ data tab. Two kinds:
   read from there when asked for;
 - added in the Admin tab: a file anywhere on the server, which is never written to. It is
   read ("imported") into ``data/references/<id>/`` (``import.json``: its labels,
-  identifiers and notes; ``values.f32``: its numbers), and again whenever it changes.
+  identifiers and notes; ``values.f32``: its numbers, or ``values.npz`` those of a matrix
+  most of whose cells are 0, `sparse.Sparse`), and again whenever it changes.
   Deleting it deletes only that copy. A file outside the folders the server may read is
   added to them, and read once the server restarts.
 
@@ -14,8 +15,8 @@ Either is a CSV, TSV or parquet file: row labels in the first column, an optiona
 an xarray DataArray of two dimensions saved as netCDF (`DataArray.to_netcdf`), its
 coordinates labelling and identifying its items (`_parse_dataarray`). Or a bundle (an
 SQLite file whose ``about`` says what it is, `bundle_kind`): of MetaCyc (metacyc.py) or
-LOTUS (lotus.py), one of whose views is made over the odor table's chemicals, and again
-whenever the odor table changes.
+LOTUS (lotus.py), one of whose views is made with the odor table's chemicals matched by the
+bundle's module, and again whenever the odor table changes.
 Chemicals can be identified by columns named ``cid`` (or ``pubchem_cid``, ...),
 ``inchi``, ``cas``, ``metacyc``, ``lotus``, ``name`` or ``abbrev`` (then the rows are
 chemicals), or by rows labelled so (then the columns are). They are matched to the odor
@@ -28,6 +29,7 @@ from __future__ import annotations
 
 import base64
 import datetime as dt
+import io
 import json
 import os
 import re
@@ -43,6 +45,7 @@ import numpy as np
 import pandas as pd
 
 from . import config, glomeruli as glom, lotus, metacyc, odormeta, sandbox
+from .sparse import Sparse
 
 NETCDF_SUFFIXES = (".nc", ".nc4", ".netcdf")  # xarray DataArrays
 BUNDLES = {"metacyc": metacyc, "lotus": lotus}  # bundles, by the kind their about says: the module reading them
@@ -74,7 +77,7 @@ _ID_FIELD = {h: f for f, hs in ID_HEADERS.items() for h in hs}
 MEMO_SIZE = 8  # files read but not imported (built in, or being checked) kept parsed
 
 _lock = threading.Lock()  # one import at a time
-_memo: "OrderedDict[tuple, tuple[dict, np.ndarray]]" = OrderedDict()
+_memo: "OrderedDict[tuple, tuple[dict, np.ndarray | Sparse]]" = OrderedDict()
 _memo_lock = threading.Lock()
 
 
@@ -172,7 +175,7 @@ def read_table(path: Path) -> pd.DataFrame:
 
 
 def parse(path: Path, chemical_axis: str = "detect", kind: str = "detect", fields: Optional[dict] = None,
-          odors: Optional[list[dict]] = None) -> tuple[dict, np.ndarray]:
+          odors: Optional[list[dict]] = None) -> tuple[dict, np.ndarray | Sparse]:
     """A reference dataset file read: (record, values).
 
     Args:
@@ -194,8 +197,10 @@ def parse(path: Path, chemical_axis: str = "detect", kind: str = "detect", field
         ``shape``, ``notes`` (what was left out or not understood); a MetaCyc view's also
         ``metacyc`` (its options) and, of distances between chemicals, ``pairwise``
         ('distance': its columns are its rows); a LOTUS view's ``lotus`` (its options, and
-        how it was made: `lotus.describe`); values: float32 (rows x cols, NaN where
-        missing).
+        how it was made: `lotus.describe`); a bundle's view may have ``matched``: per
+        item of its chemical axis, the odor it is ([id, how], or None: none), as its
+        module matched them (see `chemicals`). values: float32 (rows x cols, NaN where
+        missing), or of a bundle's view, maybe a `Sparse` matrix.
 
     Raises:
         ReferenceError: if it has no numbers. Errors reading the file are raised as they are.
@@ -617,7 +622,7 @@ def _read_error(path: Path, e: Exception) -> str:
 
 
 def _parsed(path: Path, chemical_axis: str, kind: str, fields: Optional[dict] = None,
-            odors: Optional[list[dict]] = None) -> tuple[dict, np.ndarray]:
+            odors: Optional[list[dict]] = None) -> tuple[dict, np.ndarray | Sparse]:
     """`parse`, kept in memory for the file as it is now (for files not imported), and of a
     bundle, the odor table as it is."""
     mod = BUNDLES.get(bundle_kind(path))
@@ -692,14 +697,32 @@ def state(ref: dict, odors: Optional[list[dict]] = None) -> dict:
             record.update(settings, imported_at=imported_at)
             d.mkdir(parents=True, exist_ok=True)
             if values is not None:
-                _write(d / "values.f32", values.astype("<f4").tobytes())
+                _write_values(d, values, record)
             _write(d / "import.json", json.dumps(record).encode())
     if record.get("error"):
         return {"state": "error", "error": record["error"], "record": None}
     return {"state": "ok", "error": None, "record": record}
 
 
-def _values(ref_id: str, record: dict) -> np.ndarray:
+def _write_values(d: Path, values: np.ndarray | Sparse, record: dict) -> None:
+    """An import's values written to its folder `d`: dense (``values.f32``), or of a `Sparse`
+    matrix its cells other than 0 (``values.npz``, ``storage`` 'sparse' in its record); the
+    other file, if any, deleted."""
+    if isinstance(values, Sparse):
+        buf = io.BytesIO()
+        np.savez(buf, index=values.index.astype("<i8"), values=values.values.astype("<f4"))
+        _write(d / "values.npz", buf.getvalue())
+        record["storage"] = "sparse"
+        (d / "values.f32").unlink(missing_ok=True)
+    else:
+        _write(d / "values.f32", values.astype("<f4").tobytes())
+        (d / "values.npz").unlink(missing_ok=True)
+
+
+def _values(ref_id: str, record: dict) -> np.ndarray | Sparse:
+    if record.get("storage") == "sparse":
+        with np.load(cache_dir(ref_id) / "values.npz") as z:
+            return Sparse(tuple(record["shape"]), z["index"], z["values"])
     return np.fromfile(cache_dir(ref_id) / "values.f32", dtype="<f4").reshape(record["shape"])
 
 
@@ -709,13 +732,17 @@ def _values(ref_id: str, record: dict) -> np.ndarray:
 def chemicals(record: dict, index: odormeta.OdorIndex) -> dict:
     """A reference dataset's chemicals matched to the odor table (`OdorIndex.match_chemical`).
 
+    Of a bundle's view, they are as its module matched them (its record's ``matched``),
+    each identified by the bundle's ID of it.
+
     Returns:
         ``axis`` ('rows' | 'cols' | None), ``items`` (per item of that axis: ``odor_id``,
-        ``how``, the odor's ``name`` and ``abbrev`` if matched, and its ``cid`` and
-        ``inchi``, from the file or else the odor table), ``n``, ``matched`` (to the odor
-        table), ``identified`` (with a CID or InChI), ``unidentified`` and ``ambiguous``
-        (labels), and ``unrecognized`` (looked for but none found: no identifiers, and no
-        labels the odor table knows).
+        ``how``, the odor's ``name`` and ``abbrev`` if matched, its ``cid`` and
+        ``inchi``, from the file or else the odor table, and whether it is
+        ``identified``), ``n``, ``matched`` (to the odor table), ``identified`` (with a
+        CID or InChI, or a bundle's ID), ``unidentified`` and ``ambiguous`` (labels), and
+        ``unrecognized`` (looked for but none found: no identifiers, and no labels the odor
+        table knows).
     """
     out = {"axis": None, "items": [], "n": 0, "matched": 0, "identified": 0, "unidentified": [], "ambiguous": [],
            "unrecognized": False}
@@ -724,6 +751,8 @@ def chemicals(record: dict, index: odormeta.OdorIndex) -> dict:
         return out
 
     def match(axis: str) -> list[tuple[Optional[int], str]]:
+        if record.get("matched") is not None:  # (as the bundle's module matched them)
+            return [(m[0], m[1]) if m and m[0] in index.by_id else (None, "none") for m in record["matched"]]
         ids = given[axis] or [{}] * len(record[axis])
         return [index.match_chemical(i, it["label"]) for i, it in zip(ids, record[axis])]
 
@@ -736,17 +765,21 @@ def chemicals(record: dict, index: odormeta.OdorIndex) -> dict:
         if not any(found.values()):
             return {**out, "unrecognized": True}
         axis = "rows" if found["rows"] >= found["cols"] else "cols"
-    items = []
+    items, bundled = [], record.get("matched") is not None
     for ids, it, (odor_id, how) in zip(given[axis] or [{}] * len(record[axis]), record[axis], match(axis)):
         o = index.by_id.get(odor_id) or {}
-        cid, inchi = ids.get("cid") or o.get("cid"), ids.get("inchi") or o.get("inchi")
-        items.append({"odor_id": odor_id, "how": how, "name": o.get("name"), "abbrev": o.get("abbrev"), "cid": cid, "inchi": inchi})
+        # (a bundle's chemical matched as the same but for charge or stereochemistry: the odor's)
+        first = (o, ids) if bundled else (ids, o)
+        cid, inchi = first[0].get("cid") or first[1].get("cid"), first[0].get("inchi") or first[1].get("inchi")
+        identified = bool(cid or inchi) or bundled
+        items.append({"odor_id": odor_id, "how": how, "name": o.get("name"), "abbrev": o.get("abbrev"), "cid": cid, "inchi": inchi,
+                      "identified": identified})
         if how == "ambiguous":
             out["ambiguous"].append(it["label"])
-        if not (cid or inchi):
+        if not identified:
             out["unidentified"].append(it["label"])
     return {**out, "axis": axis, "items": items, "n": len(items), "matched": sum(i["odor_id"] is not None for i in items),
-            "identified": sum(bool(i["cid"] or i["inchi"]) for i in items)}
+            "identified": sum(i["identified"] for i in items)}
 
 
 def glomeruli(record: dict) -> dict:
@@ -890,19 +923,22 @@ def load(db, ref_id: str, index: odormeta.OdorIndex) -> Optional[dict[str, Any]]
     cols = [dict(c) for c in record["cols"]]
     if chem["axis"]:
         for it, c in zip(rows if chem["axis"] == "rows" else cols, chem["items"]):
-            it["chem"] = {**{k: c[k] for k in ("odor_id", "name", "abbrev", "cid", "how")}, "identified": bool(c["cid"] or c["inchi"])}
+            it["chem"] = {k: c[k] for k in ("odor_id", "name", "abbrev", "cid", "how", "identified")}
         if record.get("pairwise"):  # (its columns are its rows)
             for it, r in zip(cols, rows):
                 it["chem"] = r["chem"]
     if gl["axis"]:
         for it, name in zip(rows if gl["axis"] == "rows" else cols, gl["names"]):
             it["glomerulus"] = name
-    finite = np.isfinite(values)
+    if isinstance(values, Sparse):  # (its cells other than 0)
+        vrange, encoded = values.range(), {"values_sparse": values.payload()}
+    else:
+        finite = values[np.isfinite(values)]
+        vrange = (float(finite.min()), float(finite.max())) if finite.size else None
+        encoded = {"values_b64": base64.b64encode(values.astype("<f4").tobytes()).decode("ascii")}
     return {
-        "meta": meta, "state": "ok", "rows": rows, "cols": cols, "shape": list(values.shape), "dtype": "float32",
-        "values_b64": base64.b64encode(values.astype("<f4").tobytes()).decode("ascii"),
-        "vmin": float(values[finite].min()) if finite.any() else None,
-        "vmax": float(values[finite].max()) if finite.any() else None,
+        "meta": meta, "state": "ok", "rows": rows, "cols": cols, "shape": list(values.shape), "dtype": "float32", **encoded,
+        "vmin": vrange[0] if vrange else None, "vmax": vrange[1] if vrange else None,
         "chemicals": {k: v for k, v in chem.items() if k != "items"}, "warning": warning(chem, gl), "notes": record["notes"],
         "glomeruli": {k: gl[k] for k in ("axis", "n", "matched")},
         "imported_at": record.get("imported_at"),

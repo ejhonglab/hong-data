@@ -556,8 +556,9 @@ def build(raw: Path, out: Path, version: Optional[str] = None, overrides: Option
 
 VIEWS = [
     {"view": "pathways", "title": "MetaCyc{v}: compounds by the pathways they are in", "kind": "detect",
-     "description": "Each chemical of the odor table that is in MetaCyc, by the pathways it is in: 1 itself, 0.5 only through a "
-                    "class it is of (e.g. an alcohol), if it is in none itself. Click a cell for the pathway.",
+     "description": "Every compound of MetaCyc in a pathway, by the pathways it is in: 1 itself, 0.5 only through a class it "
+                    "is of (e.g. an alcohol), if it is in none itself. The odor table's chemicals come first, and can be shown "
+                    "alone. Click a cell for the pathway.",
      "value_label": "in the pathway", "row_label": "chemical", "col_label": "pathway"},
     {"view": "lca", "title": "MetaCyc{v}: pathway LCA distance between odors", "kind": "sequential",
      "description": "Between two chemicals of the odor table, the fewest steps from a common ancestor to both in MetaCyc's "

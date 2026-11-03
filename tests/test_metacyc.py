@@ -4,6 +4,7 @@ OLFDB_DATA_DIR=<a scratch folder> python -m pytest tests/"""
 from __future__ import annotations
 
 import asyncio
+import base64
 import datetime as dt
 import io
 import json
@@ -19,7 +20,8 @@ import pytest
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
 
-from app import bundle_import, config, metacyc, metacyc_build, metacyc_import, odormeta, sandbox
+from app import bundle_import, config, metacyc, metacyc_build, metacyc_import, odormeta, reference, sandbox
+from app.sparse import Sparse
 from tests.test_reference import INCHI_LIN, env  # noqa: F401 (fixtures)
 from tests.test_tensor import call, main, root  # noqa: F401 (fixtures)
 
@@ -264,15 +266,26 @@ def test_match_odors(bundle_path):
 
 
 def test_pathway_matrix(bundle_path):
+    # every compound in a pathway: the odor table's first (as its odors), then the others by name
     rec, v = metacyc.parse(bundle_path, {"layout": "metacyc", "view": "pathways"}, ODORS)
-    assert [r["label"] for r in rec["rows"]] == ["geraniol", "beta-myrcene", "linalool", "acetic acid"]
+    assert [r["label"] for r in rec["rows"]] == ["geraniol", "beta-myrcene", "linalool", "acetic acid", "geranial",
+                                                 "geranyl diphosphate", "H₂O"]
     assert [c["metacyc"] for c in rec["cols"]] == ["PWY-B", "PWY-C", "PWY-A", "PWY-S"]  # (by class, then name)
-    assert v.tolist() == [[1, 0, 1, 1], [0, 0, 1, 1], [0.5, 0, 0, 0], [0, 1, 0, 0]]  # linalool through a monoterpenol
+    assert isinstance(v, Sparse) and v.shape == (7, 4) and len(v.index) == 12 and v.range() == (0, 1)
+    assert v.toarray().tolist() == [[1, 0, 1, 1], [0, 0, 1, 1], [0.5, 0, 0, 0], [0, 1, 0, 0],  # linalool through a monoterpenol
+                                    [1, 0, 0, 1], [0, 0, 1, 1], [0, 1, 0, 0]]
+    assert rec["matched"] == [[1, "inchi"], [2, "metacyc"], [3, "skeleton"], [4, "skeleton"], None, None, None]
+    assert rec["ids"]["rows"][0] == {"metacyc": "GERANIOL", "cid": 637566} and rec["ids"]["rows"][5] == {"metacyc": "GPP"}
     assert rec["kind"] == "sequential" and rec["chemical_axis"] == "rows" and rec["rows"][2]["metacyc"] == "LINALOOL"
     assert "1 of the odor table's 5 chemicals are not in MetaCyc" in rec["notes"][0] and "ethyl acetate" in rec["notes"][0]
+    assert "the 4 chemicals of the odor table in MetaCyc first, then the 3 other compounds" in rec["notes"][1]
     assert rec["metacyc"]["view"] == "pathways" and rec["metacyc"]["version"] == "99.0"
     rec, v = metacyc.parse(bundle_path, {"view": "pathways", "classes": "never"}, ODORS)
-    assert rec["kind"] == "binary" and v[2].tolist() == [0, 0, 0, 0] and any("in no pathway" in n for n in rec["notes"])
+    assert rec["kind"] == "binary" and v.toarray()[2].tolist() == [0, 0, 0, 0] and any("in no pathway" in n for n in rec["notes"])
+    # with no odor table, all the same
+    rec, v = metacyc.parse(bundle_path, {"view": "pathways"}, [])
+    assert [r["metacyc"] for r in rec["rows"]] == ["LINALOOL", "ACET", "GERANIAL", "GERANIOL", "GPP", "WATER", "MYRCENE"]
+    assert v.shape == (7, 4) and rec["matched"] == [None] * 7 and rec["rows"][0]["label"] == "(R)-linalool"
 
 
 def test_lca(bundle_path):
@@ -383,7 +396,22 @@ def test_reference_dataset(env, bundle_path, tmp_path):  # noqa: F811
     r = call(env.reference_get, path_params={"ref_id": "metacyc-lca"})[1]
     assert [x["label"] for x in r["rows"]] == ["geraniol", "linalool", "myrcene"] and r["shape"] == [3, 3]
     listed = {d["id"]: d for d in call(env.reference_list)[1]["datasets"]}
-    assert listed["metacyc-lca"]["pairwise"] == "distance" and listed["metacyc-pathways"]["shape"] == [3, 3]
+    assert listed["metacyc-lca"]["pairwise"] == "distance" and listed["metacyc-pathways"]["shape"] == [7, 4]
+    # every compound in a pathway, the odor table's first; kept and sent as its cells other than 0
+    r = call(env.reference_get, path_params={"ref_id": "metacyc-pathways"})[1]
+    assert [x["label"] for x in r["rows"]] == ["geraniol", "linalool", "myrcene", "acetate", "geranial", "geranyl diphosphate", "H₂O"]
+    assert [x["chem"]["odor_id"] is not None for x in r["rows"]] == [True] * 3 + [False] * 4
+    assert r["rows"][3]["chem"] == {"odor_id": None, "name": None, "abbrev": None, "cid": 175, "how": "none", "identified": True}
+    assert r["chemicals"]["n"] == 7 and r["chemicals"]["matched"] == 3 and r["chemicals"]["identified"] == 7 and r["warning"] is None
+    assert "values_b64" not in r and r["shape"] == [7, 4] and (r["vmin"], r["vmax"]) == (0, 1)
+    dense = np.zeros(7 * 4, np.float32)
+    dense[np.frombuffer(base64.b64decode(r["values_sparse"]["index_b64"]), "<u4")] = np.frombuffer(
+        base64.b64decode(r["values_sparse"]["values_b64"]), "<f4")
+    assert dense.reshape(7, 4).tolist() == [[1, 0, 1, 1], [0.5, 0, 0, 0], [0, 0, 1, 1], [0, 1, 0, 0], [1, 0, 0, 1], [0, 0, 1, 1],
+                                            [0, 1, 0, 0]]
+    d = reference.cache_dir("metacyc-pathways")
+    assert (d / "values.npz").exists() and not (d / "values.f32").exists()
+    assert (reference.cache_dir("metacyc-lca") / "values.f32").exists()  # (dense)
     # looked into
     pp = {"ref_id": "metacyc-pathways"}
     status, p = call(env.metacyc_pathway, path_params={**pp, "frame": "PWY-A"})

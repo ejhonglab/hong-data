@@ -1,18 +1,20 @@
 """MetaCyc as reference data: a bundle of its compounds, pathways, reactions and organisms
 (an SQLite file built by metacyc_build.py from MetaCyc's SmartTables), shown as matrices
-over the chemicals of the odor table that are in it, and looked into in the Reference data
-tab (pathways drawn, compounds, the paths between two odors).
+with the chemicals of the odor table that are in it marked (or over them alone), and looked
+into in the Reference data tab (pathways drawn, compounds, the paths between two odors).
 
 A reference dataset of a bundle has ``fields`` ``{"layout": "metacyc", "view": ...}``, the
 view one of `VIEWS`:
 
-- ``pathways``: chemicals × the pathways they are in (`pathway_matrix`): 1 where the
+- ``pathways``: every compound in a pathway × the pathways (`pathway_matrix`): 1 where the
   compound itself is, 0.5 where it is only through a class it is of (MetaCyc's "general
-  pathways", e.g. an alcohol's), as ``classes`` says;
-- ``lca``: chemicals × chemicals, their pathway LCA distance (`lca_matrix`, `Network`).
+  pathways", e.g. an alcohol's), as ``classes`` says; the odor table's chemicals first;
+- ``lca``: the odor table's chemicals × themselves, their pathway LCA distance
+  (`lca_matrix`, `Network`): of every compound, it would be too large to make or keep.
 
-Its matrix depends on the odor table, so it is made again whenever that changes (the
-reference dataset's import keeps a fingerprint of it, `odors_fingerprint`).
+Its matrix depends on the odor table (which compounds are its chemicals), so it is made
+again whenever that changes (the reference dataset's import keeps a fingerprint of it,
+`odors_fingerprint`).
 """
 from __future__ import annotations
 
@@ -29,7 +31,9 @@ from typing import Any, Optional
 
 import numpy as np
 
-VERSION = 1  # of how matrices are made from a bundle: their imports are made again when it changes
+from .sparse import Sparse
+
+VERSION = 2  # of how matrices are made from a bundle: their imports are made again when it changes
 SUFFIXES = (".sqlite", ".sqlite3", ".db")
 VIEWS = ("pathways", "lca")
 VIAS = ("reactions", "pathways")
@@ -352,6 +356,17 @@ def _row(b: Bundle, m: dict) -> dict:
             "detail": f"MetaCyc: {b.name(c)} ({c}), matched {HOW[m['how']]}"}
 
 
+def _ids(b: Bundle, frame: str) -> dict:
+    """A compound's identifiers, as a reference dataset's chemicals are given them."""
+    cid = (b.compounds.get(frame) or {}).get("cid")
+    return {"metacyc": frame, **({"cid": cid} if cid else {})}
+
+
+def _matched(m: Optional[dict]) -> Optional[list]:
+    """The odor a row is (of `match_odors`), as `reference.chemicals` takes it: [id, how], or None."""
+    return [m["odor"]["id"], m["how"]] if m else None
+
+
 def _unmatched_note(matches: list[dict]) -> Optional[str]:
     missing = [m["odor"]["name"] for m in matches if m["compound"] is None]
     if not missing:
@@ -364,8 +379,9 @@ def _unmatched_note(matches: list[dict]) -> Optional[str]:
 # ------------------------------------------------------------------ the views
 
 
-def parse(path: Path, fields: Optional[dict], odors: list[dict]) -> tuple[dict, np.ndarray]:
-    """A view of the bundle at `path` over `odors`, as `reference.parse` gives a matrix: (record, values)."""
+def parse(path: Path, fields: Optional[dict], odors: list[dict]) -> tuple[dict, np.ndarray | Sparse]:
+    """A view of the bundle at `path`, its chemicals matched to `odors` (the odor table), as
+    `reference.parse` gives a matrix: (record, values)."""
     try:
         b = bundle(path)
     except sqlite3.DatabaseError as e:
@@ -386,43 +402,55 @@ def _pathway_detail_line(b: Bundle, p: dict) -> str:
     return f"{p['id']} · " + " · ".join(x for x in parts if x)
 
 
-def pathway_matrix(b: Bundle, matches: list[dict], o: dict) -> tuple[dict, np.ndarray]:
-    """Chemicals (those of the odor table in MetaCyc) × the pathways they are in."""
-    rows = [m for m in matches if m["compound"] is not None]
+def pathway_matrix(b: Bundle, matches: list[dict], o: dict) -> tuple[dict, Sparse]:
+    """Compounds × the pathways they are in: the odor table's chemicals that are in MetaCyc
+    first (in its order, each as its odor, even if in no pathway), then every other compound
+    of MetaCyc in a pathway (or in one through a class it is of, as `o` says), by name."""
+
+    def member(frame: str) -> tuple[dict[str, float], bool]:
+        """A compound's pathways (by its value in each), and whether any is only through a class."""
+        c = b.compounds.get(frame)
+        if c is None:
+            return {}, False
+        got = {p: 1.0 for p in c["pathways"] if p in b.pathways}
+        extra = {}
+        if o["classes"] == "always" or (o["classes"] == "fallback" and not c["pathways"]):
+            extra = {p: 0.5 for p in c["general_pathways"] if p not in c["pathways"] and p in b.pathways}
+        return got | extra, bool(extra)
+
+    odor_rows = [m for m in matches if m["compound"] is not None]
+    taken = {m["compound"] for m in odor_rows}
+    others = sorted((f for f in b.compounds if f not in taken), key=lambda f: (b.name(f).casefold(), f))
+    rows = [(m["compound"], m, *member(m["compound"])) for m in odor_rows]
+    rows += [(f, None, g, through) for f in others for g, through in [member(f)] if g]
     if not rows:
-        raise MetacycError("none of the odor table's chemicals is in MetaCyc (by MetaCyc ID, InChI, CID or name)")
-    member: list[dict[str, float]] = []
-    n_class = 0
-    for m in rows:
-        c = b.compounds.get(m["compound"])
-        own = set(c["pathways"]) if c else set()
-        got = {p: 1.0 for p in own if p in b.pathways}
-        if c and (o["classes"] == "always" or (o["classes"] == "fallback" and not own)):
-            extra = {p: 0.5 for p in c["general_pathways"] if p not in own and p in b.pathways}
-            n_class += bool(extra)
-            got.update(extra)
-        member.append(got)
-    cols = sorted({p for g in member for p in g},
+        raise MetacycError("no compound of MetaCyc is in a pathway")
+    cols = sorted({p for _, _, g, _ in rows for p in g},
                   key=lambda p: ([b.pathway_classes.get(t, {}).get("name") or t for t in b.pathways[p]["types"]], b.pathways[p]["name"].casefold()))
     at = {p: j for j, p in enumerate(cols)}
-    values = np.zeros((len(rows), len(cols)), dtype=np.float32)
-    for i, g in enumerate(member):
-        for p, v in g.items():
-            values[i, at[p]] = v
-    labels = Counter(b.pathways[p]["name"] for p in cols)
+    cells = [(i, at[p], v) for i, (_, _, g, _) in enumerate(rows) for p, v in g.items()]
+    values = Sparse.of((len(rows), len(cols)), *(zip(*cells) if cells else ([], [], [])))
+    n_class = sum(through for *_, through in rows)
     notes = [n for n in [_unmatched_note(matches)] if n]
-    empty = [m["odor"]["name"] for m, g in zip(rows, member) if not g]
+    empty = [m["odor"]["name"] for _, m, g, _ in rows if m and not g]
     if empty:
         notes.append(f"{len(empty)} chemical{'s are' if len(empty) > 1 else ' is'} in MetaCyc but in no pathway"
                      f"{'' if o['classes'] == 'never' else ', even through a class'}: {', '.join(empty[:8])}{'…' if len(empty) > 8 else ''}")
+    n_other = len(rows) - len(odor_rows)
+    notes.append(f"its rows: the {len(odor_rows)} chemicals of the odor table in MetaCyc first, then the {n_other:,} other "
+                 f"compounds of MetaCyc in a pathway{'' if o['classes'] == 'never' else ' (or through a class they are of)'}, by name")
     if n_class:
-        notes.append(f"{n_class} chemical{'s' if n_class > 1 else ''} in no pathway themselves shown in those of the classes they are of (0.5)"
-                     if o["classes"] == "fallback" else f"{n_class} chemicals also in the pathways of the classes they are of (0.5)")
+        notes.append(f"{n_class:,} compound{'s' if n_class > 1 else ''} in no pathway themselves shown in those of the classes they are of (0.5)"
+                     if o["classes"] == "fallback" else f"{n_class:,} compounds also in the pathways of the classes they are of (0.5)")
+    labels = Counter(b.pathways[p]["name"] for p in cols)
+    names = Counter(b.name(f) for f, m, _, _ in rows if m is None)
     record = {
-        "rows": [_row(b, m) for m in rows],
+        "rows": [_row(b, m) if m else {"label": b.name(f) + (f" ({f})" if names[b.name(f)] > 1 else ""), "group": None, "metacyc": f,
+                                       "detail": f"MetaCyc: {b.name(f)} ({f})"} for f, m, _, _ in rows],
         "cols": [{"label": b.pathways[p]["name"] + (f" ({p})" if labels[b.pathways[p]["name"]] > 1 else ""), "metacyc": p,
                   "detail": _pathway_detail_line(b, b.pathways[p])} for p in cols],
-        "ids": {"rows": [{"name": m["odor"]["name"]} for m in rows], "cols": None},
+        "ids": {"rows": [_ids(b, f) for f, *_ in rows], "cols": None},
+        "matched": [_matched(m) for _, m, _, _ in rows],
         "chemical_axis": "rows",
         "kind": "binary" if not n_class else "sequential",
         "shape": list(values.shape),
@@ -464,7 +492,8 @@ def lca_matrix(b: Bundle, matches: list[dict], o: dict) -> tuple[dict, np.ndarra
     record = {
         "rows": rlist,
         "cols": [dict(r) for r in rlist],
-        "ids": {"rows": [{"name": m["odor"]["name"]} for m in rows], "cols": None},
+        "ids": {"rows": [_ids(b, m["compound"]) for m in rows], "cols": None},
+        "matched": [_matched(m) for m in rows],
         "chemical_axis": "rows",
         "pairwise": "distance",
         "kind": "sequential",

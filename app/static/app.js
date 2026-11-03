@@ -173,12 +173,32 @@ function serverClusterCache(dsId) {
   };
 }
 
-function decodeValues(b64) {
+function decodeBytes(b64) {
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+function decodeValues(b64) {
+  const bytes = decodeBytes(b64);
   // server writes little-endian float32; nearly every client is little-endian too
   return new Float32Array(bytes.buffer, 0, bytes.length >> 2);
+}
+
+// a reference dataset's values (or a matrix like one's), as the server sends them: all of
+// them (`values_b64`), or of a matrix most of whose cells are 0, the others (`values_sparse`:
+// their flat indices and values); decoded once, and kept as its `values`
+function matrixValues(m) {
+  if (!m.values) {
+    const s = m.values_sparse;
+    if (s) {
+      const index = new Uint32Array(decodeBytes(s.index_b64).buffer), vals = decodeValues(s.values_b64);
+      m.values = new Float32Array(m.shape[0] * m.shape[1]);
+      for (let k = 0; k < index.length; k++) m.values[index[k]] = vals[k];
+    } else m.values = decodeValues(m.values_b64);
+  }
+  return m.values;
 }
 
 function msgBox(kind, html) {
@@ -953,7 +973,7 @@ class MatrixViewer {
       this.source = ref;
       this.hideBad = ref.cols.some((c) => c.bad);
       this._editsFor(ref);
-      const values = ref.values || decodeValues(ref.values_b64), square = !!ref.square, nC = ref.cols.length;
+      const values = matrixValues(ref), square = !!ref.square, nC = ref.cols.length;
       const hasGroups = ref.rows.some((r) => r.group != null);
       let rows = ref.rows.map((r, i) => ({ label: r.label, group: hasGroups ? (r.group ?? '') : null, chem: r.chem, detail: r.detail, i }));
       let vals = values;
@@ -1055,8 +1075,10 @@ class MatrixViewer {
     if (byCols !== 'file' && !this._sharedAxis('cols')) colIdx = sortedByValues(colIdx, b.cols, keptRows, (j, i) => b.values[i * nC + j], byCols);
     const rows = arrange(rowIdx, (i) => b.rows[i].key, this.edits.rows);
     const cols = square ? rows : arrange(colIdx, (j) => b.cols[j].key, this.edits.cols).filter((j) => !hidden(j));
-    const values = new Float32Array(rows.length * cols.length);
-    rows.forEach((i, r) => { cols.forEach((j, c) => { values[r * cols.length + c] = b.values[i * nC + j]; }); });
+    // (as given, if none are removed or moved: not copied, as it may be large)
+    const same = rows.length === b.rows.length && cols.length === nC && rows.every((i, r) => i === r) && cols.every((j, c) => j === c);
+    const values = same ? b.values : new Float32Array(rows.length * cols.length);
+    if (!same) rows.forEach((i, r) => { cols.forEach((j, c) => { values[r * cols.length + c] = b.values[i * nC + j]; }); });
     const showAbbrev = abbrevShower([...b.rows, ...b.cols].map((it) => it.chem?.abbrev));
     const label = (it) => (it.chem ? { ...it, ...chemLabel(it, this.opts.chemLabels, showAbbrev) } : it);
     const m = { ...b, rows: rows.map((i) => label(b.rows[i])), cols: cols.map((j) => label(b.cols[j])), values,
@@ -3251,30 +3273,45 @@ function setAdminBadge(items) {
   badge.title = `${broken.length} reference dataset${broken.length === 1 ? '' : 's'} cannot be read (see the Admin tab)`;
 }
 
+// whether a reference dataset's chemicals can be shown as only those in the Odors table: some are, and some not
+function canOnlyOdors(ref) { const c = ref.chemicals; return !!c?.axis && c.matched > 0 && c.matched < c.n; }
+
+// a reference dataset with only some of its chemicals: those not identified (no CID or
+// InChI) left out unless `unidentified`; with `onlyOdors`, those not in the Odors table
+// too, and of its other axis (unless its columns are its rows) each item where all of
+// them are 0 or missing (e.g. the pathways none of them is in). Itself if none is left out.
+function refSubset(ref, { unidentified = true, onlyOdors = false } = {}) {
+  const c = ref.chemicals;
+  if (!c?.axis) return ref;
+  const onRows = c.axis === 'rows', items = onRows ? ref.rows : ref.cols, nR = ref.rows.length, nC = ref.cols.length;
+  const keep = items.flatMap((it, k) => ((it.chem?.identified === false && !unidentified) || (onlyOdors && it.chem?.odor_id == null) ? [] : [k]));
+  const all = matrixValues(ref), at = onRows ? (k, j) => all[k * nC + j] : (k, j) => all[j * nC + k];
+  let others = (onRows ? ref.cols : ref.rows).map((_, j) => j);
+  if (ref.square) others = keep;
+  else if (onlyOdors) others = others.filter((j) => keep.some((k) => { const v = at(k, j); return v !== 0 && v === v; }));
+  if (keep.length === items.length && others.length === (onRows ? nC : nR)) return ref;
+  const [rows, cols] = onRows ? [keep, others] : [others, keep], values = new Float32Array(rows.length * cols.length);
+  if (cols.length === nC) rows.forEach((r, i) => values.set(all.subarray(r * nC, (r + 1) * nC), i * nC));
+  else rows.forEach((r, i) => cols.forEach((j, k) => { values[i * cols.length + k] = all[r * nC + j]; }));
+  return { ...ref, values, shape: [rows.length, cols.length], rows: rows.map((k) => ref.rows[k]), cols: cols.map((k) => ref.cols[k]) };
+}
+
 class Reference {
   constructor() {
     this.items = null; this.viewer = null; this.selected = null; this.cache = new Map();
     this.showUnidentified = false; // chemicals with no CID or InChI shown in the matrix
-    this.identified = new WeakMap(); // a dataset as loaded -> it without those
+    this.onlyOdors = false; // only the chemicals in the Odors table shown (where some are not)
+    this.shownOf = new WeakMap(); // a dataset as loaded -> {[how it is shown]: it as shown so}
   }
 
-  // a dataset as shown: but for its chemicals not identified (no CID or InChI), unless chosen
+  // a dataset as shown (`refSubset`): but for its chemicals not identified, unless chosen;
+  // and if chosen, only those in the Odors table
   _shown(ref) {
-    if (this.showUnidentified || !ref.chemicals?.axis) return ref;
-    if (!this.identified.has(ref)) {
-      const onRows = ref.chemicals.axis === 'rows', items = onRows ? ref.rows : ref.cols;
-      const keep = items.flatMap((it, k) => (it.chem?.identified === false ? [] : [k]));
-      if (keep.length === items.length) this.identified.set(ref, ref);
-      else {
-        const all = ref.values || decodeValues(ref.values_b64), nR = ref.rows.length, nC = ref.cols.length;
-        const values = new Float32Array(onRows ? keep.length * nC : nR * keep.length);
-        if (onRows) keep.forEach((r, i) => values.set(all.subarray(r * nC, (r + 1) * nC), i * nC));
-        else for (let r = 0; r < nR; r++) keep.forEach((c, j) => { values[r * keep.length + j] = all[r * nC + c]; });
-        this.identified.set(ref, { ...ref, values, rows: onRows ? keep.map((k) => ref.rows[k]) : ref.rows,
-          cols: onRows ? ref.cols : keep.map((k) => ref.cols[k]) });
-      }
-    }
-    return this.identified.get(ref);
+    const only = this.onlyOdors && canOnlyOdors(ref), how = `${this.showUnidentified}|${only}`;
+    if (!this.shownOf.has(ref)) this.shownOf.set(ref, new Map());
+    const memo = this.shownOf.get(ref);
+    if (!memo.has(how)) memo.set(how, refSubset(ref, { unidentified: this.showUnidentified, onlyOdors: only }));
+    return memo.get(how);
   }
 
   // after reference datasets were added or deleted, or the odor table changed
@@ -3337,7 +3374,7 @@ class Reference {
       msgs.push(box);
     }
     const notes = [];
-    if (c.axis) notes.push(`Its ${c.axis === 'rows' ? 'rows' : 'columns'} are chemicals: ${c.matched} of ${c.n} matched to the Odors table, labelled as there.`);
+    if (c.axis) notes.push(`Its ${c.axis === 'rows' ? 'rows' : 'columns'} are chemicals: ${c.matched.toLocaleString()} of ${c.n.toLocaleString()} matched to the Odors table, labelled as there.`);
     const g = ref.glomeruli;
     const kc = kcAxisOf(ref), axisName = (a) => (a === 'rows' ? 'rows' : 'columns');
     if (g?.axis) notes.push(`Its ${axisName(g.axis)} are glomeruli (${g.matched} of ${g.n})${kc ? `, and its ${axisName(kc)} taken to be KCs (<i>Sum over KCs</i> sums them)` : ''}: it can be compared with datasets on their glomeruli (Compare tab).`);
@@ -3345,6 +3382,14 @@ class Reference {
     notes.push(...ref.notes.map((n) => `${esc(n[0].toUpperCase() + n.slice(1))}.`));
     if (m.origin === 'admin') notes.push(`Read from <code>${esc(m.path)}</code> on ${esc(fmtWhen(ref.imported_at))}.`);
     if (notes.length) msgs.push(Object.assign(document.createElement('p'), { className: 'muted small ref-notes', innerHTML: notes.join(' ') }));
+    if (canOnlyOdors(ref)) {
+      const toggle = document.createElement('label'), other = (c.axis === 'rows' ? m.col_label : m.row_label) || (c.axis === 'rows' ? 'column' : 'row');
+      toggle.className = 'check ref-only-odors';
+      toggle.innerHTML = `<input type="checkbox"${this.onlyOdors ? ' checked' : ''}> Only the ${c.matched.toLocaleString()} chemicals in the Odors table
+        <span class="muted">(${ref.square ? `of its ${c.n.toLocaleString()}` : `and each ${esc(other)} where any of them is not 0 or missing`})</span>`;
+      $('input', toggle).addEventListener('change', (e) => { this.onlyOdors = e.target.checked; this.show(id); });
+      msgs.push(toggle);
+    }
     $('#ref-msgs').replaceChildren(...msgs);
     if (!this.viewer) this.viewer = new MatrixViewer($('#reference-viewer'), { kind: 'generic' });
     this.viewer.setGenericData(this._shown(ref), { title: m.title, fileStem: `olfdb_reference-${id}` });
@@ -5086,14 +5131,17 @@ class ComparePage {
   }
 
   // a reference dataset's, of its chemicals (on 'odors') or its glomeruli (on 'glomeruli'),
-  // by their values along its other axis (each once, the first of its rows or columns)
-  // Of distances between its chemicals (pairwise: its columns its rows), the negative of
-  // its own values, whatever the similarity chosen for reference data
-  _refSpace(ref, on = 'odors') {
-    if (ref.pairwise && on === 'odors') return this._pairwiseSpace(ref);
-    return this._memo(`ref:${ref.meta.id}:${on}:${this.o.refMetric}`, () => {
+  // by their values along its other axis (each once, the first of its rows or columns); on
+  // odors, of a dataset with chemicals not in the Odors table too, only along the items of
+  // that axis any of those in it are not 0 or missing in (`refSubset`). Of distances between
+  // its chemicals (pairwise: its columns its rows), the negative of its own values, whatever
+  // the similarity chosen for reference data
+  _refSpace(given, on = 'odors') {
+    if (given.pairwise && on === 'odors') return this._pairwiseSpace(given);
+    return this._memo(`ref:${given.meta.id}:${on}:${this.o.refMetric}`, () => {
+      const ref = on === 'odors' && canOnlyOdors(given) ? refSubset(given, { onlyOdors: true }) : given;
       const axis = on === 'odors' ? ref.chemicals.axis : ref.glomeruli.axis;
-      const values = decodeValues(ref.values_b64), nR = ref.rows.length, nC = ref.cols.length, onRows = axis === 'rows';
+      const values = matrixValues(ref), nR = ref.rows.length, nC = ref.cols.length, onRows = axis === 'rows';
       const ids = [], vectors = [];
       (onRows ? ref.rows : ref.cols).forEach((it, k) => {
         const id = on === 'odors' ? it.chem?.odor_id : it.glomerulus;
@@ -5113,7 +5161,7 @@ class ComparePage {
 
   _pairwiseSpace(ref) {
     return this._memo(`refpair:${ref.meta.id}`, () => {
-      const values = decodeValues(ref.values_b64), n = ref.rows.length;
+      const values = matrixValues(ref), n = ref.rows.length;
       const keep = [], ids = [];
       ref.rows.forEach((it, k) => { const id = it.chem?.odor_id; if (id != null && !ids.includes(id)) { ids.push(id); keep.push(k); } });
       const m = ids.length, sim = new Float32Array(m * m);

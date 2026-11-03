@@ -137,19 +137,19 @@ setting from that structure), else its InChI, else its CID.
 A file can also be a MetaCyc bundle (`.sqlite`), made from MetaCyc's SmartTables by
 `python -m app.metacyc_build <raw folder> <bundle>` (README, "Scripting"), or by the
 Admin tab's *Import MetaCyc* from the folder uploaded: its compounds,
-pathways, reactions, species and BioCyc's genomes of them, in one SQLite file. It is
-shown over the chemicals of the odor table that are in it (matched by the MetaCyc ID the
-odor table gives, else InChI, InChIKey, CID, the first block of the InChIKey, as MetaCyc
-keeps acids as anions, or name), made again whenever the odor table changes, as the
+pathways, reactions, species and BioCyc's genomes of them, in one SQLite file. Its
+compounds are matched to the chemicals of the odor table (by the MetaCyc ID the odor
+table gives, else InChI, InChIKey, CID, the first block of the InChIKey, as MetaCyc
+keeps acids as anions, or name), made again whenever the odor table changes, in the
 view its `"fields"` choose:
 
 ```json
 "fields": {"layout": "metacyc",
-           "view": "pathways",       // chemicals × the pathways they are in: 1 itself, 0.5 through a class only
+           "view": "pathways",       // every compound in a pathway (the odor table's first) × the pathways: 1 itself, 0.5 through a class only
            "classes": "fallback"}    // "never", "fallback" (a chemical in none itself), "always"
 
 "fields": {"layout": "metacyc",
-           "view": "lca",            // chemicals × chemicals: their pathway LCA distance
+           "view": "lca",            // the odor table's chemicals × themselves: their pathway LCA distance
            "via": "reactions",       // or "pathways"
            "classes": "fallback",    // a chemical not in the network (or with nothing above it): as the classes it is of
            "max_pathways": null}     // leave out compounds in more than this many pathways (240 by default via pathways)

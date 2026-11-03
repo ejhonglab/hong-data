@@ -356,7 +356,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   - *Odor–odor similarity* within datasets (Pearson or Spearman correlation, or cosine
     similarity, of two odors' responses across the glomeruli or ROIs both have), and
     within reference data (Pearson correlation or cosine similarity, of their values
-    along its other axis).
+    along its other axis; of one with chemicals not in the Odors table too, only along
+    what any of those in it is not 0 or missing in, e.g. the pathways they are in).
   - *Compare to*: chemical structure, as the Jaccard similarity (1 − Jaccard distance)
     of the odors' ECFP fingerprints (RDKit's Morgan fingerprints from their InChI, ECFP6
     by default, of any even diameter up to 12), and every reference dataset with
@@ -452,18 +453,22 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   table with chemicals not identified by a CID or InChI (in the file, or through the
   Odors tab), naming the first of them, with all of them to show and copy (also when
   adding one in the Admin tab); these are left out of its matrix unless a box by the
-  warning is ticked. One that cannot be read is listed by its name alone, with why.
+  warning is ticked. Of a table with chemicals not in the Odors table too, a box under
+  its notes shows only those that are (and of its other axis, only what any of them is
+  not 0 or missing in, e.g. the pathways they are in). One that cannot be read is listed
+  by its name alone, with why.
   A table of glomeruli (by their labels) has no chemicals, and so no warning: it says it
   can be compared with datasets on their glomeruli. Its other axis is taken to be KCs:
   *Sum over KCs* in the viewer (here and in the Compare tab) shows each glomerulus's
   values summed over them (those not removed; missing values left out), as one row or
   column.
   *MetaCyc* (a bundle of its tables, imported in the Admin tab or made by a script, see
-  [Scripting](#scripting)) is shown over the odor
-  table's chemicals that are in it (made again whenever the odor table changes), as
-  either of two datasets: *compounds by the pathways they are in* (1 in the pathway
-  itself, 0.5 only through a class it is of, such as "an alcohol", if it is in none
-  itself), or the *pathway LCA distance* between odors (as in chapter 2 of O'Connell's
+  [Scripting](#scripting)) is shown as either of two datasets, its compounds matched to
+  the odor table's chemicals (made again whenever the odor table changes): *compounds by
+  the pathways they are in* (every compound of MetaCyc in a pathway, the odor table's
+  first; 1 in the pathway itself, 0.5 only through a class it is of, such as "an
+  alcohol", if it is in none itself), or the *pathway LCA distance* between the odor
+  table's chemicals (as in chapter 2 of O'Connell's
   thesis: the fewest steps from a common ancestor down to both, in MetaCyc's network of
   compounds and reactions; odor × odor, compared in the Compare tab by its own values).
   Below its matrix: click a cell for its pathway drawn (its main compounds top to bottom,
