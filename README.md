@@ -445,7 +445,21 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   adding one in the Admin tab); these are left out of its matrix unless a box by the
   warning is ticked. One that cannot be read is listed by its name alone, with why.
   A table of glomeruli (by their labels) has no chemicals, and so no warning: it says it
-  can be compared with datasets on their glomeruli. Its other axis is taken to be KCs:
+  can be compared with datasets on their glomeruli.
+  *MetaCyc* (a bundle of its tables, see [Scripting](#scripting)) is shown over the odor
+  table's chemicals that are in it (made again whenever the odor table changes), as
+  either of two datasets: *compounds by the pathways they are in* (1 in the pathway
+  itself, 0.5 only through a class it is of, such as "an alcohol", if it is in none
+  itself), or the *pathway LCA distance* between odors (as in chapter 2 of O'Connell's
+  thesis: the fewest steps from a common ancestor down to both, in MetaCyc's network of
+  compounds and reactions; odor × odor, compared in the Compare tab by its own values).
+  Below its matrix: click a cell for its pathway drawn (its main compounds top to bottom,
+  reactions as arrows with their EC numbers and equations on hover, the odor table's
+  chemicals in color, the one clicked outlined), its classes, superpathways, organisms
+  (with the environments, oxygen and hosts of BioCyc's genomes of each) and summary; or,
+  of the LCA distance, the paths from the two odors' lowest common ancestors. Click a
+  compound for its structure, identifiers, classes and pathways, or find any pathway or
+  compound by name or MetaCyc ID. Its other axis is taken to be KCs:
   *Sum over KCs* in the viewer (here and in the Compare tab) shows each glomerulus's
   values summed over them (those not removed; missing values left out), as one row or
   column.
@@ -553,7 +567,11 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     apart and shown on hover), and whose values are a field of numbers (the mean of
     several lines of a cell) or presence (1 where a line lists a row and column); of a
     DataArray, which coordinates label and describe its rows and columns. Each choice
-    shows what it makes (its size, chemicals identified) before it is added.
+    shows what it makes (its size, chemicals identified) before it is added. A MetaCyc
+    bundle (`.sqlite`) is added once for each view: compounds by pathways, or the
+    pathway LCA distance (through reactions, as computed for the thesis, or through
+    pathways, as its Methods describe, optionally without compounds in more than so many
+    pathways), and whether chemicals in no pathway are taken as the classes they are of.
     The app never changes the file: it reads a copy into `data/references/`, again
     whenever the file changes. A file outside the folders the server may read is added
     to them (itself, to read only), and read once the server restarts, with what that
@@ -593,6 +611,20 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     gives its name).
 
 ## Scripting
+
+MetaCyc: its SmartTables (as exported from BioCyc, e.g. `BioCyc/raw`, MetaCyc 27.0 by
+default) are read into one bundle, whose two reference datasets are then added through
+the Admin tab's API (or add the bundle in the Admin tab by hand):
+
+```bash
+python -m app.metacyc_build /mnt/d0/Scraped-Databases-Copy/BioCyc/raw /local/olfdb/metacyc-27.0.sqlite --register http://localhost:8000
+```
+
+It takes about 20 s. The server must be able to read the bundle: one outside the folders
+it may read is added to them, and read after a restart (the script prints what that
+takes). `--file <role>=<path>` reads another export for a table (`--help` lists them).
+Bundles hold MetaCyc's data: keep them out of this repository, and check MetaCyc's
+license terms before sharing one.
 
 Downloads: `/api/download?ids=1,2&format=files|wide|long` (as from the Browse tab).
 Datasets: `/api/datasets`, and each one's matrix at `/api/datasets/{id}/matrix`; the

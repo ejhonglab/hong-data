@@ -112,6 +112,35 @@ Coordinates:
     reference         (source) <U250 '1er Symp. Sci. Int. de Cognac, ...
 ```
 
+A file can also be a MetaCyc bundle (`.sqlite`), made from MetaCyc's SmartTables by
+`python -m app.metacyc_build <raw folder> <bundle>` (README, "Scripting"): its compounds,
+pathways, reactions, species and BioCyc's genomes of them, in one SQLite file. It is
+shown over the chemicals of the odor table that are in it (matched by the MetaCyc ID the
+odor table gives, else InChI, InChIKey, CID, the first block of the InChIKey, as MetaCyc
+keeps acids as anions, or name), made again whenever the odor table changes, as the
+view its `"fields"` choose:
+
+```json
+"fields": {"layout": "metacyc",
+           "view": "pathways",       // chemicals × the pathways they are in: 1 itself, 0.5 through a class only
+           "classes": "fallback"}    // "never", "fallback" (a chemical in none itself), "always"
+
+"fields": {"layout": "metacyc",
+           "view": "lca",            // chemicals × chemicals: their pathway LCA distance
+           "via": "reactions",       // or "pathways"
+           "classes": "fallback",    // a chemical not in the network (or with nothing above it): as the classes it is of
+           "max_pathways": null}     // leave out compounds in more than this many pathways (240 by default via pathways)
+```
+
+The pathway LCA distance of two chemicals is the smallest sum, over the nodes other than
+the two from which both can be reached, of the fewest edges down to each, in a directed
+network of compounds and either reactions (a reaction's reactants its parents, its
+products its children) or pathways (a pathway's reactants its parents, its products and
+every compound of its reactions its children), without 15 currency metabolites (ATP,
+NADH, H₂O, ...). Through reactions, with classes as fallback, it gives the matrix of
+O'Connell's thesis (ch. 2; MetaCyc 27.0, February 2024) exactly. 0 on the diagonal;
+missing where there is no common ancestor.
+
 The two `example_*.csv` files are synthetic placeholders, marked `"example": true` in
 the manifest: they are shown only while there is no other reference dataset, built in
 or added in the Admin tab.

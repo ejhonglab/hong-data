@@ -133,7 +133,8 @@ def test_add_readable(env, tmp_path):
     assert c["ok"] and c["readable"] and not c["restart"] and c["grant"] is None
     assert c["preview"]["chemicals"] == {"axis": "rows", "n": 3, "matched": 2, "identified": 2, "unidentified": ["foo"], "ambiguous": []}
     assert check(str(tmp_path / "refs"))["error"] == ("not a table it can read: give a .csv, .tsv, .tab, .txt, .parquet, .pq, .nc, .nc4 "
-                                                       "or .netcdf file")
+                                                       "or .netcdf file, or a MetaCyc bundle (.sqlite, .sqlite3, .db, made by "
+                                                       "app/metacyc_build.py)")
     assert "not found" in check(str(tmp_path / "refs/none.csv"))["error"] and "absolute" in check("refs/x.csv")["error"]
     add = lambda **kw: call(env.admin_reference_add, body=kw)  # noqa: E731
     status, r = add(path=str(src))

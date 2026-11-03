@@ -325,6 +325,55 @@ between the frontend and the server. Using the app is described in
   the Odors tab: by CID, else InChI, else CAS, MetaCyc or LOTUS ID, name or
   abbreviation, never against a CID or InChI given (a name alone can name another
   isomer).
+- **MetaCyc** (`metacyc_build.py`, `metacyc.py`, `static/metacyc.js`) is a reference
+  dataset of a kind of its own: a bundle (one SQLite file, read only and immutable, so no
+  locks on NFS) built by a script from MetaCyc's SmartTables, not a matrix. MetaCyc has
+  19,190 compounds by 3,519 pathways (67 million cells), more than a browser can be sent,
+  and only the chemicals of the odor table can be compared with datasets, so each view is
+  made over those (in about a second) when it is imported, and imported again whenever
+  the odor table changes (its fingerprint is kept with the import, as the file's size
+  and time are). Two views, each its own reference dataset (added once for each): a
+  binary-ish matrix of compounds by pathways, compared as any other by the similarity of
+  its rows, and a pairwise one (`pairwise: "distance"`: its columns its rows, served
+  `square`), compared by its own values negated (the nearer, the more alike), as a
+  distance between two odors is not a vector to correlate. What is drawn and listed below
+  the matrix is asked of the bundle when needed (`/api/reference/{id}/metacyc/...`).
+  - *Its tables*: `BioCyc/raw` holds SmartTables of MetaCyc 27.0 (January–February 2024,
+    as the thesis used), each exported twice, by frame IDs and by names, in the same row
+    order: IDs come from the first and the names of what each cell lists from the second,
+    by position. Reaction directions come from their equations' arrows (`->` and `<-`
+    both run from the reactants to the products as listed by ID; `<-->` reversible).
+    Not in them: the pathway class tree beyond each pathway's own classes (only part of
+    it, folded, in `pathway_ontology.txt`), which compounds of a reaction are its main
+    ones in a pathway, and in which direction a reversible one runs there. These are in
+    MetaCyc's flat files (parsed, of 28.0, in `BioCyc/processed/flatfiles-28.0`), which a
+    later bundle could be built from instead.
+  - *The pathway LCA distance* (`metacyc.Network`): the smallest sum, over common
+    ancestors other than the two, of the fewest edges down to each (breadth-first up from
+    each chemical over its parents, then the minimum over nodes of the sums: n × nodes
+    distances, n² sums). The thesis's Methods describe a network of compounds and pathways
+    (and leaving out compounds in over 240 pathways), but the matrices of February 2024
+    in `BioCyc/processed/networks/reaction_network/` (no code with them) are of compounds
+    and reactions: through reactions, without the same 15 currency metabolites (by frame
+    ID), and a compound with nothing above it taken as the class it is of (as 1-penten-3-one
+    as "a long-chain ketone" there), this reproduces all 380 off-diagonal values of
+    `lca_with_ontology` for its 20 odors. That is the default; through pathways (each
+    pathway a parent of every compound of its reactions, a compound in a pathway only
+    through a class one edge further) is an option, as is the cutoff.
+  - *Odors to compounds*: MetaCyc keeps compounds as at pH 7.3 (acetate, not acetic
+    acid) and often one stereoisomer, so after the MetaCyc ID the odor table gives (as
+    the thesis matched them by hand), InChI, InChIKey and CID, the first block of the
+    InChIKey (the skeleton) matches, choosing the compound in the most pathways, then a
+    neutral one.
+  - *A pathway drawn* (`layoutPathway`): its main compounds (all but common cofactors and
+    compounds in more than 100 pathways, which are shown on hover) in layers, top to
+    bottom, each reaction an arrow from each main reactant to each main product.
+    Reversible reactions run away from where the pathway starts (its primary reactants,
+    else what it consumes and does not make), as MetaCyc writes some backwards (MEP ⇄ DXP);
+    cycles are broken by a depth-first search from there, layers are the longest path to
+    each compound, ordered by the mean position of their neighbours (sweeps down and up),
+    and wrap when wider than 1,100 px. No graph library: none is used elsewhere, and
+    pathways are small (a superpathway's tens of reactions).
 
 ## Statistical testing
 
@@ -701,6 +750,10 @@ app/thorimage.py   Experiment.xml summary
 app/metadata.py    form model (pydantic) and README.md generation
 app/db.py          SQLite schema and queries
 app/reference.py   reference datasets: built-in and added ones, reading them, matching their chemicals
+app/metacyc.py     MetaCyc bundles as reference data: odors matched to compounds, compounds × pathways, the
+                   pathway LCA distance, pathways, compounds and searches for the Reference data tab
+app/metacyc_build.py  MetaCyc's SmartTables read into a bundle (python -m app.metacyc_build), and its two
+                   reference datasets added through the Admin tab's API
 app/export.py      downloads: zips of dataset files, concatenated wide/long matrices
 app/merge.py       merged downloads of a coding unit: grouping datasets, scaling groups to each other
 app/compare.py     datasets averaged for the Compare tab (odors × glomeruli or ROIs); ECFP fingerprints (RDKit)
@@ -720,7 +773,8 @@ config/odor_sheet_template.csv   odor sheet columns, with the odors from the the
 app/static/        frontend: index.html, app.js, heatmap.js, colormaps.js (+ mpl_luts.js),
                    app.css, cluster.js (+ cluster-worker.js), figure.js (SVG/PDF/PNG export),
                    player.js (movie player), similarity.js (odor similarities, and between them;
-                   pvalue-worker.js their p-values)
+                   pvalue-worker.js their p-values), metacyc.js (MetaCyc below its matrices: pathways
+                   drawn, compounds, LCA paths, search)
 manage.py          list / show / export / delete datasets from the server
 deploy/            systemd units; Dockerfile + docker-compose.yml at the top level
 tests/             pytest tests
@@ -864,6 +918,16 @@ GET    /api/headspace.csv, .tex             a calculation's table as a file: ?so
 GET    /api/reference                       every reference dataset: whether it can be read (why
                                             not), how many of its chemicals are identified
 GET    /api/reference/{id}                  one, for the viewer (its chemicals as in the odor table)
+GET    /api/reference/{id}/metacyc/pathway/{frame}    of a MetaCyc bundle's: a pathway, to draw (its
+                                            reactions' main and side compounds) and describe
+                                            (classes, superpathways, species and their genomes,
+                                            summary)
+GET    /api/reference/{id}/metacyc/compound/{frame}   a compound or class: identifiers, classes,
+                                            pathways (and through classes), reactions
+GET    /api/reference/{id}/metacyc/structure/{frame}  its structure from its InChI, as SVG
+GET    /api/reference/{id}/metacyc/lca      ?a=, b= (frame IDs) → their pathway LCA distance in its
+                                            view's network, and the paths from their LCAs
+GET    /api/reference/{id}/metacyc/search   ?q= → pathways and compounds by name or frame ID
 GET    /api/admin                           the folders the server may read and write (saved, in
                                             effect since it started, checked), the odor sheet's
                                             link; Landlock, restarts

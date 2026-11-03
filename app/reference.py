@@ -12,7 +12,9 @@ data tab. Two kinds:
 Either is a CSV, TSV or parquet file: row labels in the first column, an optional
 ``group`` column (row grouping), and one column per matrix column (blank = missing). Or
 an xarray DataArray of two dimensions saved as netCDF (`DataArray.to_netcdf`), its
-coordinates labelling and identifying its items (`_parse_dataarray`).
+coordinates labelling and identifying its items (`_parse_dataarray`). Or a MetaCyc bundle
+(metacyc.py), one of whose views is made over the odor table's chemicals, and again
+whenever the odor table changes.
 Chemicals can be identified by columns named ``cid`` (or ``pubchem_cid``, ...),
 ``inchi``, ``cas``, ``metacyc``, ``lotus``, ``name`` or ``abbrev`` (then the rows are
 chemicals), or by rows labelled so (then the columns are). They are matched to the odor
@@ -38,12 +40,16 @@ from typing import Any, Optional
 import numpy as np
 import pandas as pd
 
-from . import config, glomeruli as glom, odormeta, sandbox
+from . import config, glomeruli as glom, metacyc, odormeta, sandbox
 
 NETCDF_SUFFIXES = (".nc", ".nc4", ".netcdf")  # xarray DataArrays
-LAYOUTS = ("matrix", "list")  # a table's: laid out as its matrix, or one value per line (see `_parse_list`)
+# a table's: laid out as its matrix, or one value per line (see `_parse_list`); a MetaCyc bundle's view
+LAYOUTS = ("matrix", "list", "metacyc")
 MAX_CELLS = 20_000_000  # a matrix made from a list: its rows × columns, at most
-SUFFIXES = (".csv", ".tsv", ".tab", ".txt", ".parquet", ".pq", *NETCDF_SUFFIXES)
+SUFFIXES = (".csv", ".tsv", ".tab", ".txt", ".parquet", ".pq", *NETCDF_SUFFIXES, *metacyc.SUFFIXES)
+_TABLES = [x for x in SUFFIXES if x not in metacyc.SUFFIXES]
+NOT_A_TABLE = (f"not a table it can read: give a {', '.join(_TABLES[:-1])} or {_TABLES[-1]} file, or a MetaCyc bundle "
+               f"({', '.join(metacyc.SUFFIXES)}, made by app/metacyc_build.py)")
 KINDS = ("detect", "sequential", "diverging", "binary")
 AXES = ("detect", "rows", "cols", "none")
 # identifier columns (or rows) of a chemical, by accepted header (matched as odor sheet headers are)
@@ -103,7 +109,7 @@ def read_table(path: Path) -> pd.DataFrame:
     """The file as a table of text cells (numbers as they are in parquet), labelled by its first column."""
     suffix = path.suffix.lower()
     if suffix not in SUFFIXES:
-        raise ReferenceError(f"not a table it can read: give a {', '.join(SUFFIXES[:-1])} or {SUFFIXES[-1]} file")
+        raise ReferenceError(NOT_A_TABLE)
     if suffix in (".parquet", ".pq"):
         df = pd.read_parquet(path)
         if isinstance(df.index, pd.RangeIndex) and df.shape[1]:
@@ -113,7 +119,8 @@ def read_table(path: Path) -> pd.DataFrame:
     return pd.read_csv(path, index_col=0, dtype=str, sep=sep, engine="c" if sep else "python")
 
 
-def parse(path: Path, chemical_axis: str = "detect", kind: str = "detect", fields: Optional[dict] = None) -> tuple[dict, np.ndarray]:
+def parse(path: Path, chemical_axis: str = "detect", kind: str = "detect", fields: Optional[dict] = None,
+          odors: Optional[list[dict]] = None) -> tuple[dict, np.ndarray]:
     """A reference dataset file read: (record, values).
 
     Args:
@@ -123,17 +130,30 @@ def parse(path: Path, chemical_axis: str = "detect", kind: str = "detect", field
         kind: its colormap kind, or 'detect' (binary if all 0/1, diverging if signed).
         fields: which of its fields make the matrix's rows, columns and values, of a table
             of one value per line (``layout`` 'list': see `_parse_list`) or a DataArray
-            (`_parse_dataarray`); else (None, or ``layout`` 'matrix') a table as laid out.
+            (`_parse_dataarray`); the view of a MetaCyc bundle (``layout`` 'metacyc', see
+            `metacyc.options`); else (None, or ``layout`` 'matrix') a table as laid out.
+        odors: the odor table (as `Database.list_odors` gives it), over whose chemicals a
+            MetaCyc bundle's view is made.
 
     Returns:
         record: ``rows`` [{label, group}], ``cols`` [{label}], ``ids`` {rows, cols: per
         item, the identifiers given for it, or None}, ``chemical_axis``, ``kind``,
-        ``shape``, ``notes`` (what was left out or not understood); values: float32
-        (rows x cols, NaN where missing).
+        ``shape``, ``notes`` (what was left out or not understood); a MetaCyc view's also
+        ``metacyc`` (its options) and, of distances between chemicals, ``pairwise``
+        ('distance': its columns are its rows); values: float32 (rows x cols, NaN where
+        missing).
 
     Raises:
         ReferenceError: if it has no numbers. Errors reading the file are raised as they are.
     """
+    if metacyc.is_bundle_path(path):
+        try:
+            record, values = metacyc.parse(path, fields, odors or [])
+        except metacyc.MetacycError as e:
+            raise ReferenceError(str(e)) from None
+        if kind != "detect":
+            record["kind"] = kind
+        return record, values
     if path.suffix.lower() in NETCDF_SUFFIXES:
         return _parse_dataarray(path, chemical_axis, kind, fields)
     if fields and fields.get("layout") == "list":
@@ -413,7 +433,15 @@ def describe_fields(path: Path) -> dict:
     values), distinct (how many), numeric (share of its values that are numbers), and
     for a DataArray, ``dim``}), ``dims`` (a DataArray's) and ``suggested`` (choices to
     start from, as `parse` takes them: for a table, ``layout`` 'list' if it looks like
-    one, one value per line, else 'matrix')."""
+    one, one value per line, else 'matrix'). Of a MetaCyc bundle: ``kind`` 'metacyc', its
+    ``about`` (version, when built, counts) and its view's options to start from."""
+    if metacyc.is_bundle_path(path):
+        try:
+            about = metacyc.read_about(path)
+        except metacyc.MetacycError as e:
+            raise ReferenceError(str(e)) from None
+        return {"kind": "metacyc", "dims": None, "fields": [], "suggested": metacyc.options({"view": "pathways"}) | {"layout": "metacyc"},
+                "about": {k: about.get(k) for k in ("version", "built_at", "counts")}}
     if path.suffix.lower() in NETCDF_SUFFIXES:
         os.environ.setdefault("HDF5_USE_FILE_LOCKING", "FALSE")
         import xarray as xr
@@ -486,6 +514,11 @@ def _fields(spec: Any) -> Optional[dict]:
         out["value"] = str(spec["value"]) if spec["value"] else None
     if spec.get("empty") in ("zero", "missing"):
         out["empty"] = spec["empty"]
+    if out.get("layout") == "metacyc":  # a view and its options (checked by metacyc.options)
+        out.update({k: spec[k] for k in ("view", "via", "classes") if isinstance(spec.get(k), str)})
+        if "max_pathways" in spec:
+            mp = spec["max_pathways"]
+            out["max_pathways"] = mp if mp is None or (isinstance(mp, int) and not isinstance(mp, bool)) else None
     return out or None
 
 
@@ -516,14 +549,17 @@ def _read_error(path: Path, e: Exception) -> str:
     return f"could not be read as a table ({type(e).__name__}: {e})"
 
 
-def _parsed(path: Path, chemical_axis: str, kind: str, fields: Optional[dict] = None) -> tuple[dict, np.ndarray]:
-    """`parse`, kept in memory for the file as it is now (for files not imported)."""
-    key = (str(path), json.dumps(_source(path)), chemical_axis, kind, json.dumps(fields, sort_keys=True))
+def _parsed(path: Path, chemical_axis: str, kind: str, fields: Optional[dict] = None,
+            odors: Optional[list[dict]] = None) -> tuple[dict, np.ndarray]:
+    """`parse`, kept in memory for the file as it is now (for files not imported), and of a
+    MetaCyc bundle, the odor table as it is."""
+    key = (str(path), json.dumps(_source(path)), chemical_axis, kind, json.dumps(fields, sort_keys=True),
+           metacyc.odors_fingerprint(odors or []) if metacyc.is_bundle_path(path) else None)
     with _memo_lock:
         if key in _memo:
             _memo.move_to_end(key)
             return _memo[key]
-        out = _memo[key] = parse(path, chemical_axis, kind, fields)
+        out = _memo[key] = parse(path, chemical_axis, kind, fields, odors)
         while len(_memo) > MEMO_SIZE:
             _memo.popitem(last=False)
         return out
@@ -542,9 +578,17 @@ def _write(path: Path, data: bytes) -> None:
     tmp.replace(path)
 
 
-def state(ref: dict) -> dict:
+def _odor_settings(path: Path, odors: Optional[list[dict]]) -> dict:
+    """What of the odor table (and of how it is read) the import of a file depends on: of a
+    MetaCyc bundle, which is made over the odor table's chemicals; else nothing."""
+    if not metacyc.is_bundle_path(path):
+        return {}
+    return {"odors": metacyc.odors_fingerprint(odors or []), "metacyc_version": metacyc.VERSION}
+
+
+def state(ref: dict, odors: Optional[list[dict]] = None) -> dict:
     """An added reference dataset's state, importing its file if it changed since it was
-    last imported (or never was).
+    last imported (or never was), or of a MetaCyc bundle, if the odor table (`odors`) did.
 
     Returns:
         ``state`` ('ok' | 'pending': readable once the server restarts | 'error'),
@@ -563,7 +607,8 @@ def state(ref: dict) -> dict:
         return {"state": "error", "error": _read_error(path, e), "record": None}
     d = cache_dir(ref["id"])
     fields = _fields(ref.get("fields"))
-    settings = {"source": source, "chemical_axis": ref["chemical_axis"], "kind_setting": ref["kind"], "fields": fields}
+    settings = {"source": source, "chemical_axis": ref["chemical_axis"], "kind_setting": ref["kind"], "fields": fields,
+                **_odor_settings(path, odors)}
     with _lock:
         try:
             record = json.loads((d / "import.json").read_text())
@@ -572,7 +617,7 @@ def state(ref: dict) -> dict:
         if record is None or any(record.get(k) != v for k, v in settings.items()):
             imported_at = dt.datetime.now().isoformat(timespec="seconds")
             try:
-                record, values = parse(path, ref["chemical_axis"], ref["kind"], fields)
+                record, values = parse(path, ref["chemical_axis"], ref["kind"], fields, odors)
             except Exception as e:  # remembered for the file as it is, so as not to be tried again
                 record, values = {"error": _read_error(path, e)}, None
             record.update(settings, imported_at=imported_at)
@@ -667,6 +712,28 @@ def warning(chem: dict, glomeruli: Optional[dict] = None) -> Optional[str]:
     return None
 
 
+def metacyc_source(db, ref_id: str) -> Optional[tuple[Path, Optional[dict]]]:
+    """A reference dataset of a MetaCyc bundle, without reading it: (its bundle, its view's
+    fields); None if there is no such reference dataset, or it is not of a bundle.
+
+    Raises:
+        ReferenceError: if the server may not read its bundle (now).
+    """
+    e = next((e for e in manifest() if e["id"] == ref_id), None)
+    if e is not None:
+        path = config.REFERENCE_DIR / e["file"]
+    else:
+        e = next((r for r in db.list_references() if r["id"] == ref_id), None)
+        if e is None:
+            return None
+        path = Path(e["path"])
+        if not sandbox.can_read(path):
+            raise ReferenceError("the server may not read its file now (see the Admin tab)")
+    if not metacyc.is_bundle_path(path):
+        return None
+    return path, _fields(e.get("fields"))
+
+
 # ---------------------------------------------------------------------- listing
 
 
@@ -679,32 +746,35 @@ def manifest() -> list[dict]:
     return [dict(d) for d in data.get("datasets", []) if d.get("id") and d.get("file")]
 
 
-def _builtin_state(entry: dict) -> dict:
+def _builtin_state(entry: dict, odors: Optional[list[dict]] = None) -> dict:
     path = config.REFERENCE_DIR / entry["file"]
     try:
-        record, _ = _parsed(path, entry.get("chemical_axis", "detect"), entry.get("kind") or "detect", _fields(entry.get("fields")))
+        record, _ = _parsed(path, entry.get("chemical_axis", "detect"), entry.get("kind") or "detect", _fields(entry.get("fields")), odors)
     except Exception as e:
         error = "file missing from reference_data/" if isinstance(e, FileNotFoundError) else _read_error(path, e)
         return {"state": "error", "error": error, "record": None}
     return {"state": "ok", "error": None, "record": record}
 
 
-def entries(db) -> list[dict]:
+def entries(db, odors: Optional[list[dict]] = None) -> list[dict]:
     """Every reference dataset, built in then added: its settings, ``origin`` ('builtin' |
     'admin') and `state` (built-in ones are read when asked for, and never pending). The
-    built-in examples (``"example": true`` in the manifest) only while there is no other."""
+    built-in examples (``"example": true`` in the manifest) only while there is no other.
+    MetaCyc bundles' views are made over `odors` (the odor table, read from `db` if not given)."""
     builtin, added = manifest(), db.list_references()
     if added or any(not e.get("example") for e in builtin):
         builtin = [e for e in builtin if not e.get("example")]
-    out = [{**e, "origin": "builtin", "path": str(config.REFERENCE_DIR / e["file"]), **_builtin_state(e)} for e in builtin]
-    out += [{**r, "origin": "admin", **state(r)} for r in added]
+    if odors is None and any(metacyc.is_bundle_path(Path(e.get("file") or e.get("path") or "")) for e in builtin + added):
+        odors = db.list_odors()
+    out = [{**e, "origin": "builtin", "path": str(config.REFERENCE_DIR / e["file"]), **_builtin_state(e, odors)} for e in builtin]
+    out += [{**r, "origin": "admin", **state(r, odors)} for r in added]
     return out
 
 
 def listing(db, index: odormeta.OdorIndex) -> list[dict]:
     """`entries` for the list in the Reference data tab and the Admin tab."""
     out = []
-    for e in entries(db):
+    for e in entries(db, list(index.by_id.values())):
         rec = e.pop("record")
         item = {k: e.get(k) for k in ("id", "title", "description", "origin", "path", "state", "error", "source",
                                       "read_grant", "created_at")}
@@ -712,6 +782,7 @@ def listing(db, index: odormeta.OdorIndex) -> list[dict]:
         if rec:
             chem, gl = chemicals(rec, index), glomeruli(rec)
             item.update(kind=rec["kind"], shape=rec["shape"], notes=rec["notes"], imported_at=rec.get("imported_at"),
+                        pairwise=rec.get("pairwise"), metacyc=rec.get("metacyc"),
                         chemicals={**{k: chem[k] for k in ("axis", "n", "matched", "identified")},
                                    "odor_ids": [i["odor_id"] for i in chem["items"] if i["odor_id"] is not None]},
                         glomeruli={"axis": gl["axis"], "n": gl["n"], "matched": gl["matched"],
@@ -723,7 +794,8 @@ def listing(db, index: odormeta.OdorIndex) -> list[dict]:
 
 def load(db, ref_id: str, index: odormeta.OdorIndex) -> Optional[dict[str, Any]]:
     """A reference dataset for the viewer (None if there is none by that id; ``error`` set if it cannot be read)."""
-    e = next((e for e in entries(db) if e["id"] == ref_id), None)
+    odors = list(index.by_id.values())
+    e = next((e for e in entries(db, odors) if e["id"] == ref_id), None)
     if e is None:
         return None
     meta = {k: e.get(k) for k in ("id", "title", "description", "origin", "path", "value_label", "row_label", "col_label", "source")}
@@ -733,14 +805,18 @@ def load(db, ref_id: str, index: odormeta.OdorIndex) -> Optional[dict[str, Any]]
     if e["origin"] == "admin":
         values = _values(ref_id, record)
     else:
-        values = _parsed(Path(e["path"]), e.get("chemical_axis", "detect"), e.get("kind") or "detect", _fields(e.get("fields")))[1]
+        values = _parsed(Path(e["path"]), e.get("chemical_axis", "detect"), e.get("kind") or "detect", _fields(e.get("fields")), odors)[1]
     meta["kind"] = record["kind"]
+    meta["metacyc"] = record.get("metacyc")
     chem, gl = chemicals(record, index), glomeruli(record)
     rows = [dict(r) for r in record["rows"]]
     cols = [dict(c) for c in record["cols"]]
     if chem["axis"]:
         for it, c in zip(rows if chem["axis"] == "rows" else cols, chem["items"]):
             it["chem"] = {**{k: c[k] for k in ("odor_id", "name", "abbrev", "cid", "how")}, "identified": bool(c["cid"] or c["inchi"])}
+        if record.get("pairwise"):  # (its columns are its rows)
+            for it, r in zip(cols, rows):
+                it["chem"] = r["chem"]
     if gl["axis"]:
         for it, name in zip(rows if gl["axis"] == "rows" else cols, gl["names"]):
             it["glomerulus"] = name
@@ -753,6 +829,7 @@ def load(db, ref_id: str, index: odormeta.OdorIndex) -> Optional[dict[str, Any]]
         "chemicals": {k: v for k, v in chem.items() if k != "items"}, "warning": warning(chem, gl), "notes": record["notes"],
         "glomeruli": {k: gl[k] for k in ("axis", "n", "matched")},
         "imported_at": record.get("imported_at"),
+        **({"square": True, "pairwise": record["pairwise"]} if record.get("pairwise") else {}),
     }
 
 
@@ -793,7 +870,7 @@ def check(path_input: str, chemical_axis: str, kind: str, index: odormeta.OdorIn
     except sandbox.SandboxError as e:
         return {**out, "error": str(e)}
     if Path(p).suffix.lower() not in SUFFIXES:
-        return {**out, "error": f"not a table it can read: give a {', '.join(SUFFIXES[:-1])} or {SUFFIXES[-1]} file"}
+        return {**out, "error": NOT_A_TABLE}
     if not sandbox.can_read(p):
         if os.path.isdir(p):
             return {**out, "error": "this is a folder, not a file"}
@@ -804,13 +881,18 @@ def check(path_input: str, chemical_axis: str, kind: str, index: odormeta.OdorIn
     except Exception as e:
         return {**out, "error": _read_error(Path(p), e)}
     used = _fields(fields) or described["suggested"]
+    if described["kind"] == "metacyc":  # a bundle's view, its options checked
+        used = {**metacyc.options(used if used.get("layout") == "metacyc" else None), "layout": "metacyc"}
+    elif used.get("layout") == "metacyc":  # (chosen for a bundle, and now another file)
+        used = described["suggested"]
     out = {**out, "readable": True, "fields": {**described, "used": used}}
     try:
-        record, _ = _parsed(Path(p), chemical_axis, kind, used)
+        record, _ = _parsed(Path(p), chemical_axis, kind, used, list(index.by_id.values()))
     except Exception as e:
         return {**out, "error": _read_error(Path(p), e)}
     chem, gl = chemicals(record, index), glomeruli(record)
     preview = {"shape": record["shape"], "kind": record["kind"], "notes": record["notes"], "warning": warning(chem, gl),
+               "pairwise": record.get("pairwise"), "metacyc": record.get("metacyc"),
                "chemicals": {k: chem[k] for k in ("axis", "n", "matched", "identified", "unidentified", "ambiguous")},
                "glomeruli": {k: gl[k] for k in ("axis", "n", "matched")}}
     return {**out, "ok": True, "readable": True, "preview": preview}
@@ -842,13 +924,15 @@ def add(db, body: dict, index: odormeta.OdorIndex, supervisor: Optional[str]) ->
     if errors:
         return 422, {"ok": False, "errors": errors, "check": c}
     used = c["fields"]["used"] if c.get("fields") else _fields(body.get("fields"))
+    if metacyc.is_bundle_path(Path(c["path"])) and used:  # (a view chosen, else the first)
+        used = {**metacyc.options(used), "layout": "metacyc"}
     taken = {e["id"] for e in manifest()} | {r["id"] for r in db.list_references()}
     ref = {**fields, "id": _slug(fields["title"], taken), "created_at": dt.datetime.now().isoformat(timespec="seconds"),
            "path": c["path"], "kind": kind, "chemical_axis": axis, "read_grant": None, "fields": json.dumps(used) if used else None}
     if not c["readable"]:
         ref["read_grant"] = sandbox.grant_read(c["path"])
     db.add_reference(ref)
-    s = state(ref)
+    s = state(ref, list(index.by_id.values()))
     return 200, {"ok": True, "id": ref["id"], "state": s["state"], "error": s["error"], "grant": ref["read_grant"],
                  "restart": c["restart"], "steps": c["steps"]}
 

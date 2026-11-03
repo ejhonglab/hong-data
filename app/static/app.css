@@ -734,6 +734,70 @@ dialog.player::backdrop { background: rgba(29,31,34,.55); }
 .hs-method ul { padding-left: 20px; }
 .hs-method li { margin: 6px 0; max-width: 90ch; }
 
+/* MetaCyc, under a matrix of its in the Reference data tab (metacyc.js) */
+.mc-panel { flex: none; margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--rule); }
+/* (the matrix as high as it needs above it, up to most of the window, the tab scrolling to it) */
+#reference-view:has(#ref-metacyc:not([hidden])) #reference-viewer { flex: none; }
+.mc-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.mc-head h3 { margin: 0; }
+.mc-search { flex: 1; min-width: 220px; max-width: 520px; }
+.mc-results { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; max-height: 300px; overflow: auto; margin: 8px 0;
+  padding: 8px; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--panel); font-size: 13px; }
+.mc-hit { display: block; width: 100%; padding: 3px 4px; border: 0; background: none; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.mc-hit:hover { background: var(--accent-soft); }
+.mc-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-top: 10px; }
+.mc-title h3 { margin: 0; }
+.mc-meta { margin: 6px 0; font-size: 13px; line-height: 1.9; }
+.mc-panel .chip { display: inline-block; padding: 1px 8px; border: 1px solid var(--rule); border-radius: 999px; background: var(--panel);
+  color: var(--ink); font: inherit; font-size: 12px; line-height: 1.6; }
+.mc-chip { cursor: pointer; }
+.mc-chip:hover { border-color: var(--accent); }
+.mc-panel .chip.odor { border-color: var(--accent); background: var(--accent-soft); }
+.mc-graph-wrap { max-height: 75vh; overflow: auto; margin: 8px 0; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--hm-surface); }
+.mc-graph { display: block; margin: 0 auto; font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+.mc-node { cursor: pointer; outline: none; }
+.mc-node rect { fill: var(--panel); stroke: var(--rule-strong); stroke-width: 1; }
+.mc-node text { fill: var(--ink); font-size: 11px; text-anchor: middle; }
+.mc-node.class rect { stroke-dasharray: 4 2; }
+.mc-node.primary rect { stroke-width: 2; }
+.mc-node.odor rect { fill: var(--accent-soft); stroke: var(--accent); }
+.mc-node.odor text { font-weight: 600; }
+.mc-node.marked rect { stroke: var(--orange); stroke-width: 3; }
+.mc-node:hover rect, .mc-node:focus-visible rect { stroke: var(--accent); stroke-width: 2.5; }
+.mc-node text.badge { fill: var(--ink-muted); font-size: 9px; font-weight: normal; text-anchor: end; }
+.mc-edge { cursor: pointer; }
+.mc-edge path { fill: none; stroke: var(--ink-muted); stroke-width: 1.4; }
+.mc-edge path.hit { stroke: transparent; stroke-width: 12; }
+.mc-edge text { fill: var(--ink-muted); font-size: 9px; }
+.mc-edge.on path:not(.hit) { stroke: var(--orange); stroke-width: 2.6; }
+.mc-edge.on text { fill: var(--orange); font-weight: 600; }
+.mc-graph marker path { fill: var(--ink-muted); }
+.mc-section { margin: 10px 0; }
+.mc-section summary { font-weight: 600; cursor: pointer; }
+.mc-section p { max-width: 90ch; }
+.mc-scroll { max-height: 380px; overflow: auto; margin-top: 6px; }
+.mc-table td { vertical-align: top; }
+.mc-table tr.on td { background: var(--warn-soft); }
+.mc-compound { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 16px; margin: 8px 0; }
+.mc-structure { max-width: 260px; max-height: 200px; border-radius: var(--radius); background: #fff; }
+.mc-dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; margin: 0; font-size: 13px; }
+.mc-dl dt { color: var(--ink-muted); }
+.mc-dl dd { margin: 0; }
+.mc-wrap { word-break: break-all; }
+.mc-rx { max-height: 240px; overflow: auto; font-size: 12px; }
+.mc-lca { margin: 8px 0; padding: 10px; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--panel); }
+.mc-lca-top { display: flex; justify-content: center; }
+.mc-lca-paths { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 4px; }
+.mc-path { display: flex; flex-direction: column; align-items: center; text-align: center; }
+.mc-arrow { color: var(--ink-muted); }
+.mc-step { display: flex; flex-direction: column; align-items: center; max-width: 100%; }
+.mc-stepname { max-width: 100%; padding: 3px 8px; border: 1px solid var(--rule-strong); border-radius: 5px; background: var(--field); color: var(--ink); font: inherit; cursor: pointer; }
+.mc-step.reaction .mc-stepname { border-style: dashed; font-size: 12px; cursor: default; }
+.mc-step.pathway .mc-stepname { border-color: var(--accent); }
+.mc-step.class .mc-stepname { border-style: dotted; }
+.linkish { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; cursor: pointer; }
+.mc-lca-opts .mc-max { width: 6em; }
+
 @media (max-width: 900px) {
   .player-body { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr) auto; }
   .player-list, .player-rois { max-height: 22vh; border: 0; }

@@ -5,6 +5,7 @@ import { MAX_CLUSTER_ITEMS, CLUSTER_VERSION, ClusterPool, layoutDendrogram } fro
 import { exportFigure } from './figure.js';
 import { MoviePlayer } from './player.js';
 import { SIMILARITIES, similarityMatrix, tanimoto, correlateSimilarities, sharedSimilarities, holm } from './similarity.js';
+import { MetacycPanel } from './metacyc.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -728,6 +729,9 @@ class MatrixViewer {
     this.clusterCache = new Map();
     this._seq = 0;
     this.onShow = null; // called once the matrix is drawn (as shown, or with cells of another size)
+    // (axis, item) -> more entries of a label's menu ({html, onPick}), axis that of the
+    // matrix as given (the same whether or not it is shown transposed)
+    this.labelMenuExtra = null;
     // {other, cols}: a viewer of the same rows in the same order (and with cols, the same
     // columns), shown beside this one: rows moved, removed or reset, cell sizes, transposing,
     // chemical labels and scrolling are kept the same in both, and what is hovered is marked
@@ -1241,12 +1245,23 @@ class MatrixViewer {
       const same = this.model[axis].filter((r) => this.data.units[r.key].roi === roi).map((r) => r.key);
       if (!/^\d+$/.test(roi) && same.length > 1) entries.push({ html: `Remove ${esc(roi)} from every fly${muted(`${same.length} ROIs`)}`, keys: same });
     }
-    showContextMenu(x, y, entries.map((e) => ({
+    const extra = level === 'item' && this.labelMenuExtra ? this.labelMenuExtra(this._givenAxis(axis), it) || [] : [];
+    showContextMenu(x, y, [...extra, ...entries.map((e) => ({
       html: e.html,
       disabled: e.keys.length >= shown,
       title: e.keys.length >= shown ? `At least one ${one} has to stay` : '',
       onPick: () => this._remove(axis, e.keys),
-    })));
+    }))]);
+  }
+
+  // an axis of the matrix shown as that of the matrix given (its rows its columns, if transposed)
+  _givenAxis(axis) { return this.model?.transposed ? (axis === 'rows' ? 'cols' : 'rows') : axis; }
+
+  // a cell clicked (as the heatmap gives it) as the matrix given has it: {row, col} (each
+  // its index there), or null if it is not one of its cells (e.g. KCs summed)
+  givenCell({ row, col }) {
+    const [r, c] = this.model?.transposed ? [col, row] : [row, col];
+    return r?.key >= 0 && c?.key >= 0 ? { row: r.key, col: c.key } : null;
   }
 
   // the matrix as shown, as a CSV table: its row labels (and groups) then a column each
@@ -3242,6 +3257,33 @@ class Reference {
     $('#ref-msgs').replaceChildren(...msgs);
     if (!this.viewer) this.viewer = new MatrixViewer($('#reference-viewer'), { kind: 'generic' });
     this.viewer.setGenericData(this._shown(ref), { title: m.title, fileStem: `olfdb_reference-${id}` });
+    this._metacyc(id, ref);
+  }
+
+  // a MetaCyc bundle's view: its panel under the matrix, shown what a cell or a label is of
+  _metacyc(id, ref) {
+    const box = $('#ref-metacyc'), v = this.viewer, el = $('#reference-viewer');
+    box.hidden = !ref.meta.metacyc;
+    if (!ref.meta.metacyc) { v.heatmap.options.onCellClick = null; v.labelMenuExtra = null; v.onShow = null; el.style.height = ''; return; }
+    v.onShow = () => fitViewer(el, v);
+    fitViewer(el, v);
+    if (!this.metacyc) this.metacyc = new MetacycPanel(box, { api, esc, msgBox });
+    this.metacyc.setRef(id, ref);
+    const item = (axis, k) => v.source[axis][k]; // (of the matrix shown: some may be left out, see _shown)
+    v.heatmap.options.onCellClick = (info) => {
+      const cell = v.givenCell(info);
+      if (!cell) return;
+      const r = item('rows', cell.row), c = item('cols', cell.col);
+      if (ref.pairwise) this.metacyc.show({ kind: 'lca', a: r.metacyc, b: c.metacyc, labels: [r.label, c.label] });
+      else this.metacyc.show({ kind: 'pathway', id: c.metacyc, mark: [r.metacyc] });
+    };
+    v.labelMenuExtra = (axis, it) => {
+      const x = item(axis, it.key);
+      if (!x?.metacyc) return [];
+      const pathway = !ref.pairwise && axis === 'cols';
+      return [{ html: `${pathway ? 'Draw the pathway' : 'Show in MetaCyc'} <span class="muted">${esc(x.metacyc)}</span>`,
+        onPick: () => this.metacyc.show(pathway ? { kind: 'pathway', id: x.metacyc } : { kind: 'compound', id: x.metacyc }) }];
+    };
   }
 }
 
@@ -3635,6 +3677,7 @@ function showRefCheck(c) {
   const p = c.preview, ch = p.chemicals;
   msg.textContent = `✓ read: ${p.shape[0].toLocaleString()} rows × ${p.shape[1].toLocaleString()} columns, ${p.kind}`;
   const lines = [];
+  if (p.metacyc) lines.push(`Its values: ${esc(p.metacyc.described)}.`);
   if (ch.axis) lines.push(`Its ${ch.axis === 'rows' ? 'rows' : 'columns'} are chemicals: ${ch.matched} of ${ch.n} matched to the Odors table, ${ch.identified} identified by CID or InChI.`);
   const g = p.glomeruli;
   if (g?.axis) lines.push(`Its ${g.axis === 'rows' ? 'rows' : 'columns'} are glomeruli (${g.matched} of ${g.n}, by name): it can be compared with datasets on their glomeruli.`);
@@ -4155,6 +4198,15 @@ class AdminPage {
 
   _refBody() {
     const v = (id) => $(id).value.trim(), f = this.refFields, chosen = f && f.layout !== 'matrix';
+    if (f?.layout === 'metacyc') {
+      const lca = f.view === 'lca';
+      return {
+        path: v('#ref-path'), title: v('#ref-title'), description: v('#ref-description'), source: v('#ref-source'),
+        chemical_axis: $('#ref-axis').value, kind: $('#ref-kind').value, fields: f,
+        value_label: v('#ref-value-label') || (lca ? 'steps to their lowest common ancestor' : 'in the pathway'),
+        row_label: v('#ref-row-label') || 'chemical', col_label: v('#ref-col-label') || (lca ? 'chemical' : 'pathway'),
+      };
+    }
     return {
       path: v('#ref-path'), title: v('#ref-title'), description: v('#ref-description'), source: v('#ref-source'),
       chemical_axis: $('#ref-axis').value, kind: $('#ref-kind').value, fields: f,
@@ -4177,6 +4229,7 @@ class AdminPage {
     const key = JSON.stringify([c.path, f.kind, f.fields.map((x) => [x.name, x.dim])]);
     if (key === this._fieldsKey) return;
     this._fieldsKey = key;
+    if (f.kind === 'metacyc') { this._renderMetacyc(box, f); return; }
     const u = f.used, dims = f.dims || [];
     const named = (x) => `${esc(x.name)} <span class="muted">(${x.distinct.toLocaleString()}${x.numeric ? `, ${Math.round(x.numeric * 100)}% numbers` : ''})</span>`;
     const tip = (x) => esc(x.samples.length ? `e.g. ${x.samples.join(' · ')}` : 'empty');
@@ -4211,9 +4264,52 @@ class AdminPage {
     if (values) values.value = u.value || '';
   }
 
+  // A MetaCyc bundle (metacyc.py): which of its views, and its options; its title suggested
+  _renderMetacyc(box, f) {
+    const u = f.used, a = f.about || {}, n = a.counts || {}, v = a.version ? ` ${a.version}` : '';
+    box.innerHTML = `<div class="ref-fields"><h4>MetaCyc${esc(v)}</h4>
+      <p class="muted small">A bundle of MetaCyc's SmartTables (app/metacyc_build.py) of ${(n.compounds || 0).toLocaleString()} compounds,
+        ${(n.pathways || 0).toLocaleString()} pathways, ${(n.reactions || 0).toLocaleString()} reactions and ${(n.species || 0).toLocaleString()} species,
+        built ${esc(fmtWhen(a.built_at))}. It is shown over the odor table's chemicals that are in it (made again whenever the odor table changes),
+        each looked into below its matrix (pathways drawn, with their organisms). Add it once for each view.</p>
+      <div class="ref-role"><b>Shown as</b>
+        <label class="chip"><input type="radio" name="ref-mc-view" value="pathways"${u.view !== 'lca' ? ' checked' : ''}> chemicals by the pathways they are in</label>
+        <label class="chip"><input type="radio" name="ref-mc-view" value="lca"${u.view === 'lca' ? ' checked' : ''}> their pathway LCA distance (odor × odor)</label></div>
+      <div class="ref-role"><b>Through classes</b> <select data-mc="classes" aria-label="Through classes">
+        <option value="fallback">a chemical in none itself: as the classes it is of (e.g. an alcohol)</option>
+        <option value="always">always as the classes it is of, too</option><option value="never">never</option></select></div>
+      <div class="ref-role mc-lca-opts"${u.view === 'lca' ? '' : ' hidden'}><b>Network</b> <select data-mc="via" aria-label="Network">
+          <option value="reactions">compounds and reactions (as computed for the thesis, ch. 2)</option>
+          <option value="pathways">compounds and pathways (as the thesis's Methods describe)</option></select>
+        <label>without compounds in more than <input type="number" data-mc="max_pathways" min="1" step="1" placeholder="any number of" class="mc-max"> pathways</label></div></div>`;
+    $('[data-mc=classes]', box).value = u.classes || 'fallback';
+    if (u.view === 'lca') { $('[data-mc=via]', box).value = u.via || 'reactions'; $('[data-mc=max_pathways]', box).value = u.max_pathways ?? ''; }
+    this._mcVersion = a.version;
+    this._mcVia = u.via || 'reactions';
+    if (!$('#ref-title').value.trim()) $('#ref-title').value = this._metacycTitle(u.view, a.version);
+    this._mcTitle = $('#ref-title').value;
+  }
+
+  _metacycTitle(view, version) {
+    const v = version ? ` ${version}` : '';
+    return view === 'lca' ? `MetaCyc${v}: pathway LCA distance between odors` : `MetaCyc${v}: compounds by the pathways they are in`;
+  }
+
   // the choices of fields as the controls say
   _readFields() {
     const box = $('#ref-fields'), layout = $('input[name=ref-layout]:checked', box)?.value;
+    if ($('input[name=ref-mc-view]', box)) {
+      const view = $('input[name=ref-mc-view]:checked', box).value, lca = view === 'lca';
+      $('.mc-lca-opts', box).hidden = !lca;
+      // the title suggested follows the view, unless typed over
+      if ($('#ref-title').value === this._mcTitle) $('#ref-title').value = this._mcTitle = this._metacycTitle(view, this._mcVersion);
+      // (through pathways, by default without those in more than 240, as the thesis's Methods say)
+      const via = $('[data-mc=via]', box).value, maxIn = $('[data-mc=max_pathways]', box);
+      if (via !== this._mcVia) { maxIn.value = via === 'pathways' ? 240 : ''; this._mcVia = via; }
+      const max = parseInt(maxIn.value, 10);
+      return { layout: 'metacyc', view, classes: $('[data-mc=classes]', box).value,
+        ...(lca ? { via: $('[data-mc=via]', box).value, max_pathways: max > 0 ? max : null } : {}) };
+    }
     if ($('.ref-list', box)) $('.ref-list', box).hidden = layout === 'matrix';
     const axis = (which) => {
       const el = $(`[data-axis=${which}]`, box), label = $('[data-label]', el).value || null;
@@ -4740,7 +4836,10 @@ class ComparePage {
 
   // a reference dataset's, of its chemicals (on 'odors') or its glomeruli (on 'glomeruli'),
   // by their values along its other axis (each once, the first of its rows or columns)
+  // Of distances between its chemicals (pairwise: its columns its rows), the negative of
+  // its own values, whatever the similarity chosen for reference data
   _refSpace(ref, on = 'odors') {
+    if (ref.pairwise && on === 'odors') return this._pairwiseSpace(ref);
     return this._memo(`ref:${ref.meta.id}:${on}:${this.o.refMetric}`, () => {
       const axis = on === 'odors' ? ref.chemicals.axis : ref.glomeruli.axis;
       const values = decodeValues(ref.values_b64), nR = ref.rows.length, nC = ref.cols.length, onRows = axis === 'rows';
@@ -4758,6 +4857,19 @@ class ComparePage {
           meta: { kind: m.kind, value_label: m.value_label, col_label: (onRows ? m.col_label : m.row_label) || (onRows ? 'column' : 'row') },
           kcs: on === 'glomeruli' && kcAxisOf(ref) != null }, // (its other axis then, the columns of its data)
       };
+    });
+  }
+
+  _pairwiseSpace(ref) {
+    return this._memo(`refpair:${ref.meta.id}`, () => {
+      const values = decodeValues(ref.values_b64), n = ref.rows.length;
+      const keep = [], ids = [];
+      ref.rows.forEach((it, k) => { const id = it.chem?.odor_id; if (id != null && !ids.includes(id)) { ids.push(id); keep.push(k); } });
+      const m = ids.length, sim = new Float32Array(m * m);
+      keep.forEach((a, i) => keep.forEach((b, j) => { const v = values[a * n + b]; sim[i * m + j] = v === v ? -v : NaN; }));
+      const vectors = keep.map((a) => Float32Array.from(keep, (b) => values[a * n + b]));
+      const m0 = ref.meta;
+      return { ids, sim, data: { vectors, cols: keep.map((k) => ({ label: ref.rows[k].label })), meta: { kind: m0.kind, value_label: m0.value_label, col_label: m0.col_label || 'chemical' } } };
     });
   }
 
@@ -4810,6 +4922,12 @@ class ComparePage {
           const ref = this.refData.get(id);
           const axis = on === 'odors' ? ref.chemicals.axis : ref.glomeruli.axis;
           const along = axis === 'rows' ? ref.meta.col_label || 'columns' : ref.meta.row_label || 'rows';
+          if (ref.pairwise && on === 'odors') {
+            const what = ref.meta.value_label || 'distance';
+            out.push({ key, title: ref.meta.title, space: this._refSpace(ref, on), note: `its own values between them, negated (${what}: the nearer, the more alike)`,
+              simLabel: `−(${what})` });
+            continue;
+          }
           const simLabel = SIMILARITIES[this.o.refMetric].label;
           out.push({ key, title: ref.meta.title, space: this._refSpace(ref, on), note: `by their values across its ${along}, ${simLabel}`, simLabel });
         }

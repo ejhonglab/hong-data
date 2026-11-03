@@ -37,8 +37,8 @@ from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, R
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import (backup, chemprops, compare, config, dilution, export, filelog, headspace, merge, movies, odormeta, reference,
-               sandbox, tensor, thorimage, vcf, yamlcheck)
+from . import (backup, chemprops, compare, config, dilution, export, filelog, headspace, merge, metacyc, movies, odormeta,
+               reference, sandbox, tensor, thorimage, vcf, yamlcheck)
 from .db import PANEL_RENAMES, PROPERTY_COLUMNS, Database, rename_panel
 from .glomeruli import load_glomeruli
 from .ingest import (ParsedData, ValidationError, combine, extra_text, files_text, fly_key, kc_id_problems, load_file,
@@ -2280,6 +2280,78 @@ async def reference_list(request: Request) -> Response:
                                       for r in refs]})
 
 
+def _metacyc(request: Request) -> tuple[metacyc.Bundle, Optional[dict], dict[str, dict]]:
+    """The MetaCyc bundle of the reference dataset in the path, its view's fields, and the
+    odors of the odor table its compounds are ({frame ID: {id, name, abbrev}}).
+
+    Raises:
+        HTTPException: 404 if there is no such reference dataset of a bundle, 409 if its
+            bundle cannot be read now.
+    """
+    try:
+        src = reference.metacyc_source(db, request.path_params["ref_id"])
+    except reference.ReferenceError as e:
+        raise HTTPException(409, str(e)) from None
+    if src is None:
+        raise HTTPException(404, "no such reference dataset of MetaCyc")
+    try:
+        b = metacyc.bundle(src[0])
+    except (OSError, metacyc.MetacycError) as e:
+        raise HTTPException(409, f"its MetaCyc bundle cannot be read: {e}") from None
+    return b, src[1], metacyc.odor_marks(b, db.list_odors())
+
+
+async def metacyc_pathway(request: Request) -> Response:
+    """A pathway of a MetaCyc reference dataset's bundle, to draw and describe (`metacyc.pathway`)."""
+    def get():
+        b, _, odors = _metacyc(request)
+        return metacyc.pathway(b, request.path_params["frame"], odors)
+    out = await run_in_threadpool(get)
+    return JSONResponse(out) if out is not None else json_error(404, "MetaCyc has no such pathway")
+
+
+async def metacyc_compound(request: Request) -> Response:
+    """A compound (or class) of a MetaCyc reference dataset's bundle (`metacyc.compound`)."""
+    def get():
+        b, _, odors = _metacyc(request)
+        return metacyc.compound(b, request.path_params["frame"], odors)
+    out = await run_in_threadpool(get)
+    return JSONResponse(out) if out is not None else json_error(404, "MetaCyc has no such compound")
+
+
+async def metacyc_lca(request: Request) -> Response:
+    """The pathway LCA distance of two compounds (``a``, ``b``: frame IDs) in the network of a
+    MetaCyc reference dataset's view (or the default one's), with the paths from their LCAs (`metacyc.explain`)."""
+    a, c = request.query_params.get("a", ""), request.query_params.get("b", "")
+    if not a or not c:
+        return json_error(400, "give two compounds' frame IDs: ?a=...&b=...")
+
+    def get():
+        b, fields, _ = _metacyc(request)
+        return metacyc.explain(b, fields, a, c)
+    return JSONResponse(await run_in_threadpool(get))
+
+
+async def metacyc_search(request: Request) -> Response:
+    """Pathways and compounds of a MetaCyc reference dataset's bundle by name or frame ID (``q``)."""
+    def get():
+        b, _, _ = _metacyc(request)
+        return metacyc.search(b, request.query_params.get("q", ""))
+    return JSONResponse(await run_in_threadpool(get))
+
+
+async def metacyc_structure(request: Request) -> Response:
+    """A compound's structure drawn from its InChI in a MetaCyc bundle, as SVG."""
+    def get():
+        b, _, _ = _metacyc(request)
+        c = b.compounds.get(request.path_params["frame"])
+        return odormeta.structure_svg(c["inchi"]) if c and c["inchi"] else None
+    svg = await run_in_threadpool(get)
+    if svg is None:
+        return json_error(404, "no structure: MetaCyc has no InChI for it, or RDKit cannot read it")
+    return Response(svg, media_type="image/svg+xml", headers={"cache-control": "max-age=86400"})
+
+
 async def reference_get(request: Request) -> Response:
     """A reference dataset for the viewer (`reference.load`): gzipped, if large and the browser takes it."""
     data = await run_in_threadpool(lambda: reference.load(db, request.path_params["ref_id"], _odor_index()))
@@ -2717,6 +2789,11 @@ routes = [
     Route("/api/headspace/vcf", headspace_vcf, methods=["GET", "POST"]),
     Route("/api/reference", reference_list),
     Route("/api/reference/{ref_id}", reference_get),
+    Route("/api/reference/{ref_id}/metacyc/pathway/{frame:path}", metacyc_pathway),
+    Route("/api/reference/{ref_id}/metacyc/compound/{frame:path}", metacyc_compound),
+    Route("/api/reference/{ref_id}/metacyc/structure/{frame:path}", metacyc_structure),
+    Route("/api/reference/{ref_id}/metacyc/lca", metacyc_lca),
+    Route("/api/reference/{ref_id}/metacyc/search", metacyc_search),
     Route("/api/admin", admin_get),
     Route("/api/admin", admin_save, methods=["POST"]),
     Route("/api/admin/check", admin_check, methods=["POST"]),
