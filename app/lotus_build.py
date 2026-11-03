@@ -10,11 +10,15 @@ the app reads as a reference dataset (see lotus.py and reference_data/README.md)
 table's chemicals by the families of organisms they are reported in.
 
 The files are found in the folder as laid out in ``Scraped-Databases-Copy/LOTUS/raw``
-(`FILES`); which are read can be changed with ``--file <role>=<path>``.
+(`FILES`), each gzipped or not; which are read can be changed with ``--file <role>=<path>``.
+They are checked before anything is read (`problems`): each there, with the columns it needs.
+
+The Admin tab can do all this too, from the folder uploaded (see lotus_import.py).
 """
 from __future__ import annotations
 
 import argparse
+import csv
 import datetime as dt
 import gzip
 import io
@@ -22,6 +26,7 @@ import json
 import re
 import sqlite3
 import sys
+import zlib
 from pathlib import Path
 from typing import IO, Iterable, Optional
 
@@ -31,15 +36,43 @@ from .lotus import (BUNDLE_KIND, DEFAULT_OPTIONS, FAMILY_NAMES, SOURCES, describ
                     view_title, value_label)
 from .metacyc_build import plain
 
-# role -> where it is looked for in the folder (glob patterns: the last match, by name, of the first that matches)
+# role -> where it is looked for in the folder: glob patterns, each gzipped or not (also as <pattern>.gz); of the files
+# the first that finds any finds, the last by name (the newest; of one there as is and gzipped, `newest`)
 FILES = {
-    "pairs": ["*_frozen/*_frozen.csv", "*_frozen/*_frozen.csv.gz", "*frozen*.csv", "*frozen*.csv.gz"],
-    "structures": ["metadata_*/*/structure_metadata.tsv", "metadata_*/*/structure_metadata.tsv.gz", "**/structure_metadata.tsv*"],
-    "organisms": ["metadata_*/*/organism_metadata.tsv", "metadata_*/*/organism_metadata.tsv.gz", "**/organism_metadata.tsv*"],
-    "references": ["metadata_*/*/reference_metadata.tsv", "metadata_*/*/reference_metadata.tsv.gz", "**/reference_metadata.tsv*"],
+    "pairs": ["*_frozen/*_frozen.csv", "*frozen*.csv"],
+    "structures": ["metadata_*/*/structure_metadata.tsv", "**/structure_metadata.tsv"],
+    "organisms": ["metadata_*/*/organism_metadata.tsv", "**/organism_metadata.tsv"],
+    "references": ["metadata_*/*/reference_metadata.tsv", "**/reference_metadata.tsv"],
     "lts": ["LOTUS_DB_LATEST/LOTUS_*_simple.sdf", "**/LOTUS_*.sdf"],  # (optional) LOTUS IDs, by InChIKey
 }
 REQUIRED = ("pairs", "structures", "organisms", "references")
+ABOUT = {  # role -> what the file is (as said when it is missing or not as expected)
+    "pairs": "LOTUS's frozen export of its Wikidata records: structure, organism and paper (a CSV)",
+    "structures": "LOTUS's metadata of each structure (structure_metadata.tsv, from Zenodo)",
+    "organisms": "LOTUS's metadata of each organism: its lineage in each taxonomy (organism_metadata.tsv, from Zenodo)",
+    "references": "LOTUS's metadata of each paper (reference_metadata.tsv, from Zenodo)",
+    "lts": "LOTUS's 2021 release as an SDF, for its LOTUS IDs (LTS…)",
+}
+# what is read of each file of metadata: its column -> as kept
+STRUCTURE_COLUMNS = {
+    "structureCleanedInchikey": "inchikey", "structureCleanedInchi": "inchi", "structureCleanedSmiles": "smiles",
+    "structureCleaned_molecularFormula": "formula", "structureCleaned_exactMass": "exact_mass", "structureCleaned_xlogp": "xlogp",
+    "structureCleaned_stereocenters_total": "stereocenters", "structureCleaned_stereocenters_unspecified": "stereocenters_unspecified",
+    "structureCleaned_cid": "cid", "structureCleaned_nameTraditional": "name", "structureCleaned_nameIupac": "iupac_name"}
+RANK_COLUMNS = {"kingdom": "organismCleaned_dbTaxo_1kingdom", "phylum": "organismCleaned_dbTaxo_2phylum",
+                "class": "organismCleaned_dbTaxo_3class", "order": "organismCleaned_dbTaxo_4order",
+                "family": "organismCleaned_dbTaxo_5family", "genus": "organismCleaned_dbTaxo_6genus",
+                "species": "organismCleaned_dbTaxo_7species", "variety": "organismCleaned_dbTaxo_8variety"}
+ORGANISM_COLUMNS = ["organismCleaned", "organismCleaned_id", "organismCleaned_rank", "organismCleaned_dbTaxo",
+                    "organismCleaned_dbTaxoTaxonomy", *RANK_COLUMNS.values()]
+REFERENCE_COLUMNS = {
+    "referenceCleanedDoi": "doi", "referenceCleanedTitle": "title", "referenceCleaned_journal": "journal",
+    "referenceCleaned_date": "date", "referenceCleaned_author": "author", "referenceCleanedPmid": "pmid",
+    "referenceCleanedPmcid": "pmcid"}
+COLUMNS = {  # role -> the columns its file must have (others it reads are used if there)
+    "pairs": ("structure_inchikey", "organism_name", "reference_doi"), "structures": tuple(STRUCTURE_COLUMNS),
+    "organisms": tuple(ORGANISM_COLUMNS), "references": tuple(REFERENCE_COLUMNS), "lts": ("lotus_id", "inchikey"),
+}
 CHUNK = 500_000  # lines of the metadata read at once
 
 SCHEMA = """
@@ -67,10 +100,10 @@ CREATE INDEX structures_cid ON structures (cid);
 CREATE INDEX structures_lts ON structures (lts);
 CREATE INDEX pairs_organism ON pairs (organism);
 """
-RANK_COLUMNS = {"kingdom": "organismCleaned_dbTaxo_1kingdom", "phylum": "organismCleaned_dbTaxo_2phylum",
-                "class": "organismCleaned_dbTaxo_3class", "order": "organismCleaned_dbTaxo_4order",
-                "family": "organismCleaned_dbTaxo_5family", "genus": "organismCleaned_dbTaxo_6genus",
-                "species": "organismCleaned_dbTaxo_7species", "variety": "organismCleaned_dbTaxo_8variety"}
+
+
+class BuildError(ValueError):
+    """LOTUS's files are not as the build reads them (what it expects said)."""
 
 
 def open_peeled(path: Path) -> IO[bytes]:
@@ -89,7 +122,8 @@ def _chunks(path: Path, usecols: list[str], sep: str = "\t") -> Iterable[pd.Data
 
 
 def resolve(folder: Path, overrides: Optional[dict[str, str]] = None) -> dict[str, Optional[Path]]:
-    """The file read for each role (`FILES`): as given in `overrides`, else the first found."""
+    """The file read for each role (`FILES`): as given in `overrides`, else the first found
+    (None if none is)."""
     out: dict[str, Optional[Path]] = {}
     for role, patterns in FILES.items():
         given = (overrides or {}).get(role)
@@ -99,14 +133,74 @@ def resolve(folder: Path, overrides: Optional[dict[str, str]] = None) -> dict[st
             continue
         out[role] = None
         for pat in patterns:
-            found = sorted(p for p in folder.glob(pat) if p.is_file())
+            found = [p for g in (pat, pat + ".gz") for p in folder.glob(g) if p.is_file()]
             if found:
-                out[role] = found[-1]
+                out[role] = Path(newest([str(p) for p in found]))
                 break
-    missing = [r for r in REQUIRED if not out[r] or not out[r].is_file()]
-    if missing:
-        raise SystemExit(f"not found in {folder}: {', '.join(f'{r} ({FILES[r][0]})' for r in missing)} "
-                         f"(give it with --file {missing[0]}=<path>)")
+    return out
+
+
+def newest(paths: list[str], gzipped: bool = False) -> str:
+    """Of files found for a role, the last by name (the newest, as LOTUS's names have their
+    dates), a file gzipped named as it is not; of one there both ways, the one as is (quicker
+    to read), or gzipped (`gzipped`: smaller, to upload)."""
+    return max(paths, key=lambda p: (p.removesuffix(".gz"), p.endswith(".gz") == gzipped))
+
+
+def expected(role: str) -> str:
+    """What the file of a role is, and where in the folder it is looked for."""
+    return f"{ABOUT[role]}, as {' or '.join(FILES[role])} (gzipped or not)"
+
+
+def _is_sdf(path: Path) -> bool:
+    return path.name.lower().endswith((".sdf", ".sdf.gz"))
+
+
+def _header(path: Path, sep: str) -> list[str]:
+    """A table's first line (gunzipped), as its columns."""
+    with open_peeled(path) as f:
+        line = f.readline(1 << 20).decode("utf-8", errors="replace").rstrip("\r\n")
+    return next(csv.reader([line], delimiter=sep, quoting=csv.QUOTE_NONE if sep == "\t" else csv.QUOTE_MINIMAL), [])
+
+
+def problems(files: dict[str, Optional[Path]], folder: Optional[Path] = None) -> list[str]:
+    """Why the files of `resolve` cannot be read as LOTUS's (empty if they can): those required
+    missing, and any without the columns it needs (`COLUMNS`; an SDF of LOTUS IDs, the fields
+    of its first records). Each says what was expected."""
+    out = []
+
+    def shown(p: Path) -> str:
+        try:
+            return p.relative_to(folder).as_posix() if folder else str(p)
+        except ValueError:
+            return str(p)
+
+    for role in FILES:
+        p = files.get(role)
+        if p is None or not p.is_file():
+            if role in REQUIRED or p is not None:
+                out.append(f"{'missing' if p is None else f'{p} is not a file'}: {expected(role)}")
+            continue
+        try:
+            if role == "lts" and _is_sdf(p):
+                with open_peeled(p) as f:
+                    head = f.read(1 << 16).decode("utf-8", errors="replace")
+                lacking = [c for c in COLUMNS[role] if f"> <{c}>" not in head]
+                if lacking:
+                    out.append(f"{shown(p)} is not {ABOUT[role]}: its first records have no {' or '.join(lacking)} field")
+                continue
+            if role == "lts" and p.suffix.lower() in (".parquet", ".pq"):
+                continue
+            plain_name = p.name.lower().removesuffix(".gz")
+            header = _header(p, "\t" if role != "pairs" and not plain_name.endswith(".csv") else ",")
+        except (OSError, EOFError, zlib.error) as e:
+            out.append(f"{shown(p)} cannot be read ({e.strerror or e if isinstance(e, OSError) else e})")
+            continue
+        lacking = [c for c in COLUMNS[role] if c not in header]
+        if lacking:
+            has = ", ".join(header[:12]) + (", …" if len(header) > 12 else "") if len(header) > 1 else "none: it is not a table"
+            out.append(f"{shown(p)} is not {ABOUT[role]}: it lacks the column{'s' if len(lacking) > 1 else ''} "
+                       f"{', '.join(lacking)} (its columns: {has})")
     return out
 
 
@@ -137,12 +231,13 @@ def _notes(files: dict[str, Optional[Path]]) -> dict[str, str]:
 
 def read_lts(path: Path, log=print) -> dict[str, str]:
     """LOTUS IDs by InChIKey: from an SDF of LOTUS (``lotus_id`` and ``inchikey`` fields of
-    each record), or a table with ``lotus_id`` and ``inchikey`` columns (CSV, TSV, parquet)."""
+    each record), or a table with ``lotus_id`` and ``inchikey`` columns (CSV, TSV, parquet);
+    gzipped or not."""
     out: dict[str, str] = {}
-    if path.suffix.lower() == ".sdf":
+    if _is_sdf(path):
         rec: dict[str, str] = {}
         field = None
-        with open(path, encoding="utf-8", errors="replace") as f:
+        with io.TextIOWrapper(open_peeled(path), encoding="utf-8", errors="replace") as f:
             for line in f:
                 if field is not None:
                     rec[field] = line.strip()
@@ -155,8 +250,9 @@ def read_lts(path: Path, log=print) -> dict[str, str]:
                         out.setdefault(rec["inchikey"], rec["lotus_id"])
                     rec = {}
     else:
+        plain_name = path.name.lower().removesuffix(".gz")
         df = pd.read_parquet(path) if path.suffix.lower() in (".parquet", ".pq") else \
-            pd.read_csv(path, sep="\t" if path.suffix.lower() in (".tsv", ".tab") else ",", dtype=str)
+            pd.read_csv(path, sep="\t" if plain_name.endswith((".tsv", ".tab")) else ",", dtype=str)
         for k, v in zip(df["inchikey"], df["lotus_id"]):
             if isinstance(k, str) and isinstance(v, str):
                 out.setdefault(k, v)
@@ -207,15 +303,20 @@ def build(folder: Path, out: Path, overrides: Optional[dict[str, str]] = None, l
 
     Returns:
         its ``about`` (as stored), with ``counts`` of what it has.
+
+    Raises:
+        BuildError: if the files are not as expected (`problems`).
     """
     files = resolve(folder, overrides)
+    if found := problems(files, folder):
+        raise BuildError(f"LOTUS's files in {folder} are not as expected:\n" + "\n".join(f"- {x}" for x in found))
 
     # --------------------------------------------------------------- the records
     with open_peeled(files["pairs"]) as f:
         fr = pd.read_csv(f, dtype=str, keep_default_na=False, na_values=[""])
-    need = {"structure_inchikey", "organism_name", "reference_doi"}
+    need = set(COLUMNS["pairs"])
     if not need <= set(fr.columns):
-        raise SystemExit(f"{files['pairs'].name} has no {', '.join(sorted(need - set(fr.columns)))} column")
+        raise BuildError(f"{files['pairs'].name} has no {', '.join(sorted(need - set(fr.columns)))} column")
     n_lines = len(fr)
     fr = fr.dropna(subset=list(need)).drop_duplicates(subset=["structure_inchikey", "organism_name", "reference_doi"])
     log(f"records: {len(fr):,} structure–organism–paper ({n_lines:,} lines, {files['pairs'].name})")
@@ -224,11 +325,7 @@ def build(folder: Path, out: Path, overrides: Optional[dict[str, str]] = None, l
     org_names = set(fr["organism_name"])
 
     # -------------------------------------------------------------- structures
-    cols = {"structureCleanedInchikey": "inchikey", "structureCleanedInchi": "inchi", "structureCleanedSmiles": "smiles",
-            "structureCleaned_molecularFormula": "formula", "structureCleaned_exactMass": "exact_mass",
-            "structureCleaned_xlogp": "xlogp", "structureCleaned_stereocenters_total": "stereocenters",
-            "structureCleaned_stereocenters_unspecified": "stereocenters_unspecified", "structureCleaned_cid": "cid",
-            "structureCleaned_nameTraditional": "name", "structureCleaned_nameIupac": "iupac_name"}
+    cols = STRUCTURE_COLUMNS
     parts = []
     for ch in _chunks(files["structures"], list(cols)):
         parts.append(ch[ch["structureCleanedInchikey"].isin(keys)].rename(columns=cols))
@@ -254,8 +351,7 @@ def build(folder: Path, out: Path, overrides: Optional[dict[str, str]] = None, l
         if "organism_wikidata" in fr else pd.Series(dtype=str)
     organisms = [(i, n, _qid(owd.get(n))) for i, n in enumerate(sorted(org_names), start=1)]
     oid = {o[1]: o[0] for o in organisms}
-    ocols = ["organismCleaned", "organismCleaned_id", "organismCleaned_rank", "organismCleaned_dbTaxo",
-             "organismCleaned_dbTaxoTaxonomy", *RANK_COLUMNS.values()]
+    ocols = ORGANISM_COLUMNS
     taxonomy: dict[tuple[int, str], tuple] = {}
     for ch in _chunks(files["organisms"], ocols):
         ch = ch[ch["organismCleaned"].isin(org_names) & ch["organismCleaned_dbTaxo"].notna()]
@@ -278,9 +374,7 @@ def build(folder: Path, out: Path, overrides: Optional[dict[str, str]] = None, l
         f"({', '.join(f'{k}: {v:,}' for k, v in list(coverage.items())[:4])}, ...)")
 
     # ------------------------------------------------------------------ papers
-    rcols = {"referenceCleanedDoi": "doi", "referenceCleanedTitle": "title", "referenceCleaned_journal": "journal",
-             "referenceCleaned_date": "date", "referenceCleaned_author": "author", "referenceCleanedPmid": "pmid",
-             "referenceCleanedPmcid": "pmcid"}
+    rcols = REFERENCE_COLUMNS
     parts = []
     for ch in _chunks(files["references"], list(rcols)):
         ch = ch[ch["referenceCleanedDoi"].isin(dois)].rename(columns=rcols)
@@ -338,19 +432,25 @@ def build(folder: Path, out: Path, overrides: Optional[dict[str, str]] = None, l
 # --------------------------------------------------------------------- registering
 
 
-def register(server: str, bundle: Path, about: dict, log=print) -> int:
-    """Add the bundle's reference dataset (its default view, `DEFAULT_OPTIONS`) to the app at
-    `server` (its Admin tab's API): 0 if it was added."""
-    import urllib.error
-    import urllib.request
-
+def view(bundle: Path, about: dict) -> dict:
+    """The bundle's reference dataset (its default view, `DEFAULT_OPTIONS`), as the Admin tab
+    adds it (POST /api/admin/references)."""
     o = options(DEFAULT_OPTIONS)
     rel = about.get("release") or {}
-    body = {"path": str(bundle.resolve()), "title": view_title(o, rel), "description": describe(o)["summary"],
+    return {"path": str(bundle.resolve()), "title": view_title(o, rel), "description": describe(o)["summary"],
             "source": "LOTUS (lotus.naturalproducts.net; Rutz et al., eLife 2022): its frozen Wikidata export"
                       f"{' of ' + rel['pairs'] if rel.get('pairs') else ''} and metadata, read by app/lotus_build.py",
             "kind": "detect", "chemical_axis": "rows", "value_label": value_label(o), "row_label": "chemical",
             "col_label": o["level"], "fields": {"layout": "lotus", **o}}
+
+
+def register(server: str, bundle: Path, about: dict, log=print) -> int:
+    """Add the bundle's reference dataset (`view`) to the app at `server` (its Admin tab's
+    API): 0 if it was added."""
+    import urllib.error
+    import urllib.request
+
+    body = view(bundle, about)
     req = urllib.request.Request(server.rstrip("/") + "/api/admin/references", data=json.dumps(body).encode(),
                                  headers={"Content-Type": "application/json"}, method="POST")
     try:
@@ -385,7 +485,13 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         if role not in FILES or not path:
             ap.error(f"--file {f}: give ROLE=PATH, ROLE one of {', '.join(FILES)}")
         overrides[role] = path
-    about = build(args.folder, args.out, overrides)
+    try:
+        about = build(args.folder, args.out, overrides)
+    except BuildError as e:
+        print(f"error: {e}", file=sys.stderr)
+        if not overrides and "missing:" in str(e):
+            print("(a file elsewhere, or named otherwise: give it with --file ROLE=PATH)", file=sys.stderr)
+        return 2
     return register(args.register, args.out, about) if args.register else 0
 
 

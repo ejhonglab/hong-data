@@ -391,21 +391,6 @@ between the frontend and the server. Using the app is described in
     each compound, ordered by the mean position of their neighbours (sweeps down and up),
     and wrap when wider than 1,100 px. No graph library: none is used elsewhere, and
     pathways are small (a superpathway's tens of reactions).
-  - *Imported in the Admin tab* (`metacyc_import.py`): the input is what the script's
-    is, the raw folder (or an archive of it), so its files are found as the script finds
-    them (by the paths it reads, here by name, as a browser sends no folders) and checked
-    as it checks them (`metacyc_build.problems`: each required file there, with the
-    columns it needs; then, building, frame IDs where they should be and the compounds'
-    pathways among the pathways), each problem saying what was expected. The browser
-    lists them from the folder chosen and uploads only those (89 MB of `BioCyc/raw`'s
-    283), so a folder of anything else is refused before it is sent. They are kept, laid
-    out as the script reads them (it can be run on them again), with the bundle, in
-    `data/metacyc/<when>/` (backed up), and only what was built and added from: an upload
-    refused or failing keeps nothing. The build (about 20 s, 340 MB of memory) runs in a
-    thread, one at a time, polled by the tab; its datasets are added as the Admin tab adds
-    any (`reference.add`). The folder goes to `data/deleted/` with the last dataset of its
-    bundle, as a deleted dataset's files do, so nothing uploaded is left unused and
-    unlisted.
 - **LOTUS** (`lotus_build.py`, `lotus.py`, `static/lotus.js`) is a bundle too, read as
   MetaCyc's is (`reference.bundle_kind`: by the kind its `about` says, as both are
   `.sqlite`), for the same reason: 220,823 structures by 36,800 organisms, of which only
@@ -444,6 +429,36 @@ between the frontend and the server. Using the app is described in
   - *A cell* (`lotus.cell`, `/api/reference/{id}/lotus/cell`): the organisms of its taxon
     that its row's structures are reported in, each with its papers (titles as plain
     text: Crossref's markup, in 17k of them, dropped with the spaces it ran over kept).
+- **Bundles imported in the Admin tab** (`bundle_import.py`, with `metacyc_import.py` and
+  `lotus_import.py` for each kind; `static/imports.js`): MetaCyc's and LOTUS's are made on
+  the server from what their scripts read, the raw folder (or an archive of it). Its
+  files are found as the script finds them and checked as it checks them
+  (`metacyc_build.problems`, `lotus_build.problems`: each required file there, with the
+  columns it needs; then, building, MetaCyc's frame IDs where they should be and its
+  compounds' pathways among its pathways), each problem saying what was expected. The
+  browser lists them from the folder chosen and uploads only those, so a folder of
+  anything else is refused before it is sent. They are kept, laid out as the script reads
+  them (it can be run on them again), with the bundle, in `data/<kind>/<when>/` (backed
+  up), and only what was built and added from: an upload refused or failing keeps
+  nothing. The build is the script itself (`python -m app.<kind>_build`), in a process of
+  its own, one import of each kind at a time, polled by the tab: LOTUS's takes 1.7 GB for
+  a minute, which the server's process would keep after, and holds Python's GIL for most
+  of it. That process is held to the server's folders as the server is (Landlock is
+  inherited), so its temporary files (SQLite's, sorting to index) go in `data/tmp/`. The
+  datasets are added as the Admin tab adds any (`reference.add`). The folder goes to
+  `data/deleted/` with the last dataset of its bundle, as a deleted dataset's files do,
+  so nothing uploaded is left unused and unlisted.
+  - *MetaCyc's* files are found by name (the paths it reads them from are fixed): 89 MB
+    of `BioCyc/raw`'s 283.
+  - *LOTUS's* are found by their paths (sent as the files' names), with the script's
+    globs (`lotus_build.FILES`, each gzipped or not), and kept at the part of the path a
+    glob matched: the release's dates are in the folders' names (`metadata_2022-09-16/`),
+    and the notes beside the files (`notes.txt`, where they came from) are kept with them,
+    as the script reads them. They are kept gzipped, as the script reads them too: of a
+    file there both as is and gzipped, the gzipped one is uploaded, and the browser gzips
+    the others first (`CompressionStream`: the 1.1 GB SDF to 97 MB in 7 s), as the server
+    does those it was sent as they are or takes out of archives. Of `LOTUS/raw`'s 7.3 GB,
+    330 MB is sent.
 
 ## Statistical testing
 
@@ -824,11 +839,15 @@ app/metacyc.py     MetaCyc bundles as reference data: odors matched to compounds
                    pathway LCA distance, pathways, compounds and searches for the Reference data tab
 app/metacyc_build.py  MetaCyc's SmartTables checked and read into a bundle (python -m app.metacyc_build), and
                    its two reference datasets added through the Admin tab's API
-app/metacyc_import.py MetaCyc imported in the Admin tab: the raw folder uploaded, kept, built and added
+app/bundle_import.py  bundles imported in the Admin tab: the raw folder uploaded, kept, built (by the build
+                   script, in a process of its own) and its reference datasets added
+app/metacyc_import.py MetaCyc's files of an upload, found by name, checked as metacyc_build.py checks them
 app/lotus.py       LOTUS bundles as reference data: its view's settings (and how they are said), odors matched to
                    structures, chemicals × taxa, a cell's organisms and papers
-app/lotus_build.py LOTUS's frozen records and metadata read into a bundle (python -m app.lotus_build), and its
-                   reference dataset added through the Admin tab's API
+app/lotus_build.py LOTUS's frozen records and metadata checked and read into a bundle (python -m
+                   app.lotus_build), and its reference dataset added through the Admin tab's API
+app/lotus_import.py LOTUS's files of an upload, found by the paths lotus_build.py finds them by, checked as it
+                   checks them
 app/export.py      downloads: zips of dataset files, concatenated wide/long matrices
 app/merge.py       merged downloads of a coding unit: grouping datasets, scaling groups to each other
 app/compare.py     datasets averaged for the Compare tab (odors × glomeruli or ROIs); ECFP fingerprints (RDKit)
@@ -850,7 +869,8 @@ app/static/        frontend: index.html, app.js, heatmap.js, colormaps.js (+ mpl
                    player.js (movie player), similarity.js (odor similarities, and between them;
                    pvalue-worker.js their p-values), metacyc.js (MetaCyc below its matrices: pathways
                    drawn, compounds, LCA paths, search), lotus.js (LOTUS with its matrices: how
-                   made, a cell's organisms and papers), latex.js (labels with LaTeX math, by
+                   made, a cell's organisms and papers), imports.js (MetaCyc and LOTUS imported
+                   in the Admin tab), latex.js (labels with LaTeX math, by
                    MathJax: vendor/mathjax/)
 manage.py          list / show / export / delete datasets from the server
 deploy/            systemd units; Dockerfile + docker-compose.yml at the top level
@@ -1047,15 +1067,21 @@ PATCH  /api/admin/references/{id}           any of those adding it takes but "pa
                                             again by them
 DELETE /api/admin/references/{id}           its copy deleted (never its file) → {"revoked": the path
                                             taken off the folders it may read, if any; "moved": where
-                                            MetaCyc imported for it was moved, if it was the last of it}
+                                            MetaCyc or LOTUS imported for it was moved, if it was
+                                            the last of it}
 GET    /api/admin/metacyc                   MetaCyc imported here: what an upload is to have (each
-                                            role's files and what it is), the import under way or the
-                                            last ({"running", "stage", "log", "error", "added"}), and
-                                            those kept (folder, size, their reference datasets)
+                                            role's files and what it is, and how they are found:
+                                            "how"), the import under way or the last ({"running",
+                                            "stage", "label", "log", "error", "added"}), and those kept
+                                            (folder, size, their reference datasets)
 POST   /api/admin/metacyc                   multipart 'file' (repeatable: the files of the raw folder,
                                             or archives of it), 'version' → 422 {"errors": what is
                                             missing or not as expected}, 409 while one is under way,
                                             else {"job"}: built and added in the background
+GET    /api/admin/lotus                     LOTUS imported here, as /api/admin/metacyc
+POST   /api/admin/lotus                     multipart 'file' (repeatable: the files of LOTUS/raw,
+                                            gzipped or not, named by their paths in it; or archives
+                                            of it) → as /api/admin/metacyc
 ```
 
 Matrix payloads carry `values_b64`: little-endian float32, row-major

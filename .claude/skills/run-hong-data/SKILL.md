@@ -82,7 +82,7 @@ Stop it:
 OLFDB_DATA_DIR=<scratch>/olfdb-test ./venv/bin/python -m pytest tests/ -q
 ```
 
-267 pass in about 25 s. For internals, call a module directly (e.g.
+272 pass in about 30 s. For internals, call a module directly (e.g.
 `headspace.calculate`), as `tests/test_headspace.py` does.
 
 ## Run (human path)

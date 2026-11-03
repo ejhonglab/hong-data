@@ -17,7 +17,7 @@ import pytest
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
 
-from app import config, metacyc, metacyc_build, metacyc_import, odormeta, sandbox
+from app import bundle_import, config, metacyc, metacyc_build, metacyc_import, odormeta, sandbox
 from tests.test_reference import INCHI_LIN, env  # noqa: F401 (fixtures)
 from tests.test_tensor import call, main, root  # noqa: F401 (fixtures)
 
@@ -385,13 +385,13 @@ def post_form(endpoint, files: list[tuple[str, bytes]], version: str = "99.0") -
     return response.status_code, json.loads(response.body)
 
 
-def finished(timeout=60) -> dict:
+def finished(imp=metacyc_import.importer, timeout=120) -> dict:
     """The import under way, once it has ended."""
     t = time.monotonic()
-    while metacyc_import.JOB["running"]:
+    while imp.job()["running"]:
         assert time.monotonic() - t < timeout, "the import did not end"
         time.sleep(0.05)
-    return metacyc_import.job()
+    return imp.job()
 
 
 @pytest.fixture
@@ -399,7 +399,7 @@ def imports(env, tmp_path, monkeypatch):  # noqa: F811
     """main, with MetaCyc's imports (and things deleted) in tmp_path, and none under way."""
     monkeypatch.setattr(config, "METACYC_DIR", tmp_path / "data" / "metacyc")
     monkeypatch.setattr(config, "DELETED_DIR", tmp_path / "data" / "deleted")
-    monkeypatch.setattr(metacyc_import, "JOB", {**metacyc_import.JOB, "running": False, "id": None, "log": [], "added": []})
+    monkeypatch.setattr(metacyc_import.importer, "_job", bundle_import._idle())
     return env
 
 
@@ -407,8 +407,8 @@ def test_pick():
     rel = metacyc_build.FILES["compounds"][0]
     names = ["raw/x/all_metacyc_compounds_with_gen_pathways__frame_ids__2024-02-05.tsv", f"raw/{rel}", "raw/notes.txt",
              "species-from-metacyc_species.txt"]
-    assert metacyc_import.pick(names) == {1: rel, 3: "organisms/species-from-metacyc_species.txt"}
-    assert metacyc_import.pick(names[:1]) == {0: rel}  # (elsewhere, but named so)
+    assert metacyc_import.importer.pick(names) == {1: rel, 3: "organisms/species-from-metacyc_species.txt"}
+    assert metacyc_import.importer.pick(names[:1]) == {0: rel}  # (elsewhere, but named so)
 
 
 def test_import(imports, tmp_path):
@@ -419,7 +419,7 @@ def test_import(imports, tmp_path):
     raw = make_raw(tmp_path / "raw")
     picked = [(f"raw/{p.relative_to(raw).as_posix()}", p.read_bytes()) for p in sorted(raw.rglob("*")) if p.is_file()]
     status, r = post_form(main.admin_metacyc_import, picked)
-    assert status == 200 and r["ok"] and r["job"]["running"] and r["job"]["version"] == "99.0", r
+    assert status == 200 and r["ok"] and r["job"]["running"] and r["job"]["label"] == "99.0", r
     assert r["files"]["compounds"] == metacyc_build.FILES["compounds"][0] and len(r["files"]) == len(metacyc_build.FILES)
     job = finished()
     assert job["error"] is None and [a["title"] for a in job["added"]] == [
@@ -436,10 +436,10 @@ def test_import(imports, tmp_path):
     assert not s["job"]["running"] and [e["role"] for e in s["expected"]] == list(metacyc_build.FILES)
     assert len(s["imports"]) == 1 and s["imports"][0]["refs"] == ids and s["imports"][0]["files"] == r["files"]
     # again, while one is under way: refused
-    metacyc_import.JOB["running"] = True
+    metacyc_import.importer._job["running"] = True
     status, r = post_form(main.admin_metacyc_import, picked)
     assert status == 409 and "being imported already" in r["errors"][0]
-    metacyc_import.JOB["running"] = False
+    metacyc_import.importer._job["running"] = False
     # its reference datasets deleted: the folder with the last
     delete = lambda i: asyncio.run(main.admin_reference_delete(Request(  # noqa: E731
         {"type": "http", "method": "DELETE", "path": "/", "query_string": b"", "headers": [], "path_params": {"ref_id": i}})))
@@ -464,7 +464,7 @@ def test_import_archives(imports, tmp_path):
         t.add(raw, "raw")
     for name, data in (("BioCyc.zip", zipped.getvalue()), ("raw.tar.gz", tarred.getvalue())):
         status, r = post_form(main.admin_metacyc_import, [(name, data)], version="")
-        assert status == 200 and r["ok"] and r["job"]["version"] is None, r
+        assert status == 200 and r["ok"] and r["job"]["label"] is None, r
         job = finished()
         assert job["error"] is None and len(job["added"]) == 2 and job["added"][0]["title"] == "MetaCyc: compounds by the pathways they are in"
         d = config.METACYC_DIR / job["id"]
@@ -492,7 +492,7 @@ def test_import_refused(imports, tmp_path):
     status, r = post_form(main.admin_metacyc_import, [("raw.zip", b"not a zip")])
     assert status == 422 and r["errors"] == ["raw.zip is not a zip or tar archive"]
     assert call(main.admin_metacyc)[1]["imports"] == [] and not any(config.METACYC_DIR.iterdir())
-    assert not metacyc_import.JOB["running"]
+    assert not metacyc_import.importer.job()["running"]
     # the build refusing what was checked (the compounds' two exports swapped): nothing kept
     raw = make_raw(tmp_path / "raw2")
     a, b = (raw / metacyc_build.FILES[role][0] for role in ("compounds", "compound_names"))

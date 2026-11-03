@@ -113,7 +113,8 @@ Coordinates:
 ```
 
 A file can also be a LOTUS bundle (`.sqlite`), made by `python -m app.lotus_build <LOTUS
-folder> <bundle>` (README, "Scripting"): LOTUS's structure–organism–paper records, with
+folder> <bundle>` (README, "Scripting"), or by the Admin tab's *Import LOTUS* from the
+folder uploaded: LOTUS's structure–organism–paper records, with
 the structures' identifiers, names and CIDs, each organism's lineage in every taxonomy
 source that has it, and the papers' titles. It is shown over the chemicals of the odor
 table that are in it, made again whenever the odor table changes, as its `"fields"` say

@@ -474,7 +474,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   compound for its structure, identifiers, classes and pathways, or find any pathway or
   compound by name or MetaCyc ID.
   *LOTUS* (a bundle of its records of natural products: which papers report which
-  structure in which organism, see [Scripting](#scripting)) is shown over the odor
+  structure in which organism, imported in the Admin tab or made by a script, see
+  [Scripting](#scripting)) is shown over the odor
   table's chemicals that are in it (made again whenever the odor table changes) by the
   taxa of the organisms they are reported in: by default, *chemicals by the families of
   organisms they are reported in*, each cell how many of the family's organisms (as
@@ -620,6 +621,14 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     20 s, its progress shown) and adds its two reference datasets. Imports are listed
     with their folders and datasets; the folder is moved to `data/deleted/metacyc/` with
     the last of its datasets deleted. Backups include them.
+    *Import LOTUS* does the same for LOTUS, from the folder `LOTUS/raw` (or a
+    `.zip`/`.tar.gz` of it): its files are found as the script finds them, by their paths
+    there (the release's dates are in its folders' names), and kept gzipped, laid out as
+    they were, in `data/lotus/<when>/raw/`. Where the folder has a file both as is and
+    gzipped, the gzipped one is uploaded; the browser gzips the others first, so 330 MB
+    of the folder's 7.3 GB is sent. The bundle takes about a minute to build; its
+    reference dataset (chemicals by families) is then added, its settings changed after
+    by *Change settings…*.
   - *Delete datasets*: every dataset, newest upload first (with a filter), each with a
     Delete button that asks first. A deleted dataset is gone from the site at once; its
     files (as uploaded, with `metadata.json` holding every detail entered) are moved to
@@ -673,15 +682,18 @@ LOTUS: its frozen export of its Wikidata records (`230106_frozen/230106_frozen.c
 metadata of their structures, organisms and papers (Zenodo record 7534077,
 `metadata_2022-09-16/`) and its 2021 release's SDF (for LOTUS IDs), as laid out in
 `LOTUS/raw`, are read into one bundle, whose reference dataset (chemicals by families) is
-then added through the Admin tab's API (or add the bundle in the Admin tab by hand):
+then added through the Admin tab's API (or add the bundle in the Admin tab by hand; or
+upload the folder in its *Import LOTUS*, which does all this on the server):
 
 ```bash
 python -m app.lotus_build /mnt/d0/Scraped-Databases-Copy/LOTUS/raw /local/olfdb/lotus-2023-01-06.sqlite --register http://localhost:8000
 ```
 
-It takes about a minute, and the bundle is about 280 MB. As for MetaCyc, the server must
-be able to read it, `--file <role>=<path>` reads another file for a role (`--help`), and
-bundles are kept out of this repository. (`LOTUS/raw/NPOC2021`, the MongoDB dump of the
+It takes about a minute, and the bundle is about 280 MB. Each file may be gzipped or not
+(of one there both ways, the one as is is read). As for MetaCyc, the server must be able
+to read it, `--file <role>=<path>` reads another file for a role (`--help`), files missing
+or without the columns it needs are said before anything is read, and bundles are kept
+out of this repository. (`LOTUS/raw/NPOC2021`, the MongoDB dump of the
 2021 release that `LOTUS/processed` was made from, is not read.)
 
 Downloads: `/api/download?ids=1,2&format=files|wide|long` (as from the Browse tab).

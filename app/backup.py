@@ -4,13 +4,13 @@ write_dirs set there).
 Each backup is a folder ``olfdb-backup-<date>_<time>`` laid out like the data folder: a
 consistent copy of the database (SQLite's backup API), and the files the site keeps
 (`data_files`: data files as uploaded, odor YAMLs, Experiment.xml, READMEs and
-metadata.json of every dataset, reference data as imported, MetaCyc as imported in the
-Admin tab (its files uploaded and its bundle), datasets deleted in the Admin tab, the
-folders set in the Admin tab). Not what only passes through the data folder (uploads under
-way, downloads being sent, temporary files), nor raw and motion-corrected data, which stay
-on tensor. A file unchanged since the last backup in the same folder (by size and time) is
-a hard link to its copy there, so each backup is whole on its own but takes the space of
-what changed only.
+metadata.json of every dataset, reference data as imported, MetaCyc and LOTUS as imported
+in the Admin tab (their files uploaded and their bundles), datasets deleted in the Admin
+tab, the folders set in the Admin tab). Not what only passes through the data folder
+(uploads under way, downloads being sent, temporary files), nor raw and motion-corrected
+data, which stay on tensor. A file unchanged since the last backup in the same folder (by
+size and time) is a hard link to its copy there, so each backup is whole on its own but
+takes the space of what changed only.
 
 A backup is made in a ``.partial`` folder, renamed once it is done, with `MANIFEST`: what
 it holds, by size and time, and the fingerprint of its database (`db.content_fingerprint`),
@@ -47,7 +47,7 @@ _lock = threading.Lock()
 def _kept() -> list[Path]:
     """The folders and files of the data folder a backup copies, besides the database."""
     return [config.DATA_DIR / p.name for p in (config.DATASETS_DIR, config.REFERENCE_CACHE_DIR, config.METACYC_DIR,
-                                               config.DELETED_DIR, config.ADMIN_FILE)]
+                                               config.LOTUS_DIR, config.DELETED_DIR, config.ADMIN_FILE)]
 
 
 def data_files() -> dict[str, list[int]]:

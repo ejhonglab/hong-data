@@ -4,15 +4,19 @@ OLFDB_DATA_DIR=<a scratch folder> python -m pytest tests/"""
 from __future__ import annotations
 
 import gzip
+import io
 import json
 import sqlite3
+import tarfile
+import zipfile
 
 import numpy as np
 import pytest
 from rdkit import Chem
 from starlette.exceptions import HTTPException
 
-from app import lotus, lotus_build, odormeta, reference, sandbox
+from app import bundle_import, config, lotus, lotus_build, lotus_import, odormeta, reference, sandbox
+from tests.test_metacyc import finished, post_form
 from tests.test_reference import env  # noqa: F401 (fixtures)
 from tests.test_tensor import call, main, root  # noqa: F401 (fixtures)
 
@@ -151,10 +155,48 @@ def test_build_double_gzip(tmp_path):
     assert about["counts"]["records"] == 12 and about["release"]["pairs"] == "2023-01-06"
 
 
-def test_resolve_missing(tmp_path):
+def test_build_errors(tmp_path):
     (tmp_path / "raw").mkdir()
-    with pytest.raises(SystemExit, match="pairs"):
-        lotus_build.resolve(tmp_path / "raw")
+    assert lotus_build.resolve(tmp_path / "raw") == dict.fromkeys(lotus_build.FILES)
+    with pytest.raises(lotus_build.BuildError, match="missing: LOTUS's frozen export of its Wikidata records") as e:
+        lotus_build.build(tmp_path / "raw", tmp_path / "x.sqlite", log=lambda *_: None)
+    assert str(e.value).count("missing:") == len(lotus_build.REQUIRED)  # (LOTUS IDs, not required: not said)
+    assert lotus_build.main([str(tmp_path / "raw"), str(tmp_path / "x.sqlite")]) == 2
+    raw = make_raw(tmp_path / "raw2")
+    files = lotus_build.resolve(raw)
+    assert lotus_build.problems(files, raw) == []
+    # a table without the columns needed, one not tab-separated, an SDF without LOTUS IDs, a gzip cut short
+    m = raw / "metadata_2022-09-16/7534077"
+    tsv(m / "organism_metadata.tsv", ["organismCleaned", "x"], [["a", "b"]])
+    (m / "reference_metadata.tsv").write_text("a,b\n1,2\n")
+    (raw / "LOTUS_DB_LATEST/LOTUS_2021_03_simple.sdf").write_text("\n  CDK\n\nM  END\n> <name>\nx\n\n$$$$\n")
+    (m / "structure_metadata.tsv").rename(m / "structure_metadata.tsv.gz")
+    (m / "structure_metadata.tsv.gz").write_bytes(gzip.compress(b"structureCleanedInchikey\tx\n" * 1000)[:40])
+    found = lotus_build.problems(lotus_build.resolve(raw), raw)
+    assert len(found) == 4, found
+    assert found[0].startswith("metadata_2022-09-16/7534077/structure_metadata.tsv.gz cannot be read (")
+    assert found[1].startswith("metadata_2022-09-16/7534077/organism_metadata.tsv is not LOTUS's metadata of each organism")
+    assert "lacks the columns organismCleaned_id, " in found[1] and found[1].endswith("(its columns: organismCleaned, x)")
+    assert found[2].endswith("(its columns: none: it is not a table)")
+    assert found[3].endswith("its first records have no lotus_id or inchikey field")
+    with pytest.raises(lotus_build.BuildError, match="not as expected"):
+        lotus_build.build(raw, tmp_path / "x.sqlite", log=lambda *_: None)
+    assert not (tmp_path / "x.sqlite").exists()
+
+
+def test_resolve_newest(tmp_path):
+    """Of the files a glob finds, gzipped or not, the newest; of one there both ways, the one
+    as is (the import, the one gzipped)."""
+    raw = make_raw(tmp_path / "raw")
+    old = raw / "metadata_2021-01-01/1/structure_metadata.tsv"
+    old.parent.mkdir(parents=True)
+    old.write_text("x")
+    new = raw / "metadata_2022-09-16/7534077/structure_metadata.tsv"
+    assert lotus_build.resolve(raw)["structures"] == new
+    new.with_name(new.name + ".gz").write_bytes(gzip.compress(new.read_bytes()))
+    assert lotus_build.resolve(raw)["structures"] == new
+    new.unlink()
+    assert lotus_build.resolve(raw)["structures"] == new.with_name(new.name + ".gz")
 
 
 def test_keys():
@@ -387,3 +429,143 @@ def test_register(monkeypatch, tmp_path):
     assert url == "http://olfdb:8000/api/admin/references" and body["fields"] == {"layout": "lotus", **lotus.DEFAULT_OPTIONS}
     assert body["title"] == "LOTUS 2023-01-06: chemicals by the families of organisms they are reported in"
     assert body["value_label"] == "organisms of the family it is reported in" and body["col_label"] == "family" and len(logged) == 1
+
+
+# ------------------------------------------------------------- imported in the Admin tab
+
+
+@pytest.fixture
+def imports(env, tmp_path, monkeypatch):  # noqa: F811
+    """main, with LOTUS's imports (and things deleted) in tmp_path, and none under way."""
+    monkeypatch.setattr(config, "LOTUS_DIR", tmp_path / "data" / "lotus")
+    monkeypatch.setattr(config, "DELETED_DIR", tmp_path / "data" / "deleted")
+    monkeypatch.setattr(lotus_import.importer, "_job", bundle_import._idle())
+    return env
+
+
+def uploaded(raw, gzipped=lambda p: True) -> list[tuple[str, bytes]]:
+    """A folder's files as the Admin tab uploads them (named by their paths in it), those not
+    gzipped gzipped first (that `gzipped` says to, as a browser that can)."""
+    out = []
+    for p in sorted(raw.rglob("*")):
+        if p.is_file():
+            rel = f"{raw.name}/{p.relative_to(raw).as_posix()}"
+            gz = p.name != "notes.txt" and not p.name.endswith(".gz") and gzipped(p)
+            out.append((rel + ".gz", gzip.compress(p.read_bytes())) if gz else (rel, p.read_bytes()))
+    return out
+
+
+def test_pick():
+    names = ["raw/230106_frozen/230106_frozen.csv", "raw/230106_frozen/230106_frozen.csv.gz",
+             "raw/metadata_2021-01-01/1/structure_metadata.tsv", "raw/metadata_2022-09-16/7534077/structure_metadata.tsv.gz",
+             "raw/metadata_2022-09-16/7534077/organism_metadata.tsv", "raw/metadata_2022-09-16/7534077.zip",
+             "raw/metadata_2022-09-16/notes.txt", "elsewhere/reference_metadata.tsv.gz", "raw/LOTUS_DB_LATEST/LOTUS_2021_03_simple.sdf",
+             "raw/LOTUS_DB_LATEST/LOTUS_2021_03.tsv", "raw/NPOC2021/NPOC2021/lotusUniqueNaturalProduct.bson", "raw/notes.txt",
+             "raw\\LOTUS_DB_LATEST\\LOTUS_2021_03_simple.sdf"]
+    picked = {names[i]: p for i, p in lotus_import.importer.pick(names).items()}
+    assert picked == {
+        "raw/230106_frozen/230106_frozen.csv.gz": "230106_frozen/230106_frozen.csv.gz",  # (gzipped, of the two)
+        "raw/notes.txt": "notes.txt",  # (in the folder above it)
+        "raw/metadata_2022-09-16/7534077/structure_metadata.tsv.gz": "metadata_2022-09-16/7534077/structure_metadata.tsv.gz",
+        "raw/metadata_2022-09-16/notes.txt": "metadata_2022-09-16/notes.txt",
+        "raw/metadata_2022-09-16/7534077/organism_metadata.tsv": "metadata_2022-09-16/7534077/organism_metadata.tsv",
+        "elsewhere/reference_metadata.tsv.gz": "reference_metadata.tsv.gz",  # (found by its name alone)
+        "raw/LOTUS_DB_LATEST/LOTUS_2021_03_simple.sdf": "LOTUS_DB_LATEST/LOTUS_2021_03_simple.sdf",  # (the first of two alike)
+    }
+    assert lotus_import.place("metadata_1/../structure_metadata.tsv", "metadata_*/*/structure_metadata.tsv") is None
+    assert lotus_import.place("x/metadata_1/a/structure_metadata.tsv", "metadata_*/*/structure_metadata.tsv") == \
+        "metadata_1/a/structure_metadata.tsv"
+
+
+def test_import(imports, tmp_path):
+    """The folder uploaded as the Admin tab uploads it (only the files the build reads, gzipped
+    first; one not, as a browser that cannot sends it: gzipped by the server) is kept, built
+    into a bundle, and its reference dataset added; the folder is moved to deleted/ with it."""
+    main = imports
+    raw = make_raw(tmp_path / "raw")
+    (raw / "metadata_2022-09-16/notes.txt").write_text("Downloaded from Zenodo.")
+    files = uploaded(raw, gzipped=lambda p: p.name != "structure_metadata.tsv") + [("raw/unread.txt", b"x")]
+    status, r = post_form(main.admin_lotus_import, files, version="")
+    assert status == 200 and r["ok"] and r["job"]["running"] and r["job"]["label"] == "2023-01-06", r
+    m = "metadata_2022-09-16/7534077"
+    assert r["files"] == {"pairs": "230106_frozen/230106_frozen.csv.gz", "structures": f"{m}/structure_metadata.tsv.gz",
+                          "organisms": f"{m}/organism_metadata.tsv.gz", "references": f"{m}/reference_metadata.tsv.gz",
+                          "lts": "LOTUS_DB_LATEST/LOTUS_2021_03_simple.sdf.gz"}
+    job = finished(lotus_import.importer)
+    assert job["error"] is None and [a["title"] for a in job["added"]] == [
+        "LOTUS 2023-01-06: chemicals by the families of organisms they are reported in"], job
+    assert job["added"][0]["state"] == "ok" and any(line.startswith("records: 12 ") for line in job["log"])
+    d = config.LOTUS_DIR / job["id"]
+    kept = sorted(p.relative_to(d).as_posix() for p in d.rglob("*") if p.is_file())
+    assert kept == ["import.json", "lotus-2023-01-06.sqlite", *sorted(f"raw/{v}" for v in r["files"].values()),
+                    "raw/metadata_2022-09-16/notes.txt"]
+    assert gzip.decompress((d / "raw" / r["files"]["structures"]).read_bytes()) == (raw / m / "structure_metadata.tsv").read_bytes()
+    about = lotus.read_about(d / "lotus-2023-01-06.sqlite")
+    assert about["release"] == {"pairs": "2023-01-06", "metadata": "2022-09-16", "lts": "2021-03"}
+    assert about["counts"]["with_lts"] == 2 and list(about["notes"].values()) == ["Downloaded from Zenodo."]
+    ref_id = job["added"][0]["id"]
+    r = call(main.reference_get, path_params={"ref_id": ref_id})[1]
+    assert r["meta"]["lotus"]["level"] == "family" and [x["label"] for x in r["rows"]] == ["linalool"]
+    s = call(main.admin_lotus)[1]
+    assert s["how"] == "pattern" and s["gzip"] and s["script"] == "app/lotus_build.py" and not s["job"]["running"]
+    assert [e["role"] for e in s["expected"]] == list(lotus_build.FILES)
+    (i,) = s["imports"]
+    assert i["refs"] == [ref_id] and i["label"] == "2023-01-06" and i["release"]["metadata"] == "2022-09-16" and i["kind"] == "lotus"
+    # its reference dataset deleted: the folder with it
+    moved = call(main.admin_reference_delete, path_params={"ref_id": ref_id})[1]["moved"]
+    assert moved == str(config.DELETED_DIR / "lotus" / d.name) and not d.exists()
+    assert (config.DELETED_DIR / "lotus" / d.name / "lotus-2023-01-06.sqlite").is_file()
+    assert call(main.admin_lotus)[1]["imports"] == []
+
+
+def test_import_archives(imports, tmp_path):
+    """The folder as a zip (with more than the build reads, and a file both as is and gzipped)
+    or a tar.gz (none gzipped: gzipped as they are taken out): only what it reads kept."""
+    main = imports
+    raw = make_raw(tmp_path / "LOTUS" / "raw")
+    pairs = raw / "230106_frozen/230106_frozen.csv"
+    pairs.with_name(pairs.name + ".gz").write_bytes(gzip.compress(pairs.read_bytes()))
+    (raw / "NPOC2021").mkdir()
+    (raw / "NPOC2021/lotusUniqueNaturalProduct.bson").write_bytes(b"\0" * 100)
+    zipped, tarred = io.BytesIO(), io.BytesIO()
+    with zipfile.ZipFile(zipped, "w") as z:
+        for p in sorted((tmp_path / "LOTUS").rglob("*")):
+            z.write(p, p.relative_to(tmp_path).as_posix())
+    pairs.with_name(pairs.name + ".gz").unlink()
+    with tarfile.open(fileobj=tarred, mode="w:gz") as t:
+        t.add(raw, "raw")
+    for name, data in (("LOTUS.zip", zipped.getvalue()), ("raw.tar.gz", tarred.getvalue())):
+        status, r = post_form(main.admin_lotus_import, [(name, data)])
+        assert status == 200 and r["ok"] and all(v.endswith(".gz") for v in r["files"].values()), r
+        job = finished(lotus_import.importer)
+        assert job["error"] is None and len(job["added"]) == 1, job
+        d = config.LOTUS_DIR / job["id"]
+        kept = sorted(p.relative_to(d).as_posix() for p in d.rglob("*") if p.is_file())
+        assert kept == sorted(["import.json", "lotus-2023-01-06.sqlite", *(f"raw/{v}" for v in r["files"].values())])
+    assert len(call(main.admin_lotus)[1]["imports"]) == 2
+
+
+def test_import_refused(imports, tmp_path, monkeypatch):
+    """Uploads that are not LOTUS's files as the build reads them: refused, saying what was
+    expected, nothing kept; and a build that fails: nothing kept."""
+    main = imports
+    status, r = post_form(main.admin_lotus_import, [("a.csv", b"x,y\n1,2\n"), ("b.txt", b"")])
+    assert status == 422 and not r["ok"] and r["errors"][0].startswith("none of the 2 files uploaded is one of LOTUS's files")
+    assert sum(e.startswith("missing: ") for e in r["errors"]) == len(lotus_build.REQUIRED)
+    # a file of the right name, but not the table (as kept: gzipped)
+    raw = make_raw(tmp_path / "raw")
+    good = uploaded(raw)
+    tsv(raw / "metadata_2022-09-16/7534077/organism_metadata.tsv", ["organismCleaned"], [["x"]])
+    status, r = post_form(main.admin_lotus_import, uploaded(raw))
+    assert status == 422 and len(r["errors"]) == 1, r
+    assert r["errors"][0].startswith("metadata_2022-09-16/7534077/organism_metadata.tsv.gz is not LOTUS's metadata of each organism")
+    status, r = post_form(main.admin_lotus_import, [("raw.tar.gz", b"not a tar")])
+    assert status == 422 and r["errors"] == ["raw.tar.gz is not a zip or tar archive"]
+    assert call(main.admin_lotus)[1]["imports"] == [] and not any(config.LOTUS_DIR.iterdir())
+    # the build failing: nothing kept
+    monkeypatch.setattr(lotus_import.importer, "module", "app.no_such_build")
+    status, r = post_form(main.admin_lotus_import, good)
+    assert status == 200
+    job = finished(lotus_import.importer)
+    assert "No module named app.no_such_build" in job["error"] and job["added"] == [] and not any(config.LOTUS_DIR.iterdir())
+    assert main.db.list_references() == []

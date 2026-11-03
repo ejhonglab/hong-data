@@ -8,6 +8,7 @@ import { MoviePlayer } from './player.js';
 import { SIMILARITIES, similarityMatrix, tanimoto, correlateSimilarities, sharedSimilarities, holm } from './similarity.js';
 import { MetacycPanel } from './metacyc.js';
 import { LotusPanel, decisionsHtml } from './lotus.js';
+import { BundleImport } from './imports.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -3906,20 +3907,15 @@ class AdminPage {
       const c = e.target.closest('[data-edit-ref]');
       if (c) this.editRef(c.dataset.editRef);
     });
-    this.mc = null; // as from GET /api/admin/metacyc
-    this._mcChosen = null; // the folder (its files the build reads) or archive chosen
-    this._mcTimer = 0;
-    this._mcWatched = null; // the import started or seen under way here, to say how it ended
-    $('#mc-import-folder-btn').addEventListener('click', () => $('#mc-import-folder').click());
-    $('#mc-import-archive-btn').addEventListener('click', () => $('#mc-import-archive').click());
-    for (const [sel, how] of [['#mc-import-folder', 'folder'], ['#mc-import-archive', 'archive']]) {
-      $(sel).addEventListener('change', (e) => {
-        const files = [...e.target.files];
-        e.target.value = '';
-        if (files.length) this._chooseMetacyc(files, how);
-      });
-    }
-    $('#mc-import-btn').addEventListener('click', () => this.importMetacyc());
+    // MetaCyc and LOTUS imported here (bundle_import.py)
+    const helpers = { api, postForm, esc, msgBox, listHtml, fmtBytes, fmtWhen,
+      refTitle: (id) => this.refs?.find((r) => r.id === id)?.title || id, onAdded: () => { reference.invalidate(); this.loadRefs(); } };
+    this.imports = [
+      new BundleImport('mc', 'metacyc', { ...helpers, noLabel: '(no version given)',
+        fields: (form) => form.append('version', $('#mc-import-version').value.trim()) }),
+      new BundleImport('lt', 'lotus', { ...helpers, noLabel: '(no date in its names)',
+        done: ' Its settings (columns, cells, stereochemistry, taxonomy) can be changed by <i>Change settings…</i>, above.' }),
+    ];
     $('#admin-ds-filter').addEventListener('input', () => this._showDatasets());
     $('#admin-ds-list').addEventListener('click', (e) => {
       const b = e.target.closest('[data-delete]');
@@ -3957,7 +3953,7 @@ class AdminPage {
     this.loadPanels();
     this.loadDatasets();
     this.loadRefs();
-    this.loadMetacyc();
+    for (const i of this.imports) i.load();
     $('#ref-result').replaceChildren();
     $('#admin-result').replaceChildren();
     $('#admin-sheet-result').replaceChildren();
@@ -4307,7 +4303,7 @@ class AdminPage {
       return;
     }
     setAdminBadge(this.refs);
-    this._showMetacycImports();
+    for (const i of this.imports) i.showImports();
     const broken = this.refs.filter((r) => r.state === 'error');
     $('#admin-refs-status').replaceChildren(...(broken.length ? [msgBox('error',
       `<b>${broken.length} reference dataset${broken.length === 1 ? '' : 's'} cannot be read</b>, and ${broken.length === 1 ? 'is' : 'are'} listed by name alone in the Reference data tab: ${broken.map((r) => esc(r.title)).join(', ')} (why: below).`)] : []));
@@ -4614,13 +4610,13 @@ class AdminPage {
   async deleteRef(id) {
     const r = this.refs.find((x) => x.id === id), out = $('#ref-result');
     if (!r) return;
-    // (of MetaCyc imported here: its files go with the last of its reference datasets)
-    const imp = this.mc?.imports.find((i) => i.refs.includes(id)), last = imp?.refs.length === 1;
+    // (of a bundle imported here: its files go with the last of its reference datasets)
+    const by = this.imports.find((i) => i.importOf(id)), imp = by?.importOf(id), last = imp?.refs.length === 1, name = by?.state.name;
     $('#delete-confirm-q').textContent = `Delete the reference dataset “${r.title}”?`;
     $('#delete-confirm-detail').innerHTML = (last
-      ? `It is the last of MetaCyc imported here: its bundle and the files uploaded for it, <code>${esc(imp.dir)}</code>, are moved to
-         <code>${esc(this.mc.deleted_dir)}</code> (delete them there to free the space).`
-      : `Only the app's copy of it is deleted: its file, <code>${esc(r.path)}</code>, is left as it is${imp ? ' (for the other reference datasets of MetaCyc imported here)' : ''}.`)
+      ? `It is the last of ${esc(name)} imported here: its bundle and the files uploaded for it, <code>${esc(imp.dir)}</code>, are moved to
+         <code>${esc(by.state.deleted_dir)}</code> (delete them there to free the space).`
+      : `Only the app's copy of it is deleted: its file, <code>${esc(r.path)}</code>, is left as it is${imp ? ` (for the other reference datasets of ${esc(name)} imported here)` : ''}.`)
       + (r.read_grant ? ' It was added to the folders the server may read for it; it is taken off them again, unless another reference dataset needs it.' : '');
     if (await askDialog($('#delete-confirm')) !== 'delete') return;
     let res;
@@ -4629,169 +4625,12 @@ class AdminPage {
       this.loadRefs();
       return;
     }
-    out.replaceChildren(msgBox('ok', `Deleted “${esc(r.title)}”; ${res.moved ? `the MetaCyc imported for it was moved to <code>${esc(res.moved)}</code>` : 'its file was left as it is'}.`
+    out.replaceChildren(msgBox('ok', `Deleted “${esc(r.title)}”; ${res.moved ? `the ${esc(name)} imported for it was moved to <code>${esc(res.moved)}</code>` : 'its file was left as it is'}.`
       + (res.revoked ? ` <code>${esc(res.revoked)}</code> was taken off the folders the server may read: it can read it until it restarts.` : '')));
     reference.invalidate();
     if (res.revoked) this._reloadState();
     this.loadRefs();
-    if (imp) this.loadMetacyc();
-  }
-
-  // MetaCyc imported here (see metacyc_import.py): the files an upload is to have, the
-  // import under way (or the last), and those kept
-  async loadMetacyc() {
-    let s;
-    try { s = await api('/api/admin/metacyc'); } catch (e) {
-      $('#mc-import-msg').replaceChildren(msgBox('error', `Could not load MetaCyc's imports: ${esc(e.message)}`));
-      return;
-    }
-    this.mc = s;
-    this._showMetacycFiles();
-    this._showMetacycJob(s.job);
-    this._showMetacycImports();
-  }
-
-  // A folder chosen: the files of it the build reads, by role, as the server picks them
-  // (metacyc_import.pick: for each role, the first of its files there by name; of several
-  // named alike, the one at the path it is read from); only these are uploaded. An
-  // archive: only the server looks into it.
-  _chooseMetacyc(files, how) {
-    if (how === 'archive') {
-      this._mcChosen = { archive: files[0] };
-    } else {
-      const rel = (f) => f.webkitRelativePath || f.name, byName = new Map(), picked = {};
-      for (const f of files) byName.set(f.name, [...(byName.get(f.name) || []), f]);
-      for (const e of this.mc?.expected || []) {
-        const path = e.files.find((x) => byName.has(x.split('/').pop()));
-        if (path) { const alike = byName.get(path.split('/').pop()); picked[e.role] = alike.find((f) => `/${rel(f)}`.endsWith(`/${path}`)) || alike[0]; }
-      }
-      this._mcChosen = { folder: rel(files[0]).split('/')[0], n: files.length, picked };
-    }
-    $('#mc-import-msg').replaceChildren();
-    this._showMetacycFiles();
-  }
-
-  // what was chosen, against what the build reads (before anything is uploaded)
-  _showMetacycFiles() {
-    const box = $('#mc-import-files'), c = this._mcChosen;
-    const expected = `<details class="mc-expected"><summary>The files it reads</summary>${this._metacycTable(null)}</details>`;
-    if (!c) box.innerHTML = expected;
-    else if (c.archive) {
-      box.innerHTML = `<p><b>${esc(c.archive.name)}</b> (${fmtBytes(c.archive.size)}) is uploaded whole: the server takes the files it reads out of it,
-        and checks them before it builds anything.</p>${expected}`;
-    } else {
-      const files = Object.values(c.picked), missing = this._metacycMissing();
-      box.innerHTML = `<p>Of the ${c.n.toLocaleString()} files in <b>${esc(c.folder)}</b>, the ${files.length} it reads are uploaded
-        (${fmtBytes(files.reduce((a, f) => a + f.size, 0))}); the others are not.</p>${this._metacycTable(c.picked)}`;
-      if (missing.length) {
-        box.append(msgBox('error', `<b>Not MetaCyc's SmartTables as <code>app/metacyc_build.py</code> reads them</b>: ${missing.length === 1 ? 'one is' : `${missing.length} are`}
-          missing (above). Choose the folder of them as exported from metacyc.org (as <code>BioCyc/raw</code>), or one with files of these names in it.`));
-      }
-    }
-    this._syncMetacycButton();
-  }
-
-  // the roles required that the folder chosen has no file for
-  _metacycMissing() {
-    const c = this._mcChosen;
-    return c?.picked ? (this.mc?.expected || []).filter((e) => e.required && !c.picked[e.role]) : [];
-  }
-
-  _syncMetacycButton() {
-    $('#mc-import-btn').disabled = !this._mcChosen || !!this.mc?.job.running || this._metacycMissing().length > 0;
-  }
-
-  // each file the build reads: what it is, and where it reads it from (or, of a folder
-  // chosen, the file of it uploaded for it, if any)
-  _metacycTable(picked) {
-    const rows = (this.mc?.expected || []).map((e) => {
-      const where = e.files.map((x) => `<code>${esc(x)}</code>`).join(' or ');
-      let cell = where;
-      if (picked?.[e.role]) {
-        const f = picked[e.role];
-        cell = `✓ <code>${esc(f.webkitRelativePath || f.name)}</code> <span class="muted">(${fmtBytes(f.size)})</span>`;
-      } else if (picked) cell = e.required ? `<span class="bad">missing</span>: ${where}` : `<span class="muted">not there (${where})</span>`;
-      return `<tr><td>${esc(e.about)}${e.required ? '' : ' <span class="muted">(if there)</span>'}</td><td>${cell}</td></tr>`;
-    });
-    return `<table class="odor-table mc-files"><thead><tr><th>It reads</th><th>${picked ? 'Uploaded' : 'From (in the folder)'}</th></tr></thead>
-      <tbody>${rows.join('')}</tbody></table>`;
-  }
-
-  async importMetacyc() {
-    const c = this._mcChosen, out = $('#mc-import-msg');
-    if (!c) return;
-    const form = new FormData();
-    if (c.archive) form.append('file', c.archive, c.archive.name);
-    else for (const f of Object.values(c.picked)) form.append('file', f, f.webkitRelativePath || f.name);
-    form.append('version', $('#mc-import-version').value.trim());
-    $('#mc-import-btn').disabled = true;
-    out.replaceChildren(msgBox('info', '<b>Uploading…</b>'));
-    let res;
-    try {
-      res = await postForm('/api/admin/metacyc', form, (sent, total) => out.replaceChildren(msgBox('info',
-        `<b>Uploading…</b> ${fmtBytes(sent)} of ${fmtBytes(total)} (${Math.floor((100 * sent) / total)}%)`)));
-    } catch (e) { res = { ok: false, errors: [e.message] }; }
-    if (!res.ok) {
-      out.replaceChildren(msgBox('error', `<b>Not imported</b> (nothing was kept):${listHtml(res.errors)}`));
-      this._syncMetacycButton();
-      return;
-    }
-    this._mcChosen = null;
-    this._mcWatched = res.job.id;
-    this.mc.job = res.job;
-    this._showMetacycFiles();
-    this._showMetacycJob(res.job);
-  }
-
-  // the import under way, checked again until it ends; then how it ended, if it was
-  // started or seen under way here
-  _showMetacycJob(job) {
-    clearTimeout(this._mcTimer);
-    const out = $('#mc-import-msg'), v = job.version ? ` ${esc(job.version)}` : '';
-    if (job.running) {
-      this._mcWatched = job.id;
-      const stage = { uploading: 'Its files are being uploaded', building: 'Building its bundle', adding: 'Adding its reference datasets' }[job.stage];
-      out.replaceChildren(msgBox('info', `<b>Importing MetaCyc${v}: ${stage || 'under way'}…</b> (started ${esc(fmtWhen(job.started_at))})${
-        job.log.length ? listHtml(job.log.slice(-3)) : ''}`));
-      this._mcTimer = setTimeout(() => this._pollMetacyc(), 1500);
-      return;
-    }
-    if (!job.id || job.id !== this._mcWatched) return;
-    this._mcWatched = null;
-    const errors = (job.error || '').split('\n').filter(Boolean).map((x) => x.replace(/^- /, ''));
-    if (!job.added.length) {
-      out.replaceChildren(msgBox('error', `<b>Not imported</b> (nothing was kept):${listHtml(errors)}`));
-      return;
-    }
-    const imp = this.mc?.imports.find((i) => i.id === job.id);
-    const links = job.added.map((a) => `<a href="#reference/${esc(a.id)}">${esc(a.title)}</a>${a.state === 'ok' ? ''
-      : ` (${a.state === 'pending' ? 'read once the server restarts' : `but it cannot be read: ${esc(a.error)}`})`}`);
-    out.replaceChildren(msgBox(errors.length ? 'warn' : 'ok', `<b>Imported MetaCyc${v}</b>: ${links.join(' and ')}, in the Reference data tab.${
-      imp ? ` The files uploaded and its bundle are kept in <code>${esc(imp.dir)}</code>.` : ''}${errors.length ? listHtml(errors) : ''}`));
-    reference.invalidate();
-    this.loadRefs();
-  }
-
-  async _pollMetacyc() {
-    let s;
-    try { s = await api('/api/admin/metacyc'); } catch {
-      this._mcTimer = setTimeout(() => this._pollMetacyc(), 5000); // (the server restarting, say)
-      return;
-    }
-    this.mc = s;
-    this._showMetacycJob(s.job);
-    if (!s.job.running) { this._showMetacycImports(); this._syncMetacycButton(); }
-  }
-
-  // the imports kept, with their reference datasets
-  _showMetacycImports() {
-    const box = $('#mc-import-list'), list = this.mc?.imports || [];
-    if (!list.length) { box.replaceChildren(); return; }
-    const title = (id) => esc(this.refs?.find((r) => r.id === id)?.title || id);
-    box.innerHTML = `<h4>Imported here</h4><table class="odor-table"><thead><tr><th>MetaCyc</th><th>Uploaded</th><th>Kept in</th><th>Its reference datasets</th></tr></thead>
-      <tbody>${list.map((i) => `<tr><td>${esc(i.version || '(no version given)')}</td><td>${esc(fmtWhen(i.uploaded_at))}</td>
-        <td><code>${esc(i.dir)}</code> <span class="muted">(${fmtBytes(i.size)})</span></td>
-        <td>${i.refs.length ? i.refs.map((id) => `<a href="#reference/${esc(id)}">${title(id)}</a>`).join('<br>') : '<span class="muted">none</span>'}</td></tr>`).join('')}</tbody></table>`;
+    by?.load();
   }
 
   async loadDatasets() {

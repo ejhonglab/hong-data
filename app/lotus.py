@@ -181,7 +181,8 @@ def describe(o: dict, about: Optional[dict] = None) -> dict:
             + (f", with its metadata of {rel['metadata']}" if rel.get("metadata") else "")
             + (f"; LOTUS IDs (LTS…) from its release of {rel['lts']}" if rel.get("lts") else ""))
     decisions = [
-        {"what": "Records", "chosen": made, "admin": "another bundle, made by app/lotus_build.py from other files"},
+        {"what": "Records", "chosen": made, "admin": "another bundle, of other files of LOTUS: imported in the Admin tab "
+                                                       "(Import LOTUS), or made by app/lotus_build.py"},
         {"what": "Chemicals", "chosen": "the odor table's, each by the LOTUS ID it gives, else its InChI, else its CID; "
                                         "made again whenever the odor table changes", "admin": "the odor table (its LOTUS IDs)"},
         {"what": "Stereochemistry", "chosen": STEREO_TEXT[o["stereo"]], "admin": True},
