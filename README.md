@@ -42,6 +42,9 @@ expected, and nothing secret is entered. If a download or the page is blocked, s
    Below it, how to make each odor from its neat chemical by serial dilutions; then
    search VCF's foods (e.g. `kiwi`) for their volatiles, the headspace over
    them, and the dilutions in paraffin oil that would give the same headspace.
+8. **ROI training**: one download of what there is on tensor to train a model to draw
+   glomerulus ROIs ([al-diag-seg](https://github.com/tom-f-oconnell/al-diag-seg)) of
+   every fly of a glomeruli dataset with a diagnostic panel, and the flies left out, with why.
 
 ### Browser warnings
 
@@ -601,6 +604,20 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     a CSV per chemical (each product's values, the headspace in every unit, the oil) or
     of the matching lines (with where each constant and vapor pressure is from, and the
     file's).
+- **ROI training**: of every glomeruli dataset with a diagnostic panel, each fly whose
+  folder in the dataset's motion-corrected data (as al_analysis lays it out) has
+  diagnostic recordings (folders with `trialmean_dff.tif`, the mean dF/F of each odor, and
+  `trial_frames_and_odors.json`, more than half of whose odors are of the dataset's
+  diagnostic panels, through the odor table), a `RoiSet.zip`, and its anatomy
+  (`mocorr_concat_avg.tif`, else a `mocorr_concat.tif` to average), and whose raw data has
+  the `Experiment.xml` of a diagnostic recording. The download is a zip, sent as it is made
+  (several GB: the browser saves it as it comes), of those files where they are on tensor
+  (from its top), with the anatomy averaged on the server where al_analysis has not
+  written it (kept there, so only once), and if ticked the flies' anatomical stacks
+  (`anat` folders of the raw data, as recorded). Its `roi_training.json` lists each fly's
+  files, each recording's odors as named in the odor table (alike in every fly), the
+  glomerulus names uploads accept (to tell glomeruli from other ROIs, as the movie player
+  does), and the flies left out. A fly in several datasets is in it once.
 - **Admin** (to the right of Docs; it first asks whether you are Tom, Jon or Betty, or
   have asked one of them): settings for the whole site.
   - *Folders on the server* the app may read (by default tensor) and also write (none

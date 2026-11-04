@@ -6868,6 +6868,70 @@ class HeadspaceVcf {
   }
 }
 
+// ============================================================== ROI TRAINING
+// Every fly of a glomeruli dataset with a diagnostic panel whose files to train a model to draw
+// glomerulus ROIs with (al-diag-seg) are on tensor, those left out, and a download of them
+// (roi_training.py): a link the browser saves as it comes, as it may be several GB.
+const fmtSize = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : fmtBytes(n));
+
+class RoiTrainingPage {
+  constructor() {
+    this.data = null;
+    this._seq = 0;
+    $('#rt-stacks').addEventListener('change', () => this._renderDownload());
+    $('#rt-refresh').addEventListener('click', () => this.load(true));
+  }
+
+  async load(again = false) {
+    if (this.data && !again) return;
+    const seq = ++this._seq;
+    $('#rt-download').hidden = true;
+    $('#rt-status').replaceChildren(msgBox('info', 'Looking on tensor for each fly (half a minute, the first time)…'));
+    let r;
+    try { r = await api('/api/roi_training'); } catch (e) {
+      if (seq === this._seq) $('#rt-status').replaceChildren(msgBox('error', `Could not look on tensor: ${esc(e.message)}`));
+      return;
+    }
+    if (seq !== this._seq) return;
+    this.data = r;
+    this._render();
+  }
+
+  _render() {
+    const r = this.data;
+    const datasets = new Set(r.flies.flatMap((f) => f.datasets.map((d) => d.id)));
+    const ds = (d) => `<a href="#browse/${d.id}">#${d.id}</a> <span class="muted">${esc(d.uploader)}</span>`;
+    const fly = (f) => `<span title="${esc(f.dir)}">${esc(f.date)} fly ${f.fly_num}</span>`;
+    $('#rt-status').replaceChildren(msgBox(r.flies.length ? 'ok' : 'warn', r.flies.length
+      ? `${r.flies.length} fl${r.flies.length === 1 ? 'y' : 'ies'} of ${datasets.size} dataset${datasets.size === 1 ? '' : 's'}.`
+      : 'No fly has what is needed on tensor (see below).'));
+    const stacked = r.flies.filter((f) => f.stacks.length).length;
+    $('#rt-stacks-size').textContent = stacked ? `(${stacked} of the flies have one: ${fmtSize(r.stack_bytes)} more)` : '(none of the flies has one)';
+    $('#rt-stacks').disabled = !stacked;
+    if (!stacked) $('#rt-stacks').checked = false;
+    this._renderDownload();
+    $('#rt-flies').innerHTML = r.flies.length ? `<table class="odor-table"><thead><tr><th>Fly</th><th>Datasets</th>
+      <th>Diagnostic recordings <span class="muted">(odors)</span></th><th>Planes <span class="muted">(Z × Y × X)</span></th><th>Anatomy</th>
+      <th>Anatomical stack</th><th>Size</th></tr></thead><tbody>${r.flies.map((f) => `<tr><td>${fly(f)}</td><td>${f.datasets.map(ds).join(', ')}</td>
+      <td>${f.recordings.map((x) => `${esc(x.name)} <span class="muted">(${x.n_odors})</span>`).join('<br>')}</td><td>${f.shape.join(' × ')}</td>
+      <td>${f.anatomy === 'computed' ? '<span title="mocorr_concat_avg.tif is not there: computed from mocorr_concat.tif, once">averaged on the server</span>' : 'al_analysis\'s'}</td>
+      <td>${f.stacks.map((x) => `${esc(x.name)} <span class="muted">(${fmtSize(x.bytes)})</span>`).join('<br>') || '—'}</td>
+      <td>${fmtSize(f.bytes)}</td></tr>`).join('')}</tbody></table>` : '';
+    $('#rt-skipped-step').hidden = !r.skipped.length;
+    $('#rt-skipped').innerHTML = r.skipped.length ? `<table class="odor-table"><thead><tr><th>Dataset</th><th>Fly</th><th>Why</th></tr></thead>
+      <tbody>${r.skipped.map((x) => `<tr><td>${ds(x.dataset)}</td><td>${x.date ? `${esc(x.date)} fly ${x.fly_num}` : 'all its flies'}</td>
+      <td>${esc(x.why)}</td></tr>`).join('')}</tbody></table>` : '';
+  }
+
+  _renderDownload() {
+    const r = this.data, a = $('#rt-download'), stacks = $('#rt-stacks').checked;
+    a.hidden = !r?.flies.length;
+    if (!r) return;
+    a.href = `/api/roi_training/download${stacks ? '?stacks=1' : ''}`;
+    a.textContent = `Download (${fmtSize(r.bytes + (stacks ? r.stack_bytes : 0))})`;
+  }
+}
+
 // ==================================================================== router
 fieldsFrom($('#ds-edit'), 'edit');
 fieldsFrom($('#settings-defaults'), 'defaults', { optional: true });
@@ -6878,6 +6942,7 @@ const reference = new Reference();
 const mergePage = new MergePage();
 const comparePage = new ComparePage();
 const settings = new SettingsPage();
+const roiTraining = new RoiTrainingPage();
 const headspacePage = new HeadspacePage();
 const headspaceVcf = new HeadspaceVcf(headspacePage);
 const headspaceDilutions = new HeadspaceDilutions(headspacePage);
@@ -6889,7 +6954,7 @@ let lastPlace = 'browse'; // the hash of the last place shown other than the Adm
 
 function route() {
   const [tab, id] = location.hash.replace(/^#/, '').split('/');
-  const name = ['upload', 'browse', 'merge', 'compare', 'odors', 'reference', 'settings', 'headspace', 'admin'].includes(tab) ? tab : 'browse';
+  const name = ['upload', 'browse', 'merge', 'compare', 'odors', 'reference', 'settings', 'headspace', 'roi-training', 'admin'].includes(tab) ? tab : 'browse';
   $$('.tab').forEach((s) => { s.hidden = s.id !== `tab-${name}`; });
   $$('.tabs a').forEach((a) => a.classList.toggle('active', a.dataset.tab === name));
   if (name === 'admin' && currentTab !== 'admin') admin.enter(lastPlace);
@@ -6899,6 +6964,7 @@ function route() {
   if (name === 'odors') { odorsPage.highlightId = id ? +id : null; odorsPage.load().then(() => { if (id) odorsPage.highlight(+id); }); }
   if (name === 'reference') { reference.load().then(() => { if (id) reference.show(id); }); }
   if (name === 'settings') settings.load();
+  if (name === 'roi-training') roiTraining.load();
   if (name === 'headspace') headspacePage.load().then(() => headspaceVcf.load());
   if (name === 'merge') mergePage.load();
   if (name === 'compare') comparePage.load();

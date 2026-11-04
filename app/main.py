@@ -33,12 +33,13 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
-from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, Response
+from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from . import (backup, bundle_import, chemprops, compare, config, dilution, export, filelog, headspace, lotus, lotus_import,
-               merge, metacyc, metacyc_import, movies, odormeta, reference, sandbox, tensor, thorimage, vcf, yamlcheck)
+               merge, metacyc, metacyc_import, movies, odormeta, reference, roi_training, sandbox, tensor, thorimage, vcf,
+               yamlcheck)
 from .db import PANEL_RENAMES, PROPERTY_COLUMNS, Database, rename_panel
 from .glomeruli import GLOMERULI, load_glomeruli
 from .ingest import (ParsedData, ValidationError, combine, extra_text, files_text, fly_key, kc_id_problems, load_file,
@@ -1299,6 +1300,40 @@ async def merge_preview(request: Request) -> Response:
     except merge.MergeError as e:
         return json_error(422, str(e))
     return JSONResponse(p)
+
+
+# ---------------------------------------------------------------- ROI training
+
+def _roi_training_found(request: Request) -> tuple[dict, list[Path]]:
+    """The flies to export for ROI training (`roi_training.inventory`), of the datasets
+    ``?datasets=`` lists (ids, comma-separated), if it does; and the folders set in the Admin tab."""
+    bases = [Path(p) for p in sandbox.folders()]
+    found = roi_training.inventory(db, config.TENSOR_ROOT, bases)
+    only = {int(x) for x in re.findall(r"\d+", request.query_params.get("datasets") or "")}
+    if only:
+        found = {"flies": [f for f in found["flies"] if any(d["id"] in only for d in f["datasets"])],
+                 "skipped": [s for s in found["skipped"] if s["dataset"]["id"] in only]}
+    return found, bases
+
+
+async def roi_training_flies(request: Request) -> Response:
+    """The flies of glomeruli datasets with a diagnostic panel to export for ROI training, and
+    those left out, with why (`roi_training.summary`)."""
+    def run() -> dict:
+        found, bases = _roi_training_found(request)
+        return roi_training.summary(found, config.TENSOR_ROOT, bases)
+
+    return JSONResponse(await run_in_threadpool(run))
+
+
+async def roi_training_download(request: Request) -> Response:
+    """A zip of what the ROI training tab lists of each fly (``?stacks=1``: and its anatomical
+    stacks), sent as it is written (`roi_training.stream_zip`): it may be several GB."""
+    found, bases = await run_in_threadpool(_roi_training_found, request)
+    stacks = request.query_params.get("stacks") in ("1", "true")
+    top = f"olfdb_roi_training_{dt.date.today().isoformat()}"
+    return StreamingResponse(roi_training.stream_zip(found, config.TENSOR_ROOT, bases, stacks, top), media_type="application/zip",
+                             headers={"content-disposition": f'attachment; filename="{top}.zip"'})
 
 
 async def merge_download(request: Request) -> Response:
@@ -2979,6 +3014,8 @@ routes = [
     Route("/api/movie/rois", movie_rois),
     Route("/api/movie/trials", movie_trials),
     Route("/api/download", download),
+    Route("/api/roi_training", roi_training_flies),
+    Route("/api/roi_training/download", roi_training_download),
     Route("/api/merge", merge_units),
     Route("/api/merge/preview", merge_preview, methods=["POST"]),
     Route("/api/merge/download", merge_download),

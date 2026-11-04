@@ -215,6 +215,18 @@ between the frontend and the server. Using the app is described in
   Other…, hints, and checks. The defaults leave out what is of one dataset only (its
   uploader, manipulations, data paths and files), and require nothing; the server checks
   all of them as an upload's (`Metadata`).
+- **The ROI training download is tensor as it is, with a manifest.** Its files are where
+  al_analysis leaves them (paths from the top of tensor), not renamed into a layout of the
+  training code's: al-diag-seg reads this one (its `alseg/olfdb.py`), through
+  `roi_training.json`, which says what each file is and names every recording's odors as
+  in the odor table, so flies of different people line up by odor. Only what is not on
+  tensor is made here: a fly's anatomy where al_analysis did not write its
+  `mocorr_concat_avg.tif` (the mean of `mocorr_concat.tif`, ~3 s a fly, kept in
+  `data/roi_training/` by the movie's path, size and time). The zip is stored, not
+  compressed (TIFFs hardly compress), and written as it is sent, never to disk: it is a
+  few GB. Files are read eight at a time ahead of being sent, as each file on tensor
+  takes a while to start reading (an anatomical stack's ~1000 files: 45 s one after
+  another, 3 s eight at a time).
 - **The laser wavelength is never read from `Experiment.xml`**: ThorImage's
   `MultiPhotonLaser` value does not follow changes made to the wavelength at the laser,
   so the wavelength is only ever entered in the form.
@@ -1065,6 +1077,12 @@ GET    /api/merge/download?coding_unit=&format=wide|long&mode=&by=a,b&target=&to
                                             (&lower=1 too)
 GET    /api/merge/scales?(the same, without format)
                                             each dataset's group and scale factor (scaling.csv)
+GET    /api/roi_training[?datasets=1,2]     the flies of glomeruli datasets with a diagnostic panel to
+                                            export for ROI training (each its files' total size), and
+                                            those left out, with why (roi_training.py)
+GET    /api/roi_training/download[?stacks=1&datasets=1,2]
+                                            a zip of their files where they are on tensor, sent as it is
+                                            written, with roi_training.json (and their anatomical stacks)
 GET    /api/odors                           the odor table (with each odor's `inchi`,
                                             `vapor_pressure_kpa`, `molar_mass_g_mol`, ...)
 GET    /api/odors/status                    the odor sheet, when it was last read, whether it

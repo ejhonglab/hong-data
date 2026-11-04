@@ -25,12 +25,15 @@ try {
     <span class="tabs-sep" aria-hidden="true"></span>
     <a href="#reference" data-tab="reference">Reference data</a>
     <a href="#odors" data-tab="odors">Odors<span class="tab-badge" id="odors-badge" hidden title="The odor sheet changed since it was last synced"></span></a>
-    <a href="#settings" data-tab="settings">Settings</a>
     <span class="tabs-sep" aria-hidden="true"></span>
     <a href="#headspace" data-tab="headspace">Headspace calculator</a>
+    <span class="tabs-sep" aria-hidden="true"></span>
+    <a href="#roi-training" data-tab="roi-training">ROI training</a>
   </nav>
   <span class="topbar-status" id="topbar-status"></span>
-  <nav class="tabs" aria-label="Help and administration">
+  <nav class="tabs" aria-label="Settings, help and administration">
+    <a href="#settings" data-tab="settings">Settings</a>
+    <span class="tabs-sep" aria-hidden="true"></span>
     <a href="https://github.com/ejhonglab/hong-data#readme-ov-file" target="_blank" rel="noopener">Docs</a>
     <span class="tabs-sep" aria-hidden="true"></span>
     <a href="#admin" data-tab="admin">Admin<span class="tab-badge error" id="admin-badge" hidden title="A reference dataset cannot be read (see the Admin tab)"></span></a>
@@ -453,6 +456,42 @@ try {
       </div>
       <div id="odor-table"></div>
       <details class="sync-history"><summary>Sync history</summary><div id="odor-syncs"></div></details>
+    </div>
+  </section>
+
+  <!-- ================================================= ROI TRAINING -->
+  <section id="tab-roi-training" class="tab" hidden>
+    <div class="page-head">
+      <h1>ROI training</h1>
+      <p class="lede">Data to train a model to draw glomerulus ROIs (<a href="https://github.com/tom-f-oconnell/al-diag-seg" target="_blank" rel="noopener">al-diag-seg</a>):
+        each fly of a glomeruli dataset with a diagnostic panel whose ROIs (<code>RoiSet.zip</code>) are on tensor, with its
+        diagnostic odors' mean dF/F, its anatomy and its voxel sizes, as al_analysis leaves them there.</p>
+    </div>
+
+    <div class="step">
+      <div class="step-head"><h2>Download</h2></div>
+      <div id="rt-status" aria-live="polite"></div>
+      <label class="check"><input type="checkbox" id="rt-stacks"> Their anatomical stacks too (<code>anat</code> folders of the raw data, as recorded) <span class="muted" id="rt-stacks-size"></span></label>
+      <div class="actions">
+        <a class="btn primary" id="rt-download" href="/api/roi_training/download" download hidden>Download</a>
+        <button type="button" class="btn" id="rt-refresh">Look again</button>
+      </div>
+      <p class="muted small">A zip, sent as it is made (the browser saves it as it comes). Each file is where it is on tensor:
+        per fly, its diagnostic recordings' <code>trialmean_dff.tif</code> (odor, Z, Y, X: the mean dF/F of each odor) and
+        <code>trial_frames_and_odors.json</code>, its <code>RoiSet.zip</code>, its anatomy (<code>mocorr_concat_avg.tif</code>: the mean
+        of its <code>mocorr_concat.tif</code>, computed on the server when al_analysis has not written it), and the
+        <code>Experiment.xml</code> of its recordings in its raw data. <code>roi_training.json</code> says which file is what, and names
+        each recording's odors as in the odor table. Unzip it and give its folder to al-diag-seg's <code>run_pipeline.py</code>.</p>
+    </div>
+
+    <div class="step">
+      <div class="step-head"><h2>Flies</h2></div>
+      <div id="rt-flies"></div>
+    </div>
+
+    <div class="step" id="rt-skipped-step" hidden>
+      <div class="step-head"><h2>Left out</h2></div>
+      <div id="rt-skipped"></div>
     </div>
   </section>
 
