@@ -262,7 +262,11 @@ between the frontend and the server. Using the app is described in
   rows scroll smoothly. The default colormap is built in Oklab so that lightness is
   linear in |value|, with white at 0 and blue and red poles of equal lightness: "twice
   as dark" means "twice as large" on either side, which the ColorBrewer and Moreland
-  maps only approximate.
+  maps only approximate. Distances (a reference dataset's `pairwise: "distance"`, or its
+  values in Compare) start in plasma reversed, not viridis like other values of one sign:
+  the nearest, those that matter, brightest, in a map that can't be taken for viridis
+  (and whose ends are neither black nor white, against either theme's background); the
+  sequential colormap chosen is remembered apart for them (`_genericColormap`).
 - **Log color scale** (`makeNorm('log')`): for sequential colors, of the positive values
   (0 and below the lowest color), chosen automatically when none are negative and the
   positive ones span 3 or more orders of magnitude (`LOG_DECADES`), as VCF's

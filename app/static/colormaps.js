@@ -68,6 +68,12 @@ function fromMpl(name) {
   return Uint8ClampedArray.from(MPL_LUTS[name]);
 }
 
+function reversedLut(lut) {
+  const out = new Uint8ClampedArray(lut.length);
+  for (let i = 0; i < 256; i++) out.set(lut.subarray((255 - i) * 3, (256 - i) * 3), i * 3);
+  return out;
+}
+
 function binary(absent = [241, 241, 241], present = [31, 95, 139]) {
   const lut = new Uint8ClampedArray(256 * 3);
   for (let i = 0; i < 256; i++) {
@@ -82,6 +88,7 @@ export const COLORMAPS = {
   'rdbu': { label: 'RdBu (ColorBrewer)', kind: 'diverging', lut: fromMpl('RdBu_r') },
   'coolwarm': { label: 'coolwarm (Moreland)', kind: 'diverging', lut: fromMpl('coolwarm') },
   'viridis': { label: 'viridis', kind: 'sequential', lut: fromMpl('viridis') },
+  'plasma-r': { label: 'plasma, reversed (lowest brightest)', kind: 'sequential', lut: reversedLut(fromMpl('plasma')) },
   'oklab-seq': { label: 'White–blue (Oklab)', kind: 'sequential', lut: oklabSequential() },
   'binary': { label: 'Absent / present', kind: 'binary', lut: binary() },
 };

@@ -961,8 +961,10 @@ class MatrixViewer {
   // ref: a reference dataset (as from /api/reference/<id>), or a matrix like one with its
   // `values` (Float32Array) given, and `square` if its columns are its rows (e.g. odor–odor
   // similarities: then in one order, the rows', grouped as they are, and moved or removed
-  // together); kind: of the viewer, for its transposing kept apart; responseCalc: of a
-  // dataset's responses, how they were calculated (`setResponseCalc`)
+  // together), its values distances if its `pairwise` is 'distance' or its meta's
+  // `distance` is set (colored apart, see `_genericColormap`); kind: of the viewer, for its
+  // transposing kept apart; responseCalc: of a dataset's responses, how they were
+  // calculated (`setResponseCalc`)
   setGenericData(ref, { title = '', fileStem = 'heatmap', kind: viewerKind = 'generic', kc = false, responseCalc = null } = {}) {
     this._setKind(viewerKind);
     this.title = title;
@@ -989,6 +991,7 @@ class MatrixViewer {
       }
       this.data = {
         square,
+        distance: ref.pairwise === 'distance' || !!ref.meta.distance,
         meta: ref.meta,
         chemAxis: ref.chemicals?.matched ? ref.chemicals.axis : null,
         kcAxis: 'kcAxis' in ref ? ref.kcAxis : kcAxisOf(ref),
@@ -1049,11 +1052,16 @@ class MatrixViewer {
   }
 
   // the colormap of a matrix (not neural data) to start with: of its kind of values, the
-  // sequential one last chosen for one
+  // sequential one last chosen for one; of distances, kept apart from the others' (the
+  // lowest the brightest, unlike viridis, to start with)
   _genericColormap() {
-    const kind = this._valueKind();
-    this.opts.colormap = kind === 'binary' ? 'binary' : kind === 'diverging' ? 'oklab-div' : (COLORMAPS[this.opts.colormapSeq]?.kind === 'sequential' ? this.opts.colormapSeq : 'viridis');
+    const kind = this._valueKind(), seq = this._seqKey();
+    this.opts.colormap = kind === 'binary' ? 'binary' : kind === 'diverging' ? 'oklab-div'
+      : COLORMAPS[this.opts[seq]]?.kind === 'sequential' ? this.opts[seq] : this.data?.distance ? 'plasma-r' : 'viridis';
   }
+
+  // the option of the sequential colormap last chosen for a matrix like the one shown
+  _seqKey() { return this.data?.distance ? 'colormapDist' : 'colormapSeq'; }
 
   _editsFor(payload) {
     if (!this.editsOf.has(payload)) this.editsOf.set(payload, newEdits());
@@ -1095,7 +1103,7 @@ class MatrixViewer {
     const o = summing ? { ...this.opts, clusterRows: false, rowOrder: 'fly' } : this.opts.clusterRows ? { ...this.opts, rowOrder: 'none' } : this.opts;
     const build = (cl) => { const m = buildNeuralModel(this.data, order, o, cl); return summing ? sumOverFlies(m, this.data.units) : m; };
     if (this.kind !== 'neural') {
-      if (COLORMAPS[o.colormap]?.kind === 'sequential') { this.opts.colormapSeq = o.colormap; this._save(); }
+      if (COLORMAPS[o.colormap]?.kind === 'sequential') { this.opts[this._seqKey()] = o.colormap; this._save(); }
       this._show(this._genericModel(), this._badNote());
       return;
     }
@@ -5168,7 +5176,8 @@ class ComparePage {
       keep.forEach((a, i) => keep.forEach((b, j) => { const v = values[a * n + b]; sim[i * m + j] = v === v ? -v : NaN; }));
       const vectors = keep.map((a) => Float32Array.from(keep, (b) => values[a * n + b]));
       const m0 = ref.meta;
-      return { ids, sim, data: { vectors, cols: keep.map((k) => ({ label: ref.rows[k].label })), meta: { kind: m0.kind, value_label: m0.value_label, col_label: m0.col_label || 'chemical' } } };
+      return { ids, sim, data: { vectors, cols: keep.map((k) => ({ label: ref.rows[k].label })),
+        meta: { kind: m0.kind, distance: true, value_label: m0.value_label, col_label: m0.col_label || 'chemical' } } };
     });
   }
 
