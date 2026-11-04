@@ -1215,9 +1215,10 @@ class MatrixViewer {
     this._setNote(note);
     const grouped = (drag.rows && model.rows.some((r) => r.group != null)) || (drag.cols && model.cols.some((c) => c.group != null));
     const which = drag.rows && drag.cols ? 'a label' : drag.rows ? 'a row label' : 'a column label';
-    this.hint.textContent = [
-      drag.rows || drag.cols ? `Drag ${which} to move it${grouped ? ' within its group (drag a group’s name to move the group)' : ''}` : '',
-      'Ctrl-click a label to remove it, or right-click it for a menu.',
+    this.hint.textContent = this.hint.title = [
+      drag.rows || drag.cols ? `Drag ${which} to move it${grouped ? ' within its group (a group’s name: the group)' : ''}` : '',
+      'Ctrl-click a label to remove it, or right-click it for a menu',
+      'click a cell to pin its tooltip.',
     ].filter(Boolean).join('; ');
     this.onShow?.();
   }

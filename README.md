@@ -438,7 +438,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   longtable of names, IDs, supplier and catalog number, vapor pressure and molar mass,
   linked as on the site).
 - **Viewer** (datasets and the upload preview): odor labels stay at the
-  top and fly/ROI labels at the left while scrolling, with hover tooltips. Average over
+  top and fly/ROI labels at the left while scrolling, with hover tooltips (in every
+  matrix shown: a click on a cell pins its tooltip, to read or screenshot it, until its ×,
+  a click anywhere else, or Escape closes it). Average over
   repeats or show individual trials; rows by fly→ROI, ROI→fly or ungrouped; odors as in
   the file or by name. The default colormap is blue–white–red, with lightness linear in
   |value| and white at 0, over the full data range (of other values, viridis; of

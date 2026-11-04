@@ -11,7 +11,7 @@
 //             reorder: {rows, cols} (labels of these may be dragged), onReorder(axis, keys),
 //             onLabelMenu({axis, level, items, keys, x, y}) (right-click on a label),
 //             onLabelRemove({axis, level, items, keys}) (ctrl-click on a label),
-//             onCellClick({row, col, rowIndex, colIndex}) (a click on a cell),
+//             onCellClick({row, col, rowIndex, colIndex}) (a click on a cell, which also pins its tooltip: see _pin),
 //             minHeaderH (px: the header at least this high, to line up with another's) }
 // A label dragged moves its items within their group, and a group label its group;
 // onReorder then gets the axis's keys in their new order.
@@ -34,6 +34,7 @@ export class Heatmap {
     this.model = null;
     this._raf = 0;
     this._hover = null;
+    this._pinned = null; // {row, col}: the cell whose tooltip stays shown (see _pin)
     this.mark = null; // {rows, cols}: indices of a row and a column shaded (see setMark)
     this._build();
     // drawn again in the colors of a new theme (app.js's 'olfdb-theme'), while on the page
@@ -64,7 +65,7 @@ export class Heatmap {
 
     this._onScroll = () => {
       if (this._drag?.active) this._dragUpdate();
-      else if (this._hover || !this.tooltip.hidden) { this._hover = null; this.tooltip.hidden = true; }
+      else if (!this._pinned && (this._hover || !this.tooltip.hidden)) { this._hover = null; this.tooltip.hidden = true; }
       this._schedule();
     };
     this.scroll.addEventListener('scroll', this._onScroll, { passive: true });
@@ -85,11 +86,22 @@ export class Heatmap {
       el.addEventListener('lostpointercapture', (e) => this._dragEnd(e, false));
       el.addEventListener('contextmenu', (e) => this._labelMenu(e, el));
     }
-    this._onKey = (e) => { if (e.key === 'Escape' && this._drag) this._dragEnd(e, false); };
+    this._onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      if (this._drag) this._dragEnd(e, false);
+      else this._unpin();
+    };
     window.addEventListener('keydown', this._onKey);
+    // a press anywhere but on a pinned tooltip closes it (one on a cell then pins none: _click)
+    this._onPressOutside = (e) => {
+      if (this.tooltip.contains(e.target)) return;
+      if (this.view.contains(e.target)) this._unpinnedAt = performance.now();
+      this._unpin();
+    };
   }
 
   destroy() {
+    this._unpin();
     this._ro.disconnect();
     this.scroll.removeEventListener('scroll', this._onScroll);
     window.removeEventListener('keydown', this._onKey);
@@ -98,6 +110,7 @@ export class Heatmap {
 
   setModel(model, options) {
     if (this._drag) this._dragEnd({}, false); // its items are not these
+    this._unpin();
     this.model = model;
     if (options) Object.assign(this.options, options);
     this._measure();
@@ -548,15 +561,51 @@ export class Heatmap {
     return colIndex >= 0 && colIndex < m.cols.length && rowIndex >= 0 && rowIndex < m.rows.length ? { rowIndex, colIndex } : null;
   }
 
-  // a click on a cell, but for the one ending a drag (or removing a label, with ctrl)
+  // A click on a cell, but for the one ending a drag (or removing a label, with ctrl): pins its
+  // tooltip, unless the press closed one, and is the heatmap's onCellClick, if it has one.
   _click(e) {
-    if (!this.options.onCellClick || e.ctrlKey || performance.now() - (this._dragEndedAt || 0) < 300) return;
+    if (e.ctrlKey || performance.now() - (this._dragEndedAt ?? -Infinity) < 300) return;
     const rect = this.view.getBoundingClientRect();
     const at = this._cellAt(this.view, e.clientX - rect.left, e.clientY - rect.top);
-    if (at) this.options.onCellClick({ ...at, row: this.model.rows[at.rowIndex], col: this.model.cols[at.colIndex] });
+    if (!at) return;
+    const closedOne = performance.now() - (this._unpinnedAt ?? -Infinity) < 1000;
+    this._unpinnedAt = null;
+    if (!closedOne && !this._pinned) {
+      this._setHover({ row: at.rowIndex, col: at.colIndex }, e); // (with no pointer moved first, as on a touch screen)
+      this._pin();
+    }
+    if (this.options.onCellClick) this.options.onCellClick({ ...at, row: this.model.rows[at.rowIndex], col: this.model.cols[at.colIndex] });
+  }
+
+  // A cell's tooltip kept where it is (to read, or screenshot): neither moving the pointer,
+  // leaving the matrix nor scrolling changes it, nor what is marked as hovered, until its ×,
+  // a press anywhere else, or Escape closes it (`_unpin`).
+  _pin() {
+    if (!this._hover || this.tooltip.hidden) return;
+    this._pinned = { ...this._hover };
+    this.tooltip.classList.add('pinned');
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'hm-tooltip-close';
+    close.setAttribute('aria-label', 'Close');
+    close.title = 'Close (or click anywhere else, or press Escape)';
+    close.textContent = '×';
+    close.addEventListener('click', () => this._unpin());
+    this.tooltip.appendChild(close);
+    document.addEventListener('pointerdown', this._onPressOutside, true);
+  }
+
+  _unpin() {
+    if (!this._pinned) return;
+    this._pinned = null;
+    this.tooltip.classList.remove('pinned');
+    this.tooltip.querySelector('.hm-tooltip-close')?.remove();
+    document.removeEventListener('pointerdown', this._onPressOutside, true);
+    this._setHover(null);
   }
 
   _setHover(h, e) {
+    if (this._pinned) return;
     const prev = this._hover;
     this._hover = h && h.row >= 0 && h.col >= 0 ? h : null;
     if ((prev && prev.row) !== (this._hover && this._hover.row) || (prev && prev.col) !== (this._hover && this._hover.col)) this._drawOverlay();
