@@ -11,16 +11,16 @@ it out) has:
   diagnostic panel of the dataset (matched through the odor table);
 - its ROIs: a `ROISET` (al_analysis' is in its first diagnostic recording, drawn on the
   fly's `CONCAT`, and the other recordings' are links to it);
-- its anatomy: al_analysis' `CONCAT_AVG` (the mean of `CONCAT` over time), else that mean,
-  computed here from `CONCAT` and kept (`config.ROI_TRAINING_DIR`), so each is computed once;
+- its average image: al_analysis' `CONCAT_AVG` (the mean of `CONCAT` over time), else that
+  mean, computed here from `CONCAT` and kept (`config.ROI_TRAINING_DIR`), so each is computed once;
 
 and its folder in the raw data has the Experiment.xml of at least one of its diagnostic
 recordings (their voxel sizes). Its anatomical stacks (`tensor.ANATOMICAL` folders of its
 raw data, as recorded, so not flipped as al_analysis flips right ALs' functional data) go
 in too if asked for.
 
-The zip has each file where it is on tensor (its path from the top of tensor), the anatomy
-computed here where al_analysis writes it, and `MANIFEST`, saying which file is what (each
+The zip has each file where it is on tensor (its path from the top of tensor), the average
+image computed here where al_analysis writes it, and `MANIFEST`, saying which file is what (each
 recording's odors as in the odor table, so the same odor is named alike in every fly).
 """
 from __future__ import annotations
@@ -166,9 +166,9 @@ def _roiset(fly_dir: Path, diagnostic: list[Path], others: list[Path]) -> Option
     return None
 
 
-def _anatomy(fly_dir: Path, grid: tuple[int, ...]) -> tuple[Optional[dict], Optional[str]]:
-    """A fly's anatomy ({``path``: al_analysis' `CONCAT_AVG`, or ``source``: the `CONCAT` to
-    average}), or why there is none."""
+def _average(fly_dir: Path, grid: tuple[int, ...]) -> tuple[Optional[dict], Optional[str]]:
+    """A fly's average image ({``path``: al_analysis' `CONCAT_AVG`, or ``source``: the `CONCAT`
+    to average}), or why there is none."""
     concat, avg = fly_dir / CONCAT, fly_dir / CONCAT_AVG
     shape = _tiff_shape(concat) if _is_file(concat) else None
     concat_ok = shape is not None and len(shape) == 4 and shape[1:] == grid
@@ -181,7 +181,7 @@ def _anatomy(fly_dir: Path, grid: tuple[int, ...]) -> tuple[Optional[dict], Opti
             return {"path": avg, "computed": False}, None
     if concat_ok:
         return {"source": concat, "computed": True}, None
-    return None, f"no {CONCAT} (or {CONCAT_AVG}) of its {grid[0]} × {grid[1]} × {grid[2]} planes in its folder, for its anatomy"
+    return None, f"no {CONCAT} (or {CONCAT_AVG}) of its {grid[0]} × {grid[1]} × {grid[2]} planes in its folder, for its average image"
 
 
 def _stacks(raw_fly: Optional[Path]) -> list[dict]:
@@ -241,8 +241,8 @@ def _fly(date: str, fly_num: int, mocorr: Path, raw: Optional[Path], keys: set,
     roiset = _roiset(fly_dir, [r["dir"] for r in recs], others)
     if roiset is None:
         return None, "no RoiSet.zip (its ROIs) in its folder or its recordings'"
-    anatomy, why = _anatomy(fly_dir, grid)
-    if anatomy is None:
+    average, why = _average(fly_dir, grid)
+    if average is None:
         return None, why
     raw_dirs = tensor.fly_dirs(raw, date, fly_num) if raw else []
     raw_fly = raw_dirs[0] if raw_dirs else None
@@ -253,7 +253,7 @@ def _fly(date: str, fly_num: int, mocorr: Path, raw: Optional[Path], keys: set,
         return None, ("no folder of it in the raw data" if raw_fly is None else
                       f"no {XML} of its diagnostic recordings in its raw data folder (their voxel sizes)")
     return {"date": date, "fly_num": fly_num, "dir": fly_dir, "raw_dir": raw_fly, "recordings": recs, "grid": grid,
-            "roiset": roiset, "anatomy": anatomy, "stacks": _stacks(raw_fly), "problems": problems}, None
+            "roiset": roiset, "average": average, "stacks": _stacks(raw_fly), "problems": problems}, None
 
 
 def inventory(db, root: Path, bases: list[Path]) -> dict:
@@ -301,7 +301,7 @@ def _arcname(p: Path, root: Path, bases: list[Path]) -> str:
     return p.name
 
 
-def computed_anatomy(source: Path) -> Path:
+def computed_average(source: Path) -> Path:
     """The mean of a `CONCAT` over time ((Z, Y, X) float32, as al_analysis writes its
     `CONCAT_AVG`), computed once and kept in `config.ROI_TRAINING_DIR` (by the file's path,
     size and time)."""
@@ -340,8 +340,8 @@ def manifest(found: dict, root: Path, bases: list[Path], stacks: bool, failed: d
         flies.append({
             "fly": f"{f['date']}/{f['fly_num']}", "date": f["date"], "fly_num": f["fly_num"], "datasets": f["datasets"],
             "dir": arc(f["dir"]), "raw_dir": arc(f["raw_dir"]), "shape": list(f["grid"]),
-            "anatomy": arc(f["dir"] / CONCAT_AVG),
-            "anatomy_from": f"the mean of {CONCAT} over time, computed for this export" if f["anatomy"]["computed"] else "al_analysis",
+            "average": arc(f["dir"] / CONCAT_AVG),
+            "average_from": f"the mean of {CONCAT} over time, computed for this export" if f["average"]["computed"] else "al_analysis",
             "roiset": arc(f["roiset"]),
             "recordings": [{"name": r["dir"].name, "responses": arc(r["dir"] / TRIALMEAN), "trials": arc(r["dir"] / TRIALS),
                             "experiment_xml": arc(r["xml"]), "odors": [o["odor"] for o in r["odors"]],
@@ -356,7 +356,7 @@ def manifest(found: dict, root: Path, bases: list[Path], stacks: bool, failed: d
         "exported_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
         "about": ("Each file is where it is on tensor (its path from the top of tensor). Per fly: its diagnostic "
                   f"recordings' {TRIALMEAN} (odor, Z, Y, X: mean dF/F of each odor, in the order of `odors`, named as in "
-                  f"the odor table) and {TRIALS}, its {ROISET}, its anatomy ({CONCAT_AVG}: the mean of {CONCAT}), the "
+                  f"the odor table) and {TRIALS}, its {ROISET}, its average image ({CONCAT_AVG}: the mean of {CONCAT}), the "
                   f"{XML} of its recordings in its raw data, and its anatomical stacks if asked for."),
         # the glomerulus names uploads accept (config/glomeruli.txt): ROIs named as one of these, or several joined
         # by /, are glomeruli; with a _t<n> suffix, tentative ones (movies.roi_kind); others numbered or not identified
@@ -390,8 +390,8 @@ def files(found: dict, stacks: bool) -> list[tuple[Path, Callable[[], Path]]]:
     """(where each file goes, as on tensor; a function giving the file to send), of every fly."""
     out = []
     for f in found["flies"]:
-        a = f["anatomy"]
-        out.append((f["dir"] / CONCAT_AVG, (lambda p=a["path"]: p) if not a["computed"] else (lambda s=a["source"]: computed_anatomy(s))))
+        a = f["average"]
+        out.append((f["dir"] / CONCAT_AVG, (lambda p=a["path"]: p) if not a["computed"] else (lambda s=a["source"]: computed_average(s))))
         out.append((f["roiset"], lambda p=f["roiset"]: p))
         for r in f["recordings"]:
             for p in (r["dir"] / TRIALMEAN, r["dir"] / TRIALS, r["xml"]):
@@ -459,14 +459,14 @@ def summary(found: dict, root: Path, bases: list[Path]) -> dict:
     """What the ROI training tab shows: each fly to export and those left out, with sizes."""
     flies = []
     for f in found["flies"]:
-        size = sum(_size(p) for p, get in files({"flies": [f]}, False) if not (p.name == CONCAT_AVG and f["anatomy"]["computed"]))
-        if f["anatomy"]["computed"]:
+        size = sum(_size(p) for p, get in files({"flies": [f]}, False) if not (p.name == CONCAT_AVG and f["average"]["computed"]))
+        if f["average"]["computed"]:
             z, y, x = f["grid"]
             size += z * y * x * 4
         flies.append({
             "date": f["date"], "fly_num": f["fly_num"], "datasets": f["datasets"],
             "dir": _arcname(f["dir"], root, bases), "roiset": _arcname(f["roiset"], root, bases), "shape": list(f["grid"]),
-            "anatomy": "computed" if f["anatomy"]["computed"] else "al_analysis",
+            "average": "computed" if f["average"]["computed"] else "al_analysis",
             "recordings": [{"name": r["dir"].name, "n_odors": len(r["odors"]), "xml": r["xml"] is not None} for r in f["recordings"]],
             "stacks": [{"name": s["dir"].name, "bytes": s["bytes"]} for s in f["stacks"]],
             "bytes": size, "problems": f["problems"],

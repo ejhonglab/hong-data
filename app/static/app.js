@@ -6922,10 +6922,10 @@ class RoiTrainingPage {
     if (!stacked) $('#rt-stacks').checked = false;
     this._renderDownload();
     $('#rt-flies').innerHTML = r.flies.length ? `<table class="odor-table"><thead><tr><th>Fly</th><th>Datasets</th>
-      <th>Diagnostic recordings <span class="muted">(odors)</span></th><th>Planes <span class="muted">(Z × Y × X)</span></th><th>Anatomy</th>
+      <th>Diagnostic recordings <span class="muted">(odors)</span></th><th>Planes <span class="muted">(Z × Y × X)</span></th><th>Average image</th>
       <th>Anatomical stack</th><th>Size</th></tr></thead><tbody>${r.flies.map((f) => `<tr><td>${fly(f)}</td><td>${f.datasets.map(ds).join(', ')}</td>
       <td>${f.recordings.map((x) => `${esc(x.name)} <span class="muted">(${x.n_odors})</span>`).join('<br>')}</td><td>${f.shape.join(' × ')}</td>
-      <td>${f.anatomy === 'computed' ? '<span title="mocorr_concat_avg.tif is not there: computed from mocorr_concat.tif, once">averaged on the server</span>' : 'al_analysis\'s'}</td>
+      <td>${f.average === 'computed' ? '<span title="mocorr_concat_avg.tif is not there: computed from mocorr_concat.tif, once">averaged on the server</span>' : 'al_analysis\'s'}</td>
       <td>${f.stacks.map((x) => `${esc(x.name)} <span class="muted">(${fmtSize(x.bytes)})</span>`).join('<br>') || '—'}</td>
       <td>${fmtSize(f.bytes)}</td></tr>`).join('')}</tbody></table>` : '';
     $('#rt-skipped-step').hidden = !r.skipped.length;

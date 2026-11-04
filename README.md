@@ -610,11 +610,11 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   folder in the dataset's motion-corrected data (as al_analysis lays it out) has
   diagnostic recordings (folders with `trialmean_dff.tif`, the mean dF/F of each odor, and
   `trial_frames_and_odors.json`, more than half of whose odors are of the dataset's
-  diagnostic panels, through the odor table), a `RoiSet.zip`, and its anatomy
+  diagnostic panels, through the odor table), a `RoiSet.zip`, and its average image
   (`mocorr_concat_avg.tif`, else a `mocorr_concat.tif` to average), and whose raw data has
   the `Experiment.xml` of a diagnostic recording. The download is a zip, sent as it is made
   (several GB: the browser saves it as it comes), of those files where they are on tensor
-  (from its top), with the anatomy averaged on the server where al_analysis has not
+  (from its top), with the average image computed on the server where al_analysis has not
   written it (kept there, so only once), and if ticked the flies' anatomical stacks
   (`anat` folders of the raw data, as recorded). Its `roi_training.json` lists each fly's
   files, each recording's odors as named in the odor table (alike in every fly), the

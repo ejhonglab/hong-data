@@ -220,7 +220,7 @@ between the frontend and the server. Using the app is described in
   training code's: al-diag-seg reads this one (its `alseg/olfdb.py`), through
   `roi_training.json`, which says what each file is and names every recording's odors as
   in the odor table, so flies of different people line up by odor. Only what is not on
-  tensor is made here: a fly's anatomy where al_analysis did not write its
+  tensor is made here: a fly's average image where al_analysis did not write its
   `mocorr_concat_avg.tif` (the mean of `mocorr_concat.tif`, ~3 s a fly, kept in
   `data/roi_training/` by the movie's path, size and time). The zip is stored, not
   compressed (TIFFs hardly compress), and written as it is sent, never to disk: it is a

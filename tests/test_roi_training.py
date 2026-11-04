@@ -79,11 +79,11 @@ def test_inventory(main, root, export):  # noqa: F811
     assert status == 200 and len(r["flies"]) == 1
     f = r["flies"][0]
     a, b, kc = export["ids"]
-    # one fly of both datasets; its diagnostic recording only; its anatomy to be computed
+    # one fly of both datasets; its diagnostic recording only; its average image to be computed
     assert [d["id"] for d in f["datasets"]] == [a, b] and (f["date"], f["fly_num"]) == ("2024-01-01", 1)
     assert f["dir"] == "tom/analysis/2024-01-01/1" and f["roiset"] == "tom/analysis/2024-01-01/1/diagnostics1/RoiSet.zip"
     assert f["recordings"] == [{"name": "diagnostics1", "n_odors": 2, "xml": True}] and f["shape"] == list(GRID)
-    assert f["anatomy"] == "computed" and [s["name"] for s in f["stacks"]] == ["anat"]
+    assert f["average"] == "computed" and [s["name"] for s in f["stacks"]] == ["anat"]
     assert r["stack_bytes"] == f["stacks"][0]["bytes"] > 0
     # the others left out, with why; the KC dataset is not one to look at
     why = {(s["dataset"]["id"], s["date"], s["fly_num"]): s["why"] for s in r["skipped"]}
@@ -120,13 +120,13 @@ def test_download(main, root, export):  # noqa: F811
         f"{fly}/mocorr_concat_avg.tif", f"{fly}/diagnostics1/RoiSet.zip", f"{fly}/diagnostics1/trialmean_dff.tif",
         f"{fly}/diagnostics1/trial_frames_and_odors.json", "top/tom/raw/2024-01-01/1/diagnostics1/Experiment.xml",
         "top/roi_training.json"])
-    # the anatomy computed (and kept, to be sent again), where al_analysis writes it
+    # the average image computed (and kept, to be sent again), where al_analysis writes it
     avg = tifffile.imread(io.BytesIO(z.read(f"{fly}/mocorr_concat_avg.tif")))
     assert avg.dtype == np.float32 and np.allclose(avg, export["movie"].mean(axis=0))
     assert len(list(config.ROI_TRAINING_DIR.iterdir())) == 1
     m = json.loads(z.read("top/roi_training.json"))
     f = m["flies"][0]
-    assert f["anatomy"] == "tom/analysis/2024-01-01/1/mocorr_concat_avg.tif" and f["anatomy_from"].startswith("the mean of")
+    assert f["average"] == "tom/analysis/2024-01-01/1/mocorr_concat_avg.tif" and f["average_from"].startswith("the mean of")
     assert f["recordings"] == [{"name": "diagnostics1", "responses": "tom/analysis/2024-01-01/1/diagnostics1/trialmean_dff.tif",
                                 "trials": "tom/analysis/2024-01-01/1/diagnostics1/trial_frames_and_odors.json",
                                 "experiment_xml": "tom/raw/2024-01-01/1/diagnostics1/Experiment.xml",
@@ -140,7 +140,7 @@ def test_download(main, root, export):  # noqa: F811
                                                           "top/tom/raw/2024-01-01/1/anat/ChanA_0001_0001_0001_0001.tif"}
     assert (tifffile.imread(io.BytesIO(z.read(f"{fly}/mocorr_concat_avg.tif"))) == 7).all()
     m = json.loads(z.read("top/roi_training.json"))
-    assert m["flies"][0]["anatomy_from"] == "al_analysis" and m["flies"][0]["stacks"][0]["dir"] == "tom/raw/2024-01-01/1/anat"
+    assert m["flies"][0]["average_from"] == "al_analysis" and m["flies"][0]["stacks"][0]["dir"] == "tom/raw/2024-01-01/1/anat"
 
 
 def test_download_failed(main, root, export):  # noqa: F811
