@@ -206,6 +206,15 @@ between the frontend and the server. Using the app is described in
   (`olfdb-theme` on `window`) so that canvases, whose colors are read from the tokens
   when drawn (heatmaps, colorbars), are drawn again. Exported figures keep their own
   light colors (`figure.js`), and chemical structures (black on white) are inverted.
+- **One set of experiment detail fields, the upload form's.** The Browse tab's Edit panel and
+  the Settings tab's upload form defaults are made at page load of copies of the upload
+  form's fields in `index.html` (`fieldsFrom` in `app.js`: each `[data-field]` goes to the
+  forms its `data-in` names), and every form is read, filled in and checked by the same
+  functions (`fieldValue`, `setFieldValue`, `wireFields`, `metadataProblems`), so a field
+  added to or changed in the upload form is the same in all three: its dropdown and
+  Other…, hints, and checks. The defaults leave out what is of one dataset only (its
+  uploader, manipulations, data paths and files), and require nothing; the server checks
+  all of them as an upload's (`Metadata`).
 - **The laser wavelength is never read from `Experiment.xml`**: ThorImage's
   `MultiPhotonLaser` value does not follow changes made to the wavelength at the laser,
   so the wavelength is only ever entered in the form.

@@ -246,7 +246,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   alone, here and in the upload form (one with a space in it is refused, though a dataset
   uploaded before keeps its uploader's full name when edited), as an upload finds the
   folders saved under the name it is given. Below that, defaults for
-  the upload form, checked as the form checks its fields and kept in this browser only;
+  the upload form: its fields (dropdowns and all) but those of one dataset only (manipulations,
+  data paths and files), none required, checked as the form checks them and kept in this
+  browser only;
   and whether odor names (abbreviations) are shown in lowercase (in this browser only):
   e.g. `IaA @ -3` as `iaa @ -3`, in Browse, Compare, Reference data and the Odors tab,
   and in every download but of the original files. Names that differ from another
@@ -291,7 +293,7 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   whether to overwrite the README on the server (its path is shown) or discard the
   edits, and refuses if someone else changed it meanwhile. Unsaved edits are kept while
   you look at other datasets. *Edit* (next to *README*) changes any detail entered at
-  upload but its files: checked as the upload form checks them (data paths only if
+  upload but its files, in the upload form's own fields: checked as the upload form checks them (data paths only if
   changed, an upload's refusals too, e.g. another of your datasets of that coding unit
   with the same flies and manipulations), saved once you answer *Yes* to whether you are
   sure (*No* is the default). Its title and panels follow, and its README too unless it
