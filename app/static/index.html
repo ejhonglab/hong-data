@@ -63,14 +63,13 @@ try {
           <ul>
             <li><strong>Columns</strong> (three header rows): <code>date</code>, <code>fly_num</code>, <code>roi</code>. Each column must be unique. <code>roi</code> is either a glomerulus name (D, DA1, … VM7v) or a non-negative integer ROI id.
               It may be called <code>cells</code> instead: its values are then KC ids, so must be non-negative integers (and the coding unit is taken to be KCs).</li>
-            <li><strong>Rows</strong> (leading columns): at least <code>odor1</code> (or <code>odor</code>); optionally <code>panel</code>, <code>is_pair</code>, <code>odor2</code>, …, <code>repeat</code>. Extra <code>odor&lt;n&gt;</code> levels are mixture components presented together in air.</li>
+            <li><strong>Rows</strong> (leading columns): <code>panel</code>, on every row (the set of odors presented in the experiment, e.g. <code>megamat</code>), at least <code>odor1</code> (or <code>odor</code>) and <code>repeat</code> (or <code>trial</code>: each trial's number, an integer); optionally <code>is_pair</code>, <code>odor2</code>, …. Extra <code>odor&lt;n&gt;</code> levels are mixture components presented together in air.</li>
             <li><strong>Odor strings</strong> look like <code>va @ -3</code>: abbreviation, a space, <code>@</code>, a space, log<sub>10</sub> concentration (0 or negative). <code>solvent</code> marks an unused component.
               A mixture may also be written in one level, its components joined by <code> + </code> (<code>ea @ -4.2 + eb @ -3.5</code>).</li>
           </ul>
-          <p>A long layout (one row per value, with columns <code>date, fly_num, roi, [panel,] odor1, …, [repeat,] value</code>) is also accepted; parquet files with integer <code>fly_num</code> usually need this layout.</p>
-          <p>For now, with a warning: <strong>no flies</strong>, columns of ROIs alone (in a CSV, a single header line of the row levels' names then
-            the ROIs', as <code>DataFrame.to_csv</code> writes a frame with plain columns; in a long file, neither <code>date</code> nor <code>fly_num</code>),
-            and <strong>no trials</strong> (no <code>repeat</code> level: each row is taken as one trial, as when already averaged over them).
+          <p>A long layout (one row per value, with columns <code>date, fly_num, roi, panel, odor1, …, repeat, value</code>) is also accepted; parquet files with integer <code>fly_num</code> usually need this layout.</p>
+          <p>A file without flies (each ROI's <code>date</code> and <code>fly_num</code>), trials (<code>repeat</code>: one row per trial, not
+            averaged over them) or a panel on every row is refused, saying what is missing.
             A <code>_t0</code>, <code>_t1</code>, … suffix is removed from ROI names (<code>DA1_t0</code> → <code>DA1</code>), and an ROI of glomeruli
             that could not be told apart may be named by them joined with <code>/</code> (<code>VA1d/VA1v</code>).</p>
         </div>
