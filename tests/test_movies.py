@@ -320,6 +320,15 @@ def test_rois(root):
     assert rois[0]["paths"] == [[[0, 0], [0, 2], [3, 2], [3, 0], [0, 0]]] and rois[1]["paths"][0][:2] == [[1, 1], [6, 1]]
 
 
+def test_roi_kind():
+    # named as an upload accepts glomeruli (several joined by /), but for Sam's _t<n> suffix (tentative)
+    names = ["DL5", "VA1d/VA1v", "DA1_t0", "VA1d/VA1v_t1", "DM3+", "VC5_t1+", "DA4l?", "12", "AL", "x_t0", "DL5/x", "dl5"]
+    assert [movies.roi_kind(n) for n in names] == [
+        "glomerulus", "glomerulus", "tentative", "tentative", "other", "other", "other", "other", "other", "other", "other", "other"]
+    # or as in a dataset's data
+    assert movies.roi_kind("AL", {"AL"}) == "glomerulus" and movies.roi_kind("AL_t0", {"AL"}) == "tentative"
+
+
 def get(endpoint, params=None, path_params=None):
     scope = {"type": "http", "method": "GET", "path": "/", "headers": [], "query_string": urlencode(params or {}).encode(),
              "path_params": path_params or {}}
@@ -367,7 +376,16 @@ def test_api(main, root, tmp_path, monkeypatch):  # noqa: F811
     planes = np.frombuffer(res.body, res.headers["x-dtype"]).reshape([int(x) for x in res.headers["x-shape"].split(",")])
     np.testing.assert_array_equal(planes, tifffile.imread(movie["path"])[3:].max(axis=1))
     assert json.loads(get(main.movie_planes, {"path": movie["path"], "z": "a"}).body)["error"].startswith("t, n, c and z")
-    assert [x["name"] for x in json.loads(get(main.movie_rois, {"path": movie["rois"]}).body)["rois"]] == ["DL5", "DM2"]
+    rois = json.loads(get(main.movie_rois, {"path": movie["rois"]}).body)["rois"]
+    assert [(x["name"], x["kind"]) for x in rois] == [("DL5", "glomerulus"), ("DM2", "glomerulus")]
+    # their kinds also by the names of the dataset's ROIs, if it is given
+    assert main.db.roi_names(ds_id) == {"DM2", "DL5", "VA2"}
+    monkeypatch.setattr(main.db, "roi_names", lambda i: {"DL5", "DM2", "VA2", "DL5x"} if i == ds_id else set())
+    roifile.ImagejRoi.frompoints(np.array([[1, 1], [2, 2], [1, 2]], "f4"), name="DL5x").tofile(movie["rois"], name="DL5x.roi")
+    rois = json.loads(get(main.movie_rois, {"path": movie["rois"], "dataset": ds_id}).body)["rois"]
+    assert [(x["name"], x["kind"]) for x in rois][-1] == ("DL5x", "glomerulus")
+    assert [x["kind"] for x in json.loads(get(main.movie_rois, {"path": movie["rois"]}).body)["rois"]][-1] == "other"
+    assert get(main.movie_rois, {"path": movie["rois"], "dataset": "x"}).status_code == 400
     trials = root / "tom/analysis/2023-11-19/1/t1/trial_frames_and_odors.json"
     trials.write_text(json.dumps(TRIALS))
     assert [t["odor"] for t in json.loads(get(main.movie_trials, {"path": str(trials)}).body)["trials"]] == ["ea @ -4.2", "pfo @ 0"]

@@ -302,13 +302,21 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   else `flipped.tif` or `raw.tif`); in a fly's folder with neither, every TIFF in it.
   They are drawn with the ImageJ ROIs of the `RoiSet.zip` next to them, or in a folder
   above (for a fly's movie, the one its recordings share), each on the Z plane it was
-  drawn on (ROIs of other planes dashed). Raw ones are ThorImage `.raw` files (not its
+  drawn on. *ROIs of other planes*: those of the planes above (red) and below (blue)
+  dashed, the default; none; or all of them, dashed and paler. *glomeruli only* (ticked
+  at first) lists and draws only ROIs named as glomeruli: as an upload accepts them
+  (`config/glomeruli.txt`, or several joined by `/`) or as in the dataset's data, so not
+  numbered ones or those ending in `+` or `?`; how many it hides is next to it. ROIs
+  named as glomeruli but for a `_t0`, `_t1`… suffix (tentative) have their own box, when
+  there are any. Raw ones are ThorImage `.raw` files (not its
   `RoiMask.raw`), laid out by the `Experiment.xml` next to them (flyback frames left
   out). The odor of each trial is written over a movie (grey before the odor comes on,
   white with a red dot after), from al_analysis' `trial_frames_and_odors.json` next to
   it (for a raw movie, its recording's in the motion-corrected data), unless *odor
-  names* is unticked. Play / pause, time and Z sliders, max projection over Z, channel,
-  speed, zoom (wheel) and move (drag), with the value of the pixel under the pointer.
+  names* is unticked. Play / pause, time and Z sliders (the wheel over a slider steps
+  it, ten with Shift), max projection over Z, channel, speed, zoom (wheel; out no
+  further than the movie fits the window) and move (drag; never past its edges), with
+  the value of the pixel under the pointer.
   Brightness and contrast are set as in ImageJ's B&C window: the plane's histogram with
   its black and white levels, Minimum, Maximum, Brightness and Contrast sliders, *Auto*
   (as ImageJ's: few pixels saturated, more contrast at each press) and *Reset* (the

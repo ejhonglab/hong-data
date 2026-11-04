@@ -513,6 +513,11 @@ class Database:
             out.setdefault(r["dataset_id"], set()).add(fly_key(r["date"], r["fly_num"], json.loads(r["extra_json"] or "{}")))
         return out
 
+    def roi_names(self, ds_id: int) -> set[str]:
+        """The names of a dataset's ROIs, as in its data (those of every fly)."""
+        with self.connect() as con:
+            return {r[0] for r in con.execute("SELECT DISTINCT roi FROM units WHERE dataset_id = ?", (ds_id,))}
+
     def get_dataset(self, ds_id: int, as_shown: bool = True) -> Optional[dict]:
         """A dataset's row, parsed; its panels as shown (`panel_renames`) unless not `as_shown`."""
         with self.connect() as con:

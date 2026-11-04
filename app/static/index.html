@@ -952,7 +952,7 @@ try {
           <button type="button" class="btn small player-fit" title="Fit the image to the window (or double-click it)">Fit</button>
           <span class="player-pixel muted"></span>
         </div>
-        <p class="player-keys">Space: play / pause · ←/→: time (with Shift: ×10) · ↑/↓: plane · P: max projection · A: auto contrast (again: more) · R: reset contrast · O: odor names · F: fit · drag to move, wheel to zoom</p>
+        <p class="player-keys">Space: play / pause · ←/→: time (with Shift: ×10) · ↑/↓: plane · P: max projection · A: auto contrast (again: more) · R: reset contrast · O: odor names · F: fit · drag to move, wheel to zoom (over a slider: to step it)</p>
       </div>
     </div>
     <aside class="player-rois" aria-label="Brightness and contrast, and ImageJ ROIs">
@@ -974,6 +974,19 @@ try {
         <label class="check"><input type="checkbox" class="player-show-rois" checked> show</label>
         <label class="check"><input type="checkbox" class="player-roi-names" checked> names</label>
       </div>
+      <div class="player-roi-opts">
+        <label class="player-roi-planes-row" title="ROIs drawn on other planes than the one shown (all are drawn on a max projection)">ROIs of other planes
+          <select class="player-roi-planes">
+            <option value="current">none (this plane's only)</option>
+            <option value="adjacent" selected>above (red) and below (blue)</option>
+            <option value="all">all (paler)</option>
+          </select></label>
+        <label class="check" title="Only ROIs named as glomeruli: as an upload accepts them (config/glomeruli.txt on the server, or several of them joined by /), or as in this dataset's data">
+          <input type="checkbox" class="player-roi-glom" checked> glomeruli only <span class="player-roi-glom-n muted"></span></label>
+        <label class="check player-roi-tentative-row" hidden title="ROIs named as a glomerulus with _t0, _t1, … after it (a name not certain)">
+          <input type="checkbox" class="player-roi-tentative" checked> tentative (_t0, _t1, …) <span class="player-roi-tentative-n muted"></span></label>
+      </div>
+      <div class="player-roi-legend muted small"></div>
       <div class="player-roi-list"></div>
     </aside>
   </div>

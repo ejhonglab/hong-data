@@ -319,6 +319,13 @@ between the frontend and the server. Using the app is described in
   are found: comparisons are of every recording. A movie's trials (odors by frame) are
   al_analysis' `trial_frames_and_odors.json` next to it; a raw movie has its recording's
   from the motion-corrected data, the frames being the same.
+- **The movie player's ROIs are told apart on the server** (`movies.roi_kind`), by the
+  rules an upload names glomeruli by (`config/glomeruli.txt`, several joined by `/`, a
+  `_t<n>` suffix removed: Sam's mark of a name not certain, kept apart as tentative),
+  and by the dataset's own ROIs' names, so the player's *glomeruli only* hides just what
+  an upload would not take as a glomerulus. Zooming out stops where the movie fits the
+  window, and dragging where its edges meet the window's: nothing but the movie is
+  ever shown around it, but across (or down) the fitted movie, where it is narrower.
 - **A recording redone supersedes the one it is named for**: a fly's `<recording>_redo`
   folder (in its raw or motion-corrected data) means `<recording>` was done again, and
   `<recording>`'s movies are left out of both (`movies.drop_redone`), rather than shown as
@@ -1019,7 +1026,8 @@ GET    /api/datasets/{id}/movies            its movies in its raw and motion-cor
 GET    /api/movie?path=                     a movie's shape (t, z, c, y, x), pixel type, frame rate
 GET    /api/movie/planes?path=&t=&n=&z=&c=  n planes from time t (z: a plane, or 'max'), as numbers;
                                             their type in X-Dtype, their shape (n, y, x) in X-Shape
-GET    /api/movie/rois?path=                the ImageJ ROIs of a RoiSet.zip (or .roi), with their planes
+GET    /api/movie/rois?path=[&dataset=]     the ImageJ ROIs of a RoiSet.zip (or .roi), with their planes and
+                                            kinds (glomerulus, tentative, other; also by the dataset's ROIs)
 GET    /api/movie/trials?path=              the trials of an al_analysis trial_frames_and_odors.json: frames, odor
 GET    /api/download?ids=1,2&format=files|wide|long
                                             a zip, or a CSV for the matrix of a single dataset;

@@ -650,6 +650,15 @@ dialog.player::backdrop { background: rgba(29,31,34,.55); }
 .player-rois-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
 .player-rois-head h3 { font-size: 13px; margin-right: auto; }
 .player-rois-head .check { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--ink-muted); }
+.player-roi-opts { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; font-size: 12px; color: var(--ink-muted); }
+.player-roi-opts label { display: flex; align-items: center; gap: 5px; }
+.player-roi-opts label[hidden] { display: none; }
+.player-roi-opts .player-roi-planes-row { flex-wrap: wrap; gap: 2px 5px; }
+.player-roi-opts select { flex: 1 1 100%; min-width: 0; width: auto; padding: 2px 4px; font-size: 12px; }
+.player-roi-legend { margin-bottom: 4px; font-size: 11.5px; }
+.player-roi-legend:empty { display: none; }
+.player-roi-legend .above { color: #d23c3c; }
+.player-roi-legend .below { color: #2f7fd6; }
 .player-roi { display: flex; align-items: center; gap: 6px; width: 100%; border: 0; background: none; text-align: left; padding: 3px 6px; border-radius: 4px; cursor: pointer; font-size: 12.5px; }
 .player-roi .muted { margin-left: auto; font-size: 11.5px; }
 .player-roi:hover { background: var(--surface-2); }

@@ -40,7 +40,7 @@ from starlette.staticfiles import StaticFiles
 from . import (backup, bundle_import, chemprops, compare, config, dilution, export, filelog, headspace, lotus, lotus_import,
                merge, metacyc, metacyc_import, movies, odormeta, reference, sandbox, tensor, thorimage, vcf, yamlcheck)
 from .db import PANEL_RENAMES, PROPERTY_COLUMNS, Database, rename_panel
-from .glomeruli import load_glomeruli
+from .glomeruli import GLOMERULI, load_glomeruli
 from .ingest import (ParsedData, ValidationError, combine, extra_text, files_text, fly_key, kc_id_problems, load_file,
                      load_parsed, save_parsed, unit_key)
 from .metadata import (
@@ -1179,10 +1179,21 @@ async def movie_planes(request: Request) -> Response:
 
 
 async def movie_rois(request: Request) -> Response:
-    """The ImageJ ROIs of a RoiSet.zip (or .roi) on the server (``?path=``): see `movies.read_rois`."""
+    """The ImageJ ROIs of a RoiSet.zip (or .roi) on the server (``?path=``): see
+    `movies.read_rois`, each with its ``kind`` as a glomerulus (`movies.roi_kind`: of the
+    glomeruli an upload accepts, and those of dataset ``?dataset=``'s data, if given)."""
     path = _server_file(request.query_params.get("path"), (".zip", ".roi"))
+    ds = request.query_params.get("dataset")
+    if ds is not None and not ds.isdigit():
+        return json_error(400, "dataset must be a dataset's id")
+
+    def run() -> list[dict]:
+        rois = movies.read_rois(path)
+        names = GLOMERULI | (db.roi_names(int(ds)) if ds else set())
+        return [{**r, "kind": movies.roi_kind(r["name"], names)} for r in rois]
+
     try:
-        rois = await run_in_threadpool(movies.read_rois, path)
+        rois = await run_in_threadpool(run)
     except movies.MovieError as e:
         return json_error(422, str(e))
     return JSONResponse({"rois": rois})

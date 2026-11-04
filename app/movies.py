@@ -26,7 +26,9 @@ from typing import Any, Optional
 
 import numpy as np
 
+from . import glomeruli as glom
 from . import tensor, thorimage
+from .ingest import ROI_SUFFIX
 
 TIFF_SUFFIXES = (".tif", ".tiff")
 PREFERRED = ("mocorr.tif", "flipped.tif", "raw.tif")  # al_analysis' names, most processed first
@@ -591,6 +593,21 @@ def read_rois(path: Path) -> list[dict]:
             "closed": r.roitype in closed or r.composite, "paths": paths,
         })
     return out
+
+
+def roi_kind(name: str, names: frozenset[str] | set[str] = glom.GLOMERULI) -> str:
+    """An ImageJ ROI's name as a glomerulus's: 'glomerulus' if it is one of `names` (by
+    default the glomeruli an upload accepts) or several of them that could not be told apart
+    (``VA1d/VA1v``, as an upload accepts them); 'tentative' if it is but for a ``_t<n>``
+    suffix (``DA1_t0``: Sam's mark of a name not certain, which an upload removes); else
+    'other' (numbered ROIs, and names ending in ``+`` or ``?``, among others)."""
+    def named(n: str) -> bool:
+        return n in names or all(p in names for p in n.split("/"))
+
+    if named(name):
+        return "glomerulus"
+    bare = ROI_SUFFIX.sub("", name)
+    return "tentative" if bare != name and named(bare) else "other"
 
 
 def read_trials(path: Path) -> list[dict]:

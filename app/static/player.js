@@ -8,6 +8,10 @@ const CHUNK_BYTES = 4 * 1024 * 1024; // planes asked for at once
 const AHEAD = 2; // chunks fetched ahead while playing
 const ROI_COLOR = '#ffd400';
 const SELECTED_COLOR = '#00e5ff';
+// ROIs of the planes next to the one shown: the one above (its number less one) and below
+const ABOVE_COLOR = '#ff5050';
+const BELOW_COLOR = '#4aa3ff';
+const WHEEL_STEP = 40; // pixels of wheel scrolling (a trackpad's, added up) for one step of a slider
 // the movies of recordings with none in the other folder, listed apart in each
 const ONLY = { raw: 'Not in the motion-corrected data', mocorr: 'Not in the raw data' };
 // brightness and contrast, as ImageJ's B&C window: steps of its sliders, bins of its
@@ -18,6 +22,12 @@ const HIST_BINS = 256;
 const AUTO_THRESHOLD = 5000;
 
 const sleep = (ms) => new Promise((r) => { setTimeout(r, ms); });
+
+// a '#rrggbb' colour moved toward the grey of its luminance (by k, from 0 to 1)
+const desaturate = (hex, k = 0.6) => {
+  const rgb = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)), l = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+  return `rgb(${rgb.map((c) => Math.round(c + (l - c) * k)).join(',')})`;
+};
 
 export class MoviePlayer {
   // el: the player's <dialog>; api, esc, fmtBytes: the app's helpers
@@ -31,6 +41,9 @@ export class MoviePlayer {
     this.view = { scale: 1, ox: 0, oy: 0 };
     this.showRois = true;
     this.showNames = true;
+    this.roiPlanes = 'adjacent'; // the ROIs of other planes drawn: 'current' (none), 'adjacent' or 'all'
+    this.glomOnly = true; // only ROIs named as glomeruli (and tentative ones, if shown)
+    this.showTentative = true;
     this.selectedRoi = null;
     this.canvas = this.$('.player-canvas');
     this.off = document.createElement('canvas');
@@ -57,19 +70,28 @@ export class MoviePlayer {
     this.showOdors = true;
     this.$('.player-odors').addEventListener('change', (e) => { this.showOdors = e.target.checked; this._paint(); });
     this.$('.player-fit').addEventListener('click', () => { this._fit(); this._paint(); });
-    this.$('.player-show-rois').addEventListener('change', (e) => { this.showRois = e.target.checked; this._paint(); });
+    this.$('.player-show-rois').addEventListener('change', (e) => { this.showRois = e.target.checked; this._roiLegend(); this._paint(); });
+    this.$('.player-roi-planes').addEventListener('change', (e) => { this.roiPlanes = e.target.value; this._roiLegend(); this._paint(); });
+    this.$('.player-roi-glom').addEventListener('change', (e) => { this.glomOnly = e.target.checked; this._roisFiltered(); });
+    this.$('.player-roi-tentative').addEventListener('change', (e) => { this.showTentative = e.target.checked; this._roisFiltered(); });
     this.$('.player-roi-names').addEventListener('change', (e) => { this.showNames = e.target.checked; this._paint(); });
     this.$('.player-roi-list').addEventListener('click', (e) => {
       const b = e.target.closest('[data-roi]');
       if (b) this._selectRoi(+b.dataset.roi);
     });
     el.addEventListener('keydown', (e) => this._key(e));
+    el.addEventListener('wheel', (e) => this._wheelSlider(e), { passive: false });
     this._wireView();
-    new ResizeObserver(() => { this._sizeCanvas(); this._paint(); }).observe(this.$('.player-stage'));
+    new ResizeObserver(() => {
+      this._sizeCanvas();
+      if (this.fitted) this._fit(); else this._clampView();
+      this._paint();
+    }).observe(this.$('.player-stage'));
   }
 
   // Opens the player on a dataset's movies of one `kind` ('raw' or 'mocorr'), showing the first.
   async open(datasetId, title, kind) {
+    this.datasetId = datasetId;
     this.$('.player-title').textContent = `${kind === 'raw' ? 'Raw' : 'Motion-corrected'} movies of ${title}`;
     this.$('.player-list').innerHTML = '<p class="muted">Looking for movies…</p>';
     this._clearMovie('Choose a movie on the left.');
@@ -123,7 +145,7 @@ export class MoviePlayer {
     }
     if (id !== this.loadId) return;
     this.movie = { ...movie, info };
-    Object.assign(this, { t: 0, z: 0, c: 0, maxProj: false, rois: [], selectedRoi: null, current: null, lo: null, hi: null,
+    Object.assign(this, { t: 0, z: 0, c: 0, maxProj: false, rois: [], roiPath: null, selectedRoi: null, current: null, lo: null, hi: null,
       range: null, autoThreshold: 0, trials: null });
     this.fps = info.fps ? Math.round(info.fps * 10) / 10 : 10;
     const s = this.$('.player-t'), zs = this.$('.player-z');
@@ -182,27 +204,59 @@ export class MoviePlayer {
   async _loadRois(path, id) {
     this.$('.player-roi-list').innerHTML = '<p class="muted small">Reading the ROIs…</p>';
     let res;
-    try { res = await this.api(`/api/movie/rois?path=${encodeURIComponent(path)}`); } catch (e) {
+    const q = new URLSearchParams({ path, ...(this.datasetId != null ? { dataset: this.datasetId } : {}) });
+    try { res = await this.api(`/api/movie/rois?${q}`); } catch (e) {
       if (id === this.loadId) this.$('.player-roi-list').innerHTML = `<p class="player-error small">${this.esc(e.message)}</p>`;
       return;
     }
     if (id !== this.loadId) return;
     this.rois = res.rois;
+    this.roiPath = path;
     this._renderRoiList(path);
+    this._roiLegend();
+    this._paint();
+  }
+
+  // whether an ROI is listed and drawn: those not named as glomeruli only if asked for (by
+  // the server: tentative ones, a glomerulus with _t0, _t1…, apart)
+  _visible(r) {
+    return r.kind === 'tentative' ? this.showTentative : !(this.glomOnly && r.kind === 'other');
+  }
+
+  _roisFiltered() {
+    if (this.selectedRoi != null && !this._visible(this.rois[this.selectedRoi])) this.selectedRoi = null;
+    this._renderRoiList(this.roiPath);
     this._paint();
   }
 
   _renderRoiList(path) {
-    const box = this.$('.player-roi-list');
+    const box = this.$('.player-roi-list'), n = (kind) => this.rois.filter((r) => r.kind === kind).length;
+    const others = n('other'), tentative = n('tentative');
+    this.$('.player-roi-glom-n').textContent = path && others ? `(${others} ${this.glomOnly ? 'hidden' : 'not'})` : '';
+    this.$('.player-roi-tentative-row').hidden = !(path && tentative);
+    this.$('.player-roi-tentative-n').textContent = tentative ? `(${tentative}${this.showTentative ? '' : ' hidden'})` : '';
     if (!path) { box.innerHTML = '<p class="muted small">No ImageJ ROIs (RoiSet.zip) next to this movie, or in a folder above it.</p>'; return; }
-    const from = path.split('/').slice(-2).join('/');
-    box.innerHTML = `<p class="muted small" title="${this.esc(path)}">${this.rois.length} from …/${this.esc(from)}</p>`
+    const from = path.split('/').slice(-2).join('/'), shown = this.rois.filter((r) => this._visible(r)).length;
+    box.innerHTML = `<p class="muted small" title="${this.esc(path)}">${shown === this.rois.length ? this.rois.length : `${shown} of ${this.rois.length}`} from …/${this.esc(from)}</p>`
       + this.rois.map((r, i) => {
+        if (!this._visible(r)) return '';
         const plane = this._roiPlane(r);
         return `<button type="button" class="player-roi${i === this.selectedRoi ? ' active' : ''}" data-roi="${i}">
           <span class="swatch-roi" style="background:${this.esc(r.color || ROI_COLOR)}"></span>${this.esc(r.name)}
           <span class="muted">${plane == null ? 'all planes' : `plane ${plane + 1}`}</span></button>`;
       }).join('');
+  }
+
+  // which planes' ROIs are drawn, and how, when they are not all of the plane shown
+  _roiLegend() {
+    const box = this.$('.player-roi-legend'), info = this.movie?.info;
+    if (!info || info.z < 2 || !this.showRois || !this.rois.some((r) => this._roiPlane(r) != null)) { box.textContent = ''; return; }
+    if (this.maxProj) box.textContent = 'On the max projection: the ROIs of every plane.';
+    else if (this.roiPlanes === 'adjacent') {
+      const above = this.z > 0 ? `<span class="above">red: plane ${this.z} (above)</span>` : 'no plane above';
+      const below = this.z < info.z - 1 ? `<span class="below">blue: plane ${this.z + 2} (below)</span>` : 'no plane below';
+      box.innerHTML = `Dashed, ${above}; ${below}.`;
+    } else box.textContent = this.roiPlanes === 'all' ? 'Dashed and paler: the ROIs of the other planes.' : '';
   }
 
   // the Z plane an ROI was drawn on: its hyperstack Z, or its stack position on a volume (as hong2p reads them)
@@ -483,11 +537,29 @@ export class MoviePlayer {
     this.canvas.height = Math.max(1, Math.round(stage.clientHeight * dpr));
   }
 
+  // the least zoom: the image fit to the stage, filling it across or down
+  _minScale() {
+    const info = this.movie.info, stage = this.$('.player-stage');
+    return Math.min(stage.clientWidth / info.x, stage.clientHeight / info.y) || 1;
+  }
+
   _fit() {
-    const info = this.movie?.info, stage = this.$('.player-stage');
-    if (!info) return;
-    const scale = Math.min(stage.clientWidth / info.x, stage.clientHeight / info.y) * 0.98;
-    this.view = { scale, ox: (stage.clientWidth - info.x * scale) / 2, oy: (stage.clientHeight - info.y * scale) / 2 };
+    if (!this.movie?.info) return;
+    this.view = { scale: this._minScale(), ox: 0, oy: 0 };
+    this._clampView();
+    this.fitted = true;
+  }
+
+  // the view kept from showing anything around the image: zoomed out no further than it
+  // fits, centred across (or down) where it is narrower than the stage, else its edges
+  // never inside the stage's
+  _clampView() {
+    if (!this.movie?.info) return;
+    const info = this.movie.info, stage = this.$('.player-stage'), v = this.view;
+    v.scale = Math.max(v.scale, this._minScale());
+    const clamp = (o, size, room) => (size <= room ? (room - size) / 2 : Math.min(0, Math.max(room - size, o)));
+    v.ox = clamp(v.ox, info.x * v.scale, stage.clientWidth);
+    v.oy = clamp(v.oy, info.y * v.scale, stage.clientHeight);
   }
 
   // the plane (zoomed and moved) and the ROIs over it
@@ -503,14 +575,14 @@ export class MoviePlayer {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this._paintOdor(ctx);
     if (!this.showRois || !this.rois.length) return;
-    const z = this.maxProj ? null : this.z;
     ctx.font = '12px system-ui, sans-serif';
     this.rois.forEach((r, i) => {
-      const plane = this._roiPlane(r), here = z == null || plane == null || plane === z, selected = i === this.selectedRoi;
-      ctx.strokeStyle = selected ? SELECTED_COLOR : r.color || ROI_COLOR;
-      ctx.lineWidth = selected ? 2.5 : 1.5;
-      ctx.setLineDash(here ? [] : [4, 4]);
-      ctx.globalAlpha = here || selected ? 1 : 0.5;
+      const style = this._roiStyle(r, i);
+      if (!style) return;
+      ctx.strokeStyle = style.color;
+      ctx.lineWidth = style.width;
+      ctx.setLineDash(style.dash);
+      ctx.globalAlpha = style.alpha;
       let cx = 0, cy = 0, n = 0;
       for (const path of r.paths) {
         ctx.beginPath();
@@ -522,7 +594,7 @@ export class MoviePlayer {
         if (r.closed) ctx.closePath();
         ctx.stroke();
       }
-      if (this.showNames && n && (here || selected)) {
+      if (this.showNames && n && style.named) {
         ctx.setLineDash([]);
         ctx.fillStyle = ctx.strokeStyle;
         ctx.shadowColor = '#000';
@@ -533,6 +605,21 @@ export class MoviePlayer {
     });
     ctx.globalAlpha = 1;
     ctx.setLineDash([]);
+  }
+
+  // how an ROI is drawn over the plane shown (null: not): those of the plane, or of every
+  // plane, as they are; of the planes above and below (red, blue) or all others (paler),
+  // dashed, as asked; the one chosen in the list as it is, wherever it is
+  _roiStyle(r, i) {
+    if (!this._visible(r)) return null;
+    const plane = this._roiPlane(r), z = this.maxProj ? null : this.z, here = z == null || plane == null || plane === z;
+    if (i === this.selectedRoi) return { color: SELECTED_COLOR, width: 2.5, dash: here ? [] : [4, 4], alpha: 1, named: true };
+    if (here) return { color: r.color || ROI_COLOR, width: 1.5, dash: [], alpha: 1, named: true };
+    if (this.roiPlanes === 'all') return { color: desaturate(r.color || ROI_COLOR), width: 1.2, dash: [4, 4], alpha: 0.6, named: false };
+    if (this.roiPlanes === 'adjacent' && Math.abs(plane - z) === 1) {
+      return { color: plane < z ? ABOVE_COLOR : BELOW_COLOR, width: 1.2, dash: [4, 3], alpha: 0.75, named: false };
+    }
+    return null;
   }
 
   // the odor of the trial shown, at the top left: white from its first frame with odor, grey before
@@ -566,6 +653,7 @@ export class MoviePlayer {
     const secs = info.fps ? ` · ${(this.t / info.fps).toFixed(2)} s` : '';
     this.$('.player-t-out').textContent = `${this.t + 1} / ${info.t}${secs}`;
     this.$('.player-z-out').textContent = this.maxProj ? 'max projection' : `${this.z + 1} / ${info.z}`;
+    this._roiLegend();
   }
 
   _clearMovie(msg, error = false) {
@@ -577,6 +665,9 @@ export class MoviePlayer {
     this.$('.player-msg').textContent = msg;
     this.$('.player-msg').classList.toggle('player-error', error);
     this.$('.player-roi-list').innerHTML = '';
+    this.$('.player-roi-legend').textContent = '';
+    this.$('.player-roi-glom-n').textContent = '';
+    this.$('.player-roi-tentative-row').hidden = true;
     this.$('.player-pixel').textContent = '';
     this.trials = null;
     this.range = null;
@@ -601,8 +692,10 @@ export class MoviePlayer {
       if (!this.movie) return;
       e.preventDefault();
       const r = c.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top, v = this.view;
-      const f = Math.exp(-e.deltaY * 0.0015), scale = Math.max(0.05, Math.min(64, v.scale * f)), k = scale / v.scale;
+      const f = Math.exp(-e.deltaY * 0.0015), scale = Math.max(this._minScale(), Math.min(64, v.scale * f)), k = scale / v.scale;
       this.view = { scale, ox: mx - (mx - v.ox) * k, oy: my - (my - v.oy) * k };
+      this._clampView();
+      this.fitted = this.view.scale <= this._minScale();
       this._paint();
     }, { passive: false });
     let drag = null;
@@ -615,6 +708,7 @@ export class MoviePlayer {
       if (drag) {
         this.view.ox = drag.ox + e.clientX - drag.x;
         this.view.oy = drag.oy + e.clientY - drag.y;
+        this._clampView();
         this._paint();
       }
       this._readout(e);
@@ -622,6 +716,25 @@ export class MoviePlayer {
     c.addEventListener('pointerup', () => { drag = null; });
     c.addEventListener('pointerleave', () => { this.$('.player-pixel').textContent = ''; });
     c.addEventListener('dblclick', () => { this._fit(); this._paint(); });
+  }
+
+  // the wheel over a slider steps it: a step a notch (a trackpad's scrolling added up), up
+  // or right for more; ten with Shift; the brightness and contrast sliders by a hundredth
+  _wheelSlider(e) {
+    const el = e.target.closest?.('input[type=range]');
+    if (!el || el.disabled) return;
+    e.preventDefault();
+    const px = (e.deltaY || e.deltaX) * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1);
+    if (this.wheel?.el !== el || Math.sign(this.wheel.px) !== Math.sign(px)) this.wheel = { el, px: 0 };
+    this.wheel.px += px;
+    if (Math.abs(this.wheel.px) < WHEEL_STEP) return;
+    const dir = this.wheel.px < 0 ? 1 : -1;
+    this.wheel.px = 0;
+    const lo = +el.min, hi = +el.max, step = (el.closest('.player-bc') ? Math.max(1, Math.round((hi - lo) / 100)) : 1) * (e.shiftKey ? 10 : 1);
+    const v = Math.max(lo, Math.min(hi, +el.value + dir * step));
+    if (v === +el.value) return;
+    el.value = v;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
   // the value of the pixel under the pointer
