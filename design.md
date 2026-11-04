@@ -297,7 +297,14 @@ between the frontend and the server. Using the app is described in
   cells are a few and some hundreds). Counts (none negative nor fractional, some 0) are
   instead on a log scale of 1 + each (`makeNorm('log1p')`), as 0 would otherwise share
   the lowest color with 1: a chemical not reported in a family, with one reported in a
-  single organism of it.
+  single organism of it. The scale chosen is kept for the matrix it was chosen for (by
+  its file stem), not for all: log chosen for LOTUS made MetaCyc's 0, 0.5 and 1 its 0.5
+  to 1, 0 the color of 0.5.
+- **Colors as the colormap has them**, to be read off the colorbar: its bar is drawn in
+  whole pixels of the screen (`drawColorbar`), as columns a CSS pixel wide left seams at
+  125% or 150% display scaling, through which the page darkened every color (a quarter,
+  on the dark theme); and the hovered cell is left out of the crosshair shading its row
+  and column, which lightened it twice.
 - **Sorting a matrix** (`sortedByValues`): of reference data, each row (or column) by the
   mean or largest of its values over the columns (or rows) shown, within its group; an
   axis shared with a linked viewer (side by side in Compare) keeps that viewer's order.

@@ -779,6 +779,7 @@ class MatrixViewer {
       saved,
       { transpose: !!saved.transposed?.[kind] },
       cells ? { cellW: cells[0], cellH: cells[1] } : {},
+      { scale: 'auto' }, // (as chosen for each matrix shown, see `_scaleFor`)
     );
     this.ownCells = !!cells;
     this.tableExport = null; // () => {text, name}: the CSV the export menu offers, if any
@@ -858,9 +859,16 @@ class MatrixViewer {
     LS.set('olfdb.viewer', {
       cellW: this.ownCells ? saved.cellW : o.cellW, cellH: this.ownCells ? saved.cellH : o.cellH, colormap: o.colormap, range: o.range, rowOrder: o.rowOrder, roiSort: o.roiSort, odorOrder: o.odorOrder,
       clusterRows: o.clusterRows, clusterCols: o.clusterCols, metric: o.metric, chemLabels: o.chemLabels, sumKCs: o.sumKCs,
-      hideControls: o.hideControls, transposed: { ...saved.transposed, [this.kind]: o.transpose }, scale: o.scale, sortRows: o.sortRows,
-      sortCols: o.sortCols,
+      hideControls: o.hideControls, transposed: { ...saved.transposed, [this.kind]: o.transpose }, sortRows: o.sortRows,
+      sortCols: o.sortCols, scales: { ...saved.scales, [this.fileStem]: o.scale === 'auto' ? undefined : o.scale },
     });
+  }
+
+  // the Scale chosen for a matrix (by its file stem), else auto: a choice is kept for the
+  // matrix it was made for (as log for LOTUS's counts would make MetaCyc's 0, 0.5 and 1 its 0.5 to 1)
+  _scaleFor(fileStem) {
+    const s = LS.get('olfdb.viewer', {}).scales?.[fileStem];
+    return s === 'log' || s === 'linear' ? s : 'auto';
   }
 
   _setKind(kind) {
@@ -970,6 +978,7 @@ class MatrixViewer {
     }
     this.title = title;
     this.fileStem = fileStem;
+    this.opts.scale = this._scaleFor(fileStem);
     this.opts.colormap = this.opts.colormap in COLORMAPS && COLORMAPS[this.opts.colormap].kind === 'diverging' ? this.opts.colormap : 'oklab-div';
     this._syncToolbar();
     this._rebuild();
@@ -986,6 +995,7 @@ class MatrixViewer {
     this._setKind(viewerKind);
     this.title = title;
     this.fileStem = fileStem;
+    this.opts.scale = this._scaleFor(fileStem);
     this.kc = kc;
     this.setResponseCalc(responseCalc);
     if (ref !== this.source) {

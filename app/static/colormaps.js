@@ -175,23 +175,24 @@ function logTicks(lo, hi) {
   return [{ t: 0, value: 10 ** lo }, ...decades.map((k) => ({ t: (k - lo) / span, value: 10 ** k })), { t: 1, value: 10 ** hi }];
 }
 
-export function lutColor(lut, t) {
-  const i = Math.max(0, Math.min(255, Math.round(t * 255)));
-  return `rgb(${lut[i * 3]},${lut[i * 3 + 1]},${lut[i * 3 + 2]})`;
-}
-
 export function drawColorbar(canvas, lut, norm, { nanColor = '#e6e6e6' } = {}) {
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth || 220, h = canvas.clientHeight || 34;
   canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
   const ctx = canvas.getContext('2d');
-  ctx.scale(dpr, dpr);
-  ctx.clearRect(0, 0, w, h);
   const barH = 10, pad = 2, barW = w - 2 * pad;
-  for (let x = 0; x < barW; x++) {
-    ctx.fillStyle = lutColor(lut, x / (barW - 1));
-    ctx.fillRect(pad + x, 2, 1, barH);
+  // the bar in whole pixels of the screen: drawn as columns a CSS pixel wide, on a display
+  // scaled by a fraction (125%, 150%) they would leave seams that the page shows through,
+  // darkening (or lightening) every color
+  const x0 = Math.round(pad * dpr), y0 = Math.round(2 * dpr);
+  const bw = Math.round((pad + barW) * dpr) - x0, bh = Math.round((2 + barH) * dpr) - y0;
+  const img = ctx.createImageData(bw, bh);
+  for (let x = 0; x < bw; x++) {
+    const i = Math.max(0, Math.min(255, Math.round((x / Math.max(1, bw - 1)) * 255))) * 3;
+    for (let y = 0; y < bh; y++) img.data.set([lut[i], lut[i + 1], lut[i + 2], 255], (y * bw + x) * 4);
   }
+  ctx.putImageData(img, x0, y0);
+  ctx.scale(dpr, dpr);
   ctx.strokeStyle = 'rgba(0,0,0,0.25)';
   ctx.lineWidth = 1;
   ctx.strokeRect(pad + 0.5, 2.5, barW - 1, barH - 1);

@@ -478,10 +478,13 @@ export class Heatmap {
     ctx.strokeStyle = cssVar(this.container, '--hm-highlight', '#111');
     ctx.lineWidth = 2;
     ctx.strokeRect(x + 1, y + 1, cellW - 2, cellH - 2);
-    // faint crosshair along the row and column
+    // faint crosshair along the row and column, but for the cell itself (its color as it
+    // is, to be read off the colorbar)
     ctx.fillStyle = cssVar(this.container, '--hm-crosshair', 'rgba(0,0,0,0.06)');
-    ctx.fillRect(this.labelW, y, this.viewW - this.labelW, cellH);
-    ctx.fillRect(x, 0, cellW, this.viewH);
+    ctx.fillRect(this.labelW, y, Math.max(0, x - this.labelW), cellH);
+    ctx.fillRect(x + cellW, y, this.viewW - x - cellW, cellH);
+    ctx.fillRect(x, 0, cellW, y);
+    ctx.fillRect(x, y + cellH, cellW, this.viewH - y - cellH);
   }
 
   // the items being dragged shaded, and a line where they would go
