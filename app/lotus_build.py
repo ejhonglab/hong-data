@@ -111,7 +111,8 @@ def open_peeled(path: Path) -> IO[bytes]:
     ``230106_frozen.csv.gz`` is a gzip of a gzip)."""
     f: IO[bytes] = io.BufferedReader(open(path, "rb"))  # type: ignore[arg-type]
     while f.peek(2)[:2] == b"\x1f\x8b":
-        f = io.BufferedReader(gzip.GzipFile(fileobj=f))  # type: ignore[arg-type]
+        # (mode given: before Python 3.13, a GzipFile's mode is an int, which one around it can't read)
+        f = io.BufferedReader(gzip.GzipFile(fileobj=f, mode="rb"))  # type: ignore[arg-type]
     return f
 
 
