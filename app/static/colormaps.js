@@ -144,12 +144,11 @@ export function makeNorm(kind, vmin, vmax) {
     const hi = Math.log10(1 + vmax);
     const unit = (v) => Math.log10(1 + v) / hi;
     const decades = [];
-    for (let v = 1; v < vmax; v *= 10) if (unit(v) >= 0.2 && unit(v) <= 0.8) decades.push(v);
-    const step = Math.ceil(decades.length / 2);
+    for (let v = 1; v < vmax; v *= 10) decades.push({ t: unit(v), value: v });
     return {
       kind, vmin: 0, vmax,
       toUnit(v) { return Number.isFinite(v) ? Math.max(0, Math.min(1, unit(Math.max(0, v)))) : NaN; },
-      ticks: [{ t: 0, value: 0 }, ...decades.filter((_, i) => i % step === 0).map((v) => ({ t: unit(v), value: v })), { t: 1, value: vmax }],
+      ticks: [{ t: 0, value: 0 }, ...decades, { t: 1, value: vmax }],
     };
   }
   // linear
@@ -161,18 +160,31 @@ export function makeNorm(kind, vmin, vmax) {
   };
 }
 
-// ticks of a log scale from 10^lo to 10^hi: its ends, and at most 2 powers of ten between
-// them (not near either end, so that their labels do not overlap)
+// ticks of a log scale from 10^lo to 10^hi: its ends, and every power of ten between them
+// (those whose labels would overlap left out where they are drawn: `spacedTicks`)
 function logTicks(lo, hi) {
-  const span = hi - lo || 1;
-  let decades = [];
-  for (let k = Math.ceil(lo); k <= Math.floor(hi); k++) {
-    const t = (k - lo) / span;
-    if (t >= 0.2 && t <= 0.8) decades.push(k);
+  const span = hi - lo || 1, decades = [];
+  for (let k = Math.ceil(lo); k <= Math.floor(hi); k++) if (k > lo && k < hi) decades.push({ t: (k - lo) / span, value: 10 ** k });
+  return [{ t: 0, value: 10 ** lo }, ...decades, { t: 1, value: 10 ** hi }];
+}
+
+// Of a colorbar's ticks (`norm.ticks`), those whose labels do not overlap as drawn: its two
+// ends, and of the others, every one, else every 2nd, 3rd... (evenly, as powers of ten
+// are best left out), the first way none overlap by less than `gap`. extent(tick, index,
+// n): where its label is along the bar, [from, to].
+export function spacedTicks(ticks, extent, gap = 4) {
+  const n = ticks.length;
+  if (n <= 2) return ticks;
+  const spans = ticks.map((tk, i) => extent(tk, i, n));
+  const clear = (a, b) => (a === 0 && b === n - 1) || spans[a][1] + gap <= spans[b][0] || spans[a][0] >= spans[b][1] + gap;
+  const inner = ticks.slice(1, -1).map((_, k) => k + 1);
+  for (let step = 1; step <= inner.length; step++) {
+    for (let off = 0; off < step; off++) {
+      const kept = [0, ...inner.filter((_, k) => k % step === off), n - 1];
+      if (kept.every((a, j) => kept.slice(j + 1).every((b) => clear(a, b)))) return kept.map((i) => ticks[i]);
+    }
   }
-  const step = Math.ceil(decades.length / 2);
-  decades = decades.filter((_, i) => i % step === 0);
-  return [{ t: 0, value: 10 ** lo }, ...decades.map((k) => ({ t: (k - lo) / span, value: 10 ** k })), { t: 1, value: 10 ** hi }];
+  return [ticks[0], ticks[n - 1]];
 }
 
 export function drawColorbar(canvas, lut, norm, { nanColor = '#e6e6e6' } = {}) {
@@ -196,15 +208,35 @@ export function drawColorbar(canvas, lut, norm, { nanColor = '#e6e6e6' } = {}) {
   ctx.strokeStyle = 'rgba(0,0,0,0.25)';
   ctx.lineWidth = 1;
   ctx.strokeRect(pad + 0.5, 2.5, barW - 1, barH - 1);
-  ctx.fillStyle = getComputedStyle(canvas).color || '#333';
+  const ink = getComputedStyle(canvas).color || '#333';
+  ctx.fillStyle = ctx.strokeStyle = ink;
   ctx.font = '10px ' + (getComputedStyle(canvas).fontFamily || 'sans-serif');
   ctx.textBaseline = 'top';
+  // each tick a mark under the bar and its value, left- and right-aligned at its ends
+  const at = (tk) => pad + tk.t * (barW - 1), n = norm.ticks.length;
+  const align = (i) => (i === 0 ? 'left' : i === n - 1 ? 'right' : 'center');
+  const extent = (tk, i) => {
+    const x = at(tk), w = ctx.measureText(tickLabel(tk.value)).width;
+    return align(i) === 'left' ? [x, x + w] : align(i) === 'right' ? [x - w, x] : [x - w / 2, x + w / 2];
+  };
+  const shown = new Set(spacedTicks(norm.ticks, extent));
   norm.ticks.forEach((tk, i) => {
-    const x = pad + tk.t * (barW - 1);
-    ctx.textAlign = i === 0 ? 'left' : i === norm.ticks.length - 1 ? 'right' : 'center';
-    ctx.fillText(fmtNum(tk.value), x, barH + 5);
+    if (!shown.has(tk)) return;
+    const x = at(tk);
+    ctx.beginPath();
+    ctx.moveTo(Math.round(x) + 0.5, 2 + barH);
+    ctx.lineTo(Math.round(x) + 0.5, 2 + barH + 3);
+    ctx.stroke();
+    ctx.textAlign = align(i);
+    ctx.fillText(tickLabel(tk.value), x, barH + 6);
   });
   void nanColor;
+}
+
+// a colorbar's tick's value as labelled: as fmtNum, but without trailing zeros (0.01, not 0.010)
+export function tickLabel(v) {
+  const s = fmtNum(v);
+  return s.includes('.') && !s.includes('e') ? s.replace(/\.?0+$/, '') : s;
 }
 
 export function fmtNum(v) {

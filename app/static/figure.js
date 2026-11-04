@@ -8,7 +8,7 @@
 // (either way round)
 // opts: { cellW, cellH, lut, norm, nanColor, valueLabel, title }, valueLabel the colorbar's
 // label: text, or its parts (as `labelParts` gives them: its math drawn as MathJax's paths)
-import { fmtNum } from './colormaps.js';
+import { spacedTicks, tickLabel } from './colormaps.js';
 import { CELL_TEXT_MIN, cellLines, parseColor, textOn } from './heatmap.js';
 import { MATH_EX, fmt, geometrySvg, invert, labelGeometry, mul, pdfPath } from './latex.js';
 
@@ -143,10 +143,11 @@ function layoutFigure(model, o, label) {
   L.cbW = 12;
   L.cbH = Math.max(60, Math.min(220, L.gh));
   // one label per distinct value, preferring the middle tick (white = 0 when there are
-  // no negative values gives two ticks at 0)
-  L.ticks = o.norm.ticks
-    .filter((t, i, all) => !all.some((u, j) => j !== i && u.value === t.value && Math.abs(u.t - 0.5) < Math.abs(t.t - 0.5)))
-    .map((t) => ({ t: t.t, label: fmtNum(t.value) }));
+  // no negative values gives two ticks at 0), and of those, the ones whose labels do not overlap
+  const ticks = o.norm.ticks
+    .filter((t, i, all) => !all.some((u, j) => j !== i && u.value === t.value && Math.abs(u.t - 0.5) < Math.abs(t.t - 0.5)));
+  L.ticks = spacedTicks(ticks, (t) => { const y = (1 - t.t) * L.cbH; return [y - TICK_FONT / 2, y + TICK_FONT / 2]; }, 1)
+    .map((t) => ({ t: t.t, label: tickLabel(t.value) }));
   let right = L.cbX + L.cbW + 6 + widest(L.ticks.map((t) => t.label), TICK_FONT);
   let bottom = L.cbY + L.cbH + 4;
   L.label = label;

@@ -291,8 +291,11 @@ between the frontend and the server. Using the app is described in
 - **Log color scale** (`makeNorm('log')`): for sequential colors, of the positive values
   (0 and below the lowest color), chosen automatically when none are negative and the
   positive ones span 3 or more orders of magnitude (`LOG_DECADES`), as VCF's
-  quantities do (1e-6 to 2e6 mg/kg); its colorbar is labelled at its ends and at most two
-  powers of ten between them. A reference dataset can ask for it whatever its values
+  quantities do (1e-6 to 2e6 mg/kg); its colorbar is labelled at its ends and every power
+  of ten between them, or every 2nd, 3rd... evenly, where their labels would overlap
+  (`spacedTicks`, as for every colorbar, on screen and in figures, each tick marked). With
+  only its ends and one or two between, a log scale read as linear: LOTUS's 2, nearly
+  halfway from 0 to the 10 labelled, looked too bright for a 2. A reference dataset can ask for it whatever its values
   span (its meta's `scale`: `lotus.scale`, of counts of organisms or papers, where most
   cells are a few and some hundreds). Counts (none negative nor fractional, some 0) are
   instead on a log scale of 1 + each (`makeNorm('log1p')`), as 0 would otherwise share
