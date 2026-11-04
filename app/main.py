@@ -934,12 +934,14 @@ async def dataset_matrix(request: Request) -> Response:
 
 def _data_and_movies(d: dict) -> tuple[dict, dict, Optional[list[dict]]]:
     """A dataset's raw and motion-corrected data folders (by kind: see `tensor.find_data`),
-    their movies (by kind: ``movies`` as from `movies.find`, ``error``: why its folder was
-    not looked in, ``found``: how many were found in its flies' folders, by their paths
-    and of no fly, ``skipped``: the flies, not the dataset's, whose folders in it were
-    left out (see `movies.find`), and when both folders were found, ``compared`` and
-    ``unmatched``: the recordings with movies in that one only, see `movies.unmatched`),
-    and then its recordings in both side by side (`movies.side_by_side`; else None)."""
+    their movies (by kind: ``movies`` as from `movies.find`, raw ones given the trials of
+    their recordings in the motion-corrected data by `movies.link_trials`; ``error``: why
+    its folder was not looked in, ``found``: how many were found in its flies' folders, by
+    their paths and of no fly, ``skipped``: the flies, not the dataset's, whose folders in
+    it were left out (see `movies.find`), and when both folders were found, ``compared``
+    and ``unmatched``: the recordings with movies in that one only, see
+    `movies.unmatched`), and then its recordings in both side by side
+    (`movies.side_by_side`; else None)."""
     flies = d["summary"].get("flies") or []
     bases = [Path(p) for p in sandbox.folders()]
     found, out = {}, {}
@@ -953,6 +955,7 @@ def _data_and_movies(d: dict) -> tuple[dict, dict, Optional[list[dict]]]:
                      "skipped": [{"date": date, "fly_num": n} for date, n in sorted(skipped)],
                      # how its movies were found: in its flies' folders, by their paths, of no fly
                      "found": {b or "none": sum(1 for m in found_movies if m["by"] == b) for b in ("fly folder", "path", None)}}
+    movies.link_trials(out["raw"]["movies"], out["mocorr"]["movies"])
     rows = None
     if all(f["status"] == "ok" and f["is_dir"] for f in found.values()):
         for kind, recordings in movies.unmatched(out["raw"]["movies"], out["mocorr"]["movies"]).items():
@@ -1109,7 +1112,7 @@ async def dataset_metadata_save(request: Request) -> Response:
 
 
 def _server_file(path: Any, suffixes: tuple[str, ...]) -> Path:
-    """A file on the server named by the browser (a movie, or its ROIs): it must be on tensor
+    """A file on the server named by the browser (a movie, its ROIs or trials): it must be on tensor
     or in a folder set in the Admin tab, and one the server may read (raises HTTPException)."""
     p = str(path or "")
     if not os.path.isabs(p) or not p.lower().endswith(suffixes):
@@ -1180,6 +1183,17 @@ async def movie_rois(request: Request) -> Response:
     except movies.MovieError as e:
         return json_error(422, str(e))
     return JSONResponse({"rois": rois})
+
+
+async def movie_trials(request: Request) -> Response:
+    """The trials of a movie, from an al_analysis trial_frames_and_odors.json on the server
+    (``?path=``): see `movies.read_trials`."""
+    path = _server_file(request.query_params.get("path"), (".json",))
+    try:
+        trials = await run_in_threadpool(movies.read_trials, path)
+    except movies.MovieError as e:
+        return json_error(422, str(e))
+    return JSONResponse({"trials": trials})
 
 
 async def dataset_file(request: Request) -> Response:
@@ -2941,6 +2955,7 @@ routes = [
     Route("/api/movie", movie_info),
     Route("/api/movie/planes", movie_planes),
     Route("/api/movie/rois", movie_rois),
+    Route("/api/movie/trials", movie_trials),
     Route("/api/download", download),
     Route("/api/merge", merge_units),
     Route("/api/merge/preview", merge_preview, methods=["POST"]),

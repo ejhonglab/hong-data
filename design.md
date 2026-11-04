@@ -299,12 +299,26 @@ between the frontend and the server. Using the app is described in
   (`/api/movie/planes`) and gets plain little-endian numbers, which it colours itself:
   it never parses a TIFF or reads a whole movie, and Z max projections are computed
   where the data are. A TIFF is memory-mapped when its data are in one piece (as
-  tifffile writes ImageJ hyperstacks), and read page by page otherwise; a ThorImage
-  `.raw` is memory-mapped by its `Experiment.xml` (time, then Z with flyback frames,
-  then channel, as hong2p reads it). Open movies are kept (the last few), so a TIFF's
-  header is not read again for every plane. ImageJ ROIs are read with roifile, and each
-  is drawn on its Z plane: the hyperstack Z of the ROI, or its stack position on a
-  volume (as hong2p reads them, ROIs being drawn on per-plane average images).
+  tifffile writes ImageJ hyperstacks), in the file's byte order (hong2p writes them
+  big-endian; tifffile gives the type in the machine's), and read page by page
+  otherwise; a ThorImage `.raw` is memory-mapped by its `Experiment.xml` (time, then Z
+  with flyback frames, then channel, as hong2p reads it). Open movies are kept (the last
+  few), so a TIFF's header is not read again for every plane. ImageJ ROIs are read with
+  roifile, and each is drawn on its Z plane: the hyperstack Z of the ROI, or its stack
+  position on a volume (as hong2p reads them, ROIs being drawn on per-plane average
+  images). Contrast is set in the browser from the plane shown, as ImageJ's B&C window
+  sets it (its Auto, Reset and slider arithmetic, over a 256-bin histogram).
+- **Motion-corrected movies are found as al_analysis lays out a fly's folder**, not by
+  listing every TIFF in it, which also has its dF/F volumes, averages and the suite2p
+  run (twice, through its link): the fly's recordings registered together
+  (`mocorr_concat.tif`, linked to the suite2p run's folder, whose `<recording>.tif` are
+  the recordings in it), and one movie per recording folder not in it (`mocorr.tif`,
+  else `flipped.tif` or `raw.tif`). A movie of several recordings is in each of them
+  when the raw and motion-corrected data are compared. Only a fly's folder with neither
+  (or a folder with no fly's folder in it) has every TIFF listed. Nothing caps how many
+  are found: comparisons are of every recording. A movie's trials (odors by frame) are
+  al_analysis' `trial_frames_and_odors.json` next to it; a raw movie has its recording's
+  from the motion-corrected data, the frames being the same.
 - **Figure export** embeds the cells as an image drawn without smoothing, so they stay
   crisp at any zoom, while text and lines stay vector in SVG and PDF.
 - **Labels with LaTeX math** (a dataset's response calculation, its colorbar's label:
@@ -996,6 +1010,7 @@ GET    /api/movie?path=                     a movie's shape (t, z, c, y, x), pix
 GET    /api/movie/planes?path=&t=&n=&z=&c=  n planes from time t (z: a plane, or 'max'), as numbers;
                                             their type in X-Dtype, their shape (n, y, x) in X-Shape
 GET    /api/movie/rois?path=                the ImageJ ROIs of a RoiSet.zip (or .roi), with their planes
+GET    /api/movie/trials?path=              the trials of an al_analysis trial_frames_and_odors.json: frames, odor
 GET    /api/download?ids=1,2&format=files|wide|long
                                             a zip, or a CSV for the matrix of a single dataset;
                                             &lower=1 for odor names in lowercase (but in files)

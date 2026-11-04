@@ -10,6 +10,12 @@ const ROI_COLOR = '#ffd400';
 const SELECTED_COLOR = '#00e5ff';
 // the movies of recordings with none in the other folder, listed apart in each
 const ONLY = { raw: 'Not in the motion-corrected data', mocorr: 'Not in the raw data' };
+// brightness and contrast, as ImageJ's B&C window: steps of its sliders, bins of its
+// histogram, and the fraction of pixels (1 / this) a histogram bin must have for Auto to
+// keep it, halved at each press (more contrast) until the range found is empty
+const SLIDER = 1000;
+const HIST_BINS = 256;
+const AUTO_THRESHOLD = 5000;
 
 const sleep = (ms) => new Promise((r) => { setTimeout(r, ms); });
 
@@ -41,10 +47,15 @@ export class MoviePlayer {
     this.$('.player-max').addEventListener('change', (e) => { this.maxProj = e.target.checked; this._planeChanged(); });
     this.$('.player-c').addEventListener('change', (e) => { this.c = +e.target.value; this._planeChanged(); });
     this.$('.player-fps').addEventListener('change', (e) => { this.fps = Math.max(0.1, Math.min(200, +e.target.value || 10)); e.target.value = this.fps; });
-    for (const [sel, k] of [['.player-lo', 'lo'], ['.player-hi', 'hi']]) {
-      this.$(sel).addEventListener('change', (e) => { if (e.target.value !== '') { this[k] = +e.target.value; this._render(); } });
-    }
-    this.$('.player-auto').addEventListener('click', () => { this._autoContrast(); this._render(); });
+    this.bc = { min: this.$('.player-bc-min'), max: this.$('.player-bc-max'), bright: this.$('.player-bc-bright'), contrast: this.$('.player-bc-contrast') };
+    this.bc.min.addEventListener('input', (e) => { const v = this._fromSlider(+e.target.value); this._setLevels(v, Math.max(this.hi, v), 'min'); });
+    this.bc.max.addEventListener('input', (e) => { const v = this._fromSlider(+e.target.value); this._setLevels(Math.min(this.lo, v), v, 'max'); });
+    this.bc.bright.addEventListener('input', (e) => this._brightness(+e.target.value));
+    this.bc.contrast.addEventListener('input', (e) => this._contrast(+e.target.value));
+    this.$('.player-auto').addEventListener('click', () => this._autoContrast());
+    this.$('.player-reset').addEventListener('click', () => this._resetContrast());
+    this.showOdors = true;
+    this.$('.player-odors').addEventListener('change', (e) => { this.showOdors = e.target.checked; this._paint(); });
     this.$('.player-fit').addEventListener('click', () => { this._fit(); this._paint(); });
     this.$('.player-show-rois').addEventListener('change', (e) => { this.showRois = e.target.checked; this._paint(); });
     this.$('.player-roi-names').addEventListener('change', (e) => { this.showNames = e.target.checked; this._paint(); });
@@ -74,7 +85,8 @@ export class MoviePlayer {
       const item = (m) => {
         this.movies.push({ ...m, kind: k });
         return `<button type="button" class="player-item${m.unmatched ? ' unmatched' : ''}" data-movie="${this.movies.length - 1}" title="${this.esc(m.path)}">
-          <span>${this.esc(m.label)}</span><span class="muted">${this.fmtBytes(m.size)}${m.rois ? ' · ROIs' : ''}</span></button>`;
+          <span>${this.esc(m.label)}</span><span class="muted">${this.fmtBytes(m.size)}${m.rois ? ' · ROIs' : ''}${m.trials ? ' · odors' : ''}</span>
+          ${m.recordings ? `<span class="player-item-recs">${this.esc(this._registered(m))}</span>` : ''}</button>`;
       };
       const items = found.movies.filter((m) => !m.unmatched).map(item).join('');
       const only = found.movies.filter((m) => m.unmatched).map(item).join('');
@@ -91,6 +103,13 @@ export class MoviePlayer {
     else this._clearMovie(`No ${kind === 'raw' ? 'raw' : 'motion-corrected'} movies were found for this dataset.`);
   }
 
+  // the recordings in a fly's movie of them registered together, as said in the list
+  _registered(m) {
+    const n = m.recordings.length;
+    return n ? `${n} recording${n === 1 ? '' : 's'} registered together: ${m.recordings.join(', ')}`
+      : 'its recordings registered together (which: not known)';
+  }
+
   async load(movie) {
     this.stop();
     this._resetCache();
@@ -104,7 +123,8 @@ export class MoviePlayer {
     }
     if (id !== this.loadId) return;
     this.movie = { ...movie, info };
-    Object.assign(this, { t: 0, z: 0, c: 0, maxProj: false, rois: [], selectedRoi: null, current: null, lo: null, hi: null });
+    Object.assign(this, { t: 0, z: 0, c: 0, maxProj: false, rois: [], selectedRoi: null, current: null, lo: null, hi: null,
+      range: null, autoThreshold: 0, trials: null });
     this.fps = info.fps ? Math.round(info.fps * 10) / 10 : 10;
     const s = this.$('.player-t'), zs = this.$('.player-z');
     s.max = info.t - 1; s.value = 0;
@@ -115,20 +135,48 @@ export class MoviePlayer {
     this.$('.player-crow').hidden = info.c < 2;
     this.$('.player-fps').value = this.fps;
     const rate = info.fps ? ` · ${+info.fps.toFixed(2)} ${info.z > 1 ? 'volumes' : 'frames'}/s` : '';
-    this.$('.player-sub').textContent = `${movie.label}: ${info.t} time points × ${info.z} plane${info.z > 1 ? 's' : ''}`
+    this.$('.player-sub').textContent = `${movie.label}${movie.recordings ? ` (${this._registered(movie)})` : ''}: `
+      + `${info.t} time points × ${info.z} plane${info.z > 1 ? 's' : ''}`
       + `${info.c > 1 ? ` × ${info.c} channels` : ''}, ${info.x} × ${info.y} px, ${info.dtype}${rate}`;
     this.$('.player-warnings').textContent = info.warnings.join(' ');
     this.$('.player-msg').textContent = '';
     this._sizeCanvas();
     if (movie.rois) this._loadRois(movie.rois, id);
     else this._renderRoiList(null);
+    this.$('.player-odors-row').hidden = true;
+    if (movie.trials) this._loadTrials(movie.trials, id);
     const plane = await this._plane(0);
     if (id !== this.loadId || !plane) return;
     this.current = plane;
-    this._autoContrast();
     this._fit();
-    this._render();
+    this._resetContrast(false);
+    this._autoContrast();
     this._updateLabels();
+  }
+
+  // the movie's trials (al_analysis' trial_frames_and_odors.json), to name the odor of each over it
+  async _loadTrials(path, id) {
+    let res;
+    try { res = await this.api(`/api/movie/trials?path=${encodeURIComponent(path)}`); } catch (e) {
+      if (id === this.loadId) this.$('.player-msg').textContent = `Could not read its odors: ${e.message}`;
+      return;
+    }
+    if (id !== this.loadId) return;
+    this.trials = res.trials.slice().sort((a, b) => a.start - b.start);
+    this.$('.player-odors-row').hidden = !this.trials.length;
+    this.$('.player-odors-row').title = `From …/${path.split('/').slice(-2).join('/')}`;
+    this._paint();
+  }
+
+  // the trial (and its index) time point t is in, if any
+  _trialAt(t) {
+    const tr = this.trials || [];
+    let lo = 0, hi = tr.length - 1, found = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (tr[mid].start <= t) { found = mid; lo = mid + 1; } else hi = mid - 1;
+    }
+    return found >= 0 && t <= tr[found].end ? { trial: tr[found], i: found } : null;
   }
 
   async _loadRois(path, id) {
@@ -283,17 +331,128 @@ export class MoviePlayer {
   }
 
   // ------------------------------------------------------------- drawing
+  // the plane's lowest and highest values (NaN left out)
+  _extent(p) {
+    let mn = Infinity, mx = -Infinity;
+    for (let i = 0; i < p.length; i++) {
+      const v = p[i];
+      if (v < mn) mn = v;
+      if (v > mx) mx = v;
+    }
+    return mn <= mx ? [mn, mx] : [0, 1];
+  }
+
+  // Reset, as ImageJ's: the sliders' range and the levels, the full range of the plane shown
+  _resetContrast(render = true) {
+    const p = this.current;
+    if (!p) return;
+    const [mn, mx] = this._extent(p);
+    this.range = { lo: mn, hi: mx > mn ? mx : mn + 1 };
+    this.autoThreshold = 0;
+    if (render) this._setLevels(this.range.lo, this.range.hi);
+    else { this.lo = this.range.lo; this.hi = this.range.hi; }
+  }
+
+  // Auto, as ImageJ's: from the plane's histogram (256 bins over its range), black and white
+  // at the first bins from each end with more than 1 / autoThreshold of its pixels (bins
+  // with over a tenth of them not counting), the threshold doubling at each press
   _autoContrast() {
     const p = this.current;
     if (!p) return;
-    const step = Math.max(1, Math.floor(p.length / 65536)), sample = new Float64Array(Math.ceil(p.length / step));
-    for (let i = 0, j = 0; i < p.length; i += step, j++) sample[j] = p[i];
-    sample.sort();
-    this.lo = sample[Math.floor(sample.length * 0.005)];
-    this.hi = sample[Math.min(sample.length - 1, Math.floor(sample.length * 0.995))];
-    if (this.hi <= this.lo) this.hi = this.lo + 1;
-    this.$('.player-lo').value = +this.lo.toFixed(2);
-    this.$('.player-hi').value = +this.hi.toFixed(2);
+    const [mn, mx] = this._extent(p), bin = (mx - mn) / HIST_BINS, hist = new Uint32Array(HIST_BINS);
+    let n = 0;
+    for (let i = 0; i < p.length; i++) {
+      const v = p[i];
+      if (v !== v) continue; // NaN
+      hist[bin > 0 ? Math.min(HIST_BINS - 1, Math.floor((v - mn) / bin)) : 0]++;
+      n++;
+    }
+    const limit = Math.floor(n / 10);
+    this.autoThreshold = this.autoThreshold < 10 ? AUTO_THRESHOLD : this.autoThreshold / 2;
+    const threshold = Math.floor(n / this.autoThreshold), over = (i) => (hist[i] > limit ? 0 : hist[i]) > threshold;
+    let lo = 0, hi = HIST_BINS - 1;
+    while (lo < HIST_BINS - 1 && !over(lo)) lo++;
+    while (hi > 0 && !over(hi)) hi--;
+    if (hi < lo) { this._resetContrast(); return; }
+    let black = mn + lo * bin, white = mn + hi * bin;
+    if (black === white) { black = mn; white = mx > mn ? mx : mn + 1; }
+    if (!this.range) this.range = { lo: mn, hi: mx > mn ? mx : mn + 1 };
+    this._setLevels(black, white);
+  }
+
+  _fromSlider(v) { return this.range.lo + (this.range.hi - this.range.lo) * v / SLIDER; }
+
+  _toSlider(x) { return Math.round(Math.max(0, Math.min(1, (x - this.range.lo) / (this.range.hi - this.range.lo))) * SLIDER); }
+
+  // brightness and contrast, as ImageJ's sliders: moving the middle of the levels, and
+  // their width (the middle slider position keeping the full range)
+  _brightness(v) {
+    const r = this.range, mid = r.lo + (r.hi - r.lo) * ((SLIDER - v) / SLIDER), w = this.hi - this.lo;
+    this._setLevels(mid - w / 2, mid + w / 2, 'bright');
+  }
+
+  _contrast(v) {
+    const r = this.range, mid = this.lo + (this.hi - this.lo) / 2, half = SLIDER / 2;
+    const slope = v <= half ? v / half : half / (SLIDER - v);
+    if (slope > 0) this._setLevels(mid - (r.hi - r.lo) / 2 / slope, mid + (r.hi - r.lo) / 2 / slope, 'contrast');
+  }
+
+  // black and white at lo and hi (from the slider moved, `from`, which is left where it is)
+  _setLevels(lo, hi, from = null) {
+    if (!this.range) return;
+    this.lo = lo;
+    this.hi = hi > lo ? hi : lo + (this.range.hi - this.range.lo) / SLIDER;
+    const r = this.range, w = this.hi - this.lo, half = SLIDER / 2;
+    const pos = {
+      min: this._toSlider(this.lo), max: this._toSlider(this.hi),
+      bright: Math.round(Math.max(0, Math.min(1, 1 - ((this.lo + w / 2) - r.lo) / (r.hi - r.lo))) * SLIDER),
+      contrast: (() => { let c = ((r.hi - r.lo) / w) * half; if (c > half) c = SLIDER - (w / (r.hi - r.lo)) * half; return Math.round(Math.max(0, Math.min(SLIDER, c))); })(),
+    };
+    for (const [k, el] of Object.entries(this.bc)) if (k !== from) el.value = pos[k];
+    this.$('.player-bc-min-out').textContent = this._fmtLevel(this.lo);
+    this.$('.player-bc-max-out').textContent = this._fmtLevel(this.hi);
+    this._render();
+  }
+
+  _fmtLevel(v) {
+    const int = /int/.test(this.movie?.info.dtype || '');
+    return int ? String(Math.round(v)) : String(+v.toPrecision(4));
+  }
+
+  // the histogram of the plane shown over the sliders' range, and how its values become grey levels
+  _drawHist() {
+    const c = this.$('.player-hist'), p = this.current, r = this.range, dpr = window.devicePixelRatio || 1;
+    const w = Math.max(1, c.clientWidth), h = Math.max(1, c.clientHeight);
+    if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); }
+    const ctx = c.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    this.$('.player-bc-range-lo').textContent = r ? this._fmtLevel(r.lo) : '';
+    this.$('.player-bc-range-hi').textContent = r ? this._fmtLevel(r.hi) : '';
+    if (!p || !r) return;
+    const hist = new Uint32Array(HIST_BINS), k = HIST_BINS / (r.hi - r.lo);
+    for (let i = 0; i < p.length; i++) {
+      const b = Math.floor((p[i] - r.lo) * k);
+      if (b >= 0 && b < HIST_BINS) hist[b]++;
+      else if (p[i] === r.hi) hist[HIST_BINS - 1]++;
+    }
+    // scaled to the second-highest bin, so a single tall one (background) does not flatten the rest
+    const sorted = Array.from(hist).sort((a, b) => b - a), top = Math.max(1, Math.min(sorted[0], (sorted[1] || sorted[0]) * 1.5));
+    ctx.fillStyle = getComputedStyle(c).color;
+    const bw = w / HIST_BINS;
+    for (let i = 0; i < HIST_BINS; i++) {
+      const bh = Math.min(h, (hist[i] / top) * h);
+      if (bh > 0) ctx.fillRect(i * bw, h - bh, Math.max(bw, 1), bh);
+    }
+    const x = (v) => ((v - r.lo) / (r.hi - r.lo)) * w;
+    ctx.strokeStyle = getComputedStyle(c).getPropertyValue('--line').trim() || '#000';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(0, h - 0.75);
+    ctx.lineTo(x(this.lo), h - 0.75);
+    ctx.lineTo(x(this.hi), 0.75);
+    ctx.lineTo(w, 0.75);
+    ctx.stroke();
   }
 
   // the plane, in grey levels from lo (black) to hi (white), into the offscreen canvas
@@ -314,6 +473,7 @@ export class MoviePlayer {
       px[i] = 0xff000000 | (v << 16) | (v << 8) | v;
     }
     this.off.getContext('2d').putImageData(this.img, 0, 0);
+    this._drawHist();
     this._paint();
   }
 
@@ -341,6 +501,7 @@ export class MoviePlayer {
     ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * ox, dpr * oy);
     ctx.drawImage(this.off, 0, 0);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this._paintOdor(ctx);
     if (!this.showRois || !this.rois.length) return;
     const z = this.maxProj ? null : this.z;
     ctx.font = '12px system-ui, sans-serif';
@@ -374,6 +535,30 @@ export class MoviePlayer {
     ctx.setLineDash([]);
   }
 
+  // the odor of the trial shown, at the top left: white from its first frame with odor, grey before
+  _paintOdor(ctx) {
+    const at = this.showOdors && this.movie ? this._trialAt(this.t) : null;
+    if (!at) return;
+    const on = this.t >= at.trial.onset;
+    ctx.save();
+    ctx.shadowColor = '#000';
+    ctx.shadowBlur = 4;
+    ctx.textBaseline = 'top';
+    ctx.font = '600 16px system-ui, sans-serif';
+    ctx.fillStyle = on ? '#fff' : '#9a9a9a';
+    ctx.fillText(at.trial.odor ?? '(odor not named)', 20, 10);
+    ctx.font = '12px system-ui, sans-serif';
+    ctx.fillText(`trial ${at.i + 1} / ${this.trials.length} · ${on ? 'odor on' : 'before odor'}`, 20, 31);
+    if (on) {
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#ff5a4f';
+      ctx.beginPath();
+      ctx.arc(10, 18, 4, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
   _updateLabels() {
     const info = this.movie?.info;
     if (!info) return;
@@ -393,6 +578,12 @@ export class MoviePlayer {
     this.$('.player-msg').classList.toggle('player-error', error);
     this.$('.player-roi-list').innerHTML = '';
     this.$('.player-pixel').textContent = '';
+    this.trials = null;
+    this.range = null;
+    this.$('.player-odors-row').hidden = true;
+    this.$('.player-bc-min-out').textContent = '';
+    this.$('.player-bc-max-out').textContent = '';
+    this._drawHist();
     this._paint();
   }
 
@@ -450,7 +641,9 @@ export class MoviePlayer {
       '>': () => this.goTo(this.t + 1), '<': () => this.goTo(this.t - 1),
       ArrowUp: () => this._stepZ(1), ArrowDown: () => this._stepZ(-1),
       p: () => { this.maxProj = !this.maxProj; this.$('.player-max').checked = this.maxProj; this._planeChanged(); },
-      a: () => { this._autoContrast(); this._render(); },
+      a: () => this._autoContrast(),
+      r: () => this._resetContrast(),
+      o: () => { this.showOdors = !this.showOdors; this.$('.player-odors').checked = this.showOdors; this._paint(); },
       f: () => { this._fit(); this._paint(); },
     };
     const f = keys[e.key];

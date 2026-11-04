@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from pathlib import Path
 from urllib.parse import urlencode
 
 import numpy as np
@@ -65,15 +66,23 @@ def test_raw_layout():
 
 def test_find(root):
     found = movies.find(root / "tom/analysis", "mocorr", FLIES)
-    assert [m["label"] for m in found] == ["2023-11-19/1/t1/mocorr.tif", "2023-11-19/1/t1/flipped.tif", "2023-11-19/1/t2/mocorr.tif"]
+    # one movie per recording folder, the most processed (t1's mocorr.tif, not its flipped.tif)
+    assert [m["label"] for m in found] == ["2023-11-19/1/t1/mocorr.tif", "2023-11-19/1/t2/mocorr.tif"]
     assert found[0]["rois"] == str(root / "tom/analysis/2023-11-19/1/t1/RoiSet.zip") and found[0]["fly"] == FLIES[0]
-    assert found[2]["rois"] == str(root / "tom/analysis/2023-11-19/1/RoiSet.zip")
+    assert found[1]["rois"] == str(root / "tom/analysis/2023-11-19/1/RoiSet.zip")
+    assert [m["recordings"] for m in found] == [None, None] and [m["trials"] for m in found] == [None, None]
     # a folder of one fly (no date / fly folders below it): everything in it
     assert [m["label"] for m in movies.find(root / "tom/analysis/2023-11-19/2", "mocorr", FLIES)] == ["t1/mocorr.tif"]
     (root / "tom/raw/2023-11-19/1/t1/RoiMask.raw").write_bytes(b"\0" * 96)  # ThorImage's, not a movie
     raw = movies.find(root / "tom/raw", "raw", FLIES)
     assert [(m["label"], m["format"], m["rois"]) for m in raw] == [("2023-11-19/1/t1/Image_001_001.raw", "raw", None)]
-    assert [m["recording"] for m in found] == ["t1", "t1", "t2"] and raw[0]["recording"] == "t1"
+    assert [m["recording"] for m in found] == ["t1", "t2"] and raw[0]["recording"] == "t1"
+    # a fly's folder with no movie al_analysis names (nor one of its recordings registered together): every TIFF in it
+    other = root / "tom/other/2023-11-19/1"
+    (other / "a").mkdir(parents=True)
+    for name in ("a/x.tif", "y.tif"):
+        tifffile.imwrite(other / name, np.zeros((2, 2), np.uint16))
+    assert [m["label"] for m in movies.find(root / "tom/other", "mocorr", FLIES)] == ["2023-11-19/1/y.tif", "2023-11-19/1/a/x.tif"]
 
 
 def test_unmatched(root):
@@ -87,14 +96,14 @@ def test_unmatched(root):
         "raw": [{"date": "2023-11-19", "fly_num": 1, "of_dataset": True, "recording": "t3", "n_movies": 1}],
         "mocorr": [{"date": "2023-11-19", "fly_num": 1, "of_dataset": True, "recording": "t2", "n_movies": 1}]}
     assert [(m["recording"], m["unmatched"]) for m in raw] == [("anat_1", False), ("t1", False), ("t3", True)]
-    assert [m["unmatched"] for m in mocorr] == [False, False, True]
+    assert [m["unmatched"] for m in mocorr] == [False, True]
     # all side by side, in the order they were recorded; one with no raw data after the one before it by name
     for name, t in (("t1", 2e9), ("t3", 1e9), ("anat_1", 3e9)):
         os.utime(root / "tom/raw/2023-11-19/1" / name / "Experiment.xml", (t, t))
     rows = movies.side_by_side(raw, mocorr)
     assert [(r["recording"], r["raw"], r["mocorr"], r["time"], r["matched"], r["anatomical"]) for r in rows] == [
         ("t3", ["Image_001_001.raw"], None, 1e9, False, False),
-        ("t1", ["Image_001_001.raw"], ["mocorr.tif", "flipped.tif"], 2e9, True, False),
+        ("t1", ["Image_001_001.raw"], ["mocorr.tif"], 2e9, True, False),
         ("t2", None, ["mocorr.tif"], None, False, False),
         ("anat_1", ["Image_001_001.raw"], None, 3e9, False, True)]
     assert {(r["date"], r["fly_num"]) for r in rows} == {("2023-11-19", 1)} and rows[0]["recorded"] is None
@@ -107,7 +116,7 @@ def test_unmatched(root):
     rows = movies.side_by_side(raw, mocorr)
     assert [(r["recording"], r["recorded"]) for r in rows] == [
         ("anat_1", "2023-11-19 09:30:00"), ("t1", "2023-11-19 10:00:00"), ("t2", None), ("t3", "2023-11-19 11:00:00")]
-    assert [m["by"] for m in mocorr] == ["fly folder"] * 3
+    assert [m["by"] for m in mocorr] == ["fly folder"] * 2
 
     # a folder with no fly folders of the dataset in it (a single recording's, say): its movies
     # matched to flies by the folders in their paths
@@ -152,6 +161,79 @@ def test_other_flies_left_out(root):
     assert [m["label"] for m in movies.find(root / "tom/analysis/2023-11-19/2", "mocorr", FLIES)] == ["t1/mocorr.tif"]
 
 
+TRIALS = [{"start_frame": 0, "first_odor_frame": 1, "end_frame": 2, "odors": "ea @ -4.2", "name": "ea", "log10_conc": -4.2},
+          {"start_frame": 3, "first_odor_frame": 3, "end_frame": 4, "name": "pfo", "log10_conc": 0}]
+
+
+def concat_fly(root):
+    """Fly 1 as al_analysis writes it once its recordings are registered together: each
+    recording's motion-corrected movie and mocorr_concat.tif of them in a suite2p run's
+    folder, linked from the fly's folder (and the recordings'), next to TIFFs that are not
+    movies of its recordings."""
+    fly = root / "tom/analysis/2023-11-19/1"
+    s2p = fly / "suite2p_runs/0/suite2p"
+    s2p.mkdir(parents=True)
+    tzyx = tifffile.imread(fly / "t1/mocorr.tif")
+    for name in ("t1", "t2"):
+        tifffile.imwrite(s2p / f"{name}.tif", tzyx, imagej=True, metadata={"axes": "TZYX"})
+    tifffile.imwrite(s2p / "mocorr_concat.tif", np.concatenate([tzyx, tzyx]), imagej=True, metadata={"axes": "TZYX"})
+    (s2p / "trial_frames_and_odors.json").write_text(json.dumps(TRIALS * 2))
+    (fly / "suite2p").symlink_to("suite2p_runs/0/suite2p")
+    (fly / "mocorr_concat.tif").symlink_to("suite2p/mocorr_concat.tif")
+    (fly / "trial_frames_and_odors.json").symlink_to("suite2p/trial_frames_and_odors.json")
+    for name in ("raw_concat.tif", "trial_dff_concat.tif", "t1/trial_dff.tif"):
+        tifffile.imwrite(fly / name, np.zeros((2, 2), np.uint16))
+    (fly / "t1/trial_frames_and_odors.json").write_text(json.dumps(TRIALS))
+    # a recording not registered with the others
+    (fly / "t3").mkdir()
+    tifffile.imwrite(fly / "t3/flipped.tif", tzyx[:1], imagej=True, metadata={"axes": "TZYX"})
+    return fly
+
+
+def test_concat(root):
+    fly = concat_fly(root)
+    found = movies.find(root / "tom/analysis", "mocorr", FLIES)
+    # the fly's movie of its recordings registered together (named for the fly), then those not in it
+    assert [(m["label"], m["recording"], m["recordings"]) for m in found] == [
+        ("2023-11-19/1", None, ["t1", "t2"]), ("2023-11-19/1/t3/flipped.tif", "t3", None)]
+    assert found[0]["path"] == str(fly / "mocorr_concat.tif") and found[0]["rois"] == str(fly / "RoiSet.zip")
+    assert found[0]["trials"] == str(fly / "trial_frames_and_odors.json")
+    assert found[0]["recording_trials"] == {"t1": str(fly / "t1/trial_frames_and_odors.json")}
+    assert found[1]["rois"] == str(fly / "RoiSet.zip") and found[1]["trials"] is None
+    # without ROIs in the fly's folder: those of its recordings, when they are all one file (al_analysis links them)
+    (fly / "RoiSet.zip").unlink()
+    (fly / "t2/RoiSet.zip").symlink_to("../t1/RoiSet.zip")
+    assert movies.find(root / "tom/analysis", "mocorr", FLIES)[0]["rois"] == str(fly / "t1/RoiSet.zip")
+    (fly / "t2/RoiSet.zip").unlink()
+    roifile.ImagejRoi.frompoints(np.array([[1, 1], [2, 2], [1, 2]], "f4"), name="x").tofile(fly / "t2/RoiSet.zip")
+    assert movies.find(root / "tom/analysis", "mocorr", FLIES)[0]["rois"] is None
+
+    # paired with the raw data by each recording in it: t1 is in both, t2 and t3 not in the raw data
+    raw = movies.find(root / "tom/raw", "raw", FLIES)
+    mocorr = movies.find(root / "tom/analysis", "mocorr", FLIES)
+    assert [(u["recording"], u["n_movies"]) for u in movies.unmatched(raw, mocorr)["mocorr"]] == [("t2", 1), ("t3", 1)]
+    assert [m["unmatched"] for m in mocorr] == [False, True] and not raw[0]["unmatched"]
+    rows = movies.side_by_side(raw, mocorr)
+    assert [(r["recording"], r["mocorr"], r["matched"]) for r in rows] == [
+        ("t1", ["mocorr_concat.tif"], True), ("t2", ["mocorr_concat.tif"], False), ("t3", ["flipped.tif"], False)]
+    # the raw movie with the trials of its recording in the motion-corrected data
+    movies.link_trials(raw, mocorr)
+    assert raw[0]["trials"] == str(fly / "t1/trial_frames_and_odors.json")
+    # the movie of the recordings registered together opens as any other
+    assert movies.open_movie(Path(mocorr[0]["path"])).shape["t"] == 10
+
+
+def test_trials(tmp_path):
+    path = tmp_path / "trial_frames_and_odors.json"
+    path.write_text(json.dumps(TRIALS))
+    assert movies.read_trials(path) == [{"start": 0, "onset": 1, "end": 2, "odor": "ea @ -4.2"},
+                                        {"start": 3, "onset": 3, "end": 4, "odor": "pfo @ 0"}]
+    for bad, msg in (("{}", "not a list"), ('[{"start_frame": 0}]', "trial 1 has no"), ("[", "cannot read")):
+        path.write_text(bad)
+        with pytest.raises(movies.MovieError, match=msg):
+            movies.read_trials(path)
+
+
 def test_tiff(root):
     tzyx = tifffile.imread(root / "tom/analysis/2023-11-19/1/t1/mocorr.tif")
     for name, data in (("t1/mocorr.tif", tzyx), ("t2/mocorr.tif", tzyx[:2])):  # in one piece, and compressed
@@ -163,6 +245,12 @@ def test_tiff(root):
         with pytest.raises(movies.MovieError):
             m.planes(0, 1, 3, 0)
     assert movies.open_movie(root / "tom/analysis/2023-11-19/1/t1/mocorr.tif").fps == 4.0
+    # big-endian, as hong2p writes them: memory-mapped in the file's byte order
+    big = root / "big.tif"
+    tifffile.imwrite(big, tzyx, imagej=True, byteorder=">", metadata={"axes": "TZYX"})
+    m = movies.open_movie(big)
+    assert m.data is not None and m.info()["dtype"] == "uint16"
+    np.testing.assert_array_equal(m.planes(1, 2, 0, 0), tzyx[1:3, 0])
     # a movie of one plane
     one = root / "tyx.tif"
     tifffile.imwrite(one, tzyx[:, 0], imagej=True, metadata={"axes": "TYX"})
@@ -215,13 +303,13 @@ def test_api(main, root, tmp_path, monkeypatch):  # noqa: F811
         experiment_xml_info=None, summary={**parsed.summary(), "flies": flies}, units=parsed.units, trials=parsed.trials,
         values=parsed.values)
     r = json.loads(get(main.dataset_movies, path_params={"ds_id": ds_id}).body)
-    assert [m["label"] for m in r["mocorr"]["movies"]] == ["1/t1/mocorr.tif", "1/t1/flipped.tif", "1/t2/mocorr.tif"]
+    assert [m["label"] for m in r["mocorr"]["movies"]] == ["1/t1/mocorr.tif", "1/t2/mocorr.tif"]
     assert len(r["raw"]["movies"]) == 1 and r["raw"]["error"] is None
     # t2 is motion corrected, but not in the raw data: said so with its folder, and of its movies
     t2 = [{"date": "2023-11-19", "fly_num": 1, "of_dataset": True, "recording": "t2", "n_movies": 1}]
     assert r["mocorr"]["compared"] and r["mocorr"]["unmatched"] == t2 and r["raw"]["unmatched"] == []
-    assert [m["unmatched"] for m in r["mocorr"]["movies"]] == [False, False, True]
-    assert r["mocorr"]["found"] == {"fly folder": 3, "path": 0, "none": 0} and r["mocorr"]["skipped"] == []
+    assert [m["unmatched"] for m in r["mocorr"]["movies"]] == [False, True]
+    assert r["mocorr"]["found"] == {"fly folder": 2, "path": 0, "none": 0} and r["mocorr"]["skipped"] == []
     paths = json.loads(get(main.dataset_data_paths, path_params={"ds_id": ds_id}).body)
     assert paths["mocorr"]["status"] == "ok" and paths["mocorr"]["unmatched"] == t2 and paths["raw"]["compared"]
     assert [(r["recording"], r["matched"]) for r in paths["recordings"]] == [("t1", True), ("t2", False)]
@@ -234,6 +322,11 @@ def test_api(main, root, tmp_path, monkeypatch):  # noqa: F811
     np.testing.assert_array_equal(planes, tifffile.imread(movie["path"])[3:].max(axis=1))
     assert json.loads(get(main.movie_planes, {"path": movie["path"], "z": "a"}).body)["error"].startswith("t, n, c and z")
     assert [x["name"] for x in json.loads(get(main.movie_rois, {"path": movie["rois"]}).body)["rois"]] == ["DL5", "DM2"]
+    trials = root / "tom/analysis/2023-11-19/1/t1/trial_frames_and_odors.json"
+    trials.write_text(json.dumps(TRIALS))
+    assert [t["odor"] for t in json.loads(get(main.movie_trials, {"path": str(trials)}).body)["trials"]] == ["ea @ -4.2", "pfo @ 0"]
+    trials.write_text("{}")
+    assert get(main.movie_trials, {"path": str(trials)}).status_code == 422
     # only movies (and ROIs) on tensor or in a folder set in the Admin tab
     outside = tmp_path / "elsewhere.tif"
     tifffile.imwrite(outside, np.zeros((2, 2), np.uint8))

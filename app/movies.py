@@ -1,9 +1,13 @@
 """Movies of a dataset's flies on tensor: finding them, and reading the planes shown.
 
-Motion-corrected movies are TIFFs in the folders of a fly's recordings under the dataset's
-motion-corrected data folder (as al_analysis writes them: ``mocorr.tif``, else
-``flipped.tif`` or ``raw.tif``, though any TIFF is listed), with the ImageJ ROIs drawn on
-them (``RoiSet.zip``, next to the movie or in a folder above it). Raw movies are ThorImage
+Motion-corrected movies are TIFFs under the dataset's motion-corrected data folder, as
+al_analysis writes them in each fly's folder: all of its recordings registered together
+(``mocorr_concat.tif``, of the recordings whose own motion-corrected movies are next to
+it, in the suite2p folder), else one movie per recording folder (``mocorr.tif``, else
+``flipped.tif`` or ``raw.tif``). A fly's folder with neither, or a folder with no fly's
+folder in it, has every TIFF in it listed. Each movie has the ImageJ ROIs drawn on it
+(``RoiSet.zip``, next to the movie or in a folder above it) and its trials
+(``trial_frames_and_odors.json``: frames and odors), if any. Raw movies are ThorImage
 ``.raw`` files, with their ``Experiment.xml`` next to them. Planes are read on the server,
 only those shown (Z max projections computed here too), and sent to the browser as plain
 little-endian numbers, so it never has to parse a TIFF or read a whole movie.
@@ -11,6 +15,7 @@ little-endian numbers, so it never has to parse a TIFF or read a whole movie.
 from __future__ import annotations
 
 import datetime as dt
+import json
 import os
 import posixpath
 import re
@@ -25,10 +30,12 @@ from . import tensor, thorimage
 
 TIFF_SUFFIXES = (".tif", ".tiff")
 PREFERRED = ("mocorr.tif", "flipped.tif", "raw.tif")  # al_analysis' names, most processed first
+CONCAT = "mocorr_concat.tif"  # al_analysis' movie of a fly's recordings registered together
+TRIALS = "trial_frames_and_odors.json"  # al_analysis' trials of a movie: their frames and odors
+NOT_RECORDINGS = ("suite2p",)  # folders in a fly's that are not recordings (al_analysis' suite2p runs)
 NOT_MOVIES = {"roimask.raw"}  # ThorImage's other .raw files, beside a recording's movie (lower case)
 ROISET = "RoiSet.zip"
 DEPTH = 3  # folders scanned below a fly's folder (or the data folder, if no fly folder is found)
-MAX_MOVIES = 200
 MAX_DIRS = 2000
 MAX_PLANES_BYTES = 64 << 20  # per request for planes
 CACHED = 8  # movies kept open
@@ -53,26 +60,41 @@ def _walk(top: Path, depth: int):
             todo += [(Path(e.path), level + 1) for e in entries if tensor._is_dir(e)]
 
 
+def _size(e: os.DirEntry) -> Optional[int]:
+    try:
+        return e.stat().st_size
+    except OSError:
+        return None
+
+
 def find(folder: Path, kind: str, flies: list[dict], skipped: Optional[set] = None) -> list[dict]:
     """Movies under one of a dataset's data folders (`kind`: 'raw' or 'mocorr').
 
     Looked for in its flies' folders (``<folder>/<date>/<fly>/``, as for the upload
-    lookup) and the folders below them; if none is there (the folder may be a single
-    fly's or recording's), in `folder` and the folders below it, each then of the fly
-    the folders in its path say (`_fly_of`), if any, but for those in the folder of a fly
-    not one of `flies` below `folder` (``<date>/<fly>``): their flies' (date, fly_num)
-    are added to `skipped`.
+    lookup): for motion-corrected data, as al_analysis lays them out (`_fly_movies`), else
+    in the fly's folder and the folders below it. If none of its flies' folders is there
+    (the folder may be a single fly's or recording's), in `folder` and the folders below
+    it, each then of the fly the folders in its path say (`_fly_of`), if any, but for
+    those in the folder of a fly not one of `flies` below `folder` (``<date>/<fly>``):
+    their flies' (date, fly_num) are added to `skipped`.
 
     Returns:
-        dicts with ``path`` (on the server), ``label`` (from `folder`), ``format``
+        dicts with ``path`` (on the server), ``label`` (from `folder`; a fly's movie of
+        its recordings registered together: the fly, ``<date>/<fly_num>``), ``format``
         ('tiff' or 'raw'), ``size``, ``fly`` (its date and number, if known), ``by`` (how:
         'fly folder', 'path', or None), ``recording`` (the folder in the fly's it is in;
-        None if it is in the fly's itself, or its fly is not known) and ``rois`` (the
-        RoiSet.zip drawn on it, if any, for a TIFF).
+        None if it is in the fly's itself, or its fly is not known), ``recordings`` (those
+        in a fly's movie of them registered together, in the order of their names;
+        None for any other movie), ``rois`` (the RoiSet.zip drawn on it, if any, for a
+        TIFF) and ``trials`` (its `TRIALS`, if any).
     """
     tops = [(d, f) for f in flies for d in tensor.fly_dirs(folder, f["date"], f["fly_num"])] or [(folder, None)]
     out: list[dict] = []
     for top, fly in tops:
+        laid_out = _fly_movies(folder, top, fly) if kind == "mocorr" and fly else None
+        if laid_out is not None:
+            out += laid_out
+            continue
         rois: dict[Path, Path] = {}
         for d, entries in _walk(top, DEPTH):
             names = {e.name for e in entries}
@@ -86,9 +108,8 @@ def find(folder: Path, kind: str, flies: list[dict], skipped: Optional[set] = No
                 movies = [e for e in files if e.name.lower().endswith(".raw") and e.name.lower() not in NOT_MOVIES
                           and "Experiment.xml" in names]
             for e in movies:
-                try:
-                    size = e.stat().st_size
-                except OSError:
+                size = _size(e)
+                if size is None:
                     continue
                 below = Path(e.path).relative_to(top).parts
                 if fly:
@@ -104,11 +125,86 @@ def find(folder: Path, kind: str, flies: list[dict], skipped: Optional[set] = No
                 out.append({
                     "path": e.path, "label": Path(e.path).relative_to(folder).as_posix(),
                     "format": "raw" if kind == "raw" else "tiff", "size": size, "fly": of, "by": by, "recording": recording,
-                    "rois": str(rois[d]) if kind == "mocorr" and rois.get(d) else None,
+                    "recordings": None, "rois": str(rois[d]) if kind == "mocorr" and rois.get(d) else None,
+                    "trials": str(d / TRIALS) if TRIALS in names else None,
                 })
-                if len(out) >= MAX_MOVIES:
-                    return out
     return out
+
+
+def _fly_movies(folder: Path, top: Path, fly: dict) -> Optional[list[dict]]:
+    """A fly's motion-corrected movies (as `find` lists them), if its folder (`top`) is laid
+    out as al_analysis writes it: its recordings registered together (`CONCAT`, in the
+    fly's folder), and one movie per recording folder not in it (the first of `PREFERRED`
+    in it). None if it is not (there is neither), for `find` to list every TIFF in it.
+
+    Fly-level TIFFs other than `CONCAT` (al_analysis' averages and concatenated dF/F) and
+    the folders of `NOT_RECORDINGS` are not movies of its recordings, and are left out.
+    """
+    of = {"date": fly["date"], "fly_num": fly["fly_num"]}
+    entries = tensor._entries(top)
+    files = {e.name: e for e in entries if not tensor._is_dir(e)}
+    # each recording folder's files, by name
+    recs = {e.name: (Path(e.path), {x.name: x for x in tensor._entries(Path(e.path)) if not tensor._is_dir(x)})
+            for e in entries if tensor._is_dir(e) and not e.name.startswith(NOT_RECORDINGS)}
+    best = {r: next((n for n in PREFERRED if n in names), None) for r, (_, names) in recs.items()}
+    concat = files.get(CONCAT)
+    if concat is None and not any(best.values()):
+        return None
+    trials = {r: str(d / TRIALS) for r, (d, names) in recs.items() if TRIALS in names}
+    out, covered = [], set()
+    if concat is not None and (size := _size(concat)) is not None:
+        in_it = _concat_recordings(top, Path(concat.path))
+        covered = set(in_it)
+        out.append({
+            "path": concat.path, "label": f"{of['date']}/{of['fly_num']}", "format": "tiff", "size": size, "fly": of,
+            "by": "fly folder", "recording": None, "recordings": in_it,
+            "rois": str(top / ROISET) if ROISET in files else _shared_rois(recs, in_it),
+            "trials": str(top / TRIALS) if TRIALS in files else None,
+            # each recording's own trials (the frames of its raw data)
+            "recording_trials": {r: trials[r] for r in in_it if r in trials},
+        })
+    for r in sorted(best, key=_natural):
+        d, names = recs[r]
+        if best[r] is None or r in covered or (size := _size(names[best[r]])) is None:
+            continue
+        path = d / best[r]
+        out.append({
+            "path": str(path), "label": path.relative_to(folder).as_posix(), "format": "tiff", "size": size, "fly": of,
+            "by": "fly folder", "recording": r, "recordings": None,
+            "rois": str(d / ROISET) if ROISET in names else str(top / ROISET) if ROISET in files else None,
+            "trials": trials.get(r),
+        })
+    return out
+
+
+def _concat_recordings(top: Path, concat: Path) -> list[str]:
+    """The recordings in a fly's movie of them registered together (`CONCAT`, in its folder
+    `top`), in the order of their names: those whose motion-corrected movies
+    (``<recording>.tif``) are next to the movie it links to, where al_analysis writes them
+    (none known if it is in the fly's folder itself)."""
+    try:
+        real = concat.resolve(strict=True)
+        if real.parent == top.resolve():
+            return []
+    except OSError:
+        return []
+    names = [Path(e.name).stem for e in tensor._entries(real.parent)
+             if not tensor._is_dir(e) and e.name.lower().endswith(TIFF_SUFFIXES) and not e.name.startswith("mocorr_concat")]
+    return sorted(names, key=_natural)
+
+
+def _shared_rois(recs: dict[str, tuple[Path, dict]], recordings: list[str]) -> Optional[str]:
+    """The RoiSet.zip of `recordings` (folder, files by name: as in `_fly_movies`), if they
+    have one and all theirs are the same file (al_analysis links the others to one); that of
+    the recording it is in, if it is one of them."""
+    paths = [recs[r][0] / ROISET for r in recordings if r in recs and ROISET in recs[r][1]]
+    try:
+        real = {p.resolve(strict=True) for p in paths}
+    except OSError:
+        return None
+    if len(real) != 1:
+        return None
+    return str(next((p for p in paths if not p.is_symlink()), paths[0]))
 
 
 def _fly_of(path: Path, flies: list[dict]) -> tuple[Optional[dict], Optional[str]]:
@@ -150,39 +246,65 @@ def _recording_key(m: dict) -> tuple:
     return False, None, None, posixpath.dirname(m["label"]) or None
 
 
+def _recording_keys(m: dict) -> list[tuple]:
+    """The recordings of a movie (`_recording_key`): each of those in a fly's movie of them
+    registered together, else its own."""
+    key = _recording_key(m)
+    return [(*key[:3], r) for r in m["recordings"]] if m.get("recordings") else [key]
+
+
+def _anatomical(key: tuple) -> bool:
+    return bool(key[1] and key[3] and tensor.ANATOMICAL.fullmatch(key[3]))
+
+
 def unmatched(raw: list[dict], mocorr: list[dict]) -> dict[str, list[dict]]:
     """The recordings with movies in one of a dataset's data folders and none in the other
     (`find`'s movies of each: by fly and the name of the recording's folder, which
-    al_analysis takes from the raw data's; see `_recording_key`), but for anatomical ones
-    (`tensor.ANATOMICAL`, never motion-corrected). Each movie of one is marked
-    ``unmatched`` (and the rest not).
+    al_analysis takes from the raw data's; see `_recording_keys`), but for anatomical ones
+    (`tensor.ANATOMICAL`, never motion-corrected). Each movie whose recordings are all such
+    is marked ``unmatched`` (and the rest not).
 
     Returns:
         by kind ('raw', 'mocorr'): its recordings not in the other, each with ``date``,
         ``fly_num`` (None if in no fly's folder), ``of_dataset`` (whether the fly is one of
         the dataset's), ``recording`` and ``n_movies``.
     """
-    def recordings(found: list[dict]) -> dict[tuple, list[dict]]:
-        out: dict[tuple, list[dict]] = {}
-        for m in found:
-            m["unmatched"] = False
-            key = _recording_key(m)
-            if not (key[1] and key[3] and tensor.ANATOMICAL.fullmatch(key[3])):
-                out.setdefault(key, []).append(m)
-        return out
-
-    by_kind = {"raw": recordings(raw), "mocorr": recordings(mocorr)}
+    found = {"raw": raw, "mocorr": mocorr}
+    by_kind: dict[str, dict[tuple, list[dict]]] = {}
+    for kind, movies in found.items():
+        by_kind[kind] = {}
+        for m in movies:
+            for key in _recording_keys(m):
+                if not _anatomical(key):
+                    by_kind[kind].setdefault(key, []).append(m)
     result = {}
     for kind, other in (("raw", "mocorr"), ("mocorr", "raw")):
         result[kind] = []
-        for key, found in by_kind[kind].items():
+        for key, movies in by_kind[kind].items():
             if key not in by_kind[other]:
                 of_dataset, date, fly_num, recording = key
                 result[kind].append({"date": date, "fly_num": fly_num, "of_dataset": of_dataset, "recording": recording,
-                                     "n_movies": len(found)})
-                for m in found:
-                    m["unmatched"] = True
+                                     "n_movies": len(movies)})
+        for m in found[kind]:
+            keys = [k for k in _recording_keys(m) if not _anatomical(k)]
+            m["unmatched"] = bool(keys) and all(k not in by_kind[other] for k in keys)
     return result
+
+
+def link_trials(raw: list[dict], mocorr: list[dict]) -> None:
+    """Give each raw movie without trials of its own those of its recording in the
+    motion-corrected data (`find`'s ``trials``, or a fly's movie's ``recording_trials``):
+    a recording's frames are the same in both."""
+    of: dict[tuple, str] = {}
+    for m in mocorr:
+        if m.get("recordings"):
+            for r, path in (m.get("recording_trials") or {}).items():
+                of.setdefault((*_recording_key(m)[:3], r), path)
+        elif m.get("trials") and m["recording"]:
+            of.setdefault(_recording_key(m), m["trials"])
+    for m in raw:
+        if not m.get("trials"):
+            m["trials"] = of.get(_recording_key(m))
 
 
 def _natural(name: Optional[str]) -> list:
@@ -192,12 +314,12 @@ def _natural(name: Optional[str]) -> list:
 
 def side_by_side(raw: list[dict], mocorr: list[dict]) -> list[dict]:
     """Every recording in a dataset's raw and motion-corrected data folders, paired as
-    `unmatched` pairs them (`find`'s movies of each; those of flies not the dataset's
-    after its own, then those in no fly's folder, by folder), in the order they were
-    recorded: by fly, then by when its raw recording says it was made (its
-    Experiment.xml's date; if one of the fly's does not say, when they were written); one
-    with no raw data after the one before it by name (megamat_3 after megamat_2), there
-    being no time it was recorded.
+    `unmatched` pairs them (`find`'s movies of each, a fly's movie of its recordings
+    registered together in each of them; those of flies not the dataset's after its own,
+    then those in no fly's folder, by folder), in the order they were recorded: by fly,
+    then by when its raw recording says it was made (its Experiment.xml's date; if one of
+    the fly's does not say, when they were written); one with no raw data after the one
+    before it by name (megamat_3 after megamat_2), there being no time it was recorded.
 
     Returns:
         rows with ``date``, ``fly_num`` (both None if in no fly's folder), ``of_dataset``
@@ -213,10 +335,10 @@ def side_by_side(raw: list[dict], mocorr: list[dict]) -> list[dict]:
     rows: dict[tuple, dict] = {}
     for kind, found in (("raw", raw), ("mocorr", mocorr)):
         for m in found:
-            key = _recording_key(m)
-            row = rows.setdefault(key, {"date": key[1], "fly_num": key[2], "of_dataset": key[0], "recording": key[3],
-                                        "raw": None, "mocorr": None, "recorded": None, "time": None})
-            row[kind] = [*(row[kind] or []), Path(m["path"]).name]
+            for key in _recording_keys(m):
+                row = rows.setdefault(key, {"date": key[1], "fly_num": key[2], "of_dataset": key[0], "recording": key[3],
+                                            "raw": None, "mocorr": None, "recorded": None, "time": None})
+                row[kind] = [*(row[kind] or []), Path(m["path"]).name]
             if kind == "raw" and row["time"] is None:
                 xml = Path(m["path"]).parent / "Experiment.xml"
                 try:
@@ -316,8 +438,10 @@ class Movie:
             raise MovieError(f"unsupported pixel type {series.dtype}")
         self.dtype = _sent(series.dtype)
         offset = series.dataoffset
-        # memory-mapped when the data are in one piece (as tifffile writes them), else read page by page
-        self.data = np.memmap(self.path, dtype=series.dtype, mode="r", offset=offset, shape=shape) if offset else None
+        # memory-mapped when the data are in one piece (as tifffile writes them), else read page by page;
+        # in the file's byte order (tifffile gives the type in the machine's: hong2p writes big-endian TIFFs)
+        stored = series.dtype.newbyteorder(self.tif.byteorder)
+        self.data = np.memmap(self.path, dtype=stored, mode="r", offset=offset, shape=shape) if offset else None
         self.series = series
         self.axes = axes
         ij = self.tif.imagej_metadata or {}
@@ -441,6 +565,31 @@ def read_rois(path: Path) -> list[dict]:
             "color": f"#{color[1:].hex()}" if color and len(color) == 4 and any(color) else None,
             "closed": r.roitype in closed or r.composite, "paths": paths,
         })
+    return out
+
+
+def read_trials(path: Path) -> list[dict]:
+    """The trials of a movie in an al_analysis `TRIALS` file: ``start``, ``onset`` (its first
+    frame with the odor) and ``end`` (its last frame), as time points of the movie from 0,
+    and ``odor`` (as al_analysis names it, e.g. ``ea @ -4.2``; None if not given)."""
+    try:
+        if os.path.getsize(path) > tensor.MAX_FILE_BYTES:
+            raise MovieError(f"the trials file is larger than {tensor.MAX_FILE_BYTES >> 20} MB")
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise MovieError(f"cannot read the trials ({e})")
+    if not isinstance(data, list):
+        raise MovieError("the trials file is not a list of trials")
+    out = []
+    for i, t in enumerate(data):
+        try:
+            start, onset, end = (int(t[k]) for k in ("start_frame", "first_odor_frame", "end_frame"))
+        except (TypeError, KeyError, ValueError):
+            raise MovieError(f"trial {i + 1} has no whole start_frame, first_odor_frame and end_frame")
+        odor = t.get("odors")
+        if odor is None and t.get("name") is not None:
+            odor = f"{t['name']} @ {t['log10_conc']}" if t.get("log10_conc") is not None else t["name"]
+        out.append({"start": start, "onset": onset, "end": end, "odor": None if odor is None else str(odor)})
     return out
 
 

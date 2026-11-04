@@ -294,15 +294,26 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
 - **Movies** ("Play movies…" in the Raw data or Motion corrected menu of a dataset whose
   folder is found): a player for the movies of the dataset's flies in that menu's data
   folder (raw, or motion corrected).
-  Motion-corrected ones are TIFFs (as al_analysis writes them: `mocorr.tif`, else
-  `flipped.tif` or `raw.tif`, though any TIFF is listed), drawn with the ImageJ ROIs of
-  the `RoiSet.zip` next to them, or in a folder above (each on the Z plane it was drawn
-  on; ROIs of other planes dashed). Raw ones are ThorImage `.raw` files (not its
-  `RoiMask.raw`), laid out by the `Experiment.xml` next to them (flyback frames left out). Play / pause, time and Z
-  sliders, max projection over Z, channel, speed, contrast, zoom (wheel) and move
-  (drag), with the value of the pixel under the pointer; keys as in ImageJ where they
-  exist (space or `\` to play, `<` / `>` and the arrows to step). Only the planes shown
-  are read, on the server, so even large movies open at once.
+  Motion-corrected ones are TIFFs, as al_analysis writes them: one per fly of all its
+  recordings registered together (`mocorr_concat.tif`, listed as the fly,
+  `<date>/<fly>`, with the recordings in it), else one per recording (`mocorr.tif`,
+  else `flipped.tif` or `raw.tif`); in a fly's folder with neither, every TIFF in it.
+  They are drawn with the ImageJ ROIs of the `RoiSet.zip` next to them, or in a folder
+  above (for a fly's movie, the one its recordings share), each on the Z plane it was
+  drawn on (ROIs of other planes dashed). Raw ones are ThorImage `.raw` files (not its
+  `RoiMask.raw`), laid out by the `Experiment.xml` next to them (flyback frames left
+  out). The odor of each trial is written over a movie (grey before the odor comes on,
+  white with a red dot after), from al_analysis' `trial_frames_and_odors.json` next to
+  it (for a raw movie, its recording's in the motion-corrected data), unless *odor
+  names* is unticked. Play / pause, time and Z sliders, max projection over Z, channel,
+  speed, zoom (wheel) and move (drag), with the value of the pixel under the pointer.
+  Brightness and contrast are set as in ImageJ's B&C window: the plane's histogram with
+  its black and white levels, Minimum, Maximum, Brightness and Contrast sliders, *Auto*
+  (as ImageJ's: few pixels saturated, more contrast at each press) and *Reset* (the
+  plane's full range). Keys as in ImageJ where they exist (space or `\` to play, `<` /
+  `>` and the arrows to step, `A` auto contrast), `R` to reset the contrast and `O` for
+  odor names. Only the planes shown are read, on the server, so even large movies open
+  at once.
 - **Download**: the matrices of several datasets are concatenated into one wide CSV
   (trials × ROIs, with `dataset_id` as an extra column level; trials matched on panel,
   odor components and repeat) or long CSV (one row per value). Zips always have
