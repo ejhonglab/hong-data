@@ -252,7 +252,7 @@ input[data-src], select[data-src], textarea[data-src] { background: var(--src-so
 .readme-html ul, .readme-preview ul { padding-left: 20px; }
 
 /* ------------------------------------------------------------- settings */
-#tab-settings, #tab-headspace { overflow: auto; padding: 24px 20px 60px; }
+#tab-settings, #tab-headspace, #tab-roi-training { overflow: auto; padding: 24px 20px 60px; }
 .folders-help { margin-top: 12px; }
 #settings-display .grid + p { margin: 6px 0 14px; }
 .dir-section { margin-top: 16px; }
