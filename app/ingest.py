@@ -41,7 +41,9 @@ names then the ROIs' (as ``to_csv`` writes a frame with plain columns).
 An odor level may hold a mixture itself (``a @ -3 + b @ -5``), split into its components
 as if they were in levels of their own. Odors written ``name(conc)`` are read as
 ``name @ conc``, and a solvent alone (``PFO``, ``water``) as at 0 (``pfo @ 0``), saying so
-(`rewritten_odor`). ROI names lose a ``_t<n>`` suffix (``DA1_t0`` -> ``DA1``), and may name
+(`rewritten_odor`). Odors of diagnostic panels (`DIAGNOSTIC_PANELS`) lose a ``diag_``
+prefix (``diag_ea @ -4`` -> ``ea @ -4``), which odors of other panels may not have
+(`undiag_odor`). ROI names lose a ``_t<n>`` suffix (``DA1_t0`` -> ``DA1``), and may name
 several glomeruli that could not be told apart (``VA1d/VA1v``: `glomeruli.merged`).
 
 Row levels that say nothing are dropped before anything else (`uninformative_levels`):
@@ -98,6 +100,11 @@ PANEL_NEEDED = ("each trial's panel is needed (the name of the set of odors pres
 TRIALS_NEEDED = (f"each trial's number is needed, in a row level (in a long file, a column) named repeat (or {TRIAL}) of "
                  "integers (0, 1, 2... or 1, 2, 3...): one row per trial, not averaged over trials")
 KNOWN_ROW_LEVELS = {"panel", "is_pair", "repeat"}
+# panels of diagnostic odors (compared without case), wherever panels are told apart so: their
+# odors may be written with DIAG_PREFIX on upload, and lists and file names put them last or
+# leave them out
+DIAGNOSTIC_PANELS = ("diagnostic", "diagnostics", "glomeruli_diagnostics")
+DIAG_PREFIX = "diag_"  # of odors of diagnostic panels, as some files write them: removed on upload
 # names other column levels (a ROI's `extra`) may not have: those downloads add, and the row levels'
 RESERVED_COL_LEVELS = {"dataset_id", "value", TRIAL, *KNOWN_ROW_LEVELS}
 MAX_HEADER_ROWS = 12  # of a wide CSV: its column levels, then the row naming the row levels
@@ -617,6 +624,22 @@ def _long_to_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
 # ------------------------------------------------------ uninformative row levels
 
 
+def is_diagnostic_panel(panel) -> bool:
+    """Whether a panel is one of diagnostic odors (`DIAGNOSTIC_PANELS`)."""
+    return isinstance(panel, str) and panel.strip().casefold() in DIAGNOSTIC_PANELS
+
+
+def undiag_odor(s: str) -> Optional[str]:
+    """An odor string without the prefix of odors of diagnostic panels (`DIAG_PREFIX`, in
+    any case), of each component of a mixture written in it (``'diag_ea @ -4'`` ->
+    ``'ea @ -4'``); None if it has none."""
+    parts = s.strip().split(COMPONENT_DELIM)
+    if not any(c.strip().casefold().startswith(DIAG_PREFIX) for c in parts):
+        return None
+    return COMPONENT_DELIM.join(c.strip()[len(DIAG_PREFIX):] if c.strip().casefold().startswith(DIAG_PREFIX) else c
+                                for c in parts)
+
+
 def rewritten_odor(s: str) -> Optional[str]:
     """An odor string as this app writes odors, if it is written another way it reads:
     ``name(conc)`` as ``name @ conc`` (``'1-5ol(-3)'`` -> ``'1-5ol @ -3'``), and a solvent
@@ -871,6 +894,34 @@ def _validate_wide(df: pd.DataFrame, *, source_format: str) -> ParsedData:
         raise ValidationError([str(e)])
     idx_frame = df.index.to_frame(index=False)
     idx_frame.columns = row_names
+    panel_of = idx_frame["panel"].tolist() if "panel" in row_names else [None] * len(idx_frame)
+    undiag: dict[str, str] = {}  # odors of diagnostic panels written with DIAG_PREFIX -> without it
+    n_undiag = 0  # (trials)
+    misplaced: dict[str, list] = {}  # odors with it of other panels -> those panels
+    for lvl in odor_levels:
+        values = idx_frame[lvl].tolist()
+        for i, v in enumerate(values):
+            r = undiag_odor(v) if isinstance(v, str) else None
+            if r is None:
+                continue
+            if is_diagnostic_panel(panel_of[i]):
+                undiag.setdefault(v.strip(), r)
+                values[i] = r
+                n_undiag += 1
+            else:
+                panels = misplaced.setdefault(v.strip(), [])
+                p = "no panel" if _missing(panel_of[i]) else f"panel {panel_of[i]}"
+                if p not in panels:
+                    panels.append(p)
+        idx_frame[lvl] = values
+    if undiag:
+        warnings.append(f"the prefix '{DIAG_PREFIX}' was removed from {n_undiag} odor string(s) of diagnostic panels "
+                        f"({len(undiag)} distinct): " + _examples([f"{a} → {b}" for a, b in undiag.items()]))
+    if misplaced:
+        shown = [f"{o!r} ({', '.join(ps)})" for o, ps in misplaced.items()]
+        errors.append(f"odors prefixed '{DIAG_PREFIX}' may only be of diagnostic panels (panel {' / '.join(DIAGNOSTIC_PANELS)}, "
+                      f"in any case), but {len(misplaced)} distinct odor string(s) are of others: "
+                      + "; ".join(shown[:MAX_EXAMPLES]) + (f"; ... ({len(shown)} total)" if len(shown) > MAX_EXAMPLES else ""))
     rewritten: dict[str, str] = {}  # odors written another way -> as this app writes them (`rewritten_odor`)
     for lvl in odor_levels:
         def rewrite(v):

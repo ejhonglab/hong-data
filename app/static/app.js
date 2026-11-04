@@ -2387,15 +2387,16 @@ function filterByUnit(datasets, sel, unit) {
 
 // when a dataset was uploaded, said in lists grouped by who uploaded them or when
 const uploadedText = (d, group) => (['uploader', 'uploaded'].includes(group) && d.created_at ? `, uploaded ${esc(d.created_at.slice(0, 10))}` : '');
-// a diagnostics panel (e.g. glomeruli_diagnostics), listed last
-const isDiagnostics = (panel) => /diag/i.test(panel);
-// panels in the order of a list by panel: by name but for case, diagnostics last
-const byPanelOrder = (a, b) => isDiagnostics(a) - isDiagnostics(b) || a.localeCompare(b, undefined, { sensitivity: 'base' });
+// the panels of datasets that are of diagnostic odors (e.g. glomeruli_diagnostics), as the
+// server tells (each panel's `diagnostic`), listed last
+const diagnosticPanels = (datasets) => new Set(datasets.flatMap((d) => d.panels.filter((p) => p.diagnostic).map((p) => p.panel)));
+// panels in the order of a list by panel: by name but for case, those of `diag` last
+const panelOrder = (diag) => (a, b) => diag.has(a) - diag.has(b) || a.localeCompare(b, undefined, { sensitivity: 'base' });
 // All of a dataset's panels, each once and in that order, as a line of its item in a list
 // not grouped by panel (HTML; nothing if it has none). Comma-separated, wrapping after a comma.
 function panelsLine(d, group) {
   if (group === 'panel' || !d.panels.length) return '';
-  const names = [...new Set(d.panels.map((p) => p.panel))].sort(byPanelOrder);
+  const names = [...new Set(d.panels.map((p) => p.panel))].sort(panelOrder(diagnosticPanels([d])));
   return `<span class="s panels">${names.map(esc).join(',<wbr>')}</span>`;
 }
 
@@ -2424,9 +2425,10 @@ function datasetGroups(datasets, group) {
     const panels = (d.panels.some((p) => p.source === 'form') ? d.panels.filter((p) => p.source === 'form') : d.panels).map((p) => p.panel);
     for (const p of panels.length ? panels : ['(no panel name)']) add(p, p, d);
   }
+  const diag = diagnosticPanels(datasets);
   return [...groups.values()]
-    .map((g) => ({ ...g, datasets: newest(g.datasets), diag: isDiagnostics(g.label) }))
-    .sort((a, b) => byPanelOrder(a.label, b.label));
+    .map((g) => ({ ...g, datasets: newest(g.datasets), diag: diag.has(g.label) }))
+    .sort((a, b) => panelOrder(diag)(a.label, b.label));
 }
 
 class Browse {

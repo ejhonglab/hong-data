@@ -394,6 +394,24 @@ def test_non_numeric_values(tmp_path):
     assert "non-numeric" in e and "oops" in e
 
 
+def test_diag_prefix(tmp_path):
+    # odors of diagnostic panels lose the prefix (of each component of a mixture in one level),
+    # said so with how many; in any other panel, refused
+    rows = [(panel, False, odor, "solvent", rep) for panel, odor in (("glomeruli_diagnostics", "diag_va @ -3"),
+                                                                     ("Diagnostics", "DIAG_ea @ -2 + diag_va @ -3"),
+                                                                     ("diagnostic", "1-6ol @ -3"), ("megamat", "ea @ -2"))
+            for rep in (0, 1)]
+    parsed = load_file(write_csv(make_wide(rows, COLS), tmp_path))
+    assert [t["odor"] for t in parsed.trials[::2]] == ["va @ -3", "ea @ -2 + va @ -3", "1-6ol @ -3", "ea @ -2"]
+    assert ("the prefix 'diag_' was removed from 4 odor string(s) of diagnostic panels (2 distinct): 'diag_va @ -3 → va @ -3', "
+            "'DIAG_ea @ -2 + diag_va @ -3 → ea @ -2 + va @ -3'") in parsed.warnings
+    assert not any("diag_" in w for w in load_file(write_csv(make_wide(ROWS, COLS), tmp_path)).warnings)
+    bad = rows + [("megamat", False, "diag_pa @ -3", "solvent", 0), ("diag", False, "diag_pa @ -3", "solvent", 0)]
+    e = errors_for(make_wide(bad, COLS), tmp_path)
+    assert ("odors prefixed 'diag_' may only be of diagnostic panels (panel diagnostic / diagnostics / glomeruli_diagnostics, "
+            "in any case), but 1 distinct odor string(s) are of others: 'diag_pa @ -3' (panel megamat, panel diag)") in e
+
+
 def test_long_format_csv(tmp_path):
     wide = make_wide(ROWS, COLS)
     long = wide.stack(list(range(3)), future_stack=True).rename("value").reset_index()

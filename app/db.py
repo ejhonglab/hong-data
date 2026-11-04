@@ -33,7 +33,7 @@ from typing import Any, Callable, Iterable, Iterator, Optional
 
 import numpy as np
 
-from .ingest import drop_uninformative, fly_key
+from .ingest import drop_uninformative, fly_key, is_diagnostic_panel
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS datasets (
@@ -278,6 +278,14 @@ def _panel_rows(ds_id: int, metadata: dict, summary: dict) -> list[tuple]:
     return [(ds_id, p, "form") for p in form] + [(ds_id, p, "file") for p in summary.get("panel_names") or [] if p not in form]
 
 
+def _diagnostics(d: dict) -> dict:
+    """A dataset (as `list_datasets` or `get_dataset` give it) with each of its panels
+    saying whether it is of diagnostic odors (``diagnostic``: `is_diagnostic_panel`, of its
+    name as shown, if it is renamed)."""
+    d["panels"] = [{**p, "diagnostic": is_diagnostic_panel(p["panel"])} for p in d["panels"]]
+    return d
+
+
 def rename_panel(name: Optional[str], renames: dict[str, str]) -> Optional[str]:
     """A panel's name as shown (`PANEL_RENAMES`): as renamed, if it is."""
     return renames.get(name, name) if name is not None else None
@@ -454,7 +462,7 @@ class Database:
         by_ds: dict[int, list[dict]] = {}
         for p in panels:
             by_ds.setdefault(p["dataset_id"], []).append({"panel": p["panel"], "source": p["source"]})
-        return [self._renamed({**_parsed(dict(r)), "panels": by_ds.get(r["id"], [])}, renames) for r in rows]
+        return [_diagnostics(self._renamed({**_parsed(dict(r)), "panels": by_ds.get(r["id"], [])}, renames)) for r in rows]
 
     def panel_renames(self) -> dict[str, str]:
         """Panels shown under other names (the setting `PANEL_RENAMES`): {name in the data: name shown}."""
@@ -521,7 +529,7 @@ class Database:
         d["odor_yaml_files"] = json.loads(d.get("odor_yaml_files") or "[]")
         d["experiment_xml_info"] = json.loads(d["experiment_xml_info"]) if d.get("experiment_xml_info") else None
         d["panels"] = [dict(p) for p in panels]
-        return self._renamed(d, self.panel_renames()) if as_shown else d
+        return _diagnostics(self._renamed(d, self.panel_renames()) if as_shown else d)
 
     def get_matrix_arrays(self, ds_id: int) -> Optional[dict]:
         """Units, trials and the float32 response matrix (n_units, n_trials) of a dataset.

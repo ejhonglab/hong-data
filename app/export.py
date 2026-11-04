@@ -43,7 +43,7 @@ import pandas as pd
 
 from . import headspace, merge, odormeta
 from .db import Database
-from .ingest import BAD, CELLS
+from .ingest import BAD, CELLS, is_diagnostic_panel
 from .metadata import manipulations_text
 from .odors import (SOLVENT_STR, format_conc, is_odor_level, lowercase_map, lowercase_odor, odor_level_sort_key,
                     odor_names)
@@ -56,7 +56,6 @@ SUMMARY_COLUMNS = (
 )
 # units per chunk when writing the long format, to bound memory
 LONG_CHUNK_UNITS = 2000
-DIAGNOSTICS_PANEL = re.compile("diag", re.IGNORECASE)
 
 
 class ExportError(Exception):
@@ -138,7 +137,7 @@ def dataset_stem(d: dict, trials: list[dict]) -> str:
     ``<panels>_<uploader>_<coding unit>[_<manipulations>]_<date of the last fly>``.
 
     Panels are those in the data (or, without a panel level, those entered at upload),
-    sorted, leaving out diagnostic panels unless there are only those. The uploader's
+    sorted, leaving out diagnostic panels (`is_diagnostic_panel`) unless there are only those. The uploader's
     name is lowercased, without periods. Manipulations are each ``<key>-<value>`` (or the
     key alone). Each part is ASCII only, with spaces as '-'.
 
@@ -147,8 +146,8 @@ def dataset_stem(d: dict, trials: list[dict]) -> str:
         trials: as returned by `Database.get_matrix_arrays`.
     """
     panels = list(dict.fromkeys(t["panel"] for t in trials if t["panel"])) or d["metadata"].get("panel_names") or []
-    if not all(DIAGNOSTICS_PANEL.search(p) for p in panels):
-        panels = [p for p in panels if not DIAGNOSTICS_PANEL.search(p)]
+    if not all(map(is_diagnostic_panel, panels)):
+        panels = [p for p in panels if not is_diagnostic_panel(p)]
     manipulations = [m["key"] if m.get("value") is None else f"{m['key']}-{m['value']}" for m in d.get("manipulations") or []]
     parts = [*sorted(panels, key=str.casefold), d["uploader_name"].lower().replace(".", ""), d["coding_unit"],
              *manipulations, d["last_fly_date"] or ""]

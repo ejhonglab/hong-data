@@ -138,7 +138,10 @@ glomeruli_diagnostics,False,3mtp @ -5,solvent,0,-0.0377,0.13,...
 - **Odor strings**: `<abbrev> @ <log10_conc>` with single spaces, concentration 0 or
   negative; `solvent` for an unused component. Odors written `<abbrev>(<log10_conc>)`
   (`1-5ol(-3)`) are read as `1-5ol @ -3`, and a solvent alone (`PFO`, `water`) as at 0
-  (`pfo @ 0`), with a warning listing them. Concentrations are shown to at most 3
+  (`pfo @ 0`), with a warning listing them. Odors of diagnostic panels (`diagnostic`,
+  `diagnostics` or `glomeruli_diagnostics`, in any case) may be written with a `diag_`
+  prefix (`diag_ea @ -4`), removed on upload with a warning saying how many; a file with
+  such an odor in any other panel is refused. Concentrations are shown to at most 3
   significant digits, or 2 after a leading `0.` (`ea @ -2.69897` as `ea @ -2.7`,
   `va @ -0.30103` as `va @ -0.3`); downloads keep them as uploaded.
 - Row levels that say nothing are dropped on upload: `is_pair` if it is False on every
@@ -307,9 +310,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   links) and the READMEs. The matrix of a single dataset is just one CSV instead, laid
   out as uploaded (less the row levels dropped on upload) and named
   `<panels>_<uploader>_<coding unit>_<last fly date>.csv`: the panels in the data,
-  sorted, without diagnostic ones (unless there are only those), and the uploader's
-  name lowercased without periods, e.g. `megamat_tom_glomeruli_2023-11-19.csv` (the
-  long one ends in `_long.csv`).
+  sorted, without diagnostic ones (as above; unless there are only those), and the
+  uploader's name lowercased without periods, e.g. `megamat_tom_glomeruli_2023-11-19.csv`
+  (the long one ends in `_long.csv`).
 - **Merge**: the matrices of every dataset of the chosen coding unit (matched in any
   case), concatenated as above, in a zip that also has `scaling.csv` (each dataset's group
   and scale factor). Datasets can be left at their own scale, or grouped by any of

@@ -392,6 +392,8 @@ def test_dataset_stem():
     assert dataset_stem(d, trials("megamat", "glomeruli_diagnostics", "Kiwi", "megamat")) == "Kiwi_megamat_ej-hong_KCs_2023-11-19"
     assert dataset_stem(d, trials("glomeruli_diagnostics")) == "glomeruli_diagnostics_ej-hong_KCs_2023-11-19"
     assert dataset_stem(d, trials(None)) == "from-form_ej-hong_KCs_2023-11-19"
+    # diagnostic panels by name (in any case), not by containing 'diag'
+    assert dataset_stem(d, trials("Diagnostics", "diagnostic", "diag_2")) == "diag_2_ej-hong_KCs_2023-11-19"
 
 
 def test_stored_before_levels_were_dropped(store, tmp_path):

@@ -37,7 +37,9 @@ def test_renamed_on_read(tmp_path):
     with db.connect() as con:
         con.execute("UPDATE datasets SET title = 'glomeruli_diagnostics, megamat: GH146' WHERE id = ?", (ds_id,))
     (d,) = db.list_datasets()
-    assert [(p["panel"], p["source"]) for p in d["panels"]] == [("p1", "form"), ("diagnostics", "file"), ("megamat", "file")]
+    assert [(p["panel"], p["source"], p["diagnostic"]) for p in d["panels"]] == [
+        ("p1", "form", False), ("diagnostics", "file", True), ("megamat", "file", False)]
+    assert [p["diagnostic"] for p in db.get_dataset(ds_id)["panels"]] == [False, True, False]
     assert d["title"] == "diagnostics, megamat: GH146" == db.get_dataset(ds_id)["title"]
     summary = db.get_dataset(ds_id)["summary"]
     assert summary["panel_names"] == ["diagnostics", "megamat"] and [p["panel"] for p in summary["panels"]] == ["diagnostics", "megamat"]
