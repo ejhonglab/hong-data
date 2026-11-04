@@ -33,7 +33,7 @@ import numpy as np
 
 from .sparse import Sparse
 
-VERSION = 2  # of how matrices are made from a bundle: their imports are made again when it changes
+VERSION = 3  # of how matrices are made from a bundle: their imports are made again when it changes
 SUFFIXES = (".sqlite", ".sqlite3", ".db")
 VIEWS = ("pathways", "lca")
 VIAS = ("reactions", "pathways")
@@ -474,6 +474,9 @@ def lca_matrix(b: Bundle, matches: list[dict], o: dict) -> tuple[dict, np.ndarra
         raise MetacycError("none of the odor table's chemicals is in MetaCyc's network of compounds")
     values = net.distances(entries)
     notes = [n for n in [_unmatched_note(matches)] if n]
+    n_all = sum(1 for c in b.compounds if net.entries(c, o["classes"]))
+    notes.append(f"only between the odor table's chemicals (made again whenever it changes): between all {n_all:,} "
+                 f"compounds in the network, it would be {n_all * n_all:,} cells, too many to show")
     out = [m["odor"]["name"] for m in matches if m["compound"] is not None and m not in rows]
     if out:
         notes.append(f"{len(out)} chemical{'s are' if len(out) > 1 else ' is'} in MetaCyc but not in its network"

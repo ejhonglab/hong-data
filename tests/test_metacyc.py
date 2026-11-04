@@ -298,6 +298,7 @@ def test_lca(bundle_path):
     nan = np.nan
     np.testing.assert_array_equal(v, [[0, 4, 6, nan], [4, 0, 8, nan], [6, 8, 0, nan], [nan, nan, nan, 0]])
     assert any("linalool as a monoterpenol" in n for n in rec["notes"]) and any("3 pairs have no common ancestor" in n for n in rec["notes"])
+    assert "made again whenever it changes): between all 5 compounds in the network, it would be 25 cells" in rec["notes"][1]
     # linalool left out without classes
     rec, _ = metacyc.parse(bundle_path, {"view": "lca", "classes": "never"}, ODORS)
     assert "linalool" not in [r["label"] for r in rec["rows"]]

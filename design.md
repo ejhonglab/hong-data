@@ -367,9 +367,12 @@ between the frontend and the server. Using the app is described in
     was made before; the Compare tab compares its odors only along those pathways, as
     pathways none of them is in would add agreement of 0s to every correlation.
   - *Pathway LCA distance*: pairwise (`pairwise: "distance"`: its columns its rows,
-    served `square`) between the odor table's chemicals alone: of every compound it would
-    be 147 million cells (590 MB), from a breadth-first search of the whole network for
-    each of 12 thousand compounds and, for each pair, a sum over every node. Compared by
+    served `square`) between the odor table's chemicals alone (as its notes say): of every
+    compound in the network (12,566 of 27.1) it would be 158 million cells (630 MB), nearly
+    none missing (each reaches about 23 thousand of its 34 thousand nodes), from a
+    breadth-first search of the whole network for each compound and, for each pair, a sum
+    over every node. Made again, as the pathways view, whenever the odor table changes
+    (`odors_fingerprint`). Compared by
     its own values negated (the nearer, the more alike), as a distance between two odors
     is not a vector to correlate.
   - *Looked into*: what is drawn and listed below the matrix is asked of the bundle when
