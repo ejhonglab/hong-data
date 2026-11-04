@@ -696,12 +696,12 @@ function positiveRange(values, clip) {
 
 const LOG_DECADES = 3; // orders of magnitude the positive values span, at least, for a log color scale (when 'auto')
 
-// How values are shown on a sequential color scale: 'linear', or on a log one as chosen,
-// else if none are negative and the positive ones span `LOG_DECADES` or more or the data
+// How values are shown on a sequential color scale, as chosen (`scale`: 'auto', 'linear' or
+// 'log'), and as 'auto' would show them: {scale, auto}, each 'linear', 'log' or 'log1p'. Auto
+// is log if none are negative and the positive ones span `LOG_DECADES` or more, or the data
 // says so (`preferred` 'log': LOTUS's counts). On a log scale, counts (none negative nor
 // fractional, some 0) are 'log1p': of 1 + each, so 0 is apart from 1; else it is 'log'.
 function seqScale(values, scale, preferred = null) {
-  if (scale === 'linear') return 'linear';
   let lo = Infinity, hi = 0, negative = false, zero = false, whole = true;
   for (let i = 0; i < values.length; i++) {
     const v = values[i];
@@ -709,9 +709,9 @@ function seqScale(values, scale, preferred = null) {
     else if (v > 0) { if (v < lo) lo = v; if (v > hi) hi = v; } else if (v === 0) zero = true;
     if (whole && v !== Math.round(v) && v === v) whole = false;
   }
-  if (!(hi > 0)) return 'linear';
-  if (!(scale === 'log' || (!negative && (preferred === 'log' || hi / lo >= 10 ** LOG_DECADES)))) return 'linear';
-  return !negative && zero && whole ? 'log1p' : 'log';
+  const log = !negative && zero && whole ? 'log1p' : 'log';
+  const auto = hi > 0 && !negative && (preferred === 'log' || hi / lo >= 10 ** LOG_DECADES) ? log : 'linear';
+  return { scale: scale === 'auto' ? auto : scale === 'log' && hi > 0 ? log : 'linear', auto };
 }
 
 // the indices of an axis's items sorted by their values over those of the other axis given
@@ -1181,7 +1181,10 @@ class MatrixViewer {
     const fixed = !neural && !model.summed && this.data.meta.value_range; // [vmin, vmax] whatever the values
     const { vmin, vmax } = fixed ? { vmin: fixed[0], vmax: fixed[1] } : dataRange(model.values, o.clip);
     let norm;
-    const scale = cm.kind === 'sequential' ? seqScale(model.values, o.scale, neural || model.summed ? null : this.data.meta?.scale) : 'linear';
+    const seq = cm.kind === 'sequential' ? seqScale(model.values, o.scale, neural || model.summed ? null : this.data.meta?.scale) : null;
+    const scale = seq?.scale || 'linear';
+    // (the Scale menu's auto says what it would choose for these values)
+    $('select[data-opt=scale] option[value=auto]', this.toolbar).textContent = seq ? `auto (${seq.auto === 'linear' ? 'linear' : 'log'})` : 'auto';
     if (cm.kind === 'diverging') norm = makeNorm(o.range === 'symmetric' ? 'symmetric' : 'twoslope', vmin, vmax);
     else if (cm.kind === 'binary') norm = makeNorm('linear', 0, 1);
     else if (scale === 'log') {

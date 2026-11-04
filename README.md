@@ -534,7 +534,7 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   (by mean or largest value, highest first, those with none last, within its group;
   remove columns to sort by some of them, e.g. one product of VCF's). Sequential colors
   are on a log scale when the values are none negative and span 3 or more orders of
-  magnitude (*Scale*: auto, or linear or log, 0 then the lowest color), as VCF's do, and
+  magnitude (*Scale*: auto, saying which it chose, or linear or log, 0 then the lowest color), as VCF's do, and
   LOTUS's counts of organisms or papers always are; counts with some 0, such as LOTUS's,
   are on a log scale of 1 + each, so 0 is the lowest color and 1 apart from it.
 - **Headspace calculator**: odors are added by any part of a name, abbreviation, alias,
