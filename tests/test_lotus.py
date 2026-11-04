@@ -270,6 +270,7 @@ def test_values_and_levels(bundle):
     assert values[rows["linalool"], cols["Lamiaceae"]] == 4  # a, b, d, i
     record, values, rows, cols = view(out, value="presence")
     assert record["kind"] == "binary" and set(np.unique(values)) <= {0, 1}
+    assert lotus.scale(record["lotus"]) is None and lotus.scale(lotus.options({"value": "papers"})) == "log"
     record, values, rows, cols = view(out, level="genus", stereo="skeleton")
     assert {"Crambe (Plantae)", "Crambe (Animalia)"} <= set(cols)  # (homonyms told apart)
     assert values[rows["geraniol"], cols["Crambe (Plantae)"]] == 1 and values[rows["acetic acid"], cols["Crambe (Animalia)"]] == 1
@@ -366,6 +367,7 @@ def test_reference_dataset(env, tmp_path):  # noqa: F811
     pp = {"ref_id": r["id"]}
     r = call(env.reference_get, path_params=pp)[1]
     assert r["meta"]["lotus"]["stereo"] == "enantiomers" and [d["what"] for d in r["meta"]["lotus"]["decisions"]][2] == "Stereochemistry"
+    assert r["meta"]["scale"] == "log"  # (counts of organisms: shown on a log color scale)
     assert [x["label"] for x in r["rows"]] == ["linalool"] and r["rows"][0]["chem"]["name"] == "linalool"
     structures = ",".join(map(str, r["rows"][0]["lotus"]))
     assert len(r["rows"][0]["lotus"]) == 3 and [x["label"] for x in r["cols"]] == ["Apiaceae", "Lamiaceae"]

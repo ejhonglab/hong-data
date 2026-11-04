@@ -148,6 +148,12 @@ def value_label(o: dict) -> str:
     return f"organisms of the {o['level']} it is reported in"
 
 
+def scale(o: dict) -> Optional[str]:
+    """The color scale a view's cells are best shown on: 'log' of counts (of organisms or
+    papers: a few cells are many times most others), None (as the viewer decides) of presence."""
+    return None if o["value"] == "presence" else "log"
+
+
 def view_title(o: dict, release: Optional[dict] = None) -> str:
     """A title for a view (as `lotus_build.register` and the Admin tab suggest)."""
     rel = f" {release['pairs']}" if release and release.get("pairs") else ""

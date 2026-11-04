@@ -439,7 +439,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   (Esc, or the button again, to leave; the browser's window filled where full screen is
   not available) and *Hide controls*, folding away everything above the matrix but one
   line: what is shown (its size and range), its colorbar, and the buttons (remembered for
-  the matrices shown next).
+  the matrices shown next). The colorbar is labelled with what its values are: of a
+  dataset, its *Response calculation*; of reference data, its *Values are* (Admin tab);
+  of similarities, their metric.
   - *Moving and removing rows and columns* (also in reference data): drag a label
     to move it within its group (fly, panel, ...), or a group's name to move the whole
     group; with individual trials, an odor's trials move with its label (the repeat
@@ -526,7 +528,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   (by mean or largest value, highest first, those with none last, within its group;
   remove columns to sort by some of them, e.g. one product of VCF's). Sequential colors
   are on a log scale when the values are none negative and span 3 or more orders of
-  magnitude (*Scale*: auto, or linear or log, 0 then the lowest color), as VCF's do.
+  magnitude (*Scale*: auto, or linear or log, 0 then the lowest color), as VCF's do, and
+  LOTUS's counts of organisms or papers always are; counts with some 0, such as LOTUS's,
+  are on a log scale of 1 + each, so 0 is the lowest color and 1 apart from it.
 - **Headspace calculator**: odors are added by any part of a name, abbreviation, alias,
   CID or CAS number, or a mixture starts from a panel of the datasets: its odors in the
   odor table with a CID, but solvents, each at the highest concentration presented (what

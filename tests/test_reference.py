@@ -118,7 +118,7 @@ def test_builtin_and_chemicals(env):
     status, r = call(env.reference_get, path_params={"ref_id": "fruits"})
     assert status == 200 and r["rows"][0]["chem"] == {"odor_id": 1, "name": "ethyl acetate", "abbrev": "ea", "cid": 8857,
                                                       "how": "name", "identified": True}
-    assert r["rows"][1]["chem"]["cid"] is None and r["meta"]["kind"] == "sequential"
+    assert r["rows"][1]["chem"]["cid"] is None and r["meta"]["kind"] == "sequential" and r["meta"]["scale"] is None
     values = np.frombuffer(base64.b64decode(r["values_b64"]), "<f4").reshape(r["shape"])
     assert values[0].tolist() == [1, 2] and np.isnan(values[1, 1])
     assert call(env.reference_get, path_params={"ref_id": "gone"})[1]["state"] == "error"

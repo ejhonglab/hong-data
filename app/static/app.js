@@ -3,7 +3,7 @@ import { Heatmap } from './heatmap.js';
 import { COLORMAPS, colormapsOfKind, makeNorm, drawColorbar, fmtNum } from './colormaps.js';
 import { MAX_CLUSTER_ITEMS, CLUSTER_VERSION, ClusterPool, layoutDendrogram } from './cluster.js';
 import { exportFigure } from './figure.js';
-import { labelParts, renderLabel } from './latex.js';
+import { labelParts, labelText, renderLabel } from './latex.js';
 import { MoviePlayer } from './player.js';
 import { SIMILARITIES, similarityMatrix, tanimoto, correlateSimilarities, sharedSimilarities, holm } from './similarity.js';
 import { MetacycPanel } from './metacyc.js';
@@ -683,18 +683,22 @@ function positiveRange(values, clip) {
 
 const LOG_DECADES = 3; // orders of magnitude the positive values span, at least, for a log color scale (when 'auto')
 
-// whether values are shown on a log color scale: as chosen, else if none are negative and
-// the positive ones span `LOG_DECADES` or more
-function logScale(values, scale) {
-  if (scale === 'linear') return false;
-  let lo = Infinity, hi = 0, negative = false;
+// How values are shown on a sequential color scale: 'linear', or on a log one as chosen,
+// else if none are negative and the positive ones span `LOG_DECADES` or more or the data
+// says so (`preferred` 'log': LOTUS's counts). On a log scale, counts (none negative nor
+// fractional, some 0) are 'log1p': of 1 + each, so 0 is apart from 1; else it is 'log'.
+function seqScale(values, scale, preferred = null) {
+  if (scale === 'linear') return 'linear';
+  let lo = Infinity, hi = 0, negative = false, zero = false, whole = true;
   for (let i = 0; i < values.length; i++) {
     const v = values[i];
     if (v < 0) negative = true;
-    else if (v > 0) { if (v < lo) lo = v; if (v > hi) hi = v; }
+    else if (v > 0) { if (v < lo) lo = v; if (v > hi) hi = v; } else if (v === 0) zero = true;
+    if (whole && v !== Math.round(v) && v === v) whole = false;
   }
-  if (!(hi > 0)) return false;
-  return scale === 'log' || (!negative && hi / lo >= 10 ** LOG_DECADES);
+  if (!(hi > 0)) return 'linear';
+  if (!(scale === 'log' || (!negative && (preferred === 'log' || hi / lo >= 10 ** LOG_DECADES)))) return 'linear';
+  return !negative && zero && whole ? 'log1p' : 'log';
 }
 
 // the indices of an axis's items sorted by their values over those of the other axis given
@@ -1164,13 +1168,13 @@ class MatrixViewer {
     const fixed = !neural && !model.summed && this.data.meta.value_range; // [vmin, vmax] whatever the values
     const { vmin, vmax } = fixed ? { vmin: fixed[0], vmax: fixed[1] } : dataRange(model.values, o.clip);
     let norm;
-    const log = cm.kind === 'sequential' && logScale(model.values, o.scale);
+    const scale = cm.kind === 'sequential' ? seqScale(model.values, o.scale, neural || model.summed ? null : this.data.meta?.scale) : 'linear';
     if (cm.kind === 'diverging') norm = makeNorm(o.range === 'symmetric' ? 'symmetric' : 'twoslope', vmin, vmax);
     else if (cm.kind === 'binary') norm = makeNorm('linear', 0, 1);
-    else if (log) {
+    else if (scale === 'log') {
       const pos = positiveRange(model.values, o.clip);
       norm = makeNorm('log', fixed ? Math.max(vmin, pos.vmin) : pos.vmin, vmax);
-    } else norm = makeNorm('linear', vmin, vmax);
+    } else norm = makeNorm(scale, vmin, vmax);
     const dims = neural
       ? [model.summed ? `${model.nFlies.toLocaleString()} ${model.nFlies === 1 ? 'fly' : 'flies'}${model.rows.length !== model.nFlies
           ? ` (${model.rows.length.toLocaleString()} sums, by ${model.summedBy.join(' and ')})` : ''}`
@@ -1189,9 +1193,9 @@ class MatrixViewer {
     this.lut = cm.lut;
     this.heatmap.setModel(model, { cellW: o.cellW, cellH: o.cellH, lut: cm.lut, norm, reorder: drag });
     drawColorbar(this.colorbar, cm.lut, norm);
-    const valueLabel = this._valueLabel();
+    this._syncLabel();
     this.statsText = `${dims.join(' × ')}` + (neural && model.nPanels > 1 ? ` in ${model.nPanels} panels` : '') + ` · range ${fmtNum(vmin)} to ${fmtNum(vmax)}` +
-      (valueLabel ? ` (${valueLabel})` : '') + (log ? ' · log color scale' : '');
+      (scale === 'log' ? ' · log color scale' : scale === 'log1p' ? ' · log color scale (of 1 + each count)' : '');
     this._setNote(note);
     const grouped = (drag.rows && model.rows.some((r) => r.group != null)) || (drag.cols && model.cols.some((c) => c.group != null));
     const which = drag.rows && drag.cols ? 'a label' : drag.rows ? 'a row label' : 'a column label';
@@ -1204,7 +1208,7 @@ class MatrixViewer {
 
   // what the values shown are, if said (of a matrix, not neural data), and whether summed over KCs
   _valueLabel() {
-    const label = this.kind === 'neural' ? '' : this.data.meta?.value_label || '';
+    const label = this.kind === 'neural' ? '' : this.data?.meta?.value_label || '';
     return this.model?.summed ? `${label ? `${label}, ` : ''}summed over ${this.model.summed.toLocaleString()} KCs` : label;
   }
 
@@ -1214,19 +1218,27 @@ class MatrixViewer {
     calc = calc?.trim() || null;
     if (calc === this.responseCalc) return;
     this.responseCalc = calc;
-    const el = this.colorbarLabel;
-    el.hidden = !calc;
-    el.title = calc ? `How the responses were calculated (as entered at upload): ${calc}` : '';
-    if (!calc) el.replaceChildren();
-    else renderLabel(el, calc).then(() => { if (this.model) this.onShow?.(); }); // (its height may have changed)
+    this._syncLabel();
   }
 
-  // the label of an exported figure's colorbar (parts, as `labelParts` gives them): how the
-  // responses were calculated, if said, else what the values are (`_valueLabel`)
+  // the label of the colorbar (parts, as `labelParts` gives them), on screen and in an
+  // exported figure: how the responses were calculated, if said, else what the values are
+  // (`_valueLabel`); [] for neither
   _figureLabel() {
-    if (!this.responseCalc) return [{ text: this._valueLabel() }];
+    if (!this.responseCalc) { const text = this._valueLabel(); return text ? [{ text }] : []; }
     const summed = this.model?.summed ? [{ text: `, summed over ${this.model.summed.toLocaleString()} KCs` }] : [];
     return [...labelParts(this.responseCalc), ...summed];
+  }
+
+  // the colorbar's label shown as it now is (`_figureLabel`)
+  _syncLabel() {
+    const parts = this._figureLabel(), text = labelText(parts), el = this.colorbarLabel;
+    if (text === this._labelShown) return;
+    this._labelShown = text;
+    el.hidden = !text;
+    el.title = !text ? '' : this.responseCalc ? `How the responses were calculated (as entered at upload): ${text}` : `What the values are: ${text}`;
+    if (!text) el.replaceChildren();
+    else renderLabel(el, parts).then(() => { if (this.model) this.onShow?.(); }); // (its height may have changed)
   }
 
   _setNote(note) {
@@ -5164,7 +5176,7 @@ class ComparePage {
       return {
         ids, sim: similarityMatrix(vectors, this.o.refMetric),
         data: { vectors, cols: (onRows ? ref.cols : ref.rows).map((it) => ({ label: it.label })),
-          meta: { kind: m.kind, value_label: m.value_label, col_label: (onRows ? m.col_label : m.row_label) || (onRows ? 'column' : 'row') },
+          meta: { kind: m.kind, value_label: m.value_label, scale: m.scale, col_label: (onRows ? m.col_label : m.row_label) || (onRows ? 'column' : 'row') },
           kcs: on === 'glomeruli' && kcAxisOf(ref) != null }, // (its other axis then, the columns of its data)
       };
     });
@@ -5384,7 +5396,8 @@ class ComparePage {
       ...loaded.map((d, i) => {
         const full = `#${d.id} ${d.title}`;
         return { key: `ds:${d.id}`, title: short.filter((n) => n === short[i]).length > 1 ? full : short[i], fullTitle: full,
-          space: on === 'odors' ? this._datasetSpace(d) : on === 'panel' ? this._datasetPanelSpace(d, panel) : this._datasetGlomSpace(d), simLabel: metric };
+          space: on === 'odors' ? this._datasetSpace(d) : on === 'panel' ? this._datasetPanelSpace(d, panel) : this._datasetGlomSpace(d), simLabel: metric,
+          responseCalc: d.response_calc };
       }),
       ...spaces.filter((s) => !s.error),
     ];
@@ -5482,7 +5495,7 @@ class ComparePage {
           this._memo(`simdata:${d.id}:${this.o.metric}:${display.lowerOdors}`, () => {
             const nC = d.cols.length, rows = d.rows.map((_, i) => d.values.subarray(i * nC, (i + 1) * nC));
             const labels = d.rows.map((r) => ({ label: showOdor(r.odor), group: r.panel }));
-            return { meta: { kind: 'diverging', row_label: 'odor', col_label: 'odor' }, rows: labels, cols: labels.map((l) => ({ label: l.label })),
+            return { meta: { kind: 'diverging', row_label: 'odor', col_label: 'odor', value_label: metric }, rows: labels, cols: labels.map((l) => ({ label: l.label })),
               values: similarityMatrix(rows, this.o.metric), square: true };
           }), `dataset_${d.id}_similarity`);
       }
@@ -5559,7 +5572,8 @@ class ComparePage {
       used.add(key);
       const payload = this._memo(`pair:${what}:${s.key}:${state}:${ids.join(',')}`,
         () => (asData ? spaceData(s, ids, rowOf, N.one, this.o.on === 'odors') : spaceSims(s, ids, rowOf, N.one, this.o.on === 'odors')));
-      const v = this._viewer(key, payload, `${s.fullTitle || s.title}: ${what}`, `side_by_side_${(s.fullTitle || s.title).replace(/\W+/g, '_')}_${what}`);
+      const v = this._viewer(key, payload, `${s.fullTitle || s.title}: ${what}`, `side_by_side_${(s.fullTitle || s.title).replace(/\W+/g, '_')}_${what}`,
+        { responseCalc: asData ? s.responseCalc : null });
       const cap = asData ? `its data${payload.meta.value_label ? ` (${payload.meta.value_label})` : ''}` : `${N.one}–${N.one} ${s.simLabel}`;
       const side = document.createElement('div');
       side.className = 'cmp-pair-side';

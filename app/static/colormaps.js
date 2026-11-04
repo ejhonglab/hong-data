@@ -138,6 +138,20 @@ export function makeNorm(kind, vmin, vmax) {
       ticks: logTicks(lo, hi),
     };
   }
+  if (kind === 'log1p') {
+    // of counts: log of 1 + each, so 0 is the lowest color and 1 is apart from it
+    if (!(vmax > 0)) vmax = 1;
+    const hi = Math.log10(1 + vmax);
+    const unit = (v) => Math.log10(1 + v) / hi;
+    const decades = [];
+    for (let v = 1; v < vmax; v *= 10) if (unit(v) >= 0.2 && unit(v) <= 0.8) decades.push(v);
+    const step = Math.ceil(decades.length / 2);
+    return {
+      kind, vmin: 0, vmax,
+      toUnit(v) { return Number.isFinite(v) ? Math.max(0, Math.min(1, unit(Math.max(0, v)))) : NaN; },
+      ticks: [{ t: 0, value: 0 }, ...decades.filter((_, i) => i % step === 0).map((v) => ({ t: unit(v), value: v })), { t: 1, value: vmax }],
+    };
+  }
   // linear
   const span = vmax - vmin || 1;
   return {
@@ -197,7 +211,7 @@ export function fmtNum(v) {
   const a = Math.abs(v);
   if (a === 0) return '0';
   if (a >= 1e5) return v.toExponential(1).replace('e+', 'e').replace('.0e', 'e');
-  if (a >= 100) return v.toFixed(0);
+  if (a >= 100 || Number.isInteger(v)) return v.toFixed(0); // (counts, and powers of ten of a log scale, as such)
   if (a >= 10) return v.toFixed(1);
   if (a >= 1) return v.toFixed(2);
   if (a >= 0.01) return v.toFixed(3);

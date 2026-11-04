@@ -751,7 +751,7 @@ try {
           <label class="field"><span>Colors</span><select id="ref-kind">
             <option value="detect">from its values</option><option value="sequential">sequential (magnitudes)</option>
             <option value="diverging">diverging (signed, white at 0)</option><option value="binary">binary (0/1, presence)</option></select></label>
-          <label class="field"><span>Values are</span><input id="ref-value-label" placeholder="e.g. log10 ng/g"></label>
+          <label class="field"><span>Values are <span class="muted">(colorbar label)</span></span><input id="ref-value-label" placeholder="e.g. log10 ng/g"></label>
           <div class="grid ref-axis-labels">
             <label class="field"><span>Rows are</span><input id="ref-row-label" placeholder="e.g. chemical"></label>
             <label class="field"><span>Columns are</span><input id="ref-col-label" placeholder="e.g. fruit"></label>
@@ -1068,7 +1068,7 @@ try {
     <div class="vt-group">
       <label>Colors <select data-opt="colormap"></select></label>
       <label data-role="range">Range <select data-opt="range"><option value="twoslope">data (white at 0)</option><option value="symmetric">symmetric about 0</option></select></label>
-      <label data-role="scale" title="Log: of positive values (0 and below the lowest color). Auto: log when they are none negative and span 3 or more orders of magnitude">Scale <select data-opt="scale"><option value="auto">auto</option><option value="linear">linear</option><option value="log">log</option></select></label>
+      <label data-role="scale" title="Log: of positive values (0 and below the lowest color), or of counts (with some 0), of 1 + each, so 0 is apart from 1. Auto: log when they are none negative and span 3 or more orders of magnitude, or are counts best seen so (LOTUS&#39;s)">Scale <select data-opt="scale"><option value="auto">auto</option><option value="linear">linear</option><option value="log">log</option></select></label>
       <label class="check"><input type="checkbox" data-opt="clip"> clip to 0.5–99.5th pct</label>
     </div>
     <div class="vt-group vt-legend"><canvas class="colorbar" width="220" height="30"></canvas><span class="colorbar-label" hidden></span></div>

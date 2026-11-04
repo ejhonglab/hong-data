@@ -918,6 +918,7 @@ def load(db, ref_id: str, index: odormeta.OdorIndex) -> Optional[dict[str, Any]]
     meta["kind"] = record["kind"]
     meta["metacyc"] = record.get("metacyc")
     meta["lotus"] = record.get("lotus")
+    meta["scale"] = lotus.scale(lotus.options(record["lotus"])) if record.get("lotus") else None
     chem, gl = chemicals(record, index), glomeruli(record)
     rows = [dict(r) for r in record["rows"]]
     cols = [dict(c) for c in record["cols"]]

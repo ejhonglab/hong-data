@@ -271,7 +271,12 @@ between the frontend and the server. Using the app is described in
   (0 and below the lowest color), chosen automatically when none are negative and the
   positive ones span 3 or more orders of magnitude (`LOG_DECADES`), as VCF's
   quantities do (1e-6 to 2e6 mg/kg); its colorbar is labelled at its ends and at most two
-  powers of ten between them.
+  powers of ten between them. A reference dataset can ask for it whatever its values
+  span (its meta's `scale`: `lotus.scale`, of counts of organisms or papers, where most
+  cells are a few and some hundreds). Counts (none negative nor fractional, some 0) are
+  instead on a log scale of 1 + each (`makeNorm('log1p')`), as 0 would otherwise share
+  the lowest color with 1: a chemical not reported in a family, with one reported in a
+  single organism of it.
 - **Sorting a matrix** (`sortedByValues`): of reference data, each row (or column) by the
   mean or largest of its values over the columns (or rows) shown, within its group; an
   axis shared with a linked viewer (side by side in Compare) keeps that viewer's order.
