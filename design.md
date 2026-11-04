@@ -300,6 +300,15 @@ between the frontend and the server. Using the app is described in
   single organism of it. The scale chosen is kept for the matrix it was chosen for (by
   its file stem), not for all: log chosen for LOTUS made MetaCyc's 0, 0.5 and 1 its 0.5
   to 1, 0 the color of 0.5.
+- **The version in the footer** (`app/version.py`): the commit the code is of, whether
+  the code built (`app`, `config`, `manage.py`, `requirements.txt`, `Dockerfile`) differs
+  from it, and when it was built. The image is built from the working tree, which is
+  often ahead of its last commit, so "with changes not committed" (and the build time)
+  says when the commit alone does not name the code. Only the Dockerfile's first stage
+  sees `.git` (with git), writing `VERSION.json` for the image; run from a checkout, git
+  is asked as the server starts. A page shows the version it loaded, and on being looked
+  at again (at most every 30 s) asks `/api/health` again: a tab left open across a
+  deploy runs the old scripts, which once passed for a fix that did not work.
 - **Colors as the colormap has them**, to be read off the colorbar: its bar is drawn in
   whole pixels of the screen (`drawColorbar`), as columns a CSS pixel wide left seams at
   125% or 150% display scaling, through which the page darkened every color (a quarter,
@@ -1014,7 +1023,7 @@ PubChem's images, is left from before structures were drawn here, and can be del
 Used by the frontend; handy for scripts too.
 
 ```
-GET    /api/health                          {"ok": true, "time", "started"} (when the server started)
+GET    /api/health                          {"ok": true, "time", "started", "version"} (when the server started; app/version.py)
 GET    /api/options                         dropdown values (indicators, drivers, panels, ...)
 POST   /api/metadata/check                  {"metadata": {...}} → problems with upload form defaults
 GET    /api/user?name=                      a user's folders on tensor ("user": null if none saved)

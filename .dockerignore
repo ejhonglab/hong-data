@@ -1,5 +1,5 @@
 data/
-.git/
+# (.git is read only by the Dockerfile's first stage, for the version: app/version.py)
 __pycache__/
 *.pyc
 tests/

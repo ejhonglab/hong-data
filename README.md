@@ -46,6 +46,10 @@ expected, and nothing secret is entered. If a download or the page is blocked, s
    glomerulus ROIs ([al-diag-seg](https://github.com/tom-f-oconnell/al-diag-seg)) of
    every fly of a glomeruli dataset with a diagnostic panel, and the flies left out, with why.
 
+The footer says which version of the site the page runs (its commit, and whether it had
+changes not yet committed). After the site is updated, a page left open says so once you
+come back to it, with a link to reload it.
+
 ### Browser warnings
 
 - **Chrome** (Edge, Brave and other Chromium-based browsers are similar)

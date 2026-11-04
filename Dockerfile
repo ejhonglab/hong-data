@@ -1,3 +1,12 @@
+# the commit the code built is of, and whether it differs from it (app/version.py), for the
+# page's footer: only this stage sees the repository's .git
+FROM python:3.12-slim AS version
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/* \
+ && git config --global --add safe.directory '*'
+WORKDIR /src
+COPY . .
+RUN python -m app.version /version.json
+
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
@@ -15,6 +24,7 @@ COPY app ./app
 COPY config ./config
 COPY reference_data ./reference_data
 COPY manage.py .
+COPY --from=version /version.json ./VERSION.json
 
 # uploaded data (SQLite DB + files) lives in a volume mounted here; the code stays root's,
 # so the app cannot change it

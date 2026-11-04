@@ -6985,6 +6985,34 @@ function route() {
 
 window.addEventListener('hashchange', route);
 upload.init().then(route);
-api('/api/health').then(() => { $('#topbar-status').textContent = ''; }).catch(() => { $('#topbar-status').textContent = 'server unreachable'; });
+api('/api/health').then((h) => { $('#topbar-status').textContent = ''; showVersion(h.version); })
+  .catch(() => { $('#topbar-status').textContent = 'server unreachable'; });
+
+// The version of the code this page runs (app/version.py: as the server said when the page
+// was loaded), in the footer; and once the page is looked at again, if the server has been
+// deployed again since, which it now runs (to reload for).
+let pageVersion = null, versionCheckedAt = 0;
+const sameVersion = (a, b) => a?.commit === b?.commit && a?.dirty === b?.dirty && (!a?.dirty || a?.built === b?.built);
+function versionHtml(v) {
+  const commit = v.url ? `<a href="${esc(v.url)}" target="_blank" rel="noopener">${esc(v.short)}</a>` : esc(v.short);
+  return `${commit} (${esc(fmtWhen(v.date))})${v.dirty ? `, with changes not committed${v.built ? ` (built ${esc(fmtWhen(v.built))})` : ''}` : ''}`;
+}
+function showVersion(v, now = v) {
+  const el = $('#site-footer');
+  if (pageVersion === null) pageVersion = v || false;
+  if (!pageVersion) return;
+  el.hidden = false;
+  el.title = `${pageVersion.commit}: ${pageVersion.subject}`;
+  el.innerHTML = `Version ${versionHtml(pageVersion)}${now && !sameVersion(now, pageVersion)
+    ? ` · <span class="stale">the server now runs ${versionHtml(now)}: <a href="#" data-reload>reload</a> to use it</span>` : ''}`;
+  $('[data-reload]', el)?.addEventListener('click', (e) => { e.preventDefault(); location.reload(); });
+}
+function checkVersion() {
+  if (document.hidden || !pageVersion || Date.now() - versionCheckedAt < 30e3) return;
+  versionCheckedAt = Date.now();
+  api('/api/health').then((h) => { if (h.version) showVersion(pageVersion, h.version); }).catch(() => {});
+}
+document.addEventListener('visibilitychange', checkVersion);
+window.addEventListener('focus', checkVersion);
 api('/api/odors/status').then((s) => setOdorBadge(s.changed)).catch(() => {});
 api('/api/reference').then((r) => setAdminBadge(r.datasets)).catch(() => {});

@@ -39,7 +39,7 @@ from starlette.staticfiles import StaticFiles
 
 from . import (backup, bundle_import, chemprops, compare, config, dilution, export, filelog, headspace, lotus, lotus_import,
                merge, metacyc, metacyc_import, movies, odormeta, reference, roi_training, sandbox, tensor, thorimage, vcf,
-               yamlcheck)
+               version, yamlcheck)
 from .db import PANEL_RENAMES, PROPERTY_COLUMNS, Database, rename_panel
 from .glomeruli import GLOMERULI, load_glomeruli
 from .ingest import (ParsedData, ValidationError, combine, extra_text, files_text, fly_key, kc_id_problems, load_file,
@@ -155,7 +155,7 @@ async def index(request: Request) -> Response:
 
 async def health(request: Request) -> Response:
     return JSONResponse({"ok": True, "time": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
-                         "started": _aware(sandbox.STATUS["started_at"])})
+                         "started": _aware(sandbox.STATUS["started_at"]), "version": version.VERSION})
 
 
 async def options(request: Request) -> Response:

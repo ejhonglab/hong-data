@@ -87,7 +87,8 @@ compose` from `/opt/olfdb` itself (as the unit does): the Admin tab takes the fo
 is run from to be where the container's files are on the server, and says so when that
 does not hold its data folder.
 
-Open `http://<server>:8080/` from any machine on the intranet. The container has
+Open `http://<server>:8080/` from any machine on the intranet; its footer names the
+commit deployed (and whether the code had changes not committed). The container has
 `restart: unless-stopped`, so Docker already restarts it after a crash and after a
 reboot (as long as the docker service is enabled).
 
