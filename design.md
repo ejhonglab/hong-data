@@ -526,13 +526,17 @@ between the frontend and the server. Using the app is described in
     file there both as is and gzipped, the gzipped one is uploaded, and the browser gzips
     the others first (`CompressionStream`: the 1.1 GB SDF to 97 MB in 7 s), as the server
     does those it was sent as they are or takes out of archives. Of `LOTUS/raw`'s 7.3 GB,
-    330 MB is sent. A file chosen is a snapshot: once it changes (even its time alone) or
-    its drive will not give it, Chrome refuses to read it, saying only "Failed to fetch"
-    (or `NotReadableError`), and one cut short while it is read is read only so far, with
-    no error. So each file is checked before anything is sent (the first byte of those
-    sent as they are, which would otherwise fail the upload as a server that cannot be
-    reached; all of those gzipped first), and one that fails is named, with how much of it
-    was read (`Unreadable`, in `static/imports.js`).
+    330 MB is sent. Each gzipped copy is a Blob made of its chunks, held in memory until
+    the upload: one built from the stream (`Response.blob()`) Chrome keeps in files of its
+    profile past a few MB (165 MB of a 170 MB one, tried), and on a computer short of disk
+    room that fails part-way, saying only "Failed to fetch" (as an import from a laptop
+    did, at 120 MB of the 1.1 GB SDF). A file chosen is a snapshot: once it changes (even
+    its time alone) or its drive will not give it, Chrome refuses to read it, and one cut
+    short while it is read is read only so far, with no error. So each file is checked
+    before anything is sent (the first byte of those sent as they are, which would
+    otherwise fail the upload as a server that cannot be reached; all of those gzipped
+    first), and one that fails is named, with how much of it was read (`Unreadable`, in
+    `static/imports.js`).
 
 ## Statistical testing
 

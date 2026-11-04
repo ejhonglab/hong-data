@@ -66,24 +66,30 @@ function pickFiles(files, expected, how) {
   return { picked, notes };
 }
 
-// a file gzipped, as a Blob (onProgress(bytes read) as it goes). Rejects with an Unreadable
-// if it could not be read whole.
+// A file gzipped, as a Blob (onProgress(bytes read) as it goes). Rejects with an Unreadable
+// if it could not be read whole. Its Blob is made of its chunks, in memory: one built from the
+// stream (as Response.blob() builds it) Chrome keeps on disk past a few MB, in its profile,
+// and where that disk is short of room it fails, saying only "Failed to fetch".
 async function gzipFile(file, onProgress) {
   let n = 0;
   const count = new TransformStream({ transform(chunk, ctl) { n += chunk.byteLength; onProgress(n); ctl.enqueue(chunk); } });
-  let blob;
+  const reader = file.stream().pipeThrough(count).pipeThrough(new CompressionStream('gzip')).getReader(), chunks = [];
   try {
-    blob = await new Response(file.stream().pipeThrough(count).pipeThrough(new CompressionStream('gzip'))).blob();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
   } catch (e) {
     throw new Unreadable(file, n, e);
   }
   // (a file cut short while it is read is read only so far, without an error)
   if (n !== file.size) throw new Unreadable(file, n, null);
-  return blob;
+  return new Blob(chunks);
 }
 
 // a file that could not be read here (as chosen), after `n` bytes of it were; e: what the
-// browser said (Chrome: "Failed to fetch" or "NotReadableError", whatever the cause), if anything
+// browser said (Chrome: a TypeError, "network error", or a NotReadableError), if anything
 class Unreadable extends Error {
   constructor(file, n, e) {
     super(e?.message || 'read short');

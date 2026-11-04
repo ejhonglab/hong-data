@@ -1449,8 +1449,8 @@ function renderMarkdown(md) {
 const SOURCES = { settings: 'from your settings', nas: 'found on tensor', file: 'read from the files you added' };
 // fields that can be filled in automatically; once the user changes one, it is left alone
 const AUTO_FIELDS = ['uploader_name', 'indicator', 'driver', 'coding_unit', 'genotype', 'age_min_days', 'age_max_days', 'wavelength_nm',
-  'power_mw', 'power_tolerance_mw', 'power_measured_same_day', 'recording_system', 'panel_names', 'source_code_url', 'raw_data_path',
-  'mocorr_data_path', 'notes'];
+  'power_mw', 'power_tolerance_mw', 'power_measured_same_day', 'recording_system', 'panel_names', 'source_code_url', 'response_calc',
+  'raw_data_path', 'mocorr_data_path', 'notes'];
 // fields about one dataset only, emptied for each new file
 const DATASET_FIELDS = ['raw_data_path', 'mocorr_data_path'];
 // a row of a manipulation ({key, value}) to enter, as the upload form and the Edit panel have them
@@ -1497,10 +1497,177 @@ function manipulationsIn(rows) {
     .filter((m) => m.key || m.value);
 }
 
-// <select> + "Other…" input pairs
-const COMBOS = { indicator: ['#indicator-select', '#indicator-other'], coding_unit: ['#coding-unit-select', '#coding-unit-other'], recording_system: ['#system-select', '#system-other'] };
+// ---- the upload form's fields, wherever they are
+// The upload form's fields are the only ones written in the page: the Edit panel (Browse) and
+// the upload form defaults (Settings) are made of copies of them (`fieldsFrom`), read, filled
+// in and checked by the same functions, so that each field is entered and checked alike in all
+// three. Each field of the upload form (`[data-field]`) is copied into the forms its `data-in`
+// names ('edit', 'defaults').
+
+// every field of a dataset's metadata as entered at upload, as said of it (e.g. what an edit changed)
+const METADATA_FIELDS = {
+  uploader_name: 'uploaded by', indicator: 'calcium indicator', driver: 'driver', coding_unit: 'coding unit', genotype: 'genotype',
+  manipulations: 'manipulations', age_min_days: 'fly age (min)', age_max_days: 'fly age (max)', wavelength_nm: 'wavelength',
+  power_mw: 'power', power_tolerance_mw: 'power tolerance', power_measured_same_day: 'whether power was measured on the day',
+  recording_system: 'recording system', panel_names: 'panel names', source_code_url: 'analysis code link',
+  response_calc: 'response calculation', raw_data_path: 'raw data path', mocorr_data_path: 'motion-corrected data path', notes: 'notes',
+};
+// those an upload needs, as said when missing
+const REQUIRED_FIELDS = { uploader_name: 'your first name', indicator: 'calcium indicator', driver: 'driver', coding_unit: 'coding unit' };
+const NUMBER_FIELDS = ['age_min_days', 'age_max_days', 'wavelength_nm', 'power_mw', 'power_tolerance_mw'];
+// <select> + "Other…" input pairs, named <field>_select and <field>_other
+const COMBO_FIELDS = ['indicator', 'coding_unit', 'recording_system'];
+const comboEls = (form, key) => [form[`${key}_select`], form[`${key}_other`]];
 // the field a form element belongs to
 const fieldKey = (el) => (el.name || '').replace(/_(select|other)$/, '');
+// the forms made of the upload form's fields
+const FIELD_FORMS = ['#step-meta', '#ds-edit', '#settings-defaults'];
+
+// Copies the upload form's fields for `name` (in their `data-in`) into `form`, in their order:
+// those of its first grid (those it requires) into the form's first `.grid[data-fields]`, the
+// rest into its last. A field's `data-label-<name>` is its label there. `optional`: none of them
+// required (no `required`, no '*' in their labels, an empty choice in each dropdown), and a value
+// an input starts with in the upload form its placeholder instead (left empty, the upload form
+// keeps it).
+function fieldsFrom(form, name, { optional = false } = {}) {
+  const grids = $$('.grid[data-fields]', form);
+  $$('#step-meta .grid').forEach((grid, i) => {
+    for (const field of $$(':scope > [data-field]', grid)) {
+      if (!(field.dataset.in || '').split(' ').includes(name)) continue;
+      const copy = field.cloneNode(true);
+      const label = copy.firstElementChild;
+      if (field.getAttribute(`data-label-${name}`)) label.textContent = field.getAttribute(`data-label-${name}`);
+      for (const a of [...copy.attributes]) if (a.name === 'data-in' || a.name.startsWith('data-label-')) copy.removeAttribute(a.name);
+      $$('[id]', copy).forEach((el) => el.removeAttribute('id'));
+      if (optional) {
+        $$('[required]', copy).forEach((el) => { el.required = false; });
+        if (label.firstChild?.nodeType === Node.TEXT_NODE) label.firstChild.textContent = label.firstChild.textContent.replace(' *', '');
+        $$('select', copy).forEach((el) => { el.dataset.blank = ''; });
+        $$('input[value]:not([type=radio])', copy).forEach((el) => { el.placeholder = el.getAttribute('value'); el.removeAttribute('value'); el.value = ''; });
+      }
+      grids[Math.min(i, grids.length - 1)].appendChild(copy);
+    }
+  });
+}
+
+// the fields (of `METADATA_FIELDS`) a form of the upload form's fields has
+const fieldsIn = (form) => Object.keys(METADATA_FIELDS).filter((k) => (COMBO_FIELDS.includes(k) ? form[`${k}_select`]
+  : k === 'manipulations' ? $('[data-role=manip-rows]', form) : form[k]));
+
+// A field's value in a form of the upload form's fields, as an upload sends it: text trimmed
+// (null if empty), a dropdown's choice or what was typed for Other…, a power's tolerance and day
+// none without a power.
+function fieldValue(form, key) {
+  if (COMBO_FIELDS.includes(key)) {
+    const [s, other] = comboEls(form, key);
+    return (s.value === '__other__' ? other.value.trim() : s.value) || null;
+  }
+  if (key === 'manipulations') return manipulationsIn($('[data-role=manip-rows]', form));
+  const hasPower = form.power_mw.value !== '';
+  if (key === 'power_measured_same_day') {
+    const r = $(`input[name=${key}]:checked`, form)?.value;
+    return hasPower && r ? r === 'true' : null;
+  }
+  if (key === 'power_tolerance_mw' && !hasPower) return null;
+  const v = form[key].value;
+  if (NUMBER_FIELDS.includes(key)) return v === '' ? null : Number(v);
+  return v.trim() || null;
+}
+
+const fieldValues = (form, keys = fieldsIn(form)) => Object.fromEntries(keys.map((k) => [k, fieldValue(form, k)]));
+
+// Sets a field of a form of the upload form's fields (null: empty; a list: joined with ', ';
+// for a dropdown, a value not one of its choices as Other…, typed in).
+function setFieldValue(form, key, value) {
+  const v = value == null ? '' : Array.isArray(value) ? value.join(', ') : String(value);
+  if (COMBO_FIELDS.includes(key)) {
+    const [s, other] = comboEls(form, key);
+    const known = v !== '__other__' && [...s.options].some((o) => o.value === v);
+    s.value = known ? v : v ? '__other__' : s.options[0]?.value ?? '';
+    other.value = known ? '' : v;
+    other.hidden = s.value !== '__other__';
+  } else if (key === 'manipulations') {
+    $('[data-role=manip-rows]', form).replaceChildren(...(value?.length ? value : [{}]).map((m) => manipRow(m)));
+  } else if (key === 'power_measured_same_day') {
+    $$(`input[name=${key}]`, form).forEach((r) => { r.checked = r.value === v; });
+  } else {
+    form[key].value = v;
+  }
+  if (key === 'power_mw') syncPower(form);
+}
+
+// a power's tolerance, and whether it was measured on the day, entered only with a power
+function syncPower(form) {
+  const has = form.power_mw.value !== '';
+  form.power_tolerance_mw.disabled = !has;
+  $$('input[name=power_measured_same_day]', form).forEach((r) => { r.disabled = !has; });
+}
+
+// Fills the dropdowns of every form of the upload form's fields with their choices (from
+// /api/options), and Other…, keeping what each had; first an empty one (—) where none need be chosen.
+function fillCombos(options) {
+  const choices = { indicator: options.indicators, coding_unit: options.coding_units, recording_system: options.recording_systems };
+  for (const form of FIELD_FORMS.map((sel) => $(sel))) {
+    for (const key of COMBO_FIELDS) {
+      const [s] = comboEls(form, key);
+      if (!s) continue;
+      const had = fieldValue(form, key);
+      s.innerHTML = (s.dataset.blank !== undefined ? '<option value="">—</option>' : '')
+        + choices[key].map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join('') + '<option value="__other__">Other…</option>';
+      setFieldValue(form, key, had);
+    }
+  }
+}
+
+// What a form of the upload form's fields does as they are entered (its own checks aside): a
+// power's tolerance and day only with a power, Other… of a dropdown to type in, manipulations
+// added and removed (then `onManipulations()`), data paths checked on tensor when left (then
+// `onPath(key)`), and the response calculation drawn as it will be: returns its `texPreview`.
+function wireFields(form, { onPath = null, onManipulations = null } = {}) {
+  form.power_mw?.addEventListener('input', () => syncPower(form));
+  for (const key of COMBO_FIELDS) {
+    const [s, other] = comboEls(form, key);
+    s?.addEventListener('change', () => { other.hidden = s.value !== '__other__'; if (!other.hidden) other.focus(); });
+  }
+  const rows = $('[data-role=manip-rows]', form);
+  if (rows) {
+    $('[data-role=manip-add]', form).addEventListener('click', () => {
+      const row = manipRow();
+      rows.appendChild(row);
+      row.querySelector('.manip-key').focus();
+    });
+    rows.addEventListener('click', (e) => {
+      const b = e.target.closest('.manip-remove');
+      if (!b) return;
+      b.closest('.manip-row').remove();
+      if (!rows.children.length) rows.appendChild(manipRow());
+      onManipulations?.();
+    });
+  }
+  for (const key of DATASET_FIELDS) {
+    form[key]?.addEventListener('change', async () => {
+      await checkPathInput(form[key], form[key].nextElementSibling);
+      onPath?.(key);
+    });
+  }
+  return form.response_calc ? texPreview(form.response_calc) : null;
+}
+
+// why a response calculation is refused (as `texPreview` last drew it), if it is
+const calcProblem = (calc) => (calc?.errors.length ? `response calculation: MathJax could not read its math (${calc.errors.join('; ')})` : '');
+
+// What is wrong with metadata as a form of the upload form's fields gives it (`fieldValues`),
+// as far as can be told in the browser (the server checks it all again): `required` fields left
+// empty, a name not a first name alone (but `keptName`, an edited dataset's as stored), the fly
+// age range, and math MathJax could not read in the response calculation (`calc`).
+function metadataProblems(meta, { required = true, keptName = null, calc = null } = {}) {
+  const errs = [];
+  if (required) for (const [key, label] of Object.entries(REQUIRED_FIELDS)) if (!meta[key]) errs.push(`${label} is required`);
+  if (meta.uploader_name && normName(meta.uploader_name) !== normName(keptName) && firstNameProblem(meta.uploader_name)) errs.push(FIRST_NAME_PROBLEM);
+  if (meta.age_min_days != null && meta.age_max_days != null && meta.age_max_days < meta.age_min_days) errs.push('fly age range: max is smaller than min');
+  if (calcProblem(calc)) errs.push(calcProblem(calc));
+  return errs;
+}
 
 function markSource(el, src, detail = '') {
   if (src) { el.dataset.src = src; el.title = detail ? `${SOURCES[src]}: ${detail}` : SOURCES[src]; } else { delete el.dataset.src; el.removeAttribute('title'); }
@@ -1596,22 +1763,12 @@ class UploadFlow {
 
   _fillOptions() {
     const o = this.options;
-    const fill = (sel, values) => { sel.innerHTML = values.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join('') + '<option value="__other__">Other…</option>'; };
-    fill($('#indicator-select'), o.indicators);
-    fill($('#coding-unit-select'), o.coding_units);
-    const sys = $('#system-select');
-    sys.innerHTML = '<option value="">—</option>' + o.recording_systems.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join('') + '<option value="__other__">Other…</option>';
+    fillCombos(o);
     const dl = (id, values) => { $(id).innerHTML = values.map((v) => `<option value="${esc(v)}">`).join(''); };
     dl('#dl-uploaders', o.uploaders); dl('#dl-drivers', o.drivers); dl('#dl-genotypes', o.genotypes); dl('#dl-panels', o.panels);
     dl('#dl-response-calcs', o.response_calcs || []);
     dl('#dl-manip-keys', o.manipulation_keys || []); dl('#dl-manip-values', o.manipulation_values || []);
-    dl('#dl-indicators', o.indicators); dl('#dl-coding-units', o.coding_units); dl('#dl-systems', o.recording_systems);
     $('#step-meta').wavelength_nm.value = o.default_wavelength_nm ?? 925;
-    for (const [sel, other] of Object.values(COMBOS)) {
-      const s = $(sel), oth = $(other);
-      const sync = () => { oth.hidden = s.value !== '__other__'; if (!oth.hidden) oth.focus(); };
-      s.addEventListener('change', sync);
-    }
     this._autofill();
   }
 
@@ -1642,23 +1799,18 @@ class UploadFlow {
     });
 
     const form = $('#step-meta');
-    $('#power-mw').addEventListener('input', () => this._syncPower());
+    this.calcPreview = wireFields(form, {
+      onPath: (key) => { if (key === 'raw_data_path' && this.stage) this.lookup(); }, // its flies are looked for there
+      onManipulations: () => this._saveSoon(),
+    });
     // capturing, to know a field was changed by the user before its own listeners run
     form.addEventListener('input', (e) => this._changedByUser(e.target), true);
     form.addEventListener('change', (e) => this._changedByUser(e.target), true);
     form.uploader_name.addEventListener('input', () => this._checkName());
     form.uploader_name.addEventListener('change', () => { if (this.stage) this.lookup(); });
-    for (const el of COMBOS.coding_unit) $(el).addEventListener('change', () => this.viewer?.setKc(this._kc()));
+    for (const el of comboEls(form, 'coding_unit')) el.addEventListener('change', () => this.viewer?.setKc(this._kc()));
     // the preview's colorbar labelled with it as it is typed
-    this.calcPreview = texPreview(form.response_calc);
     form.response_calc.addEventListener('input', () => this.viewer?.setResponseCalc(form.response_calc.value));
-    // checked on the server when left, as folders are in the Settings tab
-    for (const key of DATASET_FIELDS) {
-      form[key].addEventListener('change', async () => {
-        await checkPathInput(form[key], $(`[data-msg-for=${key}]`));
-        if (key === 'raw_data_path' && this.stage) this.lookup(); // its flies are looked for there
-      });
-    }
     form.addEventListener('submit', (e) => { e.preventDefault(); this.generateReadme(); });
     form.addEventListener('input', () => this._saveSoon());
     form.addEventListener('change', () => this._saveSoon());
@@ -1672,19 +1824,7 @@ class UploadFlow {
       }
     });
 
-    this._setManipulations([]);
-    $('#manip-add').addEventListener('click', () => {
-      const row = manipRow();
-      $('#manip-rows').appendChild(row);
-      row.querySelector('.manip-key').focus();
-    });
-    $('#manip-rows').addEventListener('click', (e) => {
-      const b = e.target.closest('.manip-remove');
-      if (!b) return;
-      b.closest('.manip-row').remove();
-      if (!$('#manip-rows').children.length) $('#manip-rows').appendChild(manipRow());
-      this._saveSoon();
-    });
+    setFieldValue(form, 'manipulations', []);
 
     $('#yaml-btn').addEventListener('click', () => $('#yaml-input').click());
     $('#yaml-input').addEventListener('change', (e) => { if (e.target.files.length) this.addYaml([...e.target.files]); e.target.value = ''; });
@@ -1697,20 +1837,6 @@ class UploadFlow {
     $('#done-another').addEventListener('click', () => this.reset());
   }
 
-  // ------------------------------------------------------------- manipulations
-  // the rows of manipulations (at least one, empty)
-  _setManipulations(list) {
-    $('#manip-rows').replaceChildren(...(list.length ? list : [{}]).map((m) => manipRow(m)));
-  }
-
-  _manipulations() { return manipulationsIn($('#manip-rows')); }
-
-  _syncPower() {
-    const has = $('#power-mw').value !== '';
-    $('#power-tol').disabled = !has;
-    $$('#power-sameday input').forEach((r) => { r.disabled = !has; });
-  }
-
   // ------------------------------------------------- automatically filled fields
   _changedByUser(el) {
     const key = fieldKey(el);
@@ -1721,27 +1847,18 @@ class UploadFlow {
   }
 
   _setField(key, value) {
-    const v = value == null ? '' : String(value);
-    if (COMBOS[key]) {
-      const [s, other] = COMBOS[key].map((sel) => $(sel));
-      const known = v !== '__other__' && [...s.options].some((o) => o.value === v);
-      s.value = known ? v : v ? '__other__' : s.options[0].value;
-      other.value = known ? '' : v;
-      other.hidden = s.value !== '__other__';
-    } else if (key === 'power_measured_same_day') {
-      $$('#power-sameday input').forEach((r) => { r.checked = r.value === v; });
-    } else {
-      $('#step-meta')[key].value = v;
-    }
-    if (key === 'power_mw') this._syncPower();
+    const form = $('#step-meta');
+    setFieldValue(form, key, value);
     if (key === 'coding_unit') this.viewer?.setKc(this._kc());
-    if (DATASET_FIELDS.includes(key)) showPathCheck($('#step-meta')[key], $(`[data-msg-for=${key}]`), null);
+    if (key === 'response_calc') { this.calcPreview.show(); this.viewer?.setResponseCalc(form.response_calc.value); }
+    if (DATASET_FIELDS.includes(key)) showPathCheck(form[key], form[key].nextElementSibling, null);
   }
 
   _fieldEls(key) {
-    if (COMBOS[key]) return COMBOS[key].map((sel) => $(sel));
-    if (key === 'power_measured_same_day') return [$('#power-sameday')];
-    return [$('#step-meta')[key]];
+    const form = $('#step-meta');
+    if (COMBO_FIELDS.includes(key)) return comboEls(form, key);
+    if (key === 'power_measured_same_day') return [$('[data-role=power-sameday]', form)];
+    return [form[key]];
   }
 
   _mark(key, src, detail = '') {
@@ -2066,7 +2183,7 @@ class UploadFlow {
     }
     const readme = $('#step-readme').hidden ? null : { text: $('#readme-text').value, generated: this.generatedReadme };
     LS.set(UPLOAD_KEY, { stage_id: this.stage.stage_id, file: this.fileName, saved_at: Date.now() / 1000, fields,
-      manipulations: this._manipulations(), manual: [...this.manual], xml_auto: this.xmlAuto, readme });
+      manipulations: fieldValue($('#step-meta'), 'manipulations'), manual: [...this.manual], xml_auto: this.xmlAuto, readme });
   }
 
   // Continues the upload kept in this browser (`_save`), while the server still has it.
@@ -2089,14 +2206,14 @@ class UploadFlow {
       if (!el.name || !(el.name in saved.fields)) continue;
       if (el.type === 'radio') el.checked = el.value === saved.fields[el.name]; else el.value = saved.fields[el.name];
     }
-    for (const [sel, other] of Object.values(COMBOS)) $(other).hidden = $(sel).value !== '__other__';
-    this._setManipulations(saved.manipulations || []);
+    for (const key of COMBO_FIELDS) { const [s, other] = comboEls(form, key); other.hidden = s.value !== '__other__'; }
+    setFieldValue(form, 'manipulations', saved.manipulations || []);
     this.calcPreview.show();
     this.viewer?.setResponseCalc(form.response_calc.value);
     this.manual = new Set(saved.manual);
     this.xmlAuto = !!saved.xml_auto;
-    this._syncPower();
-    for (const key of DATASET_FIELDS) if (form[key].value.trim()) checkPathInput(form[key], $(`[data-msg-for=${key}]`));
+    syncPower(form);
+    for (const key of DATASET_FIELDS) if (form[key].value.trim()) checkPathInput(form[key], form[key].nextElementSibling);
     this._renderYaml(res);
     this._renderXml();
     if (saved.readme) {
@@ -2130,8 +2247,7 @@ class UploadFlow {
 
   // whether its data is of KCs: its coding unit in the form, or its ROI level 'cells'
   _kc() {
-    const s = $('#coding-unit-select'), unit = s.value === '__other__' ? $('#coding-unit-other').value : s.value;
-    return isKcData(unit, this.data?.summary?.col_levels);
+    return isKcData(fieldValue($('#step-meta'), 'coding_unit') || '', this.data?.summary?.col_levels);
   }
 
   // the odors of the data not one odor in the odor table (as in the data)
@@ -2300,43 +2416,10 @@ class UploadFlow {
     $('#xml-info').innerHTML = kv.length ? `<div class="kv">${kv.map(([k, v]) => `<span>${esc(k)}</span><span>${esc(v)}</span>`).join('')}</div>` : '';
   }
 
-  collectMetadata() {
-    const f = $('#step-meta');
-    const other = (selId, otherId) => { const s = $(selId); return s.value === '__other__' ? $(otherId).value.trim() : s.value; };
-    const num = (v) => (v === '' || v == null ? null : Number(v));
-    const sameday = f.querySelector('input[name=power_measured_same_day]:checked')?.value;
-    return {
-      uploader_name: f.uploader_name.value.trim(),
-      indicator: other('#indicator-select', '#indicator-other'),
-      driver: f.driver.value.trim(),
-      coding_unit: other('#coding-unit-select', '#coding-unit-other'),
-      genotype: f.genotype.value.trim() || null,
-      age_min_days: num(f.age_min_days.value),
-      age_max_days: num(f.age_max_days.value),
-      power_mw: num(f.power_mw.value),
-      power_tolerance_mw: f.power_mw.value === '' ? null : num(f.power_tolerance_mw.value),
-      power_measured_same_day: f.power_mw.value === '' || !sameday ? null : sameday === 'true',
-      wavelength_nm: num(f.wavelength_nm.value),
-      source_code_url: f.source_code_url.value.trim() || null,
-      raw_data_path: f.raw_data_path.value.trim() || null,
-      mocorr_data_path: f.mocorr_data_path.value.trim() || null,
-      panel_names: f.panel_names.value,
-      recording_system: other('#system-select', '#system-other') || null,
-      manipulations: this._manipulations(),
-      response_calc: f.response_calc.value.trim() || null,
-      notes: f.notes.value.trim() || null,
-    };
-  }
+  collectMetadata() { return fieldValues($('#step-meta'), Object.keys(METADATA_FIELDS)); }
 
   _localChecks(meta) {
-    const errs = [];
-    if (!meta.uploader_name) errs.push('your first name is required');
-    else if (firstNameProblem(meta.uploader_name)) errs.push(FIRST_NAME_PROBLEM);
-    if (!meta.indicator) errs.push('calcium indicator is required');
-    if (!meta.driver) errs.push('driver is required');
-    if (!meta.coding_unit) errs.push('coding unit is required');
-    if (meta.age_min_days != null && meta.age_max_days != null && meta.age_max_days < meta.age_min_days) errs.push('fly age range: max is smaller than min');
-    if (this.calcPreview.errors.length) errs.push(`response calculation: MathJax could not read its math (${this.calcPreview.errors.join('; ')})`);
+    const errs = metadataProblems(meta, { calc: this.calcPreview });
     if (this.yamlCheck && !this.yamlCheck.ok) errs.push('the odor YAML check has not passed');
     const upper = this.odorCheck?.case?.uppercase || [];
     if (upper.length) errs.push(`${upper.length} of its odor names ${upper.length === 1 ? 'has' : 'have'} capital letters, and new ones must be lowercase (see under the odor YAML)`);
@@ -2505,22 +2588,8 @@ class Browse {
       edit.hidden = true;
       $('#ds-edit-toggle').setAttribute('aria-expanded', 'false');
     });
-    edit.power_mw.addEventListener('input', () => this._syncEditPower());
+    this.editCalc = wireFields(edit);
     edit.uploader_name.addEventListener('input', () => showNameCheck(edit.uploader_name, this._editNameProblem()));
-    this.editCalc = texPreview(edit.response_calc);
-    for (const key of DATASET_FIELDS) edit[key].addEventListener('change', () => checkPathInput(edit[key], edit[key].nextElementSibling));
-    $('[data-role=manip-add]', edit).addEventListener('click', () => {
-      const row = manipRow();
-      $('[data-role=manip-rows]', edit).appendChild(row);
-      row.querySelector('.manip-key').focus();
-    });
-    $('[data-role=manip-rows]', edit).addEventListener('click', (e) => {
-      const b = e.target.closest('.manip-remove');
-      if (!b) return;
-      const rows = b.closest('[data-role=manip-rows]');
-      b.closest('.manip-row').remove();
-      if (!rows.children.length) rows.appendChild(manipRow());
-    });
     edit.addEventListener('submit', (e) => { e.preventDefault(); this.saveEdit(); });
     this.odorCache = new Map();
     $('#ds-odors-toggle').addEventListener('click', () => {
@@ -2681,18 +2750,12 @@ class Browse {
   // The Edit panel filled in with a dataset's metadata as entered at upload (as shown)
   _fillEdit(id) {
     const f = $('#ds-edit'), md = this.cache.get(id).d.metadata;
-    for (const key of Object.keys(EDIT_FIELDS)) {
-      const v = md[key];
-      if (key === 'manipulations') $('[data-role=manip-rows]', f).replaceChildren(...(v?.length ? v : [{}]).map((m) => manipRow(m)));
-      else if (key === 'power_measured_same_day') $$(`input[name=${key}]`, f).forEach((r) => { r.checked = r.value === (v == null ? '' : String(v)); });
-      else f[key].value = v == null ? '' : Array.isArray(v) ? v.join(', ') : String(v);
-    }
+    for (const key of fieldsIn(f)) setFieldValue(f, key, md[key]);
     for (const key of DATASET_FIELDS) showPathCheck(f[key], f[key].nextElementSibling, null);
     showNameCheck(f.uploader_name, '');
     this.editCalc.show();
     $('[data-role=errors]', f).replaceChildren();
     setStatus($('#ds-edit-status'), '');
-    this._syncEditPower();
     this.editOf = { id, start: this._editValues() };
   }
 
@@ -2703,32 +2766,14 @@ class Browse {
     return this.editOf && normName(name) !== normName(this.editOf.start.uploader_name) ? firstNameProblem(name) : '';
   }
 
-  _syncEditPower() {
-    const f = $('#ds-edit'), has = f.power_mw.value !== '';
-    f.power_tolerance_mw.disabled = !has;
-    $$('input[name=power_measured_same_day]', f).forEach((r) => { r.disabled = !has; });
-  }
-
   // the Edit panel's values, as the upload form sends them
-  _editValues() {
-    const f = $('#ds-edit'), hasPower = f.power_mw.value !== '', out = {};
-    for (const key of Object.keys(EDIT_FIELDS)) {
-      if (key === 'manipulations') out[key] = manipulationsIn($('[data-role=manip-rows]', f));
-      else if (key === 'power_measured_same_day') {
-        const r = $(`input[name=${key}]:checked`, f)?.value;
-        out[key] = hasPower && r ? r === 'true' : null;
-      } else if (key === 'power_tolerance_mw' && !hasPower) out[key] = null;
-      else if (NUMBER_FIELDS.includes(key)) out[key] = f[key].value === '' ? null : Number(f[key].value);
-      else out[key] = f[key].value.trim() || null;
-    }
-    return out;
-  }
+  _editValues() { return fieldValues($('#ds-edit')); }
 
   // the fields changed in the Edit panel since it was filled in
   _editChanged() {
     if (!this.editOf || $('#ds-edit').hidden) return [];
     const now = this._editValues(), { start } = this.editOf;
-    return Object.keys(EDIT_FIELDS).filter((k) => JSON.stringify(now[k]) !== JSON.stringify(start[k]));
+    return Object.keys(now).filter((k) => JSON.stringify(now[k]) !== JSON.stringify(start[k]));
   }
 
   // Saves the Edit panel's changes, once asked whether to (No by default); then everything
@@ -2739,17 +2784,11 @@ class Browse {
     const changed = this._editChanged();
     errors.replaceChildren();
     if (!changed.length) { setStatus(status, 'Nothing was changed.'); return; }
-    if (this._editNameProblem()) {
-      errors.replaceChildren(msgBox('error', `Not saved: ${esc(FIRST_NAME_PROBLEM)}`));
-      return;
-    }
-    if (this.editCalc.errors.length) {
-      errors.replaceChildren(msgBox('error', `Not saved: response calculation: MathJax could not read its math (${esc(this.editCalc.errors.join('; '))})`));
-      return;
-    }
+    const problems = metadataProblems(this._editValues(), { keptName: this.editOf.start.uploader_name, calc: this.editCalc });
+    if (problems.length) { errors.replaceChildren(msgBox('error', `Not saved:${listHtml(problems)}`)); return; }
     const { d } = this.cache.get(id);
     $('#edit-confirm-q').textContent = `Are you sure you want to save these changes to dataset #${id}?`;
-    $('#edit-confirm-detail').textContent = `Changed: ${changed.map((k) => EDIT_FIELDS[k]).join(', ')}. `
+    $('#edit-confirm-detail').textContent = `Changed: ${changed.map((k) => METADATA_FIELDS[k]).join(', ')}. `
       + (d.readme_edited ? 'Its README was edited by hand, so it will stay as it is.' : 'Its README will be written again from them.');
     if (await askDialog($('#edit-confirm')) !== 'yes') return;
     setStatus(status, 'Saving…');
@@ -2773,7 +2812,7 @@ class Browse {
       this.editOf = null;
       await this.show(id);
     }
-    const what = res.changed.map((k) => EDIT_FIELDS[k]).join(', ');
+    const what = res.changed.map((k) => METADATA_FIELDS[k]).join(', ');
     setStatus(status, !res.changed.length ? 'Nothing was changed.'
       : `✓ Saved: ${what}. ${res.readme === 'generated' ? 'Its README was written again.' : 'Its README, edited by hand, was left as it was.'}`);
   }
@@ -2986,14 +3025,6 @@ class Browse {
 }
 
 // the metadata entered at upload, in the order of the Edit panel (metadata.Metadata): as it names them
-const EDIT_FIELDS = {
-  uploader_name: 'uploaded by', indicator: 'calcium indicator', driver: 'driver', coding_unit: 'coding unit', genotype: 'genotype',
-  manipulations: 'manipulations', age_min_days: 'fly age (min)', age_max_days: 'fly age (max)', wavelength_nm: 'wavelength',
-  power_mw: 'power', power_tolerance_mw: 'power tolerance', power_measured_same_day: 'whether power was measured on the day',
-  recording_system: 'recording system', panel_names: 'panel names', source_code_url: 'analysis code link',
-  response_calc: 'response calculation', raw_data_path: 'raw data path', mocorr_data_path: 'motion-corrected data path', notes: 'notes',
-};
-
 const DATA_LINKS = { raw: 'Raw data', mocorr: 'Motion corrected / traces' };
 // recordings with movies in one of a dataset's data folders and none in the other: said so on that one
 const DATA_ONLY = { raw: ['not motion corrected', 'Not in the motion-corrected data'], mocorr: ['not in the raw data', 'Not in the raw data'] };
@@ -3504,9 +3535,6 @@ class Reference {
 // The user's name and data folders on tensor (saved on the server, which looks for the
 // files of their uploads there), and their defaults for the upload form (kept in this browser).
 const DIR_KINDS = ['raw_dirs', 'mocorr_dirs', 'odor_dirs'];
-const DEFAULT_FIELDS = ['indicator', 'driver', 'coding_unit', 'recording_system', 'genotype', 'age_min_days', 'age_max_days',
-  'wavelength_nm', 'power_mw', 'power_tolerance_mw', 'power_measured_same_day', 'panel_names', 'source_code_url', 'notes'];
-const NUMBER_FIELDS = ['age_min_days', 'age_max_days', 'wavelength_nm', 'power_mw', 'power_tolerance_mw'];
 
 // what is wrong with a folder as typed, as far as can be told without the server
 function localDirProblem(path) {
@@ -3562,7 +3590,7 @@ class SettingsPage {
       this.check();
     });
     const f = $('#settings-defaults');
-    f.power_mw.addEventListener('input', () => this._syncPower());
+    this.defaultsCalc = wireFields(f);
     f.addEventListener('change', () => this.checkDefaults());
     f.addEventListener('submit', (e) => e.preventDefault());
     $('#defaults-clear').addEventListener('click', () => { this._fillDefaults({}); this.checkDefaults(); });
@@ -3706,35 +3734,13 @@ class SettingsPage {
   // ------------------------------------------------------------------ defaults
   _fillDefaults(values) {
     const f = $('#settings-defaults');
-    for (const key of DEFAULT_FIELDS) {
-      const v = values[key] == null ? '' : String(values[key]);
-      if (key === 'power_measured_same_day') $$(`input[name=${key}]`, f).forEach((r) => { r.checked = r.value === v; });
-      else f[key].value = v;
-    }
-    this._syncPower();
-  }
-
-  _syncPower() {
-    const f = $('#settings-defaults'), has = f.power_mw.value !== '';
-    f.power_tolerance_mw.disabled = !has;
-    $$('input[name=power_measured_same_day]', f).forEach((r) => { r.disabled = !has; });
+    for (const key of fieldsIn(f)) setFieldValue(f, key, values[key]);
+    this.defaultsCalc.show();
   }
 
   // the defaults entered, as the upload form would send them (empty ones left out)
   _collectDefaults() {
-    const f = $('#settings-defaults'), out = {};
-    const hasPower = f.power_mw.value !== '';
-    for (const key of DEFAULT_FIELDS) {
-      let v;
-      if (key === 'power_measured_same_day') {
-        const r = $(`input[name=${key}]:checked`, f)?.value;
-        v = hasPower && r ? r === 'true' : null;
-      } else if (key === 'power_tolerance_mw' && !hasPower) v = null;
-      else if (NUMBER_FIELDS.includes(key)) v = f[key].value === '' ? null : Number(f[key].value);
-      else v = f[key].value.trim() || null;
-      if (v != null) out[key] = v;
-    }
-    return out;
+    return Object.fromEntries(Object.entries(fieldValues($('#settings-defaults'))).filter(([, v]) => v != null));
   }
 
   // Checks the defaults as an upload is checked (by the browser for the same kinds of
@@ -3745,8 +3751,11 @@ class SettingsPage {
     const values = this._collectDefaults();
     const problems = new Map();
     for (const el of $$('input[name], textarea[name]', f)) {
-      if (!el.disabled && !el.checkValidity()) problems.set(el.name, `${el.closest('.field').firstElementChild.textContent}: ${el.validationMessage}`);
+      if (!el.disabled && !el.checkValidity()) problems.set(fieldKey(el), `${el.closest('.field').firstElementChild.textContent}: ${el.validationMessage}`);
     }
+    await this.defaultsCalc.show();
+    if (seq !== this._defaultsSeq) return;
+    if (calcProblem(this.defaultsCalc)) problems.set('response_calc', calcProblem(this.defaultsCalc));
     let res;
     try {
       const checkable = Object.fromEntries(Object.entries(values).filter(([k]) => !problems.has(k)));
@@ -3757,7 +3766,7 @@ class SettingsPage {
     }
     if (seq !== this._defaultsSeq) return;
     for (const e of res.errors) if (!problems.has(e.field)) problems.set(e.field, e.message);
-    $$('[name]', f).forEach((el) => el.classList.toggle('invalid', problems.has(el.name)));
+    $$('[name]', f).forEach((el) => el.classList.toggle('invalid', problems.has(fieldKey(el))));
     if (problems.size) { box.replaceChildren(msgBox('error', `Not kept until fixed:${listHtml([...problems.values()])}`)); return; }
     this.defaults = values;
     LS.set('olfdb.defaults', values);
@@ -6857,6 +6866,8 @@ class HeadspaceVcf {
 }
 
 // ==================================================================== router
+fieldsFrom($('#ds-edit'), 'edit');
+fieldsFrom($('#settings-defaults'), 'defaults', { optional: true });
 const upload = new UploadFlow();
 const browse = new Browse();
 const odorsPage = new OdorsPage();
