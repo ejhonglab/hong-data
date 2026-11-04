@@ -1327,10 +1327,11 @@ async def roi_training_flies(request: Request) -> Response:
 
 
 async def roi_training_download(request: Request) -> Response:
-    """A zip of what the ROI training tab lists of each fly (``?stacks=1``: and its anatomical
-    stacks), sent as it is written (`roi_training.stream_zip`): it may be several GB."""
+    """A zip of what the ROI training tab lists of each fly, with its anatomical stack if it
+    has one (but with ``?stacks=0``), sent as it is written (`roi_training.stream_zip`): it may
+    be several GB."""
     found, bases = await run_in_threadpool(_roi_training_found, request)
-    stacks = request.query_params.get("stacks") in ("1", "true")
+    stacks = request.query_params.get("stacks") not in ("0", "false")
     top = f"olfdb_roi_training_{dt.date.today().isoformat()}"
     return StreamingResponse(roi_training.stream_zip(found, config.TENSOR_ROOT, bases, stacks, top), media_type="application/zip",
                              headers={"content-disposition": f'attachment; filename="{top}.zip"'})

@@ -6938,7 +6938,7 @@ class RoiTrainingPage {
     const r = this.data, a = $('#rt-download'), stacks = $('#rt-stacks').checked;
     a.hidden = !r?.flies.length;
     if (!r) return;
-    a.href = `/api/roi_training/download${stacks ? '?stacks=1' : ''}`;
+    a.href = `/api/roi_training/download${stacks ? '' : '?stacks=0'}`;
     a.textContent = `Download (${fmtSize(r.bytes + (stacks ? r.stack_bytes : 0))})`;
   }
 }

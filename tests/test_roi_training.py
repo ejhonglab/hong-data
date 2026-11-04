@@ -156,12 +156,16 @@ def test_download_failed(main, root, export):  # noqa: F811
 def test_download_endpoint(main, root, export):  # noqa: F811
     from starlette.requests import Request
 
-    scope = {"type": "http", "method": "GET", "path": "/", "headers": [], "query_string": b"stacks=1", "path_params": {}}
-    response = asyncio.run(main.roi_training_download(Request(scope)))
-    assert response.media_type == "application/zip" and "olfdb_roi_training_" in response.headers["content-disposition"]
+    def names(query: bytes) -> list[str]:
+        scope = {"type": "http", "method": "GET", "path": "/", "headers": [], "query_string": query, "path_params": {}}
+        response = asyncio.run(main.roi_training_download(Request(scope)))
+        assert response.media_type == "application/zip" and "olfdb_roi_training_" in response.headers["content-disposition"]
 
-    async def body() -> bytes:
-        return b"".join([chunk async for chunk in response.body_iterator])
+        async def body() -> bytes:
+            return b"".join([chunk async for chunk in response.body_iterator])
 
-    names = zipfile.ZipFile(io.BytesIO(asyncio.run(body()))).namelist()
-    assert any(n.endswith("/anat/ChanA_0001_0001_0001_0001.tif") for n in names)
+        return zipfile.ZipFile(io.BytesIO(asyncio.run(body()))).namelist()
+
+    # with the anatomical stacks, unless asked not to
+    stack = lambda ns: any(n.endswith("/anat/ChanA_0001_0001_0001_0001.tif") for n in ns)  # noqa: E731
+    assert stack(names(b"")) and not stack(names(b"stacks=0"))

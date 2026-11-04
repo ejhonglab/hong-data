@@ -1096,9 +1096,10 @@ GET    /api/merge/scales?(the same, without format)
 GET    /api/roi_training[?datasets=1,2]     the flies of glomeruli datasets with a diagnostic panel to
                                             export for ROI training (each its files' total size), and
                                             those left out, with why (roi_training.py)
-GET    /api/roi_training/download[?stacks=1&datasets=1,2]
+GET    /api/roi_training/download[?stacks=0&datasets=1,2]
                                             a zip of their files where they are on tensor, sent as it is
-                                            written, with roi_training.json (and their anatomical stacks)
+                                            written, with roi_training.json, and their anatomical stacks
+                                            (but with stacks=0)
 GET    /api/odors                           the odor table (with each odor's `inchi`,
                                             `vapor_pressure_kpa`, `molar_mass_g_mol`, ...)
 GET    /api/odors/status                    the odor sheet, when it was last read, whether it

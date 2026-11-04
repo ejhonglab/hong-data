@@ -16,8 +16,9 @@ it out) has:
 
 and its folder in the raw data has the Experiment.xml of at least one of its diagnostic
 recordings (their voxel sizes). Its anatomical stacks (`tensor.ANATOMICAL` folders of its
-raw data, as recorded, so not flipped as al_analysis flips right ALs' functional data) go
-in too if asked for.
+raw data: higher resolution stacks without odors, which some flies have), which al-diag-seg
+registers flies to each other through, go in too unless asked not to: as recorded, so not
+flipped as al_analysis flips right ALs' functional data.
 
 The zip has each file where it is on tensor (its path from the top of tensor), the average
 image computed here where al_analysis writes it, and `MANIFEST`, saying which file is what (each

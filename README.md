@@ -619,8 +619,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   the `Experiment.xml` of a diagnostic recording. The download is a zip, sent as it is made
   (several GB: the browser saves it as it comes), of those files where they are on tensor
   (from its top), with the average image computed on the server where al_analysis has not
-  written it (kept there, so only once), and if ticked the flies' anatomical stacks
-  (`anat` folders of the raw data, as recorded). Its `roi_training.json` lists each fly's
+  written it (kept there, so only once), and unless unticked the flies' anatomical stacks:
+  the `anat` folders of their raw data, higher resolution stacks without odors, which some
+  flies have (as recorded, so not mirrored as al_analysis mirrors right ALs' functional
+  data), through which al-diag-seg registers flies to each other. Its `roi_training.json` lists each fly's
   files, each recording's odors as named in the odor table (alike in every fly), the
   glomerulus names uploads accept (to tell glomeruli from other ROIs, as the movie player
   does), and the flies left out. A fly in several datasets is in it once.
