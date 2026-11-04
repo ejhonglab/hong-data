@@ -14,6 +14,7 @@ from starlette.requests import Request
 from app import tensor
 from app.db import Database
 from app.ingest import load_file, save_parsed
+from app.metadata import FIRST_NAME_PROBLEM
 from tests.test_ingest import COLS, ROWS, make_wide, write_csv
 
 XML = '<ThorImageExperiment><ExperimentNotes text="{notes}"/><MultiPhotonLaser position="920"/></ThorImageExperiment>'
@@ -292,12 +293,15 @@ def call(endpoint, *, body=None, params=None, path_params=None) -> tuple[int, di
 def test_user_api(main):
     save = lambda body: call(main.user_save, body=body)[1]
     get = lambda name: call(main.user_get, params={"name": name})[1]
-    r = save({"name": "  Tom  O ", "raw_dirs": ["tom/raw", "/x"], "odor_dirs": ["tom/stim"]})
+    r = save({"name": "  Tom ", "raw_dirs": ["tom/raw", "/x"], "odor_dirs": ["tom/stim"]})
     assert not r["ok"] and not r["saved"] and [c["ok"] for c in r["dirs"]["raw_dirs"]] == [True, False]
-    assert get("tom o") == {"user": None}
-    r = save({"name": "  Tom  O ", "raw_dirs": ["tom/raw/", "tom/raw", ""]})
-    assert r["ok"] and r["saved"] and r["user"]["raw_dirs"] == ["tom/raw"] and r["user"]["name"] == "Tom O"
-    assert get("tom o")["user"]["raw_dirs"] == ["tom/raw"]
+    assert get("tom") == {"user": None}
+    r = save({"name": "  Tom ", "raw_dirs": ["tom/raw/", "tom/raw", ""]})
+    assert r["ok"] and r["saved"] and r["user"]["raw_dirs"] == ["tom/raw"] and r["user"]["name"] == "Tom"
+    assert get("TOM")["user"]["raw_dirs"] == ["tom/raw"]
+    # a name that is not a first name alone: refused, and nothing saved
+    status, r = call(main.user_save, body={"name": "Tom  O", "raw_dirs": ["tom/raw"]})
+    assert (status, r) == (422, {"error": FIRST_NAME_PROBLEM}) and get("tom o") == {"user": None}
     # checked but not saved without a name
     r = save({"raw_dirs": ["tom/mocorr"]})
     assert r["ok"] and not r["saved"]
@@ -524,6 +528,8 @@ def test_duplicates(main, tmp_path, monkeypatch):
     assert status == 422 and any("are exactly those of dataset #1" in e for e in r["errors"])
     # another's flies (one's fly 1 of a day is not another's), or of another coding unit (one fly recorded in two places)
     assert readme(uploader_name="Ann")[1]["ok"] and readme(coding_unit="PNs")[1]["ok"]
+    # a name that is not a first name alone is refused
+    assert readme(uploader_name="Ann Smith") == (422, {"ok": False, "errors": [FIRST_NAME_PROBLEM]})
 
     # some flies of one of theirs: a warning, saying which dataset may need to be deleted
     status, r = upload(main, write_csv(make_wide(ROWS, COLS + [("2024-01-03", 1, "DM2")]), tmp_path, "more.csv"))

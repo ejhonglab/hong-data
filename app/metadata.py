@@ -15,6 +15,15 @@ KC_UNITS = ("kc", "kcs", "kenyon cell", "kenyon cells")  # coding units (in any 
 # what a manipulation's name (key) and value cannot have, as they are written 'key=value; key' in titles
 MANIPULATION_KEY_CHARS = "=;[]"
 MANIPULATION_VALUE_CHARS = ";[]"
+FIRST_NAME_PROBLEM = ("the name must be a first name alone, with no spaces (e.g. Ann), as the folders on tensor saved under it "
+                      "in Settings are found by it at upload")
+
+
+def first_name_problem(name: Optional[str]) -> Optional[str]:
+    """Why a name of an uploader, or of a user whose folders are saved in Settings, is
+    refused, if it is: a name with a space in it (one written in full where the other is a
+    first name finds no folders saved under the other)."""
+    return FIRST_NAME_PROBLEM if name and len(name.split()) > 1 else None
 
 
 def is_kc(coding_unit: Optional[str]) -> bool:

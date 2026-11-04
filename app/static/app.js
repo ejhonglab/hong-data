@@ -309,6 +309,19 @@ function showPathCheck(input, msg, c) {
   msg.textContent = c ? (c.ok ? c.warning || '✓ found on tensor' : c.error) : '';
 }
 
+// an uploader's name (upload form, Edit panel, Settings) is a first name alone, as the server
+// checks it (metadata.first_name_problem): folders saved under 'Ann' are not found for 'Ann Smith'
+const FIRST_NAME_PROBLEM = 'the name must be a first name alone, with no spaces (e.g. Ann), as the folders on tensor saved under it in Settings are found by it at upload';
+const normName = (s) => (s || '').trim().replace(/\s+/g, ' ').toLowerCase();
+const firstNameProblem = (name) => (normName(name).includes(' ') ? FIRST_NAME_PROBLEM : '');
+
+// shows why a name field's value is refused in the message after it ('' to clear it)
+function showNameCheck(input, problem) {
+  input.classList.toggle('invalid', !!problem);
+  input.nextElementSibling.className = `path-msg${problem ? ' bad' : ''}`;
+  input.nextElementSibling.textContent = problem;
+}
+
 // Checks a dataset's data path as typed, then on the server (as the Settings tab checks
 // folders), writing it as normalized there if it is found and no longer being typed in.
 async function checkPathInput(input, msg) {
@@ -1633,6 +1646,7 @@ class UploadFlow {
     // capturing, to know a field was changed by the user before its own listeners run
     form.addEventListener('input', (e) => this._changedByUser(e.target), true);
     form.addEventListener('change', (e) => this._changedByUser(e.target), true);
+    form.uploader_name.addEventListener('input', () => this._checkName());
     form.uploader_name.addEventListener('change', () => { if (this.stage) this.lookup(); });
     for (const el of COMBOS.coding_unit) $(el).addEventListener('change', () => this.viewer?.setKc(this._kc()));
     // the preview's colorbar labelled with it as it is typed
@@ -1779,6 +1793,12 @@ class UploadFlow {
         this.auto.delete(key);
       }
     }
+    this._checkName();
+  }
+
+  _checkName() {
+    const input = $('#step-meta').uploader_name;
+    showNameCheck(input, firstNameProblem(input.value));
   }
 
   // the uploader's folders were saved in Settings
@@ -1801,7 +1821,8 @@ class UploadFlow {
   async lookup() {
     const seq = ++this._lookupSeq;
     const box = $('#nas-lookup'), form = $('#step-meta');
-    const name = form.uploader_name.value.trim();
+    const typed = form.uploader_name.value.trim(), name = firstNameProblem(typed) ? '' : typed;
+    this._checkName();
     // as typed in, not as filled in from an earlier lookup
     const raw = this.manual.has('raw_data_path') ? form.raw_data_path.value.trim() : '';
     const stageId = this.stage.stage_id;
@@ -1811,7 +1832,7 @@ class UploadFlow {
     };
     if (!name && !raw) {
       this.user = null;
-      done('Set your name and data folders in <a href="#settings">Settings</a>, or enter the raw data path below, to have the files of this dataset found on tensor.');
+      done('Set your first name and data folders in <a href="#settings">Settings</a>, or enter the raw data path below, to have the files of this dataset found on tensor.');
       return;
     }
     this.looking = true;
@@ -2309,7 +2330,8 @@ class UploadFlow {
 
   _localChecks(meta) {
     const errs = [];
-    if (!meta.uploader_name) errs.push('your name is required');
+    if (!meta.uploader_name) errs.push('your first name is required');
+    else if (firstNameProblem(meta.uploader_name)) errs.push(FIRST_NAME_PROBLEM);
     if (!meta.indicator) errs.push('calcium indicator is required');
     if (!meta.driver) errs.push('driver is required');
     if (!meta.coding_unit) errs.push('coding unit is required');
@@ -2484,6 +2506,7 @@ class Browse {
       $('#ds-edit-toggle').setAttribute('aria-expanded', 'false');
     });
     edit.power_mw.addEventListener('input', () => this._syncEditPower());
+    edit.uploader_name.addEventListener('input', () => showNameCheck(edit.uploader_name, this._editNameProblem()));
     this.editCalc = texPreview(edit.response_calc);
     for (const key of DATASET_FIELDS) edit[key].addEventListener('change', () => checkPathInput(edit[key], edit[key].nextElementSibling));
     $('[data-role=manip-add]', edit).addEventListener('click', () => {
@@ -2665,11 +2688,19 @@ class Browse {
       else f[key].value = v == null ? '' : Array.isArray(v) ? v.join(', ') : String(v);
     }
     for (const key of DATASET_FIELDS) showPathCheck(f[key], f[key].nextElementSibling, null);
+    showNameCheck(f.uploader_name, '');
     this.editCalc.show();
     $('[data-role=errors]', f).replaceChildren();
     setStatus($('#ds-edit-status'), '');
     this._syncEditPower();
     this.editOf = { id, start: this._editValues() };
+  }
+
+  // why the uploader's name as edited is refused, if it is: a name entered before names
+  // were first names alone is kept, but not one changed to
+  _editNameProblem() {
+    const name = $('#ds-edit').uploader_name.value;
+    return this.editOf && normName(name) !== normName(this.editOf.start.uploader_name) ? firstNameProblem(name) : '';
   }
 
   _syncEditPower() {
@@ -2708,6 +2739,10 @@ class Browse {
     const changed = this._editChanged();
     errors.replaceChildren();
     if (!changed.length) { setStatus(status, 'Nothing was changed.'); return; }
+    if (this._editNameProblem()) {
+      errors.replaceChildren(msgBox('error', `Not saved: ${esc(FIRST_NAME_PROBLEM)}`));
+      return;
+    }
     if (this.editCalc.errors.length) {
       errors.replaceChildren(msgBox('error', `Not saved: response calculation: MathJax could not read its math (${esc(this.editCalc.errors.join('; '))})`));
       return;
@@ -3540,11 +3575,14 @@ class SettingsPage {
   }
 
   // what the upload form is filled in from
-  current() { return { name: this.name, defaults: this.defaults }; }
+  current() { return { name: this._validName(), defaults: this.defaults }; }
+
+  // the name as entered, if it is a first name alone (as the server saves folders under), else ''
+  _validName() { return firstNameProblem(this.name) ? '' : this.name; }
 
   // a name entered elsewhere (upload form, odor sync) is kept only while none is set here
   rememberName(name) {
-    if (this.name || !name) return;
+    if (this.name || !name || firstNameProblem(name)) return;
     this.name = name;
     LS.set('olfdb.uploader_name', name);
     $('#settings-name').value = name;
@@ -3554,9 +3592,10 @@ class SettingsPage {
     if (this.loaded) return;
     this.loaded = true;
     $('#settings-name').value = this.name;
+    showNameCheck($('#settings-name'), firstNameProblem(this.name));
     $('#tensor-root').textContent = upload.options?.tensor_root || '?';
     this._fillDefaults(this.defaults);
-    if (this.name) {
+    if (this._validName()) {
       try { this.user = (await api(`/api/user?name=${encodeURIComponent(this.name)}`)).user; } catch { /* check() says so */ }
     }
     // folders that could not be saved yet are kept in this browser until they can
@@ -3565,17 +3604,18 @@ class SettingsPage {
     this.owner = draft && draft.name === this.name ? draft.name : this.user?.name || '';
     this._setDirs(dirs);
     if (this.name || DIR_KINDS.some((k) => dirs[k]?.length)) this.check();
-    else this._status('none', 'No Folders Yet', 'Enter your name and your folders above.');
+    else this._status('none', 'No Folders Yet', 'Enter your first name and your folders above.');
   }
 
   async setName(value) {
     const name = value.trim().replace(/\s+/g, ' ');
     $('#settings-name').value = name;
+    showNameCheck($('#settings-name'), firstNameProblem(name));
     if (name === this.name) return;
     this.name = name;
     LS.set('olfdb.uploader_name', name);
     upload.settingsChanged();
-    if (name) {
+    if (this._validName()) {
       let user = null;
       try { user = (await api(`/api/user?name=${encodeURIComponent(name)}`)).user; } catch { /* check() says so */ }
       if (this.name !== name) return;
@@ -3634,7 +3674,7 @@ class SettingsPage {
     this._status('pending', 'Checking…');
     let res;
     try {
-      res = await api('/api/user', { method: 'POST', json: { name: this.name, ...dirs } });
+      res = await api('/api/user', { method: 'POST', json: { name: this._validName(), ...dirs } });
     } catch (e) {
       if (!this._checkAgain) this._status('bad', 'Could Not Check', esc(e.message));
       return;
@@ -3656,10 +3696,10 @@ class SettingsPage {
     } else LS.set('olfdb.dirs_draft', { name: this.name, dirs });
     const all = DIR_KINDS.flatMap((k) => res.dirs[k]);
     const bad = all.filter((c) => !c.ok).length;
-    const saved = res.saved ? `Saved on the server for <b>${esc(res.user.name)}</b>.` : 'Enter your name above to save them on the server.';
+    const saved = res.saved ? `Saved on the server for <b>${esc(res.user.name)}</b>.` : 'Enter your first name above to save them on the server.';
     if (!res.root.ok) this._status('bad', 'Tensor Not Accessible', `${esc(res.root.error)}. Nothing is saved until the server can read tensor.`);
     else if (bad) this._status('bad', `${bad} of ${all.length} Paths Not Accessible`, 'Fix or remove the folders marked above; they are saved on the server once all of them are found there.');
-    else if (!all.length) this._status('none', 'No Folders Yet', this.name ? '' : 'Enter your name and your folders above.');
+    else if (!all.length) this._status('none', 'No Folders Yet', this._validName() ? '' : 'Enter your first name and your folders above.');
     else this._status('ok', 'All Paths Accessible', saved);
   }
 

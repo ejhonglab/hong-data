@@ -52,6 +52,7 @@ from .metadata import (
     REQUIRED_FIELDS,
     Metadata,
     dataset_title,
+    first_name_problem,
     generate_readme,
     same_manipulations,
     same_response_calc,
@@ -173,7 +174,7 @@ async def options(request: Request) -> Response:
             "recording_systems": merge(DEFAULT_RECORDING_SYSTEMS, existing["recording_systems"]),
             "drivers": existing["drivers"],
             "panels": existing["panels"],
-            "uploaders": existing["uploaders"],
+            "uploaders": [u for u in existing["uploaders"] if not first_name_problem(u)],
             "genotypes": existing["genotypes"],
             "response_calcs": existing["response_calcs"],
             "manipulation_keys": existing["manipulation_keys"],
@@ -618,7 +619,7 @@ async def stage_lookup(request: Request) -> Response:
 
 
 _FIELD_LABELS = {
-    "uploader_name": "your name", "indicator": "calcium indicator", "driver": "driver",
+    "uploader_name": "your first name", "indicator": "calcium indicator", "driver": "driver",
     "coding_unit": "coding unit", "age_min_days": "fly age (min)", "age_max_days": "fly age (max)",
     "power_mw": "power (mW)", "power_tolerance_mw": "power tolerance", "wavelength_nm": "wavelength",
     "panel_names": "panel name(s)", "recording_system": "recording system", "source_code_url": "analysis code link",
@@ -642,11 +643,16 @@ def _metadata_errors(e: PydanticValidationError) -> list[dict]:
     return out
 
 
-def _parse_metadata(body: Any) -> tuple[Optional[Metadata], list[str]]:
+def _parse_metadata(body: Any, kept_name: Optional[str] = None) -> tuple[Optional[Metadata], list[str]]:
+    """Metadata as entered (of an upload, or an edit), validated: (it, or None; problems as
+    messages). Its uploader's name must be a first name alone (`first_name_problem`),
+    unless it is `kept_name` (an edited dataset's, as stored)."""
     try:
-        return Metadata.model_validate(body or {}), []
+        m = Metadata.model_validate(body or {})
     except PydanticValidationError as e:
         return None, [x["message"] for x in _metadata_errors(e)]
+    problem = None if _same_name(m.uploader_name, kept_name) else first_name_problem(m.uploader_name)
+    return (None, [problem]) if problem else (m, [])
 
 
 async def metadata_check(request: Request) -> Response:
@@ -1054,7 +1060,7 @@ def _save_metadata(ds_id: int, values: Any, base: dict) -> tuple[int, dict]:
         if base not in (shown["metadata"], d["metadata"]):
             return 409, {"error": "its details were changed on the server since you started editing them; copy your "
                                   "edits somewhere, and reload the page to see the new ones"}
-        m, errors = _parse_metadata(values)
+        m, errors = _parse_metadata(values, kept_name=d["metadata"].get("uploader_name"))
         if errors:
             return 422, {"ok": False, "errors": errors}
         old = _as_entered(d["metadata"])
@@ -1347,11 +1353,13 @@ async def user_get(request: Request) -> Response:
 async def user_save(request: Request) -> Response:
     """Check a user's data folders on tensor and, if every one is there, save them under the
     name given (when there is one): {"name", "raw_dirs", "mocorr_dirs", "odor_dirs"}, each
-    a list of paths relative to tensor."""
+    a list of paths relative to tensor. 422 for a name that is not a first name alone."""
     body = await request.json()
     if not isinstance(body, dict) or any(not isinstance(body.get(k) or [], list) for k in tensor.USER_DIR_KINDS):
         return json_error(400, f"expected lists of paths in {', '.join(tensor.USER_DIR_KINDS)}")
     name = _user_name(body.get("name"))
+    if first_name_problem(name):
+        return json_error(422, first_name_problem(name))
 
     def run() -> dict:
         root = tensor.root_status(config.TENSOR_ROOT)

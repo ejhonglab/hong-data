@@ -8,6 +8,7 @@ import pytest
 
 from app import config
 from app.ingest import load_file
+from app.metadata import FIRST_NAME_PROBLEM
 from tests.test_ingest import COLS, ROWS, make_wide, write_csv
 from tests.test_tensor import call, main, root  # noqa: F401 (fixtures)
 
@@ -90,6 +91,17 @@ def test_edit_refused(main, stored):  # noqa: F811
     kcs = stored(cols=[("2024-01-01", 1, "1"), ("2024-01-01", 1, "3")])
     status, r = save(main, kcs, {**MD, "coding_unit": "KCs"})
     assert status == 422 and "2" in r["errors"][0]
+
+
+def test_edit_first_name(main, stored):  # noqa: F811
+    ds_id, spaced = stored(), stored(uploader_name="Ann  Smith")
+    # changed to a name that is not a first name alone: refused; one stored before such names were: kept
+    status, r = save(main, ds_id, {**MD, "uploader_name": "Ann Smith"})
+    assert status == 422 and r["errors"] == [FIRST_NAME_PROBLEM]
+    assert save(main, spaced, {**MD, "uploader_name": "ann smith", "notes": "x"})[0] == 200
+    assert save(main, spaced, {**MD, "uploader_name": "Ann Jones"})[1]["errors"] == [FIRST_NAME_PROBLEM]
+    # not offered in the upload form
+    assert call(main.options)[1]["uploaders"] == ["me"]
 
 
 def test_edit_readme_by_hand(main, stored):  # noqa: F811

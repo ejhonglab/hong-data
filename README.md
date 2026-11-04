@@ -13,14 +13,15 @@ bookmark it). There is no login. The browser calls the site "Not secure": that i
 expected, and nothing secret is entered. If a download or the page is blocked, see
 [Browser warnings](#browser-warnings) below.
 
-1. **Settings** (once): your name, and your raw data, motion-corrected data and odor
-   YAML folders on tensor, written from the top of tensor (e.g. `tom/raw_data`). Once
-   all of them are found, they are saved under your name for any computer you use.
+1. **Settings** (once): your first name (alone, with no spaces), and your raw data,
+   motion-corrected data and odor YAML folders on tensor, written from the top of tensor
+   (e.g. `tom/raw_data`). Once all of them are found, they are saved under your first name
+   for any computer you use, and an upload under that name finds them.
 2. **Upload**: drop your CSV or parquet file of responses (see
    [Data file format](#data-file-format)), or several with the same experiment details
    (e.g. one per fly), whose ROIs become one dataset. It is checked and shown as a heatmap
    before anything is saved; if problems are listed, fix them all and drop the file again. Fill
-   in the experiment details (your name, indicator, driver and coding unit are
+   in the experiment details (your first name, indicator, driver and coding unit are
    required). Most are filled in for you from your settings, the file and your data on
    tensor, each colored by where it came from. If some of its odors are not in the odor
    table yet, the form lists them, with rows to paste into the odor sheet and a button
@@ -175,7 +176,7 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   They must have the same column levels and other row levels, and no ROI may be in two of
   them; every file is kept as uploaded. A file is refused if it was uploaded already, by
   anyone: the same file (whatever its name, alone or among others), or the same data in
-  another (the same flies, ROIs, trials and values). Once your name and the coding unit are entered (when the README is made, and
+  another (the same flies, ROIs, trials and values). Once your first name and the coding unit are entered (when the README is made, and
   again when saving), it is refused too if its flies (each `date` and `fly_num`) are
   exactly those of a dataset of yours of that coding unit and the same manipulations,
   however their responses were calculated (for now: two calculations of the same flies
@@ -241,7 +242,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   Upload tab continues it where it was left when opened again.
 - **Settings**: folders are relative to the top of tensor (absolute paths are refused),
   each checked on the server as you leave its field; once all are found ("All Paths
-  Accessible") they are saved on the server under your name. Below that, defaults for
+  Accessible") they are saved on the server under your name. A name must be a first name
+  alone, here and in the upload form (one with a space in it is refused, though a dataset
+  uploaded before keeps its uploader's full name when edited), as an upload finds the
+  folders saved under the name it is given. Below that, defaults for
   the upload form, checked as the form checks its fields and kept in this browser only;
   and whether odor names (abbreviations) are shown in lowercase (in this browser only):
   e.g. `IaA @ -3` as `iaa @ -3`, in Browse, Compare, Reference data and the Odors tab,
