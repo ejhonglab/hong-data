@@ -934,8 +934,9 @@ async def dataset_matrix(request: Request) -> Response:
 
 def _data_and_movies(d: dict) -> tuple[dict, dict, Optional[list[dict]]]:
     """A dataset's raw and motion-corrected data folders (by kind: see `tensor.find_data`),
-    their movies (by kind: ``movies`` as from `movies.find`, raw ones given the trials of
-    their recordings in the motion-corrected data by `movies.link_trials`; ``error``: why
+    their movies (by kind: ``movies`` as from `movies.find`, but for those of recordings
+    redone, `movies.drop_redone`; raw ones given the trials of their recordings in the
+    motion-corrected data by `movies.link_trials`; ``error``: why
     its folder was not looked in, ``found``: how many were found in its flies' folders, by
     their paths and of no fly, ``skipped``: the flies, not the dataset's, whose folders in
     it were left out (see `movies.find`), and when both folders were found, ``compared``
@@ -944,15 +945,17 @@ def _data_and_movies(d: dict) -> tuple[dict, dict, Optional[list[dict]]]:
     (`movies.side_by_side`; else None)."""
     flies = d["summary"].get("flies") or []
     bases = [Path(p) for p in sandbox.folders()]
-    found, out = {}, {}
+    found, out, listed, skipped = {}, {}, {}, {}
     for kind in ("raw", "mocorr"):
         f = found[kind] = tensor.find_data(d["metadata"].get(f"{kind}_data_path"), config.TENSOR_ROOT, bases)
         folder = Path(f["path"]) if f["status"] == "ok" and f["is_dir"] else None
-        skipped: set = set()
-        found_movies = movies.find(folder, kind, flies, skipped) if folder else []
-        out[kind] = {"movies": found_movies, "error": f["error"], "compared": False, "unmatched": [],
+        skipped[kind] = set()
+        listed[kind] = movies.find(folder, kind, flies, skipped[kind]) if folder else []
+    listed["raw"], listed["mocorr"] = movies.drop_redone(listed["raw"], listed["mocorr"])
+    for kind, found_movies in listed.items():
+        out[kind] = {"movies": found_movies, "error": found[kind]["error"], "compared": False, "unmatched": [],
                      # the flies (not the dataset's) whose folders in it were left out
-                     "skipped": [{"date": date, "fly_num": n} for date, n in sorted(skipped)],
+                     "skipped": [{"date": date, "fly_num": n} for date, n in sorted(skipped[kind])],
                      # how its movies were found: in its flies' folders, by their paths, of no fly
                      "found": {b or "none": sum(1 for m in found_movies if m["by"] == b) for b in ("fly folder", "path", None)}}
     movies.link_trials(out["raw"]["movies"], out["mocorr"]["movies"])

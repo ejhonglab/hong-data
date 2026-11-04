@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -223,6 +224,46 @@ def test_concat(root):
     assert movies.open_movie(Path(mocorr[0]["path"])).shape["t"] == 10
 
 
+def raw_recording(root, name):
+    d = root / "tom/raw/2023-11-19/1" / name
+    d.mkdir()
+    (d / "Experiment.xml").write_text(XML)
+    (d / "Image_001_001.raw").write_bytes(b"")
+
+
+def test_redone(root):
+    # t2 redone: in both as t2_redo, t2 left out of both (its folder in the motion-corrected data too)
+    for name in ("t2", "t2_redo"):
+        raw_recording(root, name)
+    redo = root / "tom/analysis/2023-11-19/1/t2_redo"
+    redo.mkdir()
+    tifffile.imwrite(redo / "mocorr.tif", np.zeros((2, 2), np.uint16))
+    found = movies.find(root / "tom/raw", "raw", FLIES), movies.find(root / "tom/analysis", "mocorr", FLIES)
+    assert [[m["recording"] for m in f] for f in found] == [["t1", "t2", "t2_redo"], ["t1", "t2", "t2_redo"]]
+    raw, mocorr = movies.drop_redone(*found)
+    assert [m["recording"] for m in raw] == [m["recording"] for m in mocorr] == ["t1", "t2_redo"]
+    assert movies.unmatched(raw, mocorr) == {"raw": [], "mocorr": []}
+    assert [(r["recording"], r["matched"]) for r in movies.side_by_side(raw, mocorr)] == [("t1", True), ("t2_redo", True)]
+    # a _redo in only one of them still supersedes in both (here, t1 redone and not yet motion corrected)
+    raw_recording(root, "t1_redo")
+    raw, mocorr = movies.drop_redone(movies.find(root / "tom/raw", "raw", FLIES), movies.find(root / "tom/analysis", "mocorr", FLIES))
+    assert [m["recording"] for m in raw] == ["t1_redo", "t2_redo"] and [m["recording"] for m in mocorr] == ["t2_redo"]
+    assert movies.unmatched(raw, mocorr)["raw"] == [
+        {"date": "2023-11-19", "fly_num": 1, "of_dataset": True, "recording": "t1_redo", "n_movies": 1}]
+    # and taken out of a fly's movie of its recordings registered together (t1 and t2)
+    fly = concat_fly(root)
+    shutil.rmtree(root / "tom/raw/2023-11-19/1/t1_redo")
+    raw, mocorr = movies.drop_redone(movies.find(root / "tom/raw", "raw", FLIES), movies.find(root / "tom/analysis", "mocorr", FLIES))
+    assert [(m["label"], m["recording"], m["recordings"]) for m in mocorr] == [
+        ("2023-11-19/1", None, ["t1"]), ("2023-11-19/1/t2_redo/mocorr.tif", "t2_redo", None), ("2023-11-19/1/t3/flipped.tif", "t3", None)]
+    assert mocorr[0]["recording_trials"] == {"t1": str(fly / "t1/trial_frames_and_odors.json")}
+    assert [r["recording"] for r in movies.side_by_side(raw, mocorr)] == ["t1", "t2_redo", "t3"]
+    # left out, if all of them are redone
+    raw_recording(root, "t1_redo")
+    raw, mocorr = movies.drop_redone(movies.find(root / "tom/raw", "raw", FLIES), movies.find(root / "tom/analysis", "mocorr", FLIES))
+    assert [m["recording"] for m in mocorr] == ["t2_redo", "t3"]
+
+
 def test_trials(tmp_path):
     path = tmp_path / "trial_frames_and_odors.json"
     path.write_text(json.dumps(TRIALS))
@@ -313,6 +354,11 @@ def test_api(main, root, tmp_path, monkeypatch):  # noqa: F811
     paths = json.loads(get(main.dataset_data_paths, path_params={"ds_id": ds_id}).body)
     assert paths["mocorr"]["status"] == "ok" and paths["mocorr"]["unmatched"] == t2 and paths["raw"]["compared"]
     assert [(r["recording"], r["matched"]) for r in paths["recordings"]] == [("t1", True), ("t2", False)]
+    # t2 redone (in the raw data only, so far): left out of both, its redo in the raw data only
+    raw_recording(root, "t2_redo")
+    r2 = json.loads(get(main.dataset_movies, path_params={"ds_id": ds_id}).body)
+    assert [m["label"] for m in r2["mocorr"]["movies"]] == ["1/t1/mocorr.tif"] and r2["mocorr"]["found"]["fly folder"] == 1
+    assert [u["recording"] for u in r2["raw"]["unmatched"]] == ["t2_redo"] and r2["mocorr"]["unmatched"] == []
 
     movie = r["mocorr"]["movies"][0]
     info = json.loads(get(main.movie_info, {"path": movie["path"]}).body)

@@ -34,6 +34,7 @@ CONCAT = "mocorr_concat.tif"  # al_analysis' movie of a fly's recordings registe
 TRIALS = "trial_frames_and_odors.json"  # al_analysis' trials of a movie: their frames and odors
 NOT_RECORDINGS = ("suite2p",)  # folders in a fly's that are not recordings (al_analysis' suite2p runs)
 NOT_MOVIES = {"roimask.raw"}  # ThorImage's other .raw files, beside a recording's movie (lower case)
+REDO = "_redo"  # a recording's folder <recording>_redo: it done again, in place of <recording>
 ROISET = "RoiSet.zip"
 DEPTH = 3  # folders scanned below a fly's folder (or the data folder, if no fly folder is found)
 MAX_DIRS = 2000
@@ -255,6 +256,30 @@ def _recording_keys(m: dict) -> list[tuple]:
 
 def _anatomical(key: tuple) -> bool:
     return bool(key[1] and key[3] and tensor.ANATOMICAL.fullmatch(key[3]))
+
+
+def drop_redone(raw: list[dict], mocorr: list[dict]) -> tuple[list[dict], list[dict]]:
+    """`find`'s movies of a dataset's raw and motion-corrected data folders, but for those of
+    recordings redone: a fly's ``<recording>_redo`` (`REDO`, in either folder) is in place
+    of its ``<recording>``, whose movies are left out of both, as is it from a fly's movie of
+    its recordings registered together (that movie too, if it was all such).
+
+    Returns:
+        (raw, mocorr): the movies kept, in the order found.
+    """
+    keys = {k for m in (*raw, *mocorr) for k in _recording_keys(m)}
+    redone = {(*k[:3], k[3].removesuffix(REDO)) for k in keys if k[3] and k[3].endswith(REDO)}
+
+    def kept(m: dict) -> bool:
+        if not m.get("recordings"):
+            return _recording_key(m) not in redone
+        fly = _recording_key(m)[:3]
+        m["recordings"] = [r for r in m["recordings"] if (*fly, r) not in redone]
+        if m.get("recording_trials"):
+            m["recording_trials"] = {r: p for r, p in m["recording_trials"].items() if r in m["recordings"]}
+        return bool(m["recordings"])
+
+    return [m for m in raw if kept(m)], [m for m in mocorr if kept(m)]
 
 
 def unmatched(raw: list[dict], mocorr: list[dict]) -> dict[str, list[dict]]:

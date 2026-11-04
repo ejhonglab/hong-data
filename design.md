@@ -319,6 +319,16 @@ between the frontend and the server. Using the app is described in
   are found: comparisons are of every recording. A movie's trials (odors by frame) are
   al_analysis' `trial_frames_and_odors.json` next to it; a raw movie has its recording's
   from the motion-corrected data, the frames being the same.
+- **A recording redone supersedes the one it is named for**: a fly's `<recording>_redo`
+  folder (in its raw or motion-corrected data) means `<recording>` was done again, and
+  `<recording>`'s movies are left out of both (`movies.drop_redone`), rather than shown as
+  a recording never motion corrected (hong2p's `paired_thor_dirs` skips it the same way,
+  so al_analysis does not register it). Its folder may still be in the motion-corrected
+  data (6 of the 20 on tensor, in 2026-11, as `raw.tif` and analysis outputs, none in a
+  dataset). Checked then against the raw data, by their pixels: each of those holds that
+  recording's own data, every `_redo`'s motion-corrected movies its redo's, and no
+  `mocorr_concat.tif` has a recording redone in it, so names were never swapped or the
+  suffix dropped.
 - **Figure export** embeds the cells as an image drawn without smoothing, so they stay
   crisp at any zoom, while text and lines stay vector in SVG and PDF.
 - **Labels with LaTeX math** (a dataset's response calculation, its colorbar's label:

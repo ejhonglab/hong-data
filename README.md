@@ -272,7 +272,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   them. They are red, saying why, when no path was entered, or the server cannot find
   it (from the top of tensor, or from a folder set in the Admin tab) or may not read it;
   orange when one has recordings the other does not (by fly and recording folder name,
-  not counting anatomical ones: e.g. recordings not motion corrected yet). Only the
+  not counting anatomical ones: e.g. recordings not motion corrected yet). A recording
+  redone, `<recording>_redo` (in either), is in place of `<recording>`, which is left out
+  of both, in their menus, the movie player and the comparison. Only the
   dataset's own flies' folders (`<date>/<fly>`) in them count: those of other flies are
   left out (and named); movies in no fly's folder (a recording's folder given as the
   path, say) are of the fly the folders in their path name, else by folder. Recordings in

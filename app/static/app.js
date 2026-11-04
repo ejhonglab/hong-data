@@ -2779,7 +2779,8 @@ class Browse {
     $('#mismatches-note').textContent = `${rows.length} recordings: ${only('raw')} only in the raw data, ${only('mocorr')} only in the `
       + 'motion-corrected data (highlighted). In the order they were recorded, as their Experiment.xml says (else by when it was '
       + 'written: "file time"); one with no raw data after the one before it by name. Anatomical recordings are not expected to '
-      + `be motion corrected.${how}${left}${theirs}`;
+      + 'be motion corrected. A recording redone (<recording>_redo) is in place of the one it is named for, left out of both.'
+      + `${how}${left}${theirs}`;
     const cell = (r, kind) => (r[kind]
       ? `<code>${esc(r.recording ?? "(the fly's folder)")}</code> <span class="muted">${esc(r[kind].slice(0, 3).join(', '))}${r[kind].length > 3 ? `, and ${r[kind].length - 3} more` : ''}</span>`
       : `<span class="absent">${r.anatomical ? '— (anatomical)' : '— not here'}</span>`);
