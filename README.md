@@ -670,7 +670,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     there (the release's dates are in its folders' names), and kept gzipped, laid out as
     they were, in `data/lotus/<when>/raw/`. Where the folder has a file both as is and
     gzipped, the gzipped one is uploaded; the browser gzips the others first, so 330 MB
-    of the folder's 7.3 GB is sent. The bundle takes about a minute to build; its
+    of the folder's 7.3 GB is sent. A file the browser cannot read as it was chosen
+    (changed since, or on a network mount that will not give it, as one over sshfs may
+    not) is named, with how much of it was read: copy the folder to a disk of the computer
+    the browser is on and choose it there. The bundle takes about a minute to build; its
     reference dataset (chemicals by families) is then added, its settings changed after
     by *Change settings…*.
   - *Delete datasets*: every dataset, newest upload first (with a filter), each with a

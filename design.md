@@ -526,7 +526,13 @@ between the frontend and the server. Using the app is described in
     file there both as is and gzipped, the gzipped one is uploaded, and the browser gzips
     the others first (`CompressionStream`: the 1.1 GB SDF to 97 MB in 7 s), as the server
     does those it was sent as they are or takes out of archives. Of `LOTUS/raw`'s 7.3 GB,
-    330 MB is sent.
+    330 MB is sent. A file chosen is a snapshot: once it changes (even its time alone) or
+    its drive will not give it, Chrome refuses to read it, saying only "Failed to fetch"
+    (or `NotReadableError`), and one cut short while it is read is read only so far, with
+    no error. So each file is checked before anything is sent (the first byte of those
+    sent as they are, which would otherwise fail the upload as a server that cannot be
+    reached; all of those gzipped first), and one that fails is named, with how much of it
+    was read (`Unreadable`, in `static/imports.js`).
 
 ## Statistical testing
 

@@ -66,11 +66,34 @@ function pickFiles(files, expected, how) {
   return { picked, notes };
 }
 
-// a file gzipped, as a Blob (onProgress(bytes read) as it goes)
-function gzipFile(file, onProgress) {
+// a file gzipped, as a Blob (onProgress(bytes read) as it goes). Rejects with an Unreadable
+// if it could not be read whole.
+async function gzipFile(file, onProgress) {
   let n = 0;
   const count = new TransformStream({ transform(chunk, ctl) { n += chunk.byteLength; onProgress(n); ctl.enqueue(chunk); } });
-  return new Response(file.stream().pipeThrough(count).pipeThrough(new CompressionStream('gzip'))).blob();
+  let blob;
+  try {
+    blob = await new Response(file.stream().pipeThrough(count).pipeThrough(new CompressionStream('gzip'))).blob();
+  } catch (e) {
+    throw new Unreadable(file, n, e);
+  }
+  // (a file cut short while it is read is read only so far, without an error)
+  if (n !== file.size) throw new Unreadable(file, n, null);
+  return blob;
+}
+
+// a file that could not be read here (as chosen), after `n` bytes of it were; e: what the
+// browser said (Chrome: "Failed to fetch" or "NotReadableError", whatever the cause), if anything
+class Unreadable extends Error {
+  constructor(file, n, e) {
+    super(e?.message || 'read short');
+    Object.assign(this, { file, n, cause: e });
+  }
+}
+
+// whether a file can be read here as it was chosen (its first byte): else rejects with an Unreadable
+async function readable(file) {
+  try { await file.slice(0, 1).arrayBuffer(); } catch (e) { throw new Unreadable(file, 0, e); }
 }
 
 export class BundleImport {
@@ -128,6 +151,19 @@ export class BundleImport {
   // keeps it; it gzips those this browser cannot)
   _gzipHere(f) { return !!this.state?.gzip && typeof CompressionStream === 'function' && !isGz(f.name) && f.name !== NOTES; }
 
+  // A file that could not be read here (an Unreadable), said: which, how far it was read,
+  // and why that may be. The browser cannot tell why, but for the bytes read: none, it is not
+  // as it was when chosen (changed, moved or gone since) or its drive would not give it; some,
+  // its drive stopped giving it, or it changed while it was read.
+  _unreadable(u) {
+    const { esc, fmtBytes } = this, f = u.file, name = `<code>${esc(rel(f))}</code>`;
+    const said = u.cause ? ` <span class="muted">(the browser said: ${esc(u.cause.name && u.cause.name !== 'TypeError' ? `${u.cause.name}: ` : '')}${esc(u.cause.message)})</span>` : '';
+    const drive = 'the drive it is on (such as a network mount, e.g. over sshfs)';
+    const why = u.n ? `${name} could be read here only to ${fmtBytes(u.n)} of its ${fmtBytes(f.size)}: ${drive} stopped giving it, or it changed while it was read`
+      : `${name} could not be read here as it was when chosen: it changed, moved or was deleted since, or ${drive} would not give it`;
+    return `${why}.${said} Choose the ${f.webkitRelativePath ? 'folder' : 'archive'} again; if it fails the same way, copy it to a disk of this computer and choose it there.`;
+  }
+
   // what was chosen, against what the build reads (before anything is uploaded)
   showFiles() {
     const { esc, fmtBytes } = this, box = this.$('files'), c = this.chosen, s = this.state;
@@ -183,9 +219,10 @@ export class BundleImport {
     this.$('btn').disabled = true;
     const form = new FormData(), mtimes = {}; // (when each was last changed, kept as theirs)
     try {
-      if (c.archive) form.append('file', c.archive, c.archive.name);
+      if (c.archive) { await readable(c.archive); form.append('file', c.archive, c.archive.name); }
       for (const f of c.archive ? [] : [...Object.values(c.picked), ...c.notes]) {
-        if (!this._gzipHere(f)) { form.append('file', f, rel(f)); mtimes[rel(f)] = f.lastModified; continue; }
+        // (one sent as it is is read only as it is uploaded, where a file that cannot be read looks like a server that cannot be reached)
+        if (!this._gzipHere(f)) { await readable(f); form.append('file', f, rel(f)); mtimes[rel(f)] = f.lastModified; continue; }
         let shown = -1;
         const blob = await gzipFile(f, (n) => {
           const pct = Math.floor((100 * n) / (f.size || 1));
@@ -195,7 +232,8 @@ export class BundleImport {
         mtimes[`${rel(f)}.gz`] = f.lastModified;
       }
     } catch (e) {
-      out.replaceChildren(msgBox('error', `<b>Not imported</b> (nothing was uploaded): a file could not be read here (${esc(e.message)})`));
+      out.replaceChildren(msgBox('error', `<b>Not imported</b> (nothing was uploaded): ${e instanceof Unreadable ? this._unreadable(e)
+        : `a file could not be read here (${esc(e.message)})`}`));
       this._syncButton();
       return;
     }
