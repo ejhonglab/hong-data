@@ -58,11 +58,11 @@ FLIES = [{"date": "2023-11-19", "fly_num": 1}]
 
 
 def test_raw_layout():
+    # how each is read (flyback, channels, averaging, ...) is tested in hong2p (test/test_thor_xml.py)
     assert thorimage.raw_layout(XML) == {"x": 8, "y": 6, "z": 3, "flyback": 1, "c": 1, "fps": 30.0}
-    xml = XML.replace('zFastEnable="1"', 'zFastEnable="0"').replace('averageMode="0" averageNum="1"', 'averageMode="1" averageNum="2"')
-    assert thorimage.raw_layout(xml.replace('enableB="0"', 'enableB="1"')) == {"x": 8, "y": 6, "z": 3, "flyback": 0, "c": 2, "fps": 15.0}
-    with pytest.raises(thorimage.ExperimentXmlError):
-        thorimage.raw_layout("<ThorImageExperiment/>")
+    for bad in ("<ThorImageExperiment", "<ThorImageExperiment/>", XML.replace('enableA="1"', 'enableA="0"')):
+        with pytest.raises(thorimage.ExperimentXmlError):
+            thorimage.raw_layout(bad)
 
 
 def test_find(root):

@@ -14,4 +14,6 @@ xarray>=2024.1  # reference data as DataArrays (netCDF)
 netCDF4>=1.6
 # vapor pressures, molar masses, densities and Henry's law constants of odors (chemprops.py); installed with git (and its pubchemprops, from GitHub too)
 chemutils @ git+https://github.com/ejhonglab/chemutils@7ec249c64cc99f0cf0ea30ad4f02c56c5e8d5ec0
+# odor-string conventions (odors.py) and ThorImage .raw layouts (thorimage.py); without its `all` extra (none of its heavy dependencies); installed with git
+hong2p @ git+https://github.com/ejhonglab/hong2p@4fa926da9061f2ead10807cf3cb6fcd1285a5a9c
 thermo>=0.6  # (also what chemutils uses) modified UNIFAC in paraffin oil of the molar mass given (headspace.py)

@@ -1,12 +1,16 @@
-"""Odor-string parsing and formatting.
+"""Odor-string parsing and formatting, following ``hong2p.olf``.
 
-A deliberately small port of the conventions in ``hong2p.olf`` (olf.py):
+Its conventions are taken from hong2p (installed without its heavy dependencies):
 
 * a single odor is written ``'<name> @ <log10_conc>'`` (``'va @ -3'``), with a single
   space on either side of ``'@'``; ``log10_conc`` is 0 or negative
 * ``'solvent'`` stands for "no odor on this manifold"
 * several ``odor<n>`` index levels on one trial are components of an air mixture;
   they are displayed joined with ``' + '`` after dropping solvent components
+  (`format_mix_from_strs`, hong2p's)
+
+Odor strings in uploads are parsed here more strictly than hong2p does (`parse_odor`,
+`validate_odor_levels`), to tell users what is wrong with them.
 """
 from __future__ import annotations
 
@@ -15,55 +19,20 @@ import re
 from dataclasses import dataclass
 from typing import Iterable, Optional, Sequence
 
-SOLVENT_STR = "solvent"
-CONC_DELIM = "@"
-COMPONENT_DELIM = " + "
-COMPONENT_LEVEL_PREFIX = "odor"
+from hong2p import olf
+from hong2p.olf import format_mix_from_strs  # noqa: F401 (part of this module's API)
+
+SOLVENT_STR = olf.solvent_str
+CONC_DELIM = olf.conc_delimiter
+COMPONENT_DELIM = olf.component_delim
+COMPONENT_LEVEL_PREFIX = olf.component_level_prefix
 
 # '<name> @ <conc>' with exactly one space either side of '@'. Name may contain spaces
 # (e.g. 'ethyl acetate @ -2') but not '@'.
 _ODOR_RE = re.compile(r"^(?P<name>[^@\s][^@]*?) @ (?P<conc>[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)$")
 
-# Abbreviations hardcoded in olf.py, used as a fallback when an odor YAML entry has no
-# explicit 'abbrev'.
-HARDCODED_ODOR2ABBREV = {
-    "hexyl hexanoate": "hh",
-    "furfural": "fur",
-    "1-octen-3-ol": "1o3ol",
-    "acetone": "ace",
-    "butanal": "but",
-    "ethyl acetate": "ea",
-    "ethyl hexanoate": "eh",
-    "hexyl acetate": "ha",
-    "ethanol": "EtOH",
-    "isoamyl alcohol": "IAol",
-    "kiwi approx.": "kmix",
-    "control mix": "cmix",
-    "ethyl lactate": "elac",
-    "methyl acetate": "ma",
-    "2,3-butanedione": "2,3-b",
-    "ethyl 3-hydroxybutyrate": "e3hb",
-    "trans-2-hexenal": "t2h",
-    "ethyl crotonate": "ecrot",
-    "methyl octanoate": "moct",
-    "linalool": "Lin",
-    "B-citronellol": "B-cit",
-    "hexanal": "6al",
-    "benzaldehyde": "benz",
-    "1-pentanol": "1-5ol",
-    "1-octanol": "1-8ol",
-    "pentyl acetate": "pa",
-    "ethyl propionate": "ep",
-    "acetic acid": "aa",
-    "methyl salicylate": "ms",
-    "2-heptanone": "2h",
-    "ethyl butyrate": "eb",
-    "1-hexanol": "1-6ol",
-    "isoamyl acetate": "IaA",
-    "2-butanone": "2-but",
-    "valeric acid": "va",
-    "pentanoic acid": "va",
-}
+# hong2p's abbreviations, used as a fallback when an odor YAML entry has no explicit 'abbrev'
+HARDCODED_ODOR2ABBREV = olf.hardcoded_odor2abbrev
 
 
 class OdorFormatError(ValueError):
@@ -143,8 +112,8 @@ def parse_odor(odor_str: str, *, strict: bool = True) -> Odor:
 
 
 def is_odor_level(level_name) -> bool:
-    """True for 'odor', 'odor1', 'odor2', ... (what olf.is_odor_var accepts)."""
-    return isinstance(level_name, str) and level_name.startswith(COMPONENT_LEVEL_PREFIX)
+    """True for 'odor', 'odor1', 'odor2', ... (`olf.is_odor_var`, for level names that are strings)."""
+    return isinstance(level_name, str) and olf.is_odor_var(level_name)
 
 
 def odor_level_sort_key(level_name: str) -> int:
@@ -185,18 +154,6 @@ def validate_odor_levels(level_names: Sequence[str]) -> list[str]:
     return ordered
 
 
-def format_mix_from_strs(odor_strs: Iterable[str], *, delim: str = COMPONENT_DELIM) -> str:
-    """Join component odor strings, dropping solvent (unless everything is solvent).
-
-    >>> format_mix_from_strs(['A @ -3', 'solvent'])
-    'A @ -3'
-    >>> format_mix_from_strs(['solvent', 'solvent'])
-    'solvent'
-    """
-    parts = [s for s in odor_strs if s != SOLVENT_STR]
-    return delim.join(parts) if parts else SOLVENT_STR
-
-
 def odor_names(odor_str: str) -> list[str]:
     """The odors' names (abbreviations, as written) in an odor string, of each in a mixture:
     'A @ -3 + b @ -2' -> ['A', 'b'] (solvent left out)."""
@@ -225,31 +182,3 @@ def lowercase_odor(odor_str: str, names: dict[str, str]) -> str:
         name, at, conc = p.partition(f" {CONC_DELIM} ")
         parts.append(names.get(name, name) + at + conc)
     return COMPONENT_DELIM.join(parts)
-
-
-def strip_conc(odor_str: str) -> str:
-    """'A @ -3 + B @ -2' -> 'A + B'."""
-    comps = [c.strip() for c in odor_str.split(COMPONENT_DELIM)]
-    out = []
-    for c in comps:
-        if c == SOLVENT_STR or CONC_DELIM not in c:
-            out.append(c)
-        else:
-            out.append(c.split(CONC_DELIM)[0].strip())
-    return COMPONENT_DELIM.join(out)
-
-
-def odor_sort_key(odor_str: str):
-    """Sort key matching olf's default: solvent first, then name (A-Z), then conc."""
-    if odor_str == SOLVENT_STR:
-        return (0, "", float("-inf"))
-    comps = [c.strip() for c in odor_str.split(COMPONENT_DELIM)]
-    keys = []
-    for c in comps:
-        try:
-            o = parse_odor(c, strict=False)
-        except OdorFormatError:
-            keys.append((1, c.lower(), 0.0))
-            continue
-        keys.append((1, o.name.lower(), o.log10_conc if o.log10_conc is not None else float("-inf")))
-    return tuple(keys)

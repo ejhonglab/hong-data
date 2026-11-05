@@ -781,14 +781,14 @@ deletes datasets ([DEPLOY.md](DEPLOY.md), section 7).
 
 ```bash
 python3 -m venv venv && . venv/bin/activate
-pip install -r requirements-dev.txt               # needs git (chemutils is installed from GitHub)
+pip install -r requirements-dev.txt               # needs git (chemutils and hong2p are installed from GitHub)
 uvicorn app.main:app --reload --port 8080      # data goes to ./data
 ```
 
-pip does not replace chemutils when its pin in `requirements.txt` changes (the version
-number stays the same): `pip install --force-reinstall --no-deps "$(grep '^chemutils'
-requirements.txt)"`, then `pip install -r requirements.txt` again for any new
-dependencies of it. Updating the pin takes a few more steps:
+pip does not replace chemutils (or hong2p) when its pin in `requirements.txt` changes
+(the version number stays the same): `pip install --force-reinstall --no-deps "$(grep
+'^chemutils' requirements.txt)"` (or `'^hong2p'`), then `pip install -r requirements.txt`
+again for any new dependencies of it. Updating the pin takes a few more steps:
 [DEPLOY.md](DEPLOY.md#updating-chemutils).
 
 Settings and upload lookups need tensor mounted (at `/local/tensor`, or wherever

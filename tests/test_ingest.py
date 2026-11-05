@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 
 from app.ingest import ValidationError, combine, load_file, unit_key
-from app.odors import OdorFormatError, format_mix_from_strs, parse_odor, validate_odor_levels
+from app.odors import OdorFormatError, parse_odor, validate_odor_levels
 from app.yamlcheck import check_subset, lint, parse_odor_yaml
 
 HERE = Path(__file__).parent
@@ -53,11 +53,8 @@ def test_parse_odor_bad(s):
         parse_odor(s)
 
 
-def test_solvent_and_mix():
+def test_solvent():
     assert parse_odor("solvent").is_solvent
-    assert format_mix_from_strs(["va @ -3", "solvent"]) == "va @ -3"
-    assert format_mix_from_strs(["solvent", "ea @ -2", "va @ -3"]) == "ea @ -2 + va @ -3"
-    assert format_mix_from_strs(["solvent", "solvent"]) == "solvent"
 
 
 def test_odor_levels():

@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import datetime as dt
 import re
+import warnings
 import xml.etree.ElementTree as ET
 from typing import Any, Optional
+
+from hong2p import thor
 
 
 class ExperimentXmlError(ValueError):
@@ -84,7 +87,7 @@ def parse_experiment_xml(text: str) -> dict[str, Any]:
 
 
 def raw_layout(text: str) -> dict[str, Any]:
-    """How the .raw file of a ThorImage recording is laid out, as hong2p.thor reads it.
+    """How the .raw file of a ThorImage recording is laid out, read with hong2p.thor.
 
     Planes of ``y`` × ``x`` little-endian uint16 are ordered by time, then Z (``z`` planes
     then ``flyback`` frames in each volume, with fast Z), then channel (``c``: PMT channels
@@ -92,31 +95,33 @@ def raw_layout(text: str) -> dict[str, Any]:
 
     Returns:
         dict with x, y, z, flyback, c, and fps: planes per second after averaging (flyback
-        frames counted), or None if not given.
+        frames counted; averaging configured with fast Z is not done by ThorImage), or
+        None if not given.
 
     Raises:
-        ExperimentXmlError: if the XML is not readable or has no frame size.
+        ExperimentXmlError: if the XML is not readable or does not give the layout.
     """
     try:
         root = ET.fromstring(text)
     except ET.ParseError as e:
         raise ExperimentXmlError(f"not well-formed XML: {e}")
-    lsm = root.find("LSM")
-    x, y = _num(_attr(lsm, "pixelX")), _num(_attr(lsm, "pixelY"))
-    if not x or not y:
+    try:
+        (x, y), z, c = thor.get_thorimage_dims(root)
+        flyback = thor.get_thorimage_n_flyback_xml(root)
+    except (AttributeError, KeyError, ValueError, AssertionError) as e:
+        raise ExperimentXmlError(f"the Experiment.xml does not give the .raw file's layout (frame size, ZStage, "
+                                 f"Streaming and PMT): {type(e).__name__} {e}")
+    if not (x and y):
         raise ExperimentXmlError("no frame size (LSM pixelX and pixelY) in the Experiment.xml")
-    zstages = root.findall("ZStage")
-    zstage = next((z for z in zstages if z.get("name")), zstages[0] if zstages else None)
-    z = int(_num(_attr(zstage, "steps")) or 1)
-    stream = root.find("Streaming")
-    fast_z = _attr(stream, "enable") == "1" and _attr(stream, "zFastEnable") == "1"
-    flyback = int(_num(_attr(stream, "flybackFrames")) or 0) if fast_z else 0
-    pmt = root.find("PMT")
-    c = sum(_attr(pmt, f"enable{ch}") == "1" for ch in "AB") or 1
-    fps = _num(_attr(lsm, "frameRate"))
-    if fps and _attr(lsm, "averageMode") not in (None, "0"):
-        fps /= _num(_attr(lsm, "averageNum")) or 1
-    return {"x": int(x), "y": int(y), "z": z, "flyback": flyback, "c": c, "fps": fps}
+    if not c:
+        raise ExperimentXmlError("no PMT channel (A or B) is enabled in the Experiment.xml")
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")  # that averaging was configured with fast Z
+            fps = thor.get_thorimage_fps_xml(root)
+    except (AttributeError, KeyError, ValueError):
+        fps = None
+    return {"x": x, "y": y, "z": z, "flyback": flyback, "c": c, "fps": fps}
 
 
 def recorded_at(text: str) -> Optional[dt.datetime]:

@@ -48,8 +48,11 @@ between the frontend and the server. Using the app is described in
 - **Row levels that say nothing are dropped on upload** (`ingest.uninformative_levels`),
   and from the trials of datasets stored before that whenever they are read
   (`ingest.drop_uninformative`), so old and new datasets are shown and downloaded alike.
-- **Odor strings follow `hong2p.olf`** (`app/odors.py` is a small port of it), so
-  matrices written by hong2p-based analysis can be uploaded as they are.
+- **Odor strings follow `hong2p.olf`**, whose conventions, abbreviations and mixture
+  formatting `app/odors.py` uses, so matrices written by hong2p-based analysis can be
+  uploaded as they are. hong2p is installed without its `all` extra (none of its heavy
+  dependencies). Uploaded odor strings are parsed more strictly than hong2p parses them,
+  to tell users what is wrong with one.
 - **Tensor is read by the server**, mounted read-only, with users' folders given
   relative to its top, so the same paths work from any computer and the browser never
   has to reach the NAS. Flies are looked for in hong2p's layout
@@ -946,10 +949,10 @@ and columns (by the fields chosen for it), and its values taken as mg/kg.
 app/main.py        HTTP API (Starlette) and static file serving
 app/config.py      runtime configuration (environment variables)
 app/ingest.py      CSV/parquet loading + validation → units, trials, float32 matrix
-app/odors.py       odor string parsing/formatting (port of the relevant olf.py bits)
+app/odors.py       odor string parsing/formatting (hong2p.olf's conventions; stricter parsing of uploads)
 app/glomeruli.py   accepted glomerulus names (config/glomeruli.txt overrides)
 app/yamlcheck.py   odor YAML parsing, what looks wrong in one, and the matrix ⊂ YAML check
-app/thorimage.py   Experiment.xml summary
+app/thorimage.py   Experiment.xml summary, and a .raw file's layout (with hong2p.thor)
 app/metadata.py    form model (pydantic) and README.md generation
 app/db.py          SQLite schema and queries
 app/reference.py   reference datasets: built-in and added ones, reading them, matching their chemicals
