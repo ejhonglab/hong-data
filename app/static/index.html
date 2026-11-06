@@ -135,8 +135,8 @@ try {
         <label class="field" data-field="panel_names" data-in="edit defaults"><span>Panel name(s) <span class="muted">(comma-separated)</span></span><input name="panel_names" list="dl-panels" placeholder="e.g. megamat"></label>
         <label class="field" data-field="source_code_url" data-in="edit defaults"><span>Analysis source code (link)</span><input name="source_code_url" type="url" placeholder="https://github.com/…"></label>
         <label class="field" data-field="response_calc" data-in="edit defaults"><span>Response calculation <span class="muted">(colorbar label; LaTeX math in $…$)</span></span><input name="response_calc" list="dl-response-calcs" placeholder="e.g. $\Delta F/F$" spellcheck="false"><span class="tex-preview" hidden></span></label>
-        <label class="field" data-field="raw_data_path" data-in="edit"><span>Raw data path on tensor <span class="muted">(from its top)</span></span><input name="raw_data_path" placeholder="e.g. tom/raw_data/2023-11-19" spellcheck="false"><span class="path-msg"></span></label>
-        <label class="field" data-field="mocorr_data_path" data-in="edit"><span>Motion-corrected data path on tensor <span class="muted">(from its top)</span></span><input name="mocorr_data_path" placeholder="e.g. tom/analysis/2023-11-19" spellcheck="false"><span class="path-msg"></span></label>
+        <label class="field" data-field="raw_data_path" data-in="edit"><span>Raw data path on tensor <span class="muted">(from its top)</span></span><input name="raw_data_path" data-tensor-path placeholder="e.g. tom/raw_data/2023-11-19" spellcheck="false"><span class="path-msg"></span></label>
+        <label class="field" data-field="mocorr_data_path" data-in="edit"><span>Motion-corrected data path on tensor <span class="muted">(from its top)</span></span><input name="mocorr_data_path" data-tensor-path placeholder="e.g. tom/analysis/2023-11-19" spellcheck="false"><span class="path-msg"></span></label>
 
         <div class="field span2"><span>Odor metadata YAML <span class="muted">(olfactometer config; several allowed)</span></span>
           <div class="row">
@@ -545,17 +545,17 @@ try {
       <div class="dir-section">
         <h3>Raw data</h3>
         <p class="muted">ThorImage recordings, as <code>&lt;folder&gt;/&lt;YYYY-MM-DD&gt;/&lt;fly&gt;/&lt;recording&gt;/Experiment.xml</code>.</p>
-        <div class="dirlist" data-kind="raw_dirs" data-placeholder="e.g. tom/raw_data"></div>
+        <div class="dirlist" data-kind="raw_dirs" data-tensor data-placeholder="e.g. tom/raw_data"></div>
       </div>
       <div class="dir-section">
         <h3>Motion-corrected data</h3>
         <p class="muted">Laid out like the raw data: <code>&lt;folder&gt;/&lt;YYYY-MM-DD&gt;/&lt;fly&gt;/…</code></p>
-        <div class="dirlist" data-kind="mocorr_dirs" data-placeholder="e.g. tom/analysis"></div>
+        <div class="dirlist" data-kind="mocorr_dirs" data-tensor data-placeholder="e.g. tom/analysis"></div>
       </div>
       <div class="dir-section">
         <h3>Odor metadata</h3>
         <p class="muted">Olfactometer YAML files, up to three folders deep: e.g. a copy of your olfactometer configs, with the YAMLs <code>olf</code> generates from them. For each panel of an upload: those named in the notes of its recordings (named <code>&lt;panel&gt;_&lt;n&gt;</code>, or <code>&lt;panel&gt;</code> alone), else the panel's config (<code>&lt;panel&gt;.yaml</code>), else those with one of the flies' dates in their path.</p>
-        <div class="dirlist" data-kind="odor_dirs" data-placeholder="e.g. tom/stimulus_files"></div>
+        <div class="dirlist" data-kind="odor_dirs" data-tensor data-placeholder="e.g. tom/stimulus_files"></div>
       </div>
       <div class="paths-status" id="paths-status" aria-live="polite"></div>
     </div>
@@ -798,7 +798,7 @@ try {
           <label class="check">MetaCyc version <input id="mc-import-version" value="" placeholder="told from the files" spellcheck="false" autocomplete="off" title="MetaCyc's version the tables were exported from, shown in the titles. Leave it blank, and it is told from them: by how many pathways and compounds they have, against how many each release's notes say it has. A version given that is another release's than theirs is refused."></label>
         </div>
         <label class="field imp-tensor" id="mc-import-tensor" hidden><span>Path on tensor, from its top: the folder, or an archive of it</span>
-          <input id="mc-import-path" spellcheck="false" autocomplete="off" placeholder="e.g. tom/BioCyc/raw, or tom/BioCyc.zip"><span class="path-msg"></span></label>
+          <input id="mc-import-path" data-tensor-path data-archives spellcheck="false" autocomplete="off" placeholder="e.g. tom/BioCyc/raw, or tom/BioCyc.zip"><span class="path-msg"></span></label>
         <div class="imp-chosen" id="mc-import-files"></div>
         <div id="mc-import-msg" aria-live="polite"></div>
         <div class="actions"><button type="button" class="btn primary" id="mc-import-btn" disabled>Import</button></div>
@@ -820,7 +820,7 @@ try {
           <button type="button" class="btn" id="lt-import-tensor-btn" aria-expanded="false">or a path on tensor…</button>
         </div>
         <label class="field imp-tensor" id="lt-import-tensor" hidden><span>Path on tensor, from its top: the folder, or an archive of it</span>
-          <input id="lt-import-path" spellcheck="false" autocomplete="off" placeholder="e.g. tom/LOTUS/raw, or tom/LOTUS.tar.gz"><span class="path-msg"></span></label>
+          <input id="lt-import-path" data-tensor-path data-archives spellcheck="false" autocomplete="off" placeholder="e.g. tom/LOTUS/raw, or tom/LOTUS.tar.gz"><span class="path-msg"></span></label>
         <div class="imp-chosen" id="lt-import-files"></div>
         <div id="lt-import-msg" aria-live="polite"></div>
         <div class="actions"><button type="button" class="btn primary" id="lt-import-btn" disabled>Import</button></div>

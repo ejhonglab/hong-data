@@ -515,6 +515,12 @@ dialog.mismatches::backdrop { background: rgba(29,31,34,.45); }
 /* a dataset's data path as checked on the server (upload form, data menus) */
 .path-msg { display: block; font-size: 12px; }
 .path-msg:empty { display: none; }
+/* what is in the folder of a path on tensor being typed (app.js's wirePathComplete) */
+.path-suggest { position: fixed; z-index: 60; max-height: 260px; overflow: auto; background: var(--panel); border: 1px solid var(--rule-strong);
+  border-radius: 4px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15); font-family: ui-monospace, monospace; font-size: 12.5px; padding: 2px 0; }
+.path-suggest > div { padding: 3px 10px; cursor: pointer; white-space: nowrap; }
+.path-suggest > div:hover { background: var(--surface-2); }
+.path-suggest > div.active { background: var(--accent-soft); }
 .path-msg.ok { color: var(--ok); }
 .path-msg.warn { color: var(--warn); }
 .path-msg.bad { color: var(--danger); }

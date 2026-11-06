@@ -69,6 +69,28 @@ def test_check_dir(root, tmp_path):
     assert "unmounted" in tensor.root_status(tmp_path / "empty")["error"]
 
 
+def test_list_dir(root, main):  # noqa: F811
+    """What is in a folder on tensor, to complete a path being typed: its folders (and
+    archives, if asked), not hidden ones nor a NAS's own; refused as other paths are."""
+    (root / "tom" / ".snapshot").mkdir()
+    (root / "tom" / "@eaDir").mkdir()
+    (root / "tom" / "raw.tar.gz").write_bytes(b"")
+    top = tensor.list_dir("", root)
+    assert top["ok"] and top["path"] == "" and top["entries"] == [{"name": "other", "dir": True}, {"name": "tom", "dir": True}]
+    tom = tensor.list_dir("tom/", root)
+    assert tom["ok"] and tom["path"] == "tom" and [e["name"] for e in tom["entries"]] == ["mocorr", "raw", "stim"]
+    assert [e["name"] for e in tensor.list_dir("tom", root, (".tar.gz",))["entries"]] == ["mocorr", "raw", "raw.tar.gz", "stim"]
+    assert tensor.list_dir("tom/notes.txt", root)["error"] == "this is a file, not a folder"
+    assert "'tom' has no 'Raw' (did you mean 'tom/raw'?)" in tensor.list_dir("tom/Raw", root)["error"]
+    assert "absolute" in tensor.list_dir("/local/tensor/tom", root)["error"]
+    # through the API: of the server's tensor, with its archives if asked
+    status, r = call(main.tensor_list, params={"path": "tom/raw", "archives": "1"})
+    assert status == 200 and r["ok"] and [e["name"] for e in r["entries"]] == ["2023-11-19", "20231120"]
+    assert [e["name"] for e in call(main.tensor_list, params={"path": "tom", "archives": "1"})[1]["entries"]] == [
+        "mocorr", "raw", "raw.tar.gz", "stim"]
+    assert call(main.tensor_list, params={})[1]["path"] == ""
+
+
 def test_file_path(root):
     rel, path = tensor.file_path("tom/stim/abc_stim.yaml", root, (".yaml", ".yml"))
     assert rel == "tom/stim/abc_stim.yaml" and path == root / rel

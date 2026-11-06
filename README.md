@@ -16,7 +16,8 @@ expected, and nothing secret is entered. If a download or the page is blocked, s
 
 1. **Settings** (once): your first name (alone, with no spaces), and your raw data,
    motion-corrected data and odor YAML folders on tensor, written from the top of tensor
-   (e.g. `tom/raw_data`). Once all of them are found, they are saved under your first name
+   (e.g. `tom/raw_data`). Every field of a path on tensor lists what is in the folder
+   typed so far as you type: Up/Down and Enter (or a click) take one, Tab completes. Once all of them are found, they are saved under your first name
    for any computer you use, and an upload under that name finds them.
 2. **Upload**: drop your CSV or parquet file of responses (see
    [Data file format](#data-file-format)), or several with the same experiment details

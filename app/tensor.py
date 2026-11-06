@@ -189,6 +189,35 @@ def locate(path: str, root: Path) -> tuple[str, Path]:
         raise
 
 
+def list_dir(path: str, root: Path, suffixes: tuple[str, ...] = ()) -> dict:
+    """What is in a folder on tensor (from its top: '' for the top itself), to complete a path
+    being typed: its folders, and its files ending in one of `suffixes` (as archives), but for
+    those named as hidden ('.') or as a NAS's own ('@'), each by name; at most `MAX_LISTING`
+    of them read (``truncated`` then).
+
+    Returns:
+        ``{'path' (normalized, or None), 'ok', 'error', 'entries': [{'name', 'dir'}], 'truncated'}``
+    """
+    out = {"path": None, "ok": False, "error": None, "entries": [], "truncated": False}
+    try:
+        if not path.strip().replace("\\", "/").strip("/").strip("."):
+            rel, target = "", root
+            if not os.path.isdir(root):
+                raise PathError(f"tensor is not available on the server ({root} does not exist)")
+        else:
+            rel, target = locate(path, root)
+            if not os.path.isdir(target):
+                raise PathError("this is a file, not a folder")
+    except PathError as e:
+        out["error"] = str(e)
+        return out
+    found = _entries(target)
+    keep = lambda e: _is_dir(e) or (bool(suffixes) and e.name.lower().endswith(suffixes))  # noqa: E731
+    out.update(path=rel, ok=True, truncated=len(found) >= MAX_LISTING,
+               entries=[{"name": e.name, "dir": _is_dir(e)} for e in found if not e.name.startswith((".", "@")) and keep(e)])
+    return out
+
+
 def check_dir(path: str, root: Path) -> dict:
     """Check a folder a user entered: ``{'input', 'path' (normalized, or None), 'ok', 'error'}``."""
     out = {"input": path, "path": None, "ok": False, "error": None}

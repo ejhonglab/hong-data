@@ -347,6 +347,147 @@ async function checkPathInput(input, msg) {
   showPathCheck(input, msg, c);
 }
 
+// Completion of a path on tensor as it is typed (from its top): what is in the folder typed
+// so far (GET /api/tensor/list), those starting with what follows its last '/' (else
+// containing it), in a list under the field. Up and Down choose one, Enter or a click takes
+// it, Tab takes it too (else completes what they all start with), Escape closes the list; a
+// folder taken goes on to what is in it. archives: an archive's files are offered too.
+const pathListings = new Map(); // `${archives}|${folder}` -> {at, promise of the server's answer, value: it, once here}
+function tensorListing(folder, archives) {
+  const key = `${archives ? 1 : 0}|${folder}`, hit = pathListings.get(key);
+  if (hit && Date.now() - hit.at < 60e3) return hit.promise;
+  const entry = { at: Date.now(), value: undefined };
+  entry.promise = api(`/api/tensor/list?path=${encodeURIComponent(folder)}${archives ? '&archives=1' : ''}`)
+    .catch(() => null).then((res) => { entry.value = res; return res; });
+  pathListings.set(key, entry);
+  if (pathListings.size > 200) pathListings.delete(pathListings.keys().next().value);
+  return entry.promise;
+}
+
+// a folder's listing, if it was read lately (as tensorListing gives it); else undefined
+function cachedListing(folder, archives) {
+  const hit = pathListings.get(`${archives ? 1 : 0}|${folder}`);
+  return hit && Date.now() - hit.at < 60e3 ? hit.value : undefined;
+}
+
+const pathSuggest = (() => {
+  const box = document.createElement('div');
+  box.className = 'path-suggest';
+  box.id = 'path-suggest';
+  box.setAttribute('role', 'listbox');
+  box.hidden = true;
+  document.body.appendChild(box);
+  box.addEventListener('mousedown', (e) => e.preventDefault()); // (the field keeps the focus)
+  return box;
+})();
+
+function wirePathComplete(input, { archives = false } = {}) {
+  if (input._pathComplete) return;
+  input._pathComplete = true;
+  input.autocomplete = 'off';
+  input.setAttribute('aria-autocomplete', 'list');
+  input.setAttribute('aria-controls', pathSuggest.id);
+  let seq = 0, shown = null; // {folder, items: [{name, dir}], at: the one chosen (-1: none), value: what was typed then}
+  const split = () => {
+    const v = input.value.replace(/\\/g, '/'), i = v.lastIndexOf('/');
+    return { folder: i < 0 ? '' : v.slice(0, i), part: v.slice(i + 1) };
+  };
+  const close = () => {
+    shown = null;
+    if (pathSuggest._owner === input) { pathSuggest.hidden = true; pathSuggest._owner = null; }
+    input.setAttribute('aria-expanded', 'false');
+  };
+  const place = () => {
+    const r = input.getBoundingClientRect();
+    Object.assign(pathSuggest.style, { left: `${r.left}px`, top: `${r.bottom + 2}px`, minWidth: `${r.width}px` });
+  };
+  const render = () => {
+    if (!shown?.items.length || document.activeElement !== input) { close(); return; }
+    pathSuggest._owner = input;
+    pathSuggest.innerHTML = shown.items.map((it, k) => `<div role="option" id="path-suggest-${k}" class="${k === shown.at ? 'active' : ''}"
+      data-k="${k}" aria-selected="${k === shown.at}">${esc(it.name)}${it.dir ? '/' : ' <span class="muted">archive</span>'}</div>`).join('');
+    pathSuggest.onclick = (e) => { const d = e.target.closest('[data-k]'); if (d) take(+d.dataset.k); };
+    place();
+    pathSuggest.hidden = false;
+    input.setAttribute('aria-expanded', 'true');
+    if (shown.at >= 0) {
+      input.setAttribute('aria-activedescendant', `path-suggest-${shown.at}`);
+      $(`#path-suggest-${shown.at}`)?.scrollIntoView({ block: 'nearest' });
+    } else input.removeAttribute('aria-activedescendant');
+  };
+  const set = (value) => {
+    input.value = value;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+  const take = (k) => {
+    const it = shown?.items[k];
+    if (!it) return;
+    const { folder } = split();
+    set(`${folder ? `${folder}/` : ''}${it.name}${it.dir ? '/' : ''}`);
+    if (!it.dir) close(); // (input's listener lists what is in a folder taken)
+  };
+  // what is offered of a folder's listing (`res`, as tensorListing gives it) for what is typed now
+  const offer = (res) => {
+    const { folder, part } = split(), low = part.toLowerCase(), entries = res?.ok ? res.entries : [];
+    const starts = entries.filter((e) => e.name.toLowerCase().startsWith(low));
+    const items = [...starts, ...entries.filter((e) => !starts.includes(e) && low && e.name.toLowerCase().includes(low))];
+    // (nothing to offer once what is typed is the one folder there is)
+    shown = items.length === 1 && items[0].name === part ? null : { folder, items: items.slice(0, 300), at: -1, value: input.value };
+  };
+  const suggest = async () => {
+    const { folder } = split(), mine = ++seq;
+    if (/^\s*([/~]|[A-Za-z]:)/.test(input.value) || folder.split('/').includes('..')) { close(); return; }
+    const res = await tensorListing(folder, archives);
+    if (mine !== seq) return;
+    offer(res);
+    render();
+  };
+  input.addEventListener('input', () => { clearTimeout(input._suggestTimer); input._suggestTimer = setTimeout(suggest, 80); });
+  input.addEventListener('blur', close);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' && !shown) { e.preventDefault(); suggest(); return; }
+    // (typed on since the list was made, as a Tab right after typing is: made again now, from
+    // the folder's listing if it was read, else none)
+    if ((e.key === 'Tab' || e.key === 'Enter') && shown && shown.value !== input.value) {
+      const res = cachedListing(split().folder, archives);
+      if (res === undefined) close(); else { seq++; offer(res); render(); }
+    }
+    if (!shown || pathSuggest.hidden) return;
+    const n = shown.items.length;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      // (from none, -1, through each, and round to none again)
+      shown.at = ((shown.at + 1 + (e.key === 'ArrowDown' ? 1 : -1) + n + 1) % (n + 1)) - 1;
+      render();
+    } else if (e.key === 'Enter' && shown.at >= 0) {
+      e.preventDefault(); // (not the form's submit)
+      take(shown.at);
+    } else if (e.key === 'Tab' && !e.shiftKey) {
+      if (shown.at >= 0) { e.preventDefault(); take(shown.at); return; }
+      if (n === 1) { e.preventDefault(); take(0); return; }
+      // what they all start with, if it is more than is typed
+      const names = shown.items.map((it) => it.name), { folder, part } = split();
+      let common = names[0];
+      for (const name of names) while (!name.toLowerCase().startsWith(common.toLowerCase())) common = common.slice(0, -1);
+      if (common.length > part.length && names.every((name) => name.toLowerCase().startsWith(part.toLowerCase()))) {
+        e.preventDefault();
+        set(`${folder ? `${folder}/` : ''}${names[0].slice(0, common.length)}`);
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation(); // (not a dialog's or the page's)
+      close();
+    }
+  });
+  window.addEventListener('scroll', () => { if (pathSuggest._owner === input) place(); }, true);
+  window.addEventListener('resize', () => { if (pathSuggest._owner === input) place(); });
+}
+
+// every field of a path on tensor (marked data-tensor-path; data-archives: archives too), completed once focused
+document.addEventListener('focusin', (e) => {
+  if (e.target.matches?.('input[data-tensor-path]')) wirePathComplete(e.target, { archives: 'archives' in e.target.dataset });
+});
+
 // shows a <dialog> of buttons; resolves to the value of the one chosen ('' if dismissed with Escape)
 function askDialog(dialog) {
   return new Promise((resolve) => {
@@ -360,7 +501,7 @@ function askDialog(dialog) {
 function wireMenu(menu, onPick) {
   $$('.menu-list button', menu).forEach((b) => b.addEventListener('click', () => { menu.open = false; onPick(b.dataset); }));
 }
-document.addEventListener('click', (e) => { $$('details.menu[open]').forEach((m) => { if (!m.contains(e.target)) m.open = false; }); });
+document.addEventListener('click', (e) => { $$('details.menu[open]').forEach((m) => { if (!m.contains(e.target) && !pathSuggest.contains(e.target)) m.open = false; }); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $$('details.menu[open]').forEach((m) => { m.open = false; }); });
 
 // A menu at the pointer, for a right click: entries [{html, title, disabled, onPick}].
@@ -3061,7 +3202,7 @@ class Browse {
     const kind = menu.dataset.kind;
     const edit = `<div class="data-edit">
         <label class="data-edit-label" for="data-path-${kind}">${r.status === 'none' ? 'Enter its path' : 'Its path'} on tensor, from the top (as at upload)</label>
-        <div class="data-edit-row"><input id="data-path-${kind}" class="data-path-input" spellcheck="false" autocomplete="off"
+        <div class="data-edit-row"><input id="data-path-${kind}" class="data-path-input" data-tensor-path spellcheck="false" autocomplete="off"
           placeholder="e.g. tom/${kind === 'raw' ? 'raw_data' : 'analysis'}/2023-11-19" value="${esc(r.input || '')}">
           <button type="button" class="btn small primary" data-save-path>Save</button></div>
         <span class="path-msg"></span>
@@ -3740,6 +3881,7 @@ function dirRow(list, value) {
   const input = $('input', row);
   input.placeholder = list.dataset.placeholder;
   input.setAttribute('aria-label', list.dataset.label || 'Folder on tensor');
+  if ('tensor' in list.dataset) input.dataset.tensorPath = ''; // (completed: a folder on tensor, not one of the server's)
   input.value = value;
   return row;
 }

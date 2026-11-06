@@ -751,6 +751,14 @@ async def tensor_check(request: Request) -> Response:
     return JSONResponse(await run_in_threadpool(tensor.check_data_path, path, config.TENSOR_ROOT))
 
 
+async def tensor_list(request: Request) -> Response:
+    """What is in a folder on tensor (?path=, from its top; '' for the top), to complete a path
+    being typed: its folders, and with ?archives=1 its archives too (see `tensor.list_dir`)."""
+    q = request.query_params
+    suffixes = bundle_import.ARCHIVES if q.get("archives") in ("1", "true") else ()
+    return JSONResponse(await run_in_threadpool(tensor.list_dir, q.get("path", ""), config.TENSOR_ROOT, suffixes))
+
+
 async def stage_readme(request: Request) -> Response:
     """Generate a README.md from the metadata (not yet saved)."""
     d = _stage_dir(request.path_params["stage_id"])
@@ -3222,6 +3230,7 @@ routes = [
     Route("/api/datasets/{ds_id:int}/data_paths", dataset_data_paths),
     Route("/api/datasets/{ds_id:int}/data_paths", dataset_data_paths_save, methods=["PUT"]),
     Route("/api/tensor/check", tensor_check, methods=["POST"]),
+    Route("/api/tensor/list", tensor_list),
     Route("/api/datasets/{ds_id:int}/movies", dataset_movies),
     Route("/api/movie", movie_info),
     Route("/api/movie/planes", movie_planes),
