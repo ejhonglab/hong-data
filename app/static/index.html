@@ -64,7 +64,7 @@ try {
         <div class="format-help-body">
           <p>The wide layout written by <code>DataFrame.to_csv</code> / <code>to_parquet</code> for a frame with a 3-level column index and a multi-level row index:</p>
           <ul>
-            <li><strong>Columns</strong> (three header rows): <code>date</code>, <code>fly_num</code>, <code>roi</code>. Each column must be unique. <code>roi</code> is either a glomerulus name (D, DA1, … VM7v) or a non-negative integer ROI id.
+            <li><strong>Columns</strong> (three header rows): <code>date</code>, <code>fly_num</code>, <code>roi</code>. Each column must be unique. <code>roi</code> is either a glomerulus name (D, DA1, … VM7v: <button type="button" class="link" id="glom-names-show" hidden>all of them</button>) or a non-negative integer ROI id.
               It may be called <code>cells</code> instead: its values are then KC ids, so must be non-negative integers (and the coding unit is taken to be KCs).</li>
             <li><strong>Rows</strong> (leading columns): <code>panel</code>, on every row (the set of odors presented in the experiment, e.g. <code>megamat</code>), at least <code>odor1</code> (or <code>odor</code>) and <code>repeat</code> (or <code>trial</code>: each trial's number, an integer); optionally <code>is_pair</code>, <code>odor2</code>, …. Extra <code>odor&lt;n&gt;</code> levels are mixture components presented together in air.</li>
             <li><strong>Odor strings</strong> look like <code>va @ -3</code>: abbreviation, a space, <code>@</code>, a space, log<sub>10</sub> concentration (0 or negative). <code>solvent</code> marks an unused component.
@@ -75,6 +75,14 @@ try {
             averaged over them) or a panel on every row is refused, saying what is missing.
             A <code>_t0</code>, <code>_t1</code>, … suffix is removed from ROI names (<code>DA1_t0</code> → <code>DA1</code>), and an ROI of glomeruli
             that could not be told apart may be named by them joined with <code>/</code> (<code>VA1d/VA1v</code>).</p>
+          <details class="glom-names" id="glom-names" hidden>
+            <summary>The glomerulus names accepted <span class="muted" id="glom-names-n"></span></summary>
+            <p>An ROI is a glomerulus if it is named as one of these, as written (upper and lower case matter: <code>DA4l</code>, not
+              <code>DA4L</code>), or several of them joined by <code>/</code>; any other <code>roi</code> must be a non-negative integer id.</p>
+            <p class="roi-names" id="glom-names-list"></p>
+            <div class="actions"><button type="button" class="btn small" id="glom-names-copy">Copy them, one per line</button><span class="status"></span></div>
+            <p class="small muted">The list is <code>config/glomeruli.txt</code> on the server, which can be edited to add names.</p>
+          </details>
         </div>
       </details>
       <div id="file-result"></div>

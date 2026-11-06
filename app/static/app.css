@@ -372,6 +372,9 @@ button.link { background: none; border: 0; padding: 0; color: var(--accent); tex
 .odor-table tr.missing td, .odor-table tr.ambiguous td { background: var(--warn-soft); }
 .example-file { margin: 8px 0 0; }
 .roi-names { line-height: 1.9; }
+.glom-names { margin-top: 10px; }
+.glom-names summary { cursor: pointer; font-weight: 500; }
+.glom-names .actions { margin: 6px 0; }
 ul.missing-odors { margin: 4px 0 8px; padding-left: 20px; }
 .odor-table .notes { max-width: 300px; color: var(--ink-muted); }
 .odor-table td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }

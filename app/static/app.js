@@ -1931,6 +1931,10 @@ class UploadFlow {
   _fillOptions() {
     const o = this.options;
     fillCombos(o);
+    const glomeruli = o.glomeruli || [];
+    $('#glom-names').hidden = $('#glom-names-show').hidden = !glomeruli.length;
+    $('#glom-names-n').textContent = `(${glomeruli.length})`;
+    $('#glom-names-list').innerHTML = glomeruli.map((g) => `<code>${esc(g)}</code>`).join(' ');
     const dl = (id, values) => { $(id).innerHTML = values.map((v) => `<option value="${esc(v)}">`).join(''); };
     dl('#dl-uploaders', o.uploaders); dl('#dl-drivers', o.drivers); dl('#dl-genotypes', o.genotypes); dl('#dl-panels', o.panels);
     dl('#dl-response-calcs', o.response_calcs || []);
@@ -1940,6 +1944,17 @@ class UploadFlow {
   }
 
   _wire() {
+    // the glomerulus names accepted, at the end of the expected file format (opened from its mention of them)
+    $('#glom-names-show').addEventListener('click', () => {
+      $('#glom-names').open = true;
+      $('#glom-names').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+    $('#glom-names-copy').addEventListener('click', async (e) => {
+      const names = this.options?.glomeruli || [], status = e.target.nextElementSibling;
+      try { await copyText(names.join('\n')); setStatus(status, `✓ Copied ${names.length}`); } catch (err) {
+        setStatus(status, `Could not copy them: ${err.message}`, 'error');
+      }
+    });
     const dz = $('#dropzone'), fi = $('#file-input');
     dz.addEventListener('click', () => fi.click());
     dz.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fi.click(); } });
