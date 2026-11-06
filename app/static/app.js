@@ -3541,12 +3541,36 @@ function refSubset(ref, { unidentified = true, onlyOdors = false } = {}) {
   return { ...ref, values, shape: [rows.length, cols.length], rows: rows.map((k) => ref.rows[k]), cols: cols.map((k) => ref.cols[k]) };
 }
 
+// the Reference data list's entry for ECFP (not a dataset: `Reference._showEcfp`), an id no
+// reference dataset can have (those added in the Admin tab are only a-z, 0-9 and '-')
+const ECFP_REF = '_ecfp';
+
 class Reference {
   constructor() {
     this.items = null; this.viewer = null; this.selected = null; this.cache = new Map();
     this.showUnidentified = false; // chemicals with no CID or InChI shown in the matrix
     this.onlyOdors = false; // only the chemicals in the Odors table shown (where some are not)
     this.shownOf = new WeakMap(); // a dataset as loaded -> {[how it is shown]: it as shown so}
+  }
+
+  // ECFP: not a dataset kept here, but how to compare with it in the Compare tab
+  _showEcfp() {
+    $('#ref-view-title').textContent = 'ECFP: chemical structure';
+    $('#ref-desc').textContent = 'Not a table kept here: each chemical of the Odors table with a structure (its InChI, as PubChem gives it '
+      + 'for its CID) as an ECFP fingerprint (extended-connectivity: RDKit\'s Morgan fingerprints with ECFP\'s atom invariants), made '
+      + 'when asked for. Two odors are as alike as their fingerprints: their Jaccard similarity, 1 − their Jaccard distance.';
+    for (const el of ['#reference-viewer', '#ref-metacyc', '#ref-lotus', '#ref-lotus-made']) $(el).hidden = true;
+    $('#ref-msgs').replaceChildren(msgBox('info', `<b>To compare your data with ECFP6</b>, in the <a href="#compare">Compare tab</a>:
+      <ol>
+        <li>Tick your datasets on the left (with <i>Compare on</i>: odors).</li>
+        <li>Under <i>Compare to</i>, tick <i>Chemical structure: ECFP fingerprints</i>, of <i>Diameter</i> 6 (ECFP6, the default).</li>
+        <li>Set <i>Each space as</i> to its odor–odor similarity: each dataset's, by the measure under <i>Odor–odor similarity</i>
+          (Pearson correlation by default), is shown with ECFP6's.</li>
+        <li>Tick <i>Correlate the similarities of each two</i> (under <i>Between similarities</i>): how alike each dataset's are to ECFP6's,
+          with p-values. Click a cell to see the two side by side. Similarities being 1 − distances, these are the correlations of
+          their distances too (ECFP6's Jaccard distances, and your data's correlation distances).</li>
+      </ol>
+      <a class="btn small" href="#compare/ecfp">Open the Compare tab with ECFP6 ticked</a>`));
   }
 
   // a dataset as shown (`refSubset`): but for its chemicals not identified, unless chosen;
@@ -3568,14 +3592,20 @@ class Reference {
       setAdminBadge(this.items);
     }
     const list = $('#reference-list');
-    if (!this.items.length) { list.innerHTML = '<div class="empty">No reference data yet: it is added in the Admin tab.</div>'; return; }
+    const ecfp = `<button type="button" class="list-item${this.selected === ECFP_REF ? ' active' : ''}" data-id="${ECFP_REF}">
+      <span class="t">ECFP</span><span class="s">Chemical structure: compared with in the Compare tab</span></button>`;
+    if (!this.items.length) {
+      list.innerHTML = `<div class="empty">No reference data yet: it is added in the Admin tab.</div>${ecfp}`;
+      $('.list-item', list).addEventListener('click', () => { location.hash = `#reference/${ECFP_REF}`; });
+      return;
+    }
     list.innerHTML = this.items.map((it) => {
       const ok = it.state === 'ok';
       const why = ok ? (it.warning ? `<span class="s warn">⚠ ${esc(it.warning)}</span>` : '')
         : `<span class="s ${it.state === 'error' ? 'bad' : 'muted'}">${esc(it.state === 'error' ? `Cannot be read: ${it.error}` : 'Read once the server restarts')}</span>`;
       return `<button type="button" class="list-item${this.selected === it.id ? ' active' : ''}" data-id="${esc(it.id)}">
         <span class="t">${esc(it.title)}</span>${ok && it.description ? `<span class="s">${esc(it.description)}</span>` : ''}${why}</button>`;
-    }).join('');
+    }).join('') + ecfp;
     $$('.list-item', list).forEach((b) => b.addEventListener('click', () => { location.hash = `#reference/${b.dataset.id}`; }));
   }
 
@@ -3584,6 +3614,7 @@ class Reference {
     if (this.items) this.load();
     $('#reference-empty').hidden = true;
     $('#reference-view').hidden = false;
+    if (id === ECFP_REF) { this._showEcfp(); return; }
     $('#ref-view-title').textContent = 'Loading…';
     $('#ref-desc').textContent = '';
     $('#ref-msgs').replaceChildren();
@@ -5244,6 +5275,13 @@ class ComparePage {
   _save() { LS.set(COMPARE_KEY, this.o); }
 
   _changed() { this._save(); this.renderList(); this.render(); }
+
+  // ECFP6 ticked to compare with (from the Reference data tab's ECFP), each space shown as
+  // its odor–odor similarity, on odors
+  useEcfp() {
+    Object.assign(this.o, { on: 'odors', show: 'sim', ecfpD: 6, spaces: [...new Set([...this.o.spaces, 'ecfp'])] });
+    this._changed();
+  }
 
   // each time the tab is opened: datasets and reference datasets may have come or gone
   async load() {
@@ -7164,7 +7202,13 @@ function route() {
   if (name === 'roi-training') roiTraining.load();
   if (name === 'headspace') headspacePage.load().then(() => headspaceVcf.load());
   if (name === 'merge') mergePage.load();
-  if (name === 'compare') comparePage.load();
+  if (name === 'compare') {
+    comparePage.load().then(() => {
+      if (id !== 'ecfp') return;
+      comparePage.useEcfp();
+      history.replaceState(null, '', '#compare'); // (done once: not again on a reload)
+    });
+  }
   if (name === 'browse' && !id) { $('#browse-empty').innerHTML = BROWSE_EMPTY; $('#browse-empty').hidden = false; $('#dataset-view').hidden = true; browse.selected = null; }
   if (name === 'reference' && !id) { $('#reference-empty').hidden = false; $('#reference-view').hidden = true; reference.selected = null; }
 }
