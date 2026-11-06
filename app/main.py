@@ -38,9 +38,9 @@ from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, R
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import (backup, bundle_import, chemprops, compare, config, dilution, export, filelog, headspace, lotus, lotus_import,
-               merge, metacyc, metacyc_import, movies, odormeta, permalinks, reference, roi_training, sandbox, tensor, thorimage,
-               vcf, version, yamlcheck)
+from . import (backup, bundle_import, chemprops, compare, config, dilution, export, filelog, fits, headspace, lotus,
+               lotus_import, merge, metacyc, metacyc_import, movies, odormeta, permalinks, reference, roi_training, sandbox, tensor,
+               thorimage, vcf, version, yamlcheck)
 from .db import PANEL_RENAMES, PROPERTY_COLUMNS, Database, rename_panel
 from .glomeruli import GLOMERULI, load_glomeruli
 from .ingest import (ParsedData, ValidationError, combine, extra_text, files_text, fly_key, kc_id_problems, load_file,
@@ -1478,6 +1478,79 @@ async def roi_training_download(request: Request) -> Response:
     stacks = request.query_params.get("stacks") not in ("0", "false")
     top = f"olfdb_roi_training_{dt.date.today().isoformat()}"
     return StreamingResponse(roi_training.stream_zip(found, config.TENSOR_ROOT, bases, stacks, top), media_type="application/zip",
+                             headers={"content-disposition": f'attachment; filename="{top}.zip"'})
+
+
+# ------------------------------------------------------------------------- fits
+
+def _client_ip(request: Request) -> Optional[str]:
+    """Where a request came from: its client's address (Docker's port mapping keeps it), and
+    the first X-Forwarded-For address before it, if a proxy put one there."""
+    ip = request.client.host if request.client else None
+    fwd = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    return f"{fwd} (through {ip})" if fwd else ip
+
+
+async def fits_list(request: Request) -> Response:
+    """Every fit (`fits.listing`): those running and queued with when they should end; and the fit worker."""
+    return JSONResponse(await run_in_threadpool(fits.listing, db))
+
+
+async def fits_create(request: Request) -> Response:
+    """Asks for a fit: {"name": the first name set in Settings, "options": `fits.options`}. Who,
+    and from where (`_client_ip`), are kept with it. 422 without a name, or for one not a first
+    name alone; 400 for options out of range."""
+    body = await request.json()
+    if not isinstance(body, dict):
+        return json_error(400, "expected a JSON object")
+    name = _user_name(body.get("name"))
+    if not name:
+        return json_error(422, "say who you are: enter your first name in Settings")
+    if first_name_problem(name):
+        return json_error(422, "the name must be a first name alone, with no spaces (e.g. Ann)")
+    try:
+        opts = fits.options(body.get("options") or {})
+    except ValueError as e:
+        return json_error(400, str(e))
+    return JSONResponse(await run_in_threadpool(fits.create, db, name, _client_ip(request), opts), status_code=201)
+
+
+async def fits_cancel(request: Request) -> Response:
+    """Stops a fit: one queued now, one running at its next step (`fits.request_cancel`)."""
+    f = await run_in_threadpool(fits.request_cancel, db, request.path_params["id"])
+    return JSONResponse(f) if f else json_error(404, "no such fit")
+
+
+async def fits_delete(request: Request) -> Response:
+    """Deletes a fit and its files. 409 while it runs (stop it first)."""
+    done = await run_in_threadpool(fits.delete, db, request.path_params["id"])
+    if done is None:
+        return json_error(404, "no such fit")
+    if done is False:
+        return json_error(409, "it is running: stop it first")
+    return JSONResponse({"deleted": True})
+
+
+async def fits_log(request: Request) -> Response:
+    """A fit's log (its last 200 kB)."""
+    p = fits.fit_dir(request.path_params["id"]) / "log.txt"
+    if not p.is_file():
+        return json_error(404, "no log of that fit (it has not started, or is deleted)")
+    with open(p, "rb") as f:
+        f.seek(max(0, p.stat().st_size - 200_000))
+        return PlainTextResponse(f.read().decode("utf-8", errors="replace"))
+
+
+async def fits_download(request: Request) -> Response:
+    """A fit's model and results, as a zip sent as it is written (`fits.stream_zip`)."""
+    fit_id = request.path_params["id"]
+    f = await run_in_threadpool(fits.get, db, fit_id)
+    if f is None:
+        return json_error(404, "no such fit")
+    if f["status"] != "done" or not (fits.fit_dir(fit_id) / "model").is_dir():
+        return json_error(409, "only a fit that is done has a model to download")
+    top = f"olfdb_fit_{fit_id}"
+    return StreamingResponse(fits.stream_zip(fit_id, top), media_type="application/zip",
                              headers={"content-disposition": f'attachment; filename="{top}.zip"'})
 
 
@@ -3239,6 +3312,12 @@ routes = [
     Route("/api/download", download),
     Route("/api/roi_training", roi_training_flies),
     Route("/api/roi_training/download", roi_training_download),
+    Route("/api/fits", fits_list),
+    Route("/api/fits", fits_create, methods=["POST"]),
+    Route("/api/fits/{id:int}", fits_delete, methods=["DELETE"]),
+    Route("/api/fits/{id:int}/cancel", fits_cancel, methods=["POST"]),
+    Route("/api/fits/{id:int}/log", fits_log),
+    Route("/api/fits/{id:int}/download", fits_download),
     Route("/api/merge", merge_units),
     Route("/api/merge/preview", merge_preview, methods=["POST"]),
     Route("/api/merge/download", merge_download),

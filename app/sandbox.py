@@ -302,10 +302,12 @@ def _system_paths() -> list[str]:
     return list(dict.fromkeys(str(p) for p in paths if p and os.path.isabs(p)))
 
 
-def restrict(read: list[str], write: list[str]) -> dict:
+def restrict(read: list[str], write: list[str], files: Iterable[str] = ()) -> dict:
     """Have the kernel deny this thread, and the threads and processes it starts from now
     on, reading anything outside `read` and `_system_paths`, and writing anything outside
-    `write` (and /dev/null). Paths that do not exist are left out.
+    `write` (and /dev/null, and `files`: files, or folders of files, it may also open to write
+    and truncate, but not make or delete, e.g. a GPU's device files). Paths that do not exist
+    are left out.
 
     Returns:
         dict with ``enforced``, ``abi`` and ``reason`` (why it is not enforced, or None).
@@ -321,7 +323,8 @@ def restrict(read: list[str], write: list[str]) -> dict:
     if ruleset < 0:
         return {"enforced": False, "abi": abi, "reason": f"the kernel refused a ruleset ({os.strerror(err)})"}
     rules = ([(p, _READ | _EXECUTE) for p in _system_paths()] + [(p, _READ) for p in read]
-             + [(p, _WRITE) for p in write] + [("/dev/null", _READ_FILE | _WRITE_FILE | _TRUNCATE)])
+             + [(p, _WRITE) for p in write] + [("/dev/null", _READ_FILE | _WRITE_FILE | _TRUNCATE)]
+             + [(p, _READ_FILE | _WRITE_FILE | _TRUNCATE) for p in files])
     try:
         for path, access in rules:
             try:
@@ -348,10 +351,11 @@ def restrict(read: list[str], write: list[str]) -> dict:
     return {"enforced": True, "abi": abi, "reason": None}
 
 
-def start() -> dict:
+def start(files: Iterable[str] = ()) -> dict:
     """Fix the folders the server may use until it stops. To be called once as it starts,
     before it starts any thread (Landlock holds the calling thread and those it starts;
     numpy's and pyarrow's worker threads, started on import, run no Python and open no files).
+    ``files``: files it may also write to (`restrict`), e.g. the fit worker's GPU.
 
     Returns:
         `STATUS`: the settings in effect, when, and how the kernel holds the server to them.
@@ -361,7 +365,7 @@ def start() -> dict:
     settings = load()
     activate(settings)
     if config.LANDLOCK:
-        kernel = restrict(ACTIVE["read"], ACTIVE["write"])
+        kernel = restrict(ACTIVE["read"], ACTIVE["write"], files)
     else:
         kernel = {"enforced": False, "abi": landlock_abi(), "reason": "turned off on the server (OLFDB_LANDLOCK=0)"}
     if kernel["enforced"]:

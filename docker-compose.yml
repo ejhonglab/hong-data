@@ -1,6 +1,6 @@
 services:
   olfdb:
-    build: .
+    build: {context: ., target: web}
     image: olfdb:latest
     container_name: olfdb
     restart: unless-stopped    # also what starts it again after a restart from the Admin tab
@@ -28,6 +28,41 @@ services:
       # this folder on the server (the one docker compose is run from), for the Admin tab
       # to give paths in the container as paths on the server
       OLFDB_HOST_DIR: "${PWD}"
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+  # Runs the fits asked for in the AL Segmentation tab (app/fit_worker.py), one at a time, with
+  # al-diag-seg on the GPU: the same app, and folders, as the web server's, but an image with PyTorch
+  # and al-diag-seg too (about 9 GB), and the only one given the GPU. Needs the NVIDIA Container
+  # Toolkit (DEPLOY.md, "GPU"); without a GPU, remove this service (fits then wait, and the tab says so).
+  worker:
+    build: {context: ., target: worker}
+    image: olfdb-worker:latest
+    container_name: olfdb-worker
+    restart: unless-stopped
+    volumes:
+      - ./data:/data
+      - ./reference_data:/srv/olfdb/reference_data:ro
+      - ./config:/srv/olfdb/config:ro
+      - /local/tensor:/local/tensor:ro
+      - /etc/hostname:/etc/host_hostname:ro
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    shm_size: "8gb"            # PyTorch's shared memory
+    environment:
+      OLFDB_TENSOR_ROOT: "/local/tensor"
+      OLFDB_HOST_DIR: "${PWD}"
+      # what PyTorch, CUDA and matplotlib cache: in the data folder, the only one it may write
+      XDG_CACHE_HOME: "/data/tmp/cache"
+      CUDA_CACHE_PATH: "/data/tmp/cache/cuda"
+      MPLCONFIGDIR: "/data/tmp/cache/matplotlib"
+    deploy:
+      resources:
+        reservations:
+          devices: [{driver: nvidia, count: all, capabilities: [gpu]}]
     logging:
       driver: json-file
       options: { max-size: "20m", max-file: "5" }

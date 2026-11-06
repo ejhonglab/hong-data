@@ -96,7 +96,7 @@ try {
       <div id="nas-lookup"></div>
 
       <div class="grid">
-        <label class="field" data-field="uploader_name" data-in="edit" data-label-edit="Uploaded by (first name) *"><span>Your first name *</span><input name="uploader_name" required list="dl-uploaders" placeholder="first name only, e.g. Ann"><span class="path-msg"></span></label>
+        <label class="field" data-field="uploader_name" data-in="edit" data-label-edit="First name *"><span>First name *</span><input name="uploader_name" required list="dl-uploaders" placeholder="first name only, e.g. Ann"><span class="path-msg"></span></label>
         <label class="field" data-field="indicator" data-in="edit defaults"><span>Calcium indicator *</span>
           <div class="combo"><select name="indicator_select"></select><input name="indicator_other" placeholder="e.g. jGCaMP8f-opt" hidden></div>
         </label>
@@ -491,6 +491,28 @@ try {
         each recording's odors as in the odor table. Unzip it and give its folder to al-diag-seg's <code>run_pipeline.py</code>.</p>
     </div>
 
+    <div class="step" id="fit-step">
+      <div class="step-head"><h2>Fit a model</h2></div>
+      <p class="muted small">Fits <a href="https://github.com/tom-f-oconnell/al-diag-seg" target="_blank" rel="noopener">al-diag-seg</a>'s
+        model to the flies below (as the download above has them, read where they are on tensor), on the server's GPU: Cellpose
+        fine-tuned on their ROIs, an atlas of where each glomerulus is, and each one's odor tuning. A few flies are held out of
+        it (from each dataset in turn), and their predicted ROIs scored against their own. Its model can then be downloaded, to
+        run on your own flies (how, it says). One fit runs at a time; others wait their turn.</p>
+      <div class="grid fit-options">
+        <label class="field"><span>Held-out flies</span><input type="number" id="fit-held-out" min="1" max="30" value="4"></label>
+        <label class="field"><span>Epochs <span class="muted">(of Cellpose's training)</span></span><input type="number" id="fit-epochs" min="1" max="5000" value="200"></label>
+      </div>
+      <label class="check"><input type="checkbox" id="fit-atlas" checked><span>The atlas <span class="muted">(the flies registered to
+        each other, through their anatomical stacks where they have them: slower, but places and names glomeruli better)</span></span></label>
+      <label class="check"><input type="checkbox" id="fit-tentative" checked><span>Tentative ROIs (<code>DA1_t0</code>) trained on as
+        that glomerulus</span></label>
+      <p class="small" id="fit-who"></p>
+      <div class="actions"><button type="button" class="btn primary" id="fit-start">Start a fit</button></div>
+      <div id="fit-status" aria-live="polite"></div>
+      <div id="fit-worker"></div>
+      <div id="fits-list"></div>
+    </div>
+
     <div class="step">
       <div class="step-head"><h2>Flies</h2></div>
       <div id="rt-flies"></div>
@@ -526,6 +548,14 @@ try {
           <option value="rare">Only infrequently identified ones</option></select></label>
       <div class="actions"><button type="button" class="btn small" id="rt-cut-reset">Back to ≤ 50% of the flies, all counted</button></div>
     </div>
+
+    <div class="step" id="fits-past-step" hidden>
+      <div class="step-head"><h2>Past fits</h2></div>
+      <p class="muted small">Anyone's, newest first. A fit's scores (click them for each held-out fly's, and the glomeruli not found)
+        are of its final ROIs against the held-out flies' own. Its download is its model, with how to run it on your flies, and its
+        held-out flies' predicted ROIs (as named RoiSets too).</p>
+      <div id="fits-past"></div>
+    </div>
   </section>
 
   <!-- ====================================================== SETTINGS -->
@@ -538,7 +568,7 @@ try {
     <div class="step" id="settings-folders">
       <div class="step-head"><h2>You and your data on tensor</h2></div>
       <div class="grid">
-        <label class="field"><span>Your first name</span><input id="settings-name" list="dl-uploaders" autocomplete="off" placeholder="first name only, e.g. Ann"><span class="path-msg"></span></label>
+        <label class="field"><span>First name</span><input id="settings-name" list="dl-uploaders" autocomplete="off" placeholder="first name only, e.g. Ann"><span class="path-msg"></span></label>
       </div>
       <p class="muted folders-help">Give folders relative to the top of tensor (on the server: <code id="tensor-root">…</code>), e.g. <code>tom/raw_data</code>.
         Each is checked on the server when you leave its field; once all of them are found there, they are saved under your first name, by which the upload form finds them.</p>

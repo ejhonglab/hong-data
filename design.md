@@ -255,6 +255,28 @@ between the frontend and the server. Using the app is described in
   is exported through, not those its datasets have. Which glomeruli are infrequent, and
   everything said of them, is worked out in the browser from each fly's glomeruli, so a new
   cutoff needs no request.
+- **Fits run in a worker container of their own** (`fit_worker.py`, docker-compose.yml's
+  `worker`), not the web server: it alone is given the GPU, and has PyTorch, Cellpose and
+  al-diag-seg (an image of about 9 GB, from the Dockerfile's `worker` target; the site's
+  stays 1.2 GB). A fit takes hours and the CPU too (ANTs), while the web server is one
+  process whose restart (Admin tab) would end one. The two share only the database and the
+  data folder: a fit is a row of `fits` (asked for, and stopped, by the site; claimed and
+  run, one at a time, by the worker) and a folder, `data/fits/<id>/`; the worker says it is
+  there, and with which GPU, every 10 s (a setting the tab reads). It is held to the
+  folders the server may use as the web server is (Landlock), but may also write to the
+  GPU's device files, and to its own threads' entries in /proc, which CUDA does as it starts
+  (without, it says the GPU is not there). al-diag-seg reads the flies where they are on tensor, through a
+  manifest like the download's with every path absolute, so nothing is copied.
+- **A fit's held-out flies are taken from each dataset in turn**, spread through its flies,
+  so that each uploader's are scored; their names are al-diag-seg's (top folder on tensor,
+  date, number). A fit records who asked for it (the first name set in Settings: the box
+  sends people there, its name field selected) and from which IP address; anyone may
+  delete any fit, as anyone may start one.
+- **A fit's time left is estimated stage by stage** (loading, training, atlas, scoring),
+  from how long each took per unit of work in the last ten fits that finished (per fly
+  loaded, per epoch and training fly, per fly in the atlas, per held-out fly), and for the
+  stage it is in, from how far it has got; a fit waiting starts when those before it end.
+  Before any fit has finished, the estimate is a guess, and says so.
 - **The laser wavelength is never read from `Experiment.xml`**: ThorImage's
   `MultiPhotonLaser` value does not follow changes made to the wavelength at the laser,
   so the wavelength is only ever entered in the form.
@@ -992,6 +1014,8 @@ app/odors.py       odor string parsing/formatting (hong2p.olf's conventions; str
 app/glomeruli.py   accepted glomerulus names (config/glomeruli.txt overrides)
 app/yamlcheck.py   odor YAML parsing, what looks wrong in one, and the matrix ⊂ YAML check
 app/thorimage.py   Experiment.xml summary, and a .raw file's layout (with hong2p.thor)
+app/fits.py        fits of al-diag-seg models: records, options, held-out flies, their manifest, time estimates
+app/fit_worker.py  the fit worker (python -m app.fit_worker): runs fits one at a time, with al-diag-seg
 app/metadata.py    form model (pydantic) and README.md generation
 app/db.py          SQLite schema and queries
 app/reference.py   reference datasets: built-in and added ones, reading them, matching their chemicals
@@ -1031,8 +1055,8 @@ app/static/        frontend: index.html, app.js, heatmap.js, colormaps.js (+ mpl
                    pvalue-worker.js their p-values), metacyc.js (MetaCyc below its matrices: pathways
                    drawn, compounds, LCA paths, search), lotus.js (LOTUS with its matrices: how
                    made, a cell's organisms and papers), imports.js (MetaCyc and LOTUS imported
-                   in the Admin tab), latex.js (labels with LaTeX math, by
-                   MathJax: vendor/mathjax/)
+                   in the Admin tab), fits.js (the AL Segmentation tab's fits), latex.js (labels with
+                   LaTeX math, by MathJax: vendor/mathjax/)
 manage.py          list / show / export / delete datasets from the server
 deploy/            systemd units; Dockerfile + docker-compose.yml at the top level
 tests/             pytest tests
@@ -1154,6 +1178,13 @@ GET    /api/roi_training[?datasets=1,2]     the flies of glomeruli datasets with
                                             export for ROI training (each its files' total size, its
                                             glomeruli and its panels but diagnostic ones), and those
                                             left out, with why (roi_training.py)
+GET    /api/fits                            every fit (those running and waiting with when they should end), and
+                                            the fit worker's status (fits.py)
+POST   /api/fits                            ask for a fit: {name (a first name), options}; who and from where are kept
+POST   /api/fits/{id}/cancel                stop a fit (one waiting now, one running at its next step)
+DELETE /api/fits/{id}                       delete a fit and its files (409 while it runs)
+GET    /api/fits/{id}/log                   its log
+GET    /api/fits/{id}/download              its model and results, as a zip sent as it is written
 GET    /api/roi_training/download[?stacks=0&datasets=1,2]
                                             a zip of their files where they are on tensor, sent as it is
                                             written, with roi_training.json, and their anatomical stacks

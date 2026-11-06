@@ -225,6 +225,23 @@ CREATE TABLE IF NOT EXISTS file_log (  -- files the server has read or written i
     wrote INTEGER NOT NULL DEFAULT 0,
     first_at TEXT                      -- null: in the data folder when the record began
 );
+CREATE TABLE IF NOT EXISTS fits (  -- al-diag-seg models fit in the AL Segmentation tab, by the fit worker (see fits.py)
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,                -- who asked for it (their first name, from Settings)
+    ip TEXT,                           -- from where
+    created_at TEXT NOT NULL,          -- when it was asked for
+    started_at TEXT,
+    finished_at TEXT,
+    status TEXT NOT NULL,              -- queued, running, done, failed, cancelled, interrupted (fits.STATUSES)
+    cancel INTEGER NOT NULL DEFAULT 0, -- 1: asked to stop
+    options_json TEXT NOT NULL,        -- fits.options
+    flies_json TEXT,                   -- the flies it is fit to and those held out (with their datasets)
+    progress_json TEXT,                -- the stage it is at, how far, and when each stage started
+    stages_json TEXT,                  -- each stage's seconds and size, once done (what estimates are made from)
+    result_json TEXT,                  -- its scores on the held-out flies
+    error TEXT,
+    model_bytes INTEGER
+);
 """
 # columns added since the first release: (table, column, type)
 # what is looked up through chemutils for an odor CID (chemprops.PROPERTIES): property -> the

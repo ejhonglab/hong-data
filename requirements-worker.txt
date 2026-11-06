@@ -1,0 +1,5 @@
+# The fit worker's (fit_worker.py: the AL Segmentation tab's fits), on top of the web server's
+-r requirements.txt
+# al-diag-seg, with Cellpose 4 and PyTorch (with CUDA, from PyPI) and ANTsPy; installed with git. Its hong2p is the pin in
+# requirements.txt (it leaves it unpinned)
+al-diag-seg @ git+https://github.com/tom-f-oconnell/al-diag-seg@38864ef24badfbe9581c4c4b8bee59fdc637d1d5

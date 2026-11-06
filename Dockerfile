@@ -7,7 +7,8 @@ WORKDIR /src
 COPY . .
 RUN python -m app.version /version.json
 
-FROM python:3.12-slim
+# what the web server and the fit worker share: Python and the web server's packages
+FROM python:3.12-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 
@@ -20,6 +21,37 @@ RUN apt-get update && apt-get install -y --no-install-recommends git \
  && pip install --no-cache-dir -r requirements.txt \
  && apt-get purge -y --auto-remove git && rm -rf /var/lib/apt/lists/*
 
+# the fit worker (fit_worker.py, docker-compose.yml's worker service): also al-diag-seg, PyTorch (with CUDA) and
+# Cellpose-SAM's weights, which it would otherwise download where the container cannot write. Its packages are
+# installed before the app is copied in, so a change to the app does not install them again.
+FROM base AS worker
+COPY requirements-worker.txt .
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+ && pip install --no-cache-dir -r requirements-worker.txt \
+ && apt-get purge -y --auto-remove git && rm -rf /var/lib/apt/lists/*
+ENV CELLPOSE_LOCAL_MODELS_PATH=/srv/olfdb/cellpose_models
+# (downloaded as root, readable by root only: made readable by the user the worker runs as)
+RUN python -c "from cellpose.models import cache_model_path; cache_model_path('cpsam_v2')" \
+ && chmod -R a+rX "$CELLPOSE_LOCAL_MODELS_PATH"
+
+COPY app ./app
+COPY config ./config
+COPY reference_data ./reference_data
+COPY manage.py .
+COPY --from=version /version.json ./VERSION.json
+
+# uploaded data (SQLite DB + files) lives in a volume mounted here; the code stays root's,
+# so the app cannot change it
+ENV OLFDB_DATA_DIR=/data OLFDB_REFERENCE_DIR=/srv/olfdb/reference_data
+RUN mkdir -p /data && chown -R olfdb:olfdb /data
+VOLUME ["/data"]
+USER olfdb
+
+CMD ["python", "-m", "app.fit_worker"]
+
+
+# the web server (the default target, docker-compose.yml's olfdb service)
+FROM base AS web
 COPY app ./app
 COPY config ./config
 COPY reference_data ./reference_data

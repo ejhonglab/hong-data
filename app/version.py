@@ -18,7 +18,7 @@ from . import config
 
 FILE = config.ROOT / "VERSION.json"
 # what the image is built of (the Dockerfile's COPYs), where a change not committed makes it differ from its commit
-CODE = ("app", "config", "manage.py", "requirements.txt", "Dockerfile")
+CODE = ("app", "config", "manage.py", "requirements.txt", "requirements-worker.txt", "Dockerfile")
 
 
 def _git(*args: str) -> str:

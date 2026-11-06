@@ -9,6 +9,7 @@ import { SIMILARITIES, similarityMatrix, tanimoto, correlateSimilarities, shared
 import { MetacycPanel } from './metacyc.js';
 import { LotusPanel, decisionsHtml } from './lotus.js';
 import { BundleImport } from './imports.js';
+import { FitsPanel } from './fits.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -3945,6 +3946,14 @@ class SettingsPage {
     $('#settings-name').value = name;
   }
 
+  // the name field, ready to type in (#settings/name: from where a name is asked for, e.g. a fit)
+  focusName() {
+    const input = $('#settings-name');
+    input.scrollIntoView({ block: 'center' });
+    input.focus();
+    input.select();
+  }
+
   async load() {
     if (this.loaded) return;
     this.loaded = true;
@@ -7283,9 +7292,11 @@ class RoiTrainingPage {
       $('#rt-count').value = 'all';
       this._render();
     });
+    this.fits = new FitsPanel({ $, esc, api, msgBox, askDialog, fmtWhen, fmtSize, getName: () => settings.current().name });
   }
 
   async load(again = false) {
+    this.fits.load();
     if (this.data && !again) return;
     const seq = ++this._seq;
     $('#rt-download').hidden = true;
@@ -7560,7 +7571,7 @@ function route() {
   if (name === 'browse') { browse.load().then(() => { if (id) { if (/^\d+$/.test(id)) browse.show(+id); else browse.openPermalink(decodeURIComponent(id)); } }); }
   if (name === 'odors') { odorsPage.highlightId = id ? +id : null; odorsPage.load().then(() => { if (id) odorsPage.highlight(+id); }); }
   if (name === 'reference') { reference.load().then(() => { if (id) reference.show(id); }); }
-  if (name === 'settings') settings.load();
+  if (name === 'settings') settings.load().then(() => { if (id === 'name') settings.focusName(); });
   if (name === 'al-segmentation') roiTraining.load();
   if (name === 'headspace') headspacePage.load().then(() => headspaceVcf.load());
   if (name === 'merge') mergePage.load();

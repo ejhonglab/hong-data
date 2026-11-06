@@ -47,7 +47,8 @@ expected, and nothing secret is entered. If a download or the page is blocked, s
 8. **AL Segmentation**: one download of what there is on tensor to train a model to draw
    glomerulus ROIs ([al-diag-seg](https://github.com/tom-f-oconnell/al-diag-seg)) of
    every fly of a glomeruli dataset with a diagnostic panel, and the flies left out, with why;
-   how many glomeruli each fly has, and which glomeruli few of the flies have.
+   how many glomeruli each fly has, and which glomeruli few of the flies have. Models fit to
+   them on the server's GPU, scored on flies held out, and downloaded to run on your own flies.
 
 The footer says which version of the site the page runs (its commit, and whether it had
 changes not yet committed). After the site is updated, a page left open says so once you
@@ -660,6 +661,19 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   has. The box at the bottom sets the cutoff (a number or percent of the flies, `≤` or
   `<`), and whether all glomeruli are counted at the top, in the table and in the
   histogram, or only those identified more often, or only the infrequent ones.
+  *Fit a model* fits [al-diag-seg](https://github.com/tom-f-oconnell/al-diag-seg)'s
+  model to those flies, read where they are on tensor, on the server's GPU (Cellpose
+  fine-tuned on their ROIs, an atlas of where each glomerulus is, and each one's odor
+  tuning), holding out a few flies (from each dataset in turn) to score its predicted ROIs
+  against theirs; with how many to hold out, Cellpose's epochs, and whether to build the
+  atlas and train on tentative ROIs. Anyone may start one, once their first name is set in
+  Settings (the box links to it). One runs at a time; those running and waiting say who
+  asked for them, from which IP address, when, how far they have got, and when they should
+  end (estimated from how long earlier fits took, stage by stage). *Past fits*, at the
+  bottom, has every fit's scores (each held-out fly's, and the glomeruli not found, when
+  clicked), its log, and its download: its model, with how to run it on your own flies
+  (`alseg-predict`, which writes their ROIs as RoiSets named by glomerulus), and its
+  held-out flies' predicted ROIs. Anyone may delete one (it asks first).
 - **Admin** (to the right of Docs; it first asks whether you are Tom, Jon or Betty, or
   have asked one of them): settings for the whole site.
   - *Folders on the server* the app may read (by default tensor) and also write (none

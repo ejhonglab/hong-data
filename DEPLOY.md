@@ -34,6 +34,29 @@ is the same.) Use one set or the other, never both: they install the same files,
 fails with "trying to overwrite '/usr/libexec/docker/cli-plugins/…'" (or offers to remove
 Docker) when the other set is already there.
 
+### GPU (the fit worker)
+
+The AL Segmentation tab's fits run in a second container, `olfdb-worker`, given the
+server's NVIDIA GPU. That needs the NVIDIA driver (`nvidia-smi` lists the GPU) and the
+NVIDIA Container Toolkit, set up for Docker; this prints the GPU if both are there:
+
+```bash
+docker run --rm --gpus all ubuntu nvidia-smi
+```
+
+Otherwise install the toolkit from NVIDIA's repository
+(https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html),
+then:
+
+```bash
+sudo apt install nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+```
+
+On a server without an NVIDIA GPU, delete the `worker` service from `docker-compose.yml`:
+everything else works, and fits asked for wait, the tab saying no worker is running.
+
 ## 2. Put the code on the server
 
 ```bash
@@ -80,6 +103,11 @@ docker compose up -d --build
 curl -s http://localhost:8080/api/health     # {"ok":true,...}
 docker compose logs -f                       # Ctrl-C to stop following
 ```
+
+This starts two containers: `olfdb`, the site, and `olfdb-worker`, which runs fits (with
+the GPU: section 1). The first build takes a while: the worker's image has PyTorch, CUDA's
+libraries and Cellpose's weights in it (about 9 GB), installed again only when
+`requirements.txt` or `requirements-worker.txt` change.
 
 Go on only once the health check answers `{"ok":true,...}`: the systemd unit in section
 4 runs the same command, so whatever stops it here stops the unit too. Run `docker
@@ -272,7 +300,17 @@ docker compose exec olfdb python manage.py cleanup-staging
 sqlite3 data/olfdb.sqlite3 '.tables'                       # direct SQL access (apt install sqlite3)
 ```
 
-Logs: `journalctl -u olfdb` (with the systemd unit) or `docker compose logs`.
+Logs: `journalctl -u olfdb` (with the systemd unit) or `docker compose logs` (`docker
+compose logs worker` for the fit worker's; each fit's own log is in the tab, and in
+`data/fits/<fit>/log.txt`, with its model and results).
+
+### Updating al-diag-seg
+
+The fit worker's al-diag-seg is installed from GitHub at the commit pinned in
+`requirements-worker.txt`. Push the al-diag-seg commit, pin it there (in full), and
+restart (`sudo systemctl restart olfdb`): the worker's image is rebuilt with it. Fits
+already done keep the model they made; each model's README says which al-diag-seg to
+install to run it.
 
 ### Updating chemutils
 

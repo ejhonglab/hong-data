@@ -343,6 +343,16 @@ dialog.confirm .actions { justify-content: flex-end; }
 .rt-cutoff select, .rt-count select { width: auto; }
 .rt-count { margin-top: 12px; max-width: 520px; }
 #rt-rare .nowrap { white-space: nowrap; }
+.fit-options { grid-template-columns: repeat(auto-fill, minmax(200px, 260px)); }
+.fit-active { border: 1px solid var(--rule); border-radius: var(--radius); padding: 10px 12px; margin-top: 10px; }
+.fit-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.fit-stage { margin: 6px 0 4px; }
+.fit-active progress { display: block; width: 100%; height: 8px; margin-bottom: 4px; }
+.fits-table td { vertical-align: middle; }
+.fit-acts { white-space: nowrap; }
+.fit-acts .btn + .btn { margin-left: 4px; }
+.fit-details > td { background: var(--surface); }
+button.link { background: none; border: 0; padding: 0; color: var(--accent); text-decoration: underline; cursor: pointer; font: inherit; }
 
 /* --------------------------------------------------------------- odors */
 #tab-odors { overflow: auto; padding: 24px 20px 60px; }
