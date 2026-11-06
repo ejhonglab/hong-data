@@ -1,6 +1,7 @@
 """Reference data bundles imported in the Admin tab (MetaCyc, LOTUS): the files of the folder
-a bundle's build script reads (or an archive of it) uploaded, kept in the data folder laid
-out as the script reads them, built into a bundle there by the script itself (``python -m
+a bundle's build script reads (or an archive of it) uploaded, or read from a path on tensor
+(`Importer.tensor_source`: copied in the background), kept in the data folder laid out as
+the script reads them, built into a bundle there by the script itself (``python -m
 app.<kind>_build <raw> <bundle>``, in a process of its own, in the background), and the
 bundle's reference datasets added (as the script's ``--register`` adds them).
 
@@ -35,12 +36,13 @@ import zlib
 from pathlib import Path
 from typing import IO, Callable, Optional, Union
 
-from . import config, reference
+from . import config, reference, tensor
 
 log = logging.getLogger("uvicorn.error")
 
 ARCHIVES = (".zip", ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz")
 RECORD = "import.json"
+MAX_TENSOR_FILES = 100_000  # files of a folder on tensor looked through (`Importer.tensor_source`)
 
 
 class UploadError(ValueError):
@@ -239,6 +241,93 @@ class Importer:
         except (zipfile.BadZipFile, zipfile.LargeZipFile, tarfile.TarError, EOFError, zlib.error, RuntimeError, OSError) as e:
             raise UploadError(f"{name} could not be read as an archive ({e})") from e
         return list(chosen.values())
+
+    def tensor_source(self, path: str, root: Path) -> dict:
+        """A path on tensor (from its top, as entered) to import from, instead of an upload:
+        the folder the build reads, or an archive of it, checked as data folders are
+        (`tensor.locate`).
+
+        Returns:
+            ``input``; ``path``: normalized (or None); ``ok``; ``error``; ``kind``: 'folder'
+            or 'archive'; ``size``: an archive's; of a folder, ``n``: its files, and
+            ``files``: those the build reads [{path (in the folder, after its name, as a
+            browser names a folder's files), dest (where in ``raw/`` it goes), size, mtime}].
+        """
+        out = {"input": path, "path": None, "ok": False, "error": None, "kind": None, "size": None, "n": None, "files": []}
+        try:
+            rel, target = tensor.locate(path, root)
+            out["path"] = rel
+            if os.path.isdir(target):
+                found = []
+                for top, dirs, names in os.walk(target):
+                    dirs.sort()
+                    for name in sorted(names):
+                        found.append(os.path.join(top, name))
+                    if len(found) > MAX_TENSOR_FILES:
+                        raise tensor.PathError(f"it has more than {MAX_TENSOR_FILES:,} files: give the folder of {self.what} itself")
+                names = [f"{target.name}/{Path(f).relative_to(target).as_posix()}" for f in found]
+                files = []
+                for k, dest in self.pick(names).items():
+                    st = os.stat(found[k])
+                    files.append({"path": names[k], "dest": dest, "size": st.st_size, "mtime": st.st_mtime})
+                out.update(kind="folder", n=len(names), files=sorted(files, key=lambda f: f["path"]))
+            elif is_archive(target.name):
+                out.update(kind="archive", size=os.path.getsize(target))
+            else:
+                raise tensor.PathError(f"a file, but not an archive ({', '.join(ARCHIVES)}): give the folder of {self.what}, or an archive of it")
+            if not os.access(target, os.R_OK):
+                raise tensor.PathError("exists, but the server is not allowed to read it")
+        except (tensor.PathError, OSError) as e:
+            out.update(error=str(e), kind=None, files=[])
+            return out
+        out["ok"] = True
+        return out
+
+    def take(self, src: dict, root: Path, raw: Path, max_bytes: int) -> int:
+        """The files of a path on tensor (`tensor_source`) put in `raw`, as an upload's are: a
+        folder's that the build reads copied (gzipped, those to be kept so), keeping when they
+        were last changed; an archive's taken out of it. How many files that was.
+
+        Raises:
+            UploadError: if they could not be read, or one is too large.
+        """
+        target = root / src["path"]
+        if src["kind"] == "archive":
+            self.extract(target, src["path"], raw, max_bytes)
+            return 1
+        for f in src["files"]:
+            where = f"{src['path']}/{f['path'].split('/', 1)[1]}"
+            try:
+                with open(target.parent / f["path"], "rb") as fh:
+                    self.save(fh, raw, f["dest"], max_bytes, where, f["mtime"])
+            except OSError as e:
+                raise UploadError(f"{where} could not be read on tensor ({e})") from e
+        return len(src["files"])
+
+    def start_from_tensor(self, db, d: Path, opts: dict, src: dict, index: Callable, supervisor: Callable) -> dict:
+        """As `start`, of a path on tensor (`tensor_source`): its files first put in ``raw/``
+        (`take`), checked and its options settled as an upload's are, in the background too
+        (a folder's files can take minutes to copy and gzip). The job, as started."""
+        self._job.update(stage="copying", note=f"from {src['path']} on tensor")
+
+        def run() -> None:
+            job = self._job
+            try:
+                n = self.take(src, config.TENSOR_ROOT, d / "raw", int(config.MAX_UPLOAD_MB * 1024 * 1024))
+                found = self.check(d / "raw", n)
+                settled = {**self.settle(d / "raw", opts), "tensor_path": src["path"]}  # (kept in its record)
+            except Exception as e:
+                if not isinstance(e, UploadError):
+                    log.exception("%s import from %s on tensor failed", self.name, src["path"])
+                shutil.rmtree(d, ignore_errors=True)
+                job.update(running=False, stage=None, finished_at=_now(),
+                           error=str(e) if isinstance(e, UploadError) else f"{type(e).__name__}: {e}")
+                return
+            job.update(stage="building", label=self.label(d / "raw", settled), note=self.note(settled))
+            self._run(db, d, settled, found, index, supervisor)
+
+        threading.Thread(target=run, name=f"{self.key}-import", daemon=True).start()
+        return self.job()
 
     def start(self, db, d: Path, opts: dict, files: dict[str, str], index: Callable, supervisor: Callable) -> dict:
         """Build the bundle of an upload checked (in folder `d`, from `claim`) and add its

@@ -547,6 +547,59 @@ def test_import_archives(imports, tmp_path):
     assert len(call(main.admin_lotus)[1]["imports"]) == 2
 
 
+def test_import_from_tensor(imports, tmp_path, monkeypatch):
+    """From a path on tensor instead of an upload: the folder (only the files the build reads
+    copied, gzipped, in the background) or an archive of it, checked as data folders are;
+    paths refused, saying why; a folder without what the build needs, refused once copied."""
+    main = imports
+    root = tmp_path / "tensor"
+    monkeypatch.setattr(config, "TENSOR_ROOT", root)
+    raw = make_raw(root / "tom" / "LOTUS" / "raw")
+    (raw / "metadata_2022-09-16/notes.txt").write_text("Downloaded from Zenodo.")
+    (raw / "unread.txt").write_text("x")
+    check = lambda path: call(main.admin_lotus_tensor_check, body={"path": path})[1]  # noqa: E731
+    c = check(" tom/LOTUS/raw/ ")
+    assert c["ok"] and c["path"] == "tom/LOTUS/raw" and c["kind"] == "folder" and c["error"] is None, c
+    assert c["n"] == sum(1 for p in raw.rglob("*") if p.is_file())
+    m = "metadata_2022-09-16/7534077"
+    assert {f["path"]: f["dest"] for f in c["files"]} == {
+        "raw/230106_frozen/230106_frozen.csv": "230106_frozen/230106_frozen.csv", "raw/LOTUS_DB_LATEST/LOTUS_2021_03_simple.sdf":
+        "LOTUS_DB_LATEST/LOTUS_2021_03_simple.sdf", **{f"raw/{m}/{n}_metadata.tsv": f"{m}/{n}_metadata.tsv"
+                                                      for n in ("structure", "organism", "reference")},
+        "raw/metadata_2022-09-16/notes.txt": "metadata_2022-09-16/notes.txt"}
+    status, r = call(main.admin_lotus_tensor, body={"path": "tom/LOTUS/raw"})
+    assert status == 200 and r["ok"] and r["job"]["running"] and r["job"]["stage"] == "copying", r
+    job = finished(lotus_import.importer)
+    assert job["error"] is None and job["label"] == "2023-01-06" and len(job["added"]) == 1, job
+    d = config.LOTUS_DIR / job["id"]
+    kept = sorted(p.relative_to(d / "raw").as_posix() for p in (d / "raw").rglob("*") if p.is_file())
+    assert kept == sorted([*(f["dest"] + ".gz" for f in c["files"] if not f["dest"].endswith("notes.txt")), "metadata_2022-09-16/notes.txt"])
+    assert gzip.decompress((d / "raw" / f"{m}/organism_metadata.tsv.gz").read_bytes()) == (raw / m / "organism_metadata.tsv").read_bytes()
+    assert (d / "raw" / f"{m}/organism_metadata.tsv.gz").stat().st_mtime == (raw / m / "organism_metadata.tsv").stat().st_mtime
+    (listed,) = call(main.admin_lotus)[1]["imports"]
+    assert listed["tensor_path"] == "tom/LOTUS/raw"
+    # an archive of it on tensor
+    with tarfile.open(root / "tom" / "LOTUS.tar.gz", "w:gz") as t:
+        t.add(raw, "raw")
+    c = check("tom/LOTUS.tar.gz")
+    assert c["ok"] and c["kind"] == "archive" and c["size"] == (root / "tom" / "LOTUS.tar.gz").stat().st_size and c["files"] == []
+    assert call(main.admin_lotus_tensor, body={"path": "tom/LOTUS.tar.gz"})[0] == 200
+    job = finished(lotus_import.importer)
+    assert job["error"] is None and len(job["added"]) == 1, job
+    # refused, saying why
+    assert check("tom/LOTUS/rae")["error"] == "not found on tensor: 'tom/LOTUS' has no 'rae'"
+    assert check("tom/lotus/raw")["error"] == "not found on tensor: 'tom' has no 'lotus' (did you mean 'tom/LOTUS'?)"
+    assert check(f"{root}/tom/LOTUS/raw")["error"].startswith("absolute paths are not accepted")
+    assert check("tom/LOTUS/raw/unread.txt")["error"].startswith("a file, but not an archive")
+    status, r = call(main.admin_lotus_tensor, body={"path": "tom/nothing"})
+    assert status == 422 and r["errors"] == ["tom/nothing: not found on tensor: 'tom' has no 'nothing'"]
+    (root / "tom" / "partial" / "metadata_2022-09-16").mkdir(parents=True)
+    (root / "tom" / "partial" / "metadata_2022-09-16" / "notes.txt").write_text("x")
+    assert call(main.admin_lotus_tensor, body={"path": "tom/partial"})[0] == 200
+    job = finished(lotus_import.importer)
+    assert not job["added"] and "frozen export" in job["error"] and not (config.LOTUS_DIR / job["id"]).exists(), job
+
+
 def test_import_refused(imports, tmp_path, monkeypatch):
     """Uploads that are not LOTUS's files as the build reads them: refused, saying what was
     expected, nothing kept; and a build that fails: nothing kept."""

@@ -783,7 +783,8 @@ try {
         <h3 class="subhead" id="mc-import-head">Import MetaCyc</h3>
         <p class="muted">From MetaCyc's SmartTables as exported from metacyc.org: its compounds, pathways and reactions, each exported by frame IDs and again by common names
           (and its organisms, pathway summaries and pathway class tree, if there). Choose the folder of them that <code>app/metacyc_build.py</code> reads
-          (as <code>BioCyc/raw</code>, with its subfolders), or a <code>.zip</code> or <code>.tar.gz</code> of it. Only the files it reads are uploaded and kept,
+          (as <code>BioCyc/raw</code>, with its subfolders), or a <code>.zip</code> or <code>.tar.gz</code> of it, or give either's path on tensor (read there by the
+          server, nothing uploaded). Only the files it reads are uploaded and kept,
           in the data folder, with the bundle it builds of them there. Two reference datasets of the bundle are then added, as <i>Add one</i> above
           would add them: the odor table's chemicals by the pathways they are in, and the pathway LCA distance between them.
           SmartTables do not say which MetaCyc they are of, so unless a version is given, it is told from how many pathways and compounds they have
@@ -793,8 +794,11 @@ try {
           <input type="file" id="mc-import-archive" accept=".zip,.tar,.tar.gz,.tgz,.tar.bz2,.tbz2,.tar.xz,.txz" hidden>
           <button type="button" class="btn" id="mc-import-folder-btn">Choose the folder…</button>
           <button type="button" class="btn" id="mc-import-archive-btn">or an archive of it…</button>
+          <button type="button" class="btn" id="mc-import-tensor-btn" aria-expanded="false">or a path on tensor…</button>
           <label class="check">MetaCyc version <input id="mc-import-version" value="" placeholder="told from the files" spellcheck="false" autocomplete="off" title="MetaCyc's version the tables were exported from, shown in the titles. Leave it blank, and it is told from them: by how many pathways and compounds they have, against how many each release's notes say it has. A version given that is another release's than theirs is refused."></label>
         </div>
+        <label class="field imp-tensor" id="mc-import-tensor" hidden><span>Path on tensor, from its top: the folder, or an archive of it</span>
+          <input id="mc-import-path" spellcheck="false" autocomplete="off" placeholder="e.g. tom/BioCyc/raw, or tom/BioCyc.zip"><span class="path-msg"></span></label>
         <div class="imp-chosen" id="mc-import-files"></div>
         <div id="mc-import-msg" aria-live="polite"></div>
         <div class="actions"><button type="button" class="btn primary" id="mc-import-btn" disabled>Import</button></div>
@@ -803,7 +807,8 @@ try {
         <p class="muted">From LOTUS's files as downloaded: its frozen export of its Wikidata records, structure by organism by paper (<code>230106_frozen/</code>),
           its metadata of each structure, organism and paper (from Zenodo, <code>metadata_2022-09-16/</code>) and, if there, its 2021 release as an SDF,
           for LOTUS IDs (<code>LOTUS_DB_LATEST/</code>). Choose the folder of them that <code>app/lotus_build.py</code> reads
-          (as <code>Scraped-Databases-Copy/LOTUS/raw</code>, with its subfolders), or a <code>.zip</code> or <code>.tar.gz</code> of it. Only the files it reads are uploaded
+          (as <code>Scraped-Databases-Copy/LOTUS/raw</code>, with its subfolders), or a <code>.zip</code> or <code>.tar.gz</code> of it, or give either's path on tensor
+          (read there by the server, nothing uploaded). Only the files it reads are uploaded
           and kept, gzipped (of that folder's 7.3 GB, 330 MB: the copies of them gzipped there, and its 1.1 GB SDF gzipped here first), in the data folder,
           laid out as they were, with the bundle it builds of them there (in about a minute). Its reference dataset is then added, as <i>Add one</i> above
           would add it: the odor table's chemicals by the families of organisms they are reported in (its settings can be changed after, by <i>Change settings…</i> in the list above).</p>
@@ -812,7 +817,10 @@ try {
           <input type="file" id="lt-import-archive" accept=".zip,.tar,.tar.gz,.tgz,.tar.bz2,.tbz2,.tar.xz,.txz" hidden>
           <button type="button" class="btn" id="lt-import-folder-btn">Choose the folder…</button>
           <button type="button" class="btn" id="lt-import-archive-btn">or an archive of it…</button>
+          <button type="button" class="btn" id="lt-import-tensor-btn" aria-expanded="false">or a path on tensor…</button>
         </div>
+        <label class="field imp-tensor" id="lt-import-tensor" hidden><span>Path on tensor, from its top: the folder, or an archive of it</span>
+          <input id="lt-import-path" spellcheck="false" autocomplete="off" placeholder="e.g. tom/LOTUS/raw, or tom/LOTUS.tar.gz"><span class="path-msg"></span></label>
         <div class="imp-chosen" id="lt-import-files"></div>
         <div id="lt-import-msg" aria-live="polite"></div>
         <div class="actions"><button type="button" class="btn primary" id="lt-import-btn" disabled>Import</button></div>

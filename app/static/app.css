@@ -555,6 +555,7 @@ svg.tex { overflow: visible; }
 .imp-files code, .imp-list code { word-break: break-all; }
 .imp-files .bad { color: var(--danger); }
 .imp-chosen > p { margin: 10px 0 0; }
+.imp-tensor { margin: 10px 0 0; max-width: 640px; }
 .imp-list h4 { margin: 16px 0 6px; font-size: 13.5px; }
 .imp-list td { vertical-align: top; }
 #mc-import-version { width: 150px; }

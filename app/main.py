@@ -3085,6 +3085,37 @@ async def _admin_import(request: Request, imp: bundle_import.Importer) -> Respon
     return JSONResponse({"ok": True, "job": job, "files": found})
 
 
+async def _admin_tensor_check(request: Request, imp: bundle_import.Importer) -> Response:
+    """Check a path on tensor ({"path"}, from its top) to import a bundle from: the folder its
+    build reads (with the files of it read) or an archive of it, see `Importer.tensor_source`."""
+    body = await request.json()
+    path = body.get("path") if isinstance(body, dict) else None
+    if not isinstance(path, str):
+        return json_error(400, 'expected {"path": ...}')
+    return JSONResponse(await run_in_threadpool(imp.tensor_source, path, config.TENSOR_ROOT))
+
+
+async def _admin_import_tensor(request: Request, imp: bundle_import.Importer) -> Response:
+    """Import a bundle from a path on tensor ({"path", and its options, as MetaCyc's "version"}):
+    the folder its build reads, or an archive of it, checked (422 with why not), then its files
+    copied (or taken out of the archive) and checked as an upload's, and the bundle built, in
+    the background (the job, as GET /api/admin/<kind> gives it); 409 while another is under way."""
+    body = await request.json()
+    if not isinstance(body, dict) or not isinstance(body.get("path"), str):
+        return json_error(400, 'expected {"path": ...}')
+    src = await run_in_threadpool(imp.tensor_source, body["path"], config.TENSOR_ROOT)
+    if not src["ok"]:
+        return JSONResponse({"ok": False, "errors": [f"{src['path'] or src['input']}: {src['error']}"]}, status_code=422)
+    try:
+        d = imp.claim()
+    except bundle_import.UploadError as e:
+        return JSONResponse({"ok": False, "errors": e.errors}, status_code=409)
+    imp.start_from_tensor(db, d, imp.options(body), src, _odor_index, _supervisor)
+    job = _import_job(imp)
+    log.info("%s from %s on tensor (%s) being imported in the Admin tab into %s", imp.name, src["path"], src["kind"], d)
+    return JSONResponse({"ok": True, "job": job, "source": src})
+
+
 async def admin_metacyc(request: Request) -> Response:
     """MetaCyc imported in the Admin tab (see `_bundle_imports`)."""
     return JSONResponse(await run_in_threadpool(_bundle_imports, metacyc_import.importer))
@@ -3097,6 +3128,15 @@ async def admin_metacyc_import(request: Request) -> Response:
     return await _admin_import(request, metacyc_import.importer)
 
 
+async def admin_metacyc_tensor_check(request: Request) -> Response:
+    return await _admin_tensor_check(request, metacyc_import.importer)
+
+
+async def admin_metacyc_tensor(request: Request) -> Response:
+    """Import MetaCyc from a path on tensor, see `_admin_import_tensor`."""
+    return await _admin_import_tensor(request, metacyc_import.importer)
+
+
 async def admin_lotus(request: Request) -> Response:
     """LOTUS imported in the Admin tab (see `_bundle_imports`)."""
     return JSONResponse(await run_in_threadpool(_bundle_imports, lotus_import.importer))
@@ -3106,6 +3146,15 @@ async def admin_lotus_import(request: Request) -> Response:
     """Import LOTUS: its files uploaded (those of the folder app/lotus_build.py reads, as
     Scraped-Databases-Copy/LOTUS/raw, or an archive of it), see `_admin_import`."""
     return await _admin_import(request, lotus_import.importer)
+
+
+async def admin_lotus_tensor_check(request: Request) -> Response:
+    return await _admin_tensor_check(request, lotus_import.importer)
+
+
+async def admin_lotus_tensor(request: Request) -> Response:
+    """Import LOTUS from a path on tensor, see `_admin_import_tensor`."""
+    return await _admin_import_tensor(request, lotus_import.importer)
 
 
 async def admin_dataset_delete(request: Request) -> Response:
@@ -3230,6 +3279,10 @@ routes = [
     Route("/api/admin/metacyc", admin_metacyc_import, methods=["POST"]),
     Route("/api/admin/lotus", admin_lotus),
     Route("/api/admin/lotus", admin_lotus_import, methods=["POST"]),
+    Route("/api/admin/metacyc/tensor/check", admin_metacyc_tensor_check, methods=["POST"]),
+    Route("/api/admin/metacyc/tensor", admin_metacyc_tensor, methods=["POST"]),
+    Route("/api/admin/lotus/tensor/check", admin_lotus_tensor_check, methods=["POST"]),
+    Route("/api/admin/lotus/tensor", admin_lotus_tensor, methods=["POST"]),
     Mount("/static", RevalidatedStaticFiles(directory=str(config.STATIC_DIR)), name="static"),
 ]
 

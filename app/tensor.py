@@ -172,6 +172,23 @@ def _locate(path: str, root: Path) -> tuple[str, Path]:
     return rel, target
 
 
+def locate(path: str, root: Path) -> tuple[str, Path]:
+    """A path a user entered, from the top of tensor: normalized, and where it is on the
+    server, checked as data folders are (`check_dir`), whether a folder or a file.
+
+    Raises:
+        PathError: saying why it is refused, as for data folders; while tensor itself is not
+            there to look in (`root_status`), why not.
+    """
+    try:
+        return _locate(path, root)
+    except PathError:
+        status = root_status(root)
+        if not status["ok"] and normalize(path, root):
+            raise PathError(status["error"]) from None
+        raise
+
+
 def check_dir(path: str, root: Path) -> dict:
     """Check a folder a user entered: ``{'input', 'path' (normalized, or None), 'ok', 'error'}``."""
     out = {"input": path, "path": None, "ok": False, "error": None}

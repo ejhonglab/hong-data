@@ -711,28 +711,33 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     *Import MetaCyc*, below it, does what the script does ([Scripting](#scripting)) from
     the folder of MetaCyc's SmartTables (as `BioCyc/raw`) or a `.zip`/`.tar.gz` of it:
     choosing the folder lists the files the script reads (what each is, and which are
-    missing), and only those are uploaded. The server checks them first (each there, with
-    the columns it needs) and refuses them saying what is missing or not as expected;
-    else it keeps them in `data/metacyc/<when>/raw/` (with the times they were last
-    changed), builds the bundle there (about 20 s, its progress shown) and adds its two
-    reference datasets. Its version, unless given, is told from the files (SmartTables do
-    not say it): by how many pathways (not counting super-pathways) and compounds they
-    have, against how many each release's notes say it has (e.g. `BioCyc/raw`'s, of
-    January 2024, are 27.1's: more than 27.1 had, fewer than 28.0). How it was told is
-    shown, and kept; a version given that is another release's is refused. Imports are listed
-    with their folders and datasets; the folder is moved to `data/deleted/metacyc/` with
-    the last of its datasets deleted. Backups include them.
+    missing), and only those are uploaded. *or a path on tensor…* takes either from
+    tensor instead (its path from the top of tensor, checked as you type as data folders
+    are, e.g. `tom/BioCyc/raw`): the server reads it there, so nothing is uploaded, and
+    copies the files the script reads (or takes them out of the archive) before
+    building. The server checks them first (each there, with the columns it needs) and
+    refuses them saying what is missing or not as expected; else it keeps them in
+    `data/metacyc/<when>/raw/` (with the times they were last changed), builds the
+    bundle there (about 20 s, its progress shown) and adds its two reference datasets.
+    Its version, unless given, is told from the files (SmartTables do not say it): by
+    how many pathways (not counting super-pathways) and compounds they have, against how
+    many each release's notes say it has (e.g. `BioCyc/raw`'s, of January 2024, are
+    27.1's: more than 27.1 had, fewer than 28.0). How it was told is shown, and kept; a
+    version given that is another release's is refused. Imports are listed with their
+    folders and datasets; the folder is moved to `data/deleted/metacyc/` with the last
+    of its datasets deleted. Backups include them.
     *Import LOTUS* does the same for LOTUS, from the folder `LOTUS/raw` (or a
-    `.zip`/`.tar.gz` of it): its files are found as the script finds them, by their paths
-    there (the release's dates are in its folders' names), and kept gzipped, laid out as
-    they were, in `data/lotus/<when>/raw/`. Where the folder has a file both as is and
-    gzipped, the gzipped one is uploaded; the browser gzips the others first, so 330 MB
-    of the folder's 7.3 GB is sent. A file the browser cannot read as it was chosen
-    (changed since, or on a network mount that will not give it, as one over sshfs may
-    not) is named, with how much of it was read: copy the folder to a disk of the computer
-    the browser is on and choose it there. The bundle takes about a minute to build; its
-    reference dataset (chemicals by families) is then added, its settings changed after
-    by *Change settings…*.
+    `.zip`/`.tar.gz` of it, or either on tensor): its files are found as the script
+    finds them, by their paths there (the release's dates are in its folders' names),
+    and kept gzipped, laid out as they were, in `data/lotus/<when>/raw/`. Where the
+    folder has a file both as is and gzipped, the gzipped one is uploaded; the browser
+    gzips the others first, so 330 MB of the folder's 7.3 GB is sent. A file the browser
+    cannot read as it was chosen (changed since, or on a network mount that will not
+    give it, as one over sshfs may not) is named, with how much of it was read: copy the
+    folder to a disk of the computer the browser is on and choose it there (or, if it is
+    on tensor, give its path there). The bundle takes about a minute to build; its
+    reference dataset (chemicals by families) is then added, its settings changed after by
+    *Change settings…*.
   - *Delete datasets*: every dataset, newest upload first (with a filter), each with a
     Delete button that asks first. A deleted dataset is gone from the site at once; its
     files (as uploaded, with `metadata.json` holding every detail entered) are moved to

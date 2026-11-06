@@ -555,25 +555,32 @@ between the frontend and the server. Using the app is described in
   - *A cell* (`lotus.cell`, `/api/reference/{id}/lotus/cell`): the organisms of its taxon
     that its row's structures are reported in, each with its papers (titles as plain
     text: Crossref's markup, in 17k of them, dropped with the spaces it ran over kept).
-- **Bundles imported in the Admin tab** (`bundle_import.py`, with `metacyc_import.py` and
-  `lotus_import.py` for each kind; `static/imports.js`): MetaCyc's and LOTUS's are made on
-  the server from what their scripts read, the raw folder (or an archive of it). Its
-  files are found as the script finds them and checked as it checks them
+- **Bundles imported in the Admin tab** (`bundle_import.py`, with `metacyc_import.py`
+  and `lotus_import.py` for each kind; `static/imports.js`): MetaCyc's and LOTUS's are
+  made on the server from what their scripts read, the raw folder (or an archive of it).
+  Its files are found as the script finds them and checked as it checks them
   (`metacyc_build.problems`, `lotus_build.problems`: each required file there, with the
   columns it needs; then, building, MetaCyc's frame IDs where they should be and its
   compounds' pathways among its pathways), each problem saying what was expected. The
   browser lists them from the folder chosen and uploads only those, so a folder of
-  anything else is refused before it is sent. They are kept, laid out as the script reads
-  them (it can be run on them again), with the bundle, in `data/<kind>/<when>/` (backed
-  up), and only what was built and added from: an upload refused or failing keeps
-  nothing. The build is the script itself (`python -m app.<kind>_build`), in a process of
-  its own, one import of each kind at a time, polled by the tab: LOTUS's takes 1.7 GB for
-  a minute, which the server's process would keep after, and holds Python's GIL for most
-  of it. That process is held to the server's folders as the server is (Landlock is
-  inherited), so its temporary files (SQLite's, sorting to index) go in `data/tmp/`. The
-  datasets are added as the Admin tab adds any (`reference.add`). The folder goes to
-  `data/deleted/` with the last dataset of its bundle, as a deleted dataset's files do,
-  so nothing uploaded is left unused and unlisted.
+  anything else is refused before it is sent. Or the folder (or archive) is a path on
+  tensor (`Importer.tensor_source`, `tensor.locate`: checked as data folders are, with
+  their messages): the server lists the folder's files, picks those the script reads as
+  it picks an upload's, and the tab shows them as it shows a folder chosen; importing,
+  it copies them (gzipping as kept) or takes them out of the archive, in the background
+  (a stage of the job, "copying": LOTUS's 1.1 GB SDF takes a while to gzip), then checks
+  them as an upload's, and keeps the path in the import's record. They are kept, laid
+  out as the script reads them (it can be run on them again), with the bundle, in
+  `data/<kind>/<when>/` (backed up), and only what was built and added from: an upload
+  refused or failing keeps nothing. The build is the script itself
+  (`python -m app.<kind>_build`), in a process of its own, one import of each kind at
+  a time, polled by the tab: LOTUS's takes 1.7 GB for a minute, which the server's
+  process would keep after, and holds Python's GIL for most of it. That process is held
+  to the server's folders as the server is (Landlock is inherited), so its temporary
+  files (SQLite's, sorting to index) go in `data/tmp/`. The datasets are added as the
+  Admin tab adds any (`reference.add`). The folder goes to `data/deleted/` with the last
+  dataset of its bundle, as a deleted dataset's files do, so nothing uploaded is left
+  unused and unlisted.
   - *MetaCyc's* files are found by name (the paths it reads them from are fixed): 89 MB
     of `BioCyc/raw`'s 283. Its version is told from them (`metacyc_build.identify`), as
     SmartTables do not say it and one typed by hand is easily wrong (the thesis says
@@ -1254,6 +1261,12 @@ GET    /api/admin/lotus                     LOTUS imported here, as /api/admin/m
 POST   /api/admin/lotus                     multipart 'file' (repeatable: the files of LOTUS/raw,
                                             gzipped or not, named by their paths in it; or archives
                                             of it) → as /api/admin/metacyc
+POST   /api/admin/{metacyc|lotus}/tensor/check  {"path"} (from the top of tensor) → {ok, error, path
+                                            (normalized), kind: "folder" | "archive", size, n, files:
+                                            those of the folder the build reads}
+POST   /api/admin/{metacyc|lotus}/tensor    {"path", "version"} → 422 {"errors"} if the path is not
+                                            one, 409 while one is under way, else {"job", "source"}:
+                                            copied, checked, built and added in the background
 ```
 
 Matrix payloads carry `values_b64`: little-endian float32, row-major
