@@ -16,6 +16,7 @@ from rdkit import Chem
 from starlette.exceptions import HTTPException
 
 from app import bundle_import, config, lotus, lotus_build, lotus_import, odormeta, reference, sandbox
+from app.sparse import Sparse
 from tests.test_metacyc import finished, post_form
 from tests.test_reference import env  # noqa: F401 (fixtures)
 from tests.test_tensor import call, main, root  # noqa: F401 (fixtures)
@@ -123,7 +124,7 @@ def view(path, **fields):
     record, values = lotus.parse(path, fields, ODORS)
     rows = {r["label"]: i for i, r in enumerate(record["rows"])}
     cols = {c["label"]: j for j, c in enumerate(record["cols"])}
-    return record, values, rows, cols
+    return record, values.toarray(), rows, cols
 
 
 def test_build(bundle):
@@ -211,17 +212,22 @@ def test_keys():
 
 def test_options_and_describe():
     o = lotus.options(None)
-    assert o == {"level": "family", "value": "organisms", "stereo": "enantiomers", "taxonomy": "GBIF Backbone Taxonomy"}
+    assert o == {"level": "family", "value": "organisms", "stereo": "enantiomers", "taxonomy": "GBIF Backbone Taxonomy", "others": "250"}
     assert lotus.options({"level": "organism"})["value"] == "papers"
     assert lotus.options({"level": "organism", "value": "organisms"})["value"] == "presence"
-    assert lotus.options({"level": "nope", "stereo": "nope", "value": "nope"}) == o
+    assert lotus.options({"level": "nope", "stereo": "nope", "value": "nope", "others": "1000"}) == o
+    assert lotus.options({"others": 300})["others"] == "300" and lotus.options({"others": "none"})["others"] == "none"
+    assert [x["value"] for x in lotus.choices()["others"] if x["default"]] == ["250"]
     d = lotus.describe(o, {"release": {"pairs": "2023-01-06", "metadata": "2022-09-16", "lts": "2021-03"}})
     what = {x["what"]: x for x in d["decisions"]}
     assert "2023-01-06" in what["Records"]["chosen"] and "2021-03" in what["Records"]["chosen"]
     assert what["Records"]["admin"] is not True and what["Stereochemistry"]["admin"] is True
     assert "geraniol and nerol" in what["Stereochemistry"]["chosen"] and "kept apart" in what["Stereochemistry"]["chosen"]
     assert what["Taxonomy"]["chosen"].startswith("GBIF Backbone Taxonomy's lineage")
-    assert "families" in d["summary"]
+    assert what["Other chemicals"]["chosen"].startswith("after the odor table's, every other chemical of LOTUS of at most 250 Da")
+    assert "families" in d["summary"] and "(then its other chemicals of at most 250 Da)" in d["summary"]
+    d = lotus.describe({**o, "others": "none"})
+    assert {x["what"]: x for x in d["decisions"]}["Other chemicals"]["chosen"] == "none" and "then its other" not in d["summary"]
     assert lotus.priority("NCBI")[:3] == ["NCBI", "GBIF Backbone Taxonomy", "Catalogue of Life"]
     assert lotus.view_title(o, {"pairs": "2023-01-06"}) == "LOTUS 2023-01-06: chemicals by the families of organisms they are reported in"
 
@@ -239,7 +245,7 @@ def test_stereo(bundle):
 
 def test_families(bundle):
     out, _ = bundle
-    record, values, rows, cols = view(out)
+    record, values, rows, cols = view(out, others="none")
     assert list(rows) == ["linalool", "geraniol", "acetic acid", "(R)-linalool"]
     # by lineage (kingdoms with the most organisms first, then phylum, ...: Apiaceae by NCBI's, the rest by GBIF's);
     # only those any row is in
@@ -260,8 +266,32 @@ def test_families(bundle):
     assert "1 of the odor table's 5 chemicals are not in LOTUS" in notes and "ethyl acetate" in notes
     assert "1 organism of these chemicals left out" in notes  # (Unplaced thing)
     lo = record["lotus"]
-    assert lo["stereo"] == "enantiomers" and lo["release"]["pairs"] == "2023-01-06" and len(lo["decisions"]) == 6
+    assert lo["stereo"] == "enantiomers" and lo["release"]["pairs"] == "2023-01-06" and len(lo["decisions"]) == 7
     assert lo["value_label"] == "organisms of the family it is reported in"
+
+
+def test_others(bundle):
+    """LOTUS's other chemicals after the odor table's (by default those of at most 250 Da):
+    merged as the stereochemistry setting says, by name, those in no organism with a taxon at
+    the level left out; the matrix sparse; each matched to no odor, but identified."""
+    out, _ = bundle
+    record, values, rows, cols = view(out)
+    assert list(rows) == ["linalool", "geraniol", "acetic acid", "(R)-linalool", "nerol"]  # (nerol: geraniol's cis isomer)
+    assert "Brassicaceae" in cols and values[rows["nerol"], cols["Brassicaceae"]] == 1 and values[rows["nerol"]].sum() == 2
+    assert record["matched"] == [[1, "inchi"], [2, "inchi"], [3, "cid"], [4, "lotus"], None]
+    nerol = record["rows"][rows["nerol"]]
+    assert nerol["detail"] == "LOTUS: nerol (GLZPCOQZEFWAFX-YFHOEESVSA-N); C10H18O, 154.1 Da" and len(nerol["lotus"]) == 1
+    assert record["ids"]["rows"][rows["nerol"]]["cid"] == 643820
+    assert record["notes"][-1] == ("its rows: the 4 chemicals of the odor table in LOTUS first, then the 1 chemical of LOTUS's "
+                                   "others of at most 250 Da reported in an organism with a family, by name")
+    assert isinstance(lotus.parse(out, {}, ODORS)[1], Sparse)
+    # merged as the stereochemistry setting says: of any stereoisomer, nerol is geraniol's (an odor's), so none is left
+    assert list(view(out, stereo="skeleton")[2]) == ["linalool", "geraniol", "acetic acid", "(R)-linalool"]
+    # only those of at most so many Da
+    b = lotus.bundle(out)
+    assert [len(m["structures"]) for m in lotus._others(b, "key_no_rs", 250, set())] == [3, 1, 1, 1]
+    assert lotus._others(b, "key_no_rs", 154, set()) == []  # (every structure made up here: 154.1 Da)
+    assert len(lotus._others(b, "key_no_rs", 155, set())) == 4
 
 
 def test_values_and_levels(bundle):
@@ -366,11 +396,14 @@ def test_reference_dataset(env, tmp_path):  # noqa: F811
     assert status == 200 and r["state"] == "ok", r
     pp = {"ref_id": r["id"]}
     r = call(env.reference_get, path_params=pp)[1]
-    assert r["meta"]["lotus"]["stereo"] == "enantiomers" and [d["what"] for d in r["meta"]["lotus"]["decisions"]][2] == "Stereochemistry"
+    assert r["meta"]["lotus"]["stereo"] == "enantiomers" and [d["what"] for d in r["meta"]["lotus"]["decisions"]][3] == "Stereochemistry"
     assert r["meta"]["scale"] == "log"  # (counts of organisms: shown on a log color scale)
-    assert [x["label"] for x in r["rows"]] == ["linalool"] and r["rows"][0]["chem"]["name"] == "linalool"
+    # the odor table's chemical first, then LOTUS's others (of at most 250 Da), by name: the page offers only the odor table's
+    assert [x["label"] for x in r["rows"]] == ["linalool", "acetic acid", "geraniol", "nerol"] and r["rows"][0]["chem"]["name"] == "linalool"
+    assert (r["chemicals"]["matched"], r["chemicals"]["n"], r["chemicals"]["identified"]) == (1, 4, 4)
     structures = ",".join(map(str, r["rows"][0]["lotus"]))
-    assert len(r["rows"][0]["lotus"]) == 3 and [x["label"] for x in r["cols"]] == ["Apiaceae", "Lamiaceae"]
+    assert len(r["rows"][0]["lotus"]) == 3 and [x["label"] for x in r["cols"]] == [
+        "Apiaceae", "Asteraceae", "Brassicaceae", "Lamiaceae", "Rosaceae", "Crambidae"]
     # a cell looked into
     status, cell = call(env.lotus_cell, path_params=pp, params={"structures": structures, "name": "Lamiaceae", "kingdom": "Plantae"})
     assert status == 200 and cell["n_organisms"] == 3 and cell["organisms"][0]["papers"][0]["title"] == "Paper D"
@@ -398,7 +431,7 @@ def test_reference_dataset(env, tmp_path):  # noqa: F811
     rows, _, _ = odormeta.parse_sheet("name,abbrev,cid,lotus\ngeraniol,ger,637566,\nR-linalool,rlin,,LTS0000002\n")
     env.db.apply_odor_sync(added=rows, changed=[], deleted=[], source="test", fingerprint="1", details={}, when="2026-11-03T00:00:00")
     r = call(env.reference_get, path_params=pp)[1]
-    assert [x["label"] for x in r["rows"]] == ["geraniol", "linalool", "R-linalool"]
+    assert [x["label"] for x in r["rows"]] == ["geraniol", "linalool", "R-linalool", "acetic acid", "nerol"]
     assert "matched by the LOTUS ID in the odor table" in r["rows"][2]["detail"]
 
 
@@ -507,7 +540,7 @@ def test_import(imports, tmp_path):
     assert about["counts"]["with_lts"] == 2 and list(about["notes"].values()) == ["Downloaded from Zenodo."]
     ref_id = job["added"][0]["id"]
     r = call(main.reference_get, path_params={"ref_id": ref_id})[1]
-    assert r["meta"]["lotus"]["level"] == "family" and [x["label"] for x in r["rows"]] == ["linalool"]
+    assert r["meta"]["lotus"]["level"] == "family" and [x["label"] for x in r["rows"]] == ["linalool", "acetic acid", "geraniol", "nerol"]
     s = call(main.admin_lotus)[1]
     assert s["how"] == "pattern" and s["gzip"] and s["script"] == "app/lotus_build.py" and not s["job"]["running"]
     assert [e["role"] for e in s["expected"]] == list(lotus_build.FILES)

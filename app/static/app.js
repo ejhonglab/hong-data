@@ -4747,14 +4747,16 @@ class AdminPage {
       <p class="muted small">A bundle of LOTUS (app/lotus_build.py) of ${num(n.records)} structure–organism–paper records (${num(n.structures)} structures,
         ${num(n.organisms)} organisms, ${num(n.papers)} papers): its frozen export of Wikidata${r.pairs ? ` of ${esc(r.pairs)}` : ''}${r.metadata ? `, with its metadata of ${esc(r.metadata)}` : ''}${r.lts ? `,
         and LOTUS IDs from its release of ${esc(r.lts)}` : ''}; built ${esc(fmtWhen(a.built_at))}. It is shown over the odor table's chemicals that are in it
-        (made again whenever the odor table changes), a cell clicked for the papers behind it. These settings are shown with its matrix, and can be
+        (made again whenever the odor table changes), then its other chemicals as chosen below, a cell clicked for the papers behind it. These settings are shown with its matrix, and can be
         changed once it is added (<i>Change settings…</i>, in the list above).</p>
       <div class="ref-role"><b>Columns</b> <select data-lt="level" aria-label="Columns">${opts('level')}</select></div>
       <div class="ref-role"><b>Cells</b> <select data-lt="value" aria-label="Cells">${opts('value')}</select></div>
       <div class="ref-role"><b>Stereochemistry</b> ${ch.stereo.map((o) => `<label class="chip"><input type="radio" name="ref-lt-stereo" value="${esc(o.value)}"${u.stereo === o.value ? ' checked' : ''}> ${esc(o.label)}${o.default ? ' (default)' : ''}</label>`).join('')}
         <p class="muted small lt-stereo-detail"></p></div>
       <div class="ref-role"><b>Taxonomy</b> <select data-lt="taxonomy" aria-label="Taxonomy first">${opts('taxonomy')}</select>
-        <span class="muted small">first: its lineage of each organism, the others after it in turn where it has none (or none at the level)</span></div></div>`;
+        <span class="muted small">first: its lineage of each organism, the others after it in turn where it has none (or none at the level)</span></div>
+      <div class="ref-role"><b>Other chemicals</b> <select data-lt="others" aria-label="Other chemicals">${opts('others')}</select>
+        <span class="muted small">after the odor table's (a box above the matrix shows only those)</span></div></div>`;
     this._ltSource = `LOTUS (lotus.naturalproducts.net; Rutz et al., eLife 2022)${r.pairs ? `, its frozen Wikidata export of ${r.pairs}` : ''}`;
     this._syncLotus(box);
   }
@@ -4787,7 +4789,8 @@ class AdminPage {
     if ($('[data-lt=level]', box)) {
       this._syncLotus(box);
       return { layout: 'lotus', level: $('[data-lt=level]', box).value, value: $('[data-lt=value]', box).value,
-        stereo: $('input[name=ref-lt-stereo]:checked', box)?.value, taxonomy: $('[data-lt=taxonomy]', box).value };
+        stereo: $('input[name=ref-lt-stereo]:checked', box)?.value, taxonomy: $('[data-lt=taxonomy]', box).value,
+        others: $('[data-lt=others]', box).value };
     }
     if ($('input[name=ref-mc-view]', box)) {
       const view = $('input[name=ref-mc-view]:checked', box).value, lca = view === 'lca';
@@ -4887,7 +4890,7 @@ class AdminPage {
     $('#ref-col-label').value = r.col_label && r.col_label !== lt?.level ? r.col_label : '';
     $('#ref-axis').value = r.chemical_axis || 'detect';
     $('#ref-kind').value = r.kind_setting || 'detect';
-    this.refFields = lt ? { layout: 'lotus', level: lt.level, value: lt.value, stereo: lt.stereo, taxonomy: lt.taxonomy } : null;
+    this.refFields = lt ? { layout: 'lotus', level: lt.level, value: lt.value, stereo: lt.stereo, taxonomy: lt.taxonomy, others: lt.others } : null;
     $('#ref-add').textContent = 'Save changes';
     $('#ref-cancel').hidden = false;
     $('#ref-form-head').textContent = `Change “${r.title}”`;

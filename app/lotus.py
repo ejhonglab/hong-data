@@ -1,7 +1,8 @@
 """LOTUS as reference data: a bundle of its structure–organism–paper records, with its
 metadata of each (an SQLite file built by lotus_build.py), shown as a matrix of the odor
-table's chemicals that are in it by the taxa of the organisms they are reported in, each
-cell's papers looked into in the Reference data tab.
+table's chemicals that are in it (then, by default, its other chemicals as small as
+odorants are) by the taxa of the organisms they are reported in, each cell's papers looked
+into in the Reference data tab.
 
 A reference dataset of a bundle has ``fields`` ``{"layout": "lotus", ...}`` with its
 options (`options`, `DEFAULT_OPTIONS`), each of which can be changed in the Admin tab:
@@ -16,7 +17,11 @@ options (`options`, `DEFAULT_OPTIONS`), each of which can be changed in the Admi
   (the first block of its InChIKey: cis/trans isomers merged too);
 - ``taxonomy``: the taxonomy source whose lineage of an organism is used first (`SOURCES`:
   the others follow in that order, each used where those before it do not give the
-  organism one at the level).
+  organism one at the level);
+- ``others``: LOTUS's other chemicals after the odor table's (`OTHERS`): none, or those of
+  at most 200, 250 (the default: 22k of its 2023 release, as many cells as MetaCyc's view
+  of compounds) or 300 Da, merged as ``stereo`` says, those with no organism at the level
+  left out. The matrix is kept sparse (`Sparse`), as most of its cells are 0.
 
 `describe` says these (and what the bundle was made from) for people, as the app shows
 them with the matrix. Its matrix depends on the odor table, so it is made again whenever
@@ -34,10 +39,10 @@ from collections import Counter, OrderedDict
 from pathlib import Path
 from typing import Any, Optional
 
-import numpy as np
+from .sparse import Sparse
 
 BUNDLE_KIND = "lotus"
-VERSION = 1  # of how matrices are made from a bundle: their imports are made again when it changes
+VERSION = 2  # of how matrices are made from a bundle: their imports are made again when it changes
 SUFFIXES = (".sqlite", ".sqlite3", ".db")
 LEVELS = ("organism", "species", "genus", "family", "order", "class", "phylum", "kingdom")
 RANKS = LEVELS[1:]  # of a lineage, lowest first
@@ -45,11 +50,13 @@ PLURAL = {"organism": "organisms", "species": "species", "genus": "genera", "fam
           "class": "classes", "phylum": "phyla", "kingdom": "kingdoms"}
 VALUES = ("organisms", "papers", "presence")
 STEREO = ("enantiomers", "exact", "skeleton")
+# LOTUS's other chemicals shown after the odor table's: none, or those of at most so many Da (odorants are small)
+OTHERS = ("none", "200", "250", "300")
 # taxonomy sources, in the order used by default after the one chosen (the most organisms of LOTUS first)
 SOURCES = ("GBIF Backbone Taxonomy", "Catalogue of Life", "Open Tree of Life", "NCBI", "World Flora Online", "ITIS",
            "iNaturalist", "EUNIS", "Index Fungorum", "VASCAN", "AlgaeBase", "Mammal Species of the World",
            "BirdLife International")
-DEFAULT_OPTIONS = {"level": "family", "value": "organisms", "stereo": "enantiomers", "taxonomy": SOURCES[0]}
+DEFAULT_OPTIONS = {"level": "family", "value": "organisms", "stereo": "enantiomers", "taxonomy": SOURCES[0], "others": "250"}
 # kingdoms by other names (of NCBI and the Open Tree of Life), as GBIF and the Catalogue of Life name them
 KINGDOMS = {"Viridiplantae": "Plantae", "Chloroplastida": "Plantae", "Archaeplastida": "Plantae", "Metazoa": "Animalia"}
 SOURCE_KINGDOM = {"World Flora Online": "Plantae", "VASCAN": "Plantae", "Mammal Species of the World": "Animalia",
@@ -86,6 +93,8 @@ def options(fields: Optional[dict]) -> dict:
         out["stereo"] = f["stereo"]
     if isinstance(f.get("taxonomy"), str) and f["taxonomy"].strip():
         out["taxonomy"] = f["taxonomy"].strip()
+    if str(f.get("others")) in OTHERS:
+        out["others"] = str(f["others"])
     return out
 
 
@@ -118,6 +127,9 @@ LEVEL_TEXT = {"organism": "organisms, as LOTUS names them (varieties and subspec
 STEREO_SHORT = {"enantiomers": "the same but for R/S: stereocenters ignored, cis/trans kept",
                 "exact": "exactly the odor's structure, stereochemistry included",
                 "skeleton": "any stereoisomer: stereocenters and cis/trans ignored"}
+OTHERS_SHORT = {"none": "none: only the odor table's chemicals",
+                "200": "LOTUS's other chemicals of at most 200 Da", "250": "LOTUS's other chemicals of at most 250 Da (odorant-sized)",
+                "300": "LOTUS's other chemicals of at most 300 Da"}
 VALUE_SHORT = {"organisms": "how many of the column's organisms (as LOTUS names them) it is reported in",
                "papers": "how many papers report it in any of the column's organisms",
                "presence": "1 where any paper reports it in any of the column's organisms, else 0"}
@@ -133,6 +145,7 @@ def choices(about: Optional[dict] = None) -> dict[str, list[dict]]:
         "level": [{"value": x, "label": LEVEL_TEXT.get(x, PLURAL[x]), "default": x == d["level"]} for x in LEVELS],
         "value": [{"value": x, "label": VALUE_SHORT[x], "default": x == d["value"]} for x in VALUES],
         "stereo": [{"value": x, "label": STEREO_SHORT[x], "detail": STEREO_TEXT[x], "default": x == d["stereo"]} for x in STEREO],
+        "others": [{"value": x, "label": OTHERS_SHORT[x], "default": x == d["others"]} for x in OTHERS],
         "taxonomy": [{"value": x, "label": f"{x} ({cov[x]:,} organisms)", "default": x == d["taxonomy"]}
                      for x in priority(d["taxonomy"], list(cov)) if x in cov] or
                     [{"value": x, "label": x, "default": x == d["taxonomy"]} for x in SOURCES],
@@ -191,12 +204,17 @@ def describe(o: dict, about: Optional[dict] = None) -> dict:
                                                        "(Import LOTUS), or made by app/lotus_build.py"},
         {"what": "Chemicals", "chosen": "the odor table's, each by the LOTUS ID it gives, else its InChI, else its CID; "
                                         "made again whenever the odor table changes", "admin": "the odor table (its LOTUS IDs)"},
+        {"what": "Other chemicals", "chosen": "none" if o["others"] == "none" else
+            f"after the odor table's, every other chemical of LOTUS of at most {o['others']} Da (its exact mass) reported in an "
+            f"organism with {'a ' + level if level != 'organism' else 'a name'}, by name; the box above the matrix shows only "
+            "the odor table's", "admin": True},
         {"what": "Stereochemistry", "chosen": STEREO_TEXT[o["stereo"]], "admin": True},
         {"what": "Columns", "chosen": cols, "admin": True},
         {"what": "Taxonomy", "chosen": taxonomy, "admin": True},
         {"what": "Cells", "chosen": cells, "admin": True},
     ]
-    summary = (f"The odor table's chemicals in LOTUS by the {plural if level != 'organism' else 'organisms'} they are "
+    others = "" if o["others"] == "none" else f" (then its other chemicals of at most {o['others']} Da)"
+    summary = (f"The odor table's chemicals in LOTUS{others} by the {plural if level != 'organism' else 'organisms'} they are "
                f"reported in: {cells}. A chemical is {STEREO_TEXT[o['stereo']].split(':')[0]}.")
     return {"summary": summary, "decisions": decisions}
 
@@ -461,6 +479,19 @@ def _structures(b: Bundle, ids: list[int]) -> dict[int, dict]:
     return {r["id"]: dict(r) for r in b.query_in("SELECT * FROM structures WHERE id IN ({ids})", ids)}
 
 
+def _others(b: Bundle, col: str, max_mass: float, taken: set[str]) -> list[dict]:
+    """LOTUS's chemicals of at most `max_mass` Da (their exact mass) but those of `taken` (the
+    odor table's): each its structures (those of one key of `STEREO_COLUMN` `col`, as the
+    stereochemistry setting merges them; those with the most records first), as
+    `match_odors` gives an odor's, of none."""
+    n = {r[0]: r[1] for r in b.query("SELECT structure, COUNT(*) FROM pairs GROUP BY structure")}
+    by_key: dict[str, list[int]] = {}
+    for r in b.query(f"SELECT id, {col} AS k FROM structures WHERE exact_mass <= ? AND {col} IS NOT NULL", (max_mass,)):
+        if r["k"] not in taken:
+            by_key.setdefault(r["k"], []).append(r["id"])
+    return [{"odor": None, "structures": sorted(ids, key=lambda s: (-n.get(s, 0), s)), "how": None} for ids in by_key.values()]
+
+
 def _unmatched_note(matches: list[dict]) -> Optional[str]:
     missing = [m["odor"]["name"] for m in matches if not m["structures"]]
     if not missing:
@@ -485,7 +516,7 @@ def _lineage_text(t: dict) -> str:
     return " › ".join(v for k in RANKS if (v := t["lineage"].get(k)))
 
 
-def parse(path: Path, fields: Optional[dict], odors: list[dict]) -> tuple[dict, np.ndarray]:
+def parse(path: Path, fields: Optional[dict], odors: list[dict]) -> tuple[dict, Sparse]:
     """A view of the bundle at `path` over `odors` (the odor table), as `reference.parse`
     gives a matrix: (record, values). Its rows carry their structures (``lotus``: IDs), its
     columns their taxon (``lotus``: {level, name, kingdom}), to look into a cell (`cell`)."""
@@ -495,17 +526,21 @@ def parse(path: Path, fields: Optional[dict], odors: list[dict]) -> tuple[dict, 
         raise LotusError(f"not a LOTUS bundle: {e}") from None
     o = options(fields)
     matches = match_odors(b, odors, o["stereo"])
-    rows = [m for m in matches if m["structures"]]
-    if not rows:
+    odor_rows = [m for m in matches if m["structures"]]
+    col = STEREO_COLUMN[o["stereo"]]
+    taken = {r["k"] for r in b.query_in(f"SELECT {col} AS k FROM structures WHERE id IN ({{ids}})",
+                                        sorted({s for m in odor_rows for s in m["structures"]}))}
+    candidates = odor_rows + ([] if o["others"] == "none" else _others(b, col, float(o["others"]), taken))
+    if not candidates:
         raise LotusError("none of the odor table's chemicals is in LOTUS (by LOTUS ID, InChI or CID)")
     tx = b.taxa(o["level"], o["taxonomy"])
-    all_ids = sorted({s for m in rows for s in m["structures"]})
+    all_ids = sorted({s for m in candidates for s in m["structures"]})
     by_structure: dict[int, list[tuple[int, int]]] = {}
     for r in b.query_in("SELECT structure, organism, ref FROM pairs WHERE structure IN ({ids})", all_ids):
         by_structure.setdefault(r["structure"], []).append((r["organism"], r["ref"]))
     cells: dict[tuple[int, tuple], tuple[set, set]] = {}
     left_out: set[int] = set()
-    for i, m in enumerate(rows):
+    for i, m in enumerate(candidates):
         for s in m["structures"]:
             for org, ref in by_structure.get(s, ()):
                 key = tx["of"].get(org)
@@ -515,15 +550,28 @@ def parse(path: Path, fields: Optional[dict], odors: list[dict]) -> tuple[dict, 
                 orgs, refs = cells.setdefault((i, key), (set(), set()))
                 orgs.add(org)
                 refs.add(ref)
+    info = _structures(b, all_ids)
+    # the odor table's chemicals, then the others in some organism with a taxon at the level, by name (those unnamed last)
+    with_cells = {i for i, _ in cells}
+
+    def name(m: dict) -> str:  # (a chemical's, as LOTUS names its structure with the most records; some still CSV-quoted)
+        f = info.get(m["structures"][0], {})
+        n = f.get("name") or f.get("iupac_name") or f.get("inchikey") or "?"
+        return n[1:-1].replace('""', '"') if len(n) > 1 and n[0] == n[-1] == '"' else n
+
+    others = sorted((i for i in range(len(odor_rows), len(candidates)) if i in with_cells),
+                    key=lambda i: (not info.get(candidates[i]["structures"][0], {}).get("name"), name(candidates[i]).casefold(), i))
+    order = [*range(len(odor_rows)), *others]
+    new_at = {old: new for new, old in enumerate(order)}
+    rows = [candidates[i] for i in order]
     kingdoms = Counter()
     for t in tx["taxa"].values():
         kingdoms[t["lineage"].get("kingdom", t["kingdom"])] += len(t["organisms"])
     keys = sorted({k for _, k in cells}, key=lambda k: _sort_key(tx["taxa"][k], kingdoms))
     at = {k: j for j, k in enumerate(keys)}
-    values = np.zeros((len(rows), len(keys)), dtype=np.float32)
-    for (i, k), (orgs, refs) in cells.items():
-        values[i, at[k]] = len(orgs) if o["value"] == "organisms" else len(refs) if o["value"] == "papers" else 1
-    info = _structures(b, all_ids)
+    filled = [(new_at[i], at[k], len(orgs) if o["value"] == "organisms" else len(refs) if o["value"] == "papers" else 1)
+              for (i, k), (orgs, refs) in cells.items()]
+    values = Sparse.of((len(rows), len(keys)), *(zip(*filled) if filled else ([], [], [])))
     names = Counter(tx["taxa"][k]["name"] for k in keys)
     cols = []
     for k in keys:
@@ -535,32 +583,49 @@ def parse(path: Path, fields: Optional[dict], odors: list[dict]) -> tuple[dict, 
                      "lotus": {"level": o["level"], "name": t["name"], "kingdom": t["kingdom"],
                                **({"organism": k[1]} if o["level"] == "organism" else {})}})
 
+    labels = Counter(m["odor"]["name"] if m["odor"] else name(m) for m in rows)
+
     def row(m: dict) -> dict:
         s = [info[i] for i in m["structures"] if i in info]
         first = s[0] if s else {}
-        what = first.get("name") or first.get("iupac_name") or first.get("inchikey") or "?"
+        what = name(m)
         ident = first.get("lts") or first.get("inchikey")
         more = f", and {len(s) - 1} other structure{'s' if len(s) > 2 else ''} of it" if len(s) > 1 else ""
+        if not m["odor"]:  # (another chemical of LOTUS, as it names it: told apart from others named alike)
+            return {"label": what + (f" ({ident})" if labels[what] > 1 else ""), "group": None, "lotus": m["structures"],
+                    "detail": f"LOTUS: {what} ({ident}){more}; {first.get('formula') or ''}, {first.get('exact_mass') or 0:.1f} Da"}
         return {"label": m["odor"]["name"], "group": None, "lotus": m["structures"],
                 "detail": f"LOTUS: {what} ({ident}){more}, matched {HOW[m['how']]}"}
 
     notes = [n for n in [_unmatched_note(matches)] if n]
-    merged = [(m["odor"]["name"], len(m["structures"])) for m in rows if len(m["structures"]) > 1]
+    merged = [(m["odor"]["name"], len(m["structures"])) for m in odor_rows if len(m["structures"]) > 1]
     if merged:
         notes.append(f"{len(merged)} chemical{'s are' if len(merged) > 1 else ' is'} each several of LOTUS's structures "
                      f"(as the stereochemistry setting says): " + ", ".join(f"{n} ({k})" for n, k in merged[:8])
                      + ("…" if len(merged) > 8 else ""))
-    empty = [m["odor"]["name"] for i, m in enumerate(rows) if not values[i].any()]
+    empty = [m["odor"]["name"] for i, m in enumerate(odor_rows) if i not in with_cells]
     if empty:
         notes.append(f"{len(empty)} chemical{'s are' if len(empty) > 1 else ' is'} in LOTUS but in no organism with a "
                      f"{o['level']}: {', '.join(empty[:8])}{'…' if len(empty) > 8 else ''}")
     if left_out:
         notes.append(f"{len(left_out):,} organism{'s' if len(left_out) > 1 else ''} of these chemicals left out: no taxonomy "
                      f"source gives {'them' if len(left_out) > 1 else 'it'} a {o['level']}")
+    if o["others"] != "none":
+        chems = lambda n: f"{n:,} chemical{'s' if n != 1 else ''}"  # noqa: E731
+        notes.append(f"its rows: the {chems(len(odor_rows))} of the odor table in LOTUS first, then the {chems(len(others))} of "
+                     f"LOTUS's others of at most {o['others']} Da reported in an organism with a {o['level']}, by name")
+
+    def ids(m: dict) -> dict:  # (as a reference dataset's chemicals are identified)
+        if m["odor"]:
+            return {k: m["odor"].get(k) for k in ("name", "cid", "inchi") if m["odor"].get(k)}
+        f = info.get(m["structures"][0], {})
+        return {k: v for k, v in (("name", name(m)), ("cid", f.get("cid")), ("inchi", f.get("inchi"))) if v}
+
     record = {
         "rows": [row(m) for m in rows],
         "cols": cols,
-        "ids": {"rows": [{k: m["odor"].get(k) for k in ("name", "cid", "inchi") if m["odor"].get(k)} for m in rows], "cols": None},
+        "ids": {"rows": [ids(m) for m in rows], "cols": None},
+        "matched": [[m["odor"]["id"], m["how"]] if m["odor"] else None for m in rows],
         "chemical_axis": "rows",
         "kind": "binary" if o["value"] == "presence" else "sequential",
         "shape": list(values.shape),

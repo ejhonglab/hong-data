@@ -542,19 +542,22 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   compound by name or MetaCyc ID.
   *LOTUS* (a bundle of its records of natural products: which papers report which
   structure in which organism, imported in the Admin tab or made by a script, see
-  [Scripting](#scripting)) is shown over the odor
-  table's chemicals that are in it (made again whenever the odor table changes) by the
+  [Scripting](#scripting)) is shown over the odor table's chemicals that are in it (made
+  again whenever the odor table changes), then, by default, its other chemicals of at
+  most 250 Da, odorant-sized (22k of its 2023 release; or 200 or 300 Da, or none), by the
   taxa of the organisms they are reported in: by default, *chemicals by the families of
   organisms they are reported in*, each cell how many of the family's organisms (as
-  LOTUS names them) the chemical is reported in. Above its matrix, *How this matrix was
+  LOTUS names them) the chemical is reported in. As for MetaCyc, a box above the matrix
+  shows only the odor table's chemicals. Above its matrix, *How this matrix was
   made* says each choice behind it, and which can be changed in the Admin tab: the
   columns (organisms as LOTUS names them, or their species, genera, families, orders,
   classes, phyla or kingdoms), the cells (organisms, papers, or presence), the
   stereochemistry (by default, LOTUS's structures that are the odor's but for R/S:
   enantiomers, diastereomers and unspecified stereocenters merged, cis/trans isomers kept
-  apart; or exactly the odor's; or any of its skeleton) and the taxonomy used first (GBIF's
+  apart; or exactly the odor's; or any of its skeleton), the taxonomy used first (GBIF's
   backbone by default, then the Catalogue of Life, the Open Tree of Life, NCBI and the rest
-  in turn, where those before give an organism none). Below it, click a cell for the
+  in turn, where those before give an organism none) and the other chemicals (up to what
+  mass). Below it, click a cell for the
   organisms it is of, each with its lineage and the papers reporting the chemical there
   (year, first author, title linked to its DOI, journal; those checked by hand by LOTUS
   marked), and the structures of LOTUS its row is (with links to LOTUS and Wikidata).

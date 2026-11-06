@@ -521,7 +521,14 @@ between the frontend and the server. Using the app is described in
   MetaCyc's is (`reference.bundle_kind`: by the kind its `about` says, as both are
   `.sqlite`), for the same reason: 220,823 structures by 36,800 organisms, of which only
   the odor table's chemicals can be compared with datasets. Its one view is made over
-  them, by the settings in its `fields`; unlike MetaCyc's views, these are changed in place
+  them, then (as MetaCyc's compounds by pathways is over all its compounds, a box
+  showing only the odor table's) its other chemicals of at most 250 Da by default
+  (`others`: 200, 250, 300 or none): all 165k, merged but for R/S, are 1.2 GB by
+  families as the grid the viewer makes of a matrix (5.7 by genera, 21.5 by species),
+  though 99.9% of their cells are 0; odorants are small, and those of at most 250 Da are
+  22k (104 MB by the 1,178 families they are in), as many cells as MetaCyc's. The view is
+  kept sparse (`Sparse`), as MetaCyc's is. It is made by the settings in its `fields`;
+  unlike MetaCyc's views, these are changed in place
   (`PATCH /api/admin/references/{id}`, `reference.update`, which any reference dataset
   added in the Admin tab could use), the import made again as for any change to `fields`.
   The settings and what the bundle was made from are said above the matrix
