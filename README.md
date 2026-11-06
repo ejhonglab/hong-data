@@ -8,8 +8,9 @@ chemicals × pathways, ...) and the lab's table of odor metadata.
 
 ## Using it
 
-Open `http://<server>:8080/` in a browser on the lab network (type the `http://`, and
-bookmark it). There is no login. The browser calls the site "Not secure": that is
+Open `http://hal:8080/` in a browser on the lab network (type the `http://`, and
+bookmark it). If `hal` is not found, use `http://10.0.0.5:8080/` instead (for now, until
+every computer's DNS has `hal`). There is no login. The browser calls the site "Not secure": that is
 expected, and nothing secret is entered. If a download or the page is blocked, see
 [Browser warnings](#browser-warnings) below.
 
@@ -307,7 +308,7 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   was edited by hand; `metadata.json` keeps each edit (when, and each field before and
   after).
 - **Permalinks**: under a dataset's title, *Make a permalink…* names a link to it that
-  stays whatever its number, `http://<server>:8080/d/<name>` (lowercase letters, digits
+  stays whatever its number, `http://hal:8080/d/<name>` (lowercase letters, digits
   and `-`; by default as its downloads are named, e.g. `megamat-tom-glomeruli-2023-06-22`),
   with *Copy* and *Rename…*. An edit of its details that would change that default name
   (its uploader, coding unit, manipulations, or panel names if its file has none) asks
