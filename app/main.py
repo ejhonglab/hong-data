@@ -1463,7 +1463,7 @@ async def roi_training_flies(request: Request) -> Response:
 
 
 async def roi_training_download(request: Request) -> Response:
-    """A zip of what the ROI training tab lists of each fly, with its anatomical stack if it
+    """A zip of what the AL Segmentation tab lists of each fly, with its anatomical stack if it
     has one (but with ``?stacks=0``), sent as it is written (`roi_training.stream_zip`): it may
     be several GB."""
     found, bases = await run_in_threadpool(_roi_training_found, request)

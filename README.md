@@ -43,7 +43,7 @@ expected, and nothing secret is entered. If a download or the page is blocked, s
    Below it, how to make each odor from its neat chemical by serial dilutions; then
    search VCF's foods (e.g. `kiwi`) for their volatiles, the headspace over
    them, and the dilutions in paraffin oil that would give the same headspace.
-8. **ROI training**: one download of what there is on tensor to train a model to draw
+8. **AL Segmentation**: one download of what there is on tensor to train a model to draw
    glomerulus ROIs ([al-diag-seg](https://github.com/tom-f-oconnell/al-diag-seg)) of
    every fly of a glomeruli dataset with a diagnostic panel, and the flies left out, with why;
    how many glomeruli each fly has, and which glomeruli few of the flies have.
@@ -629,7 +629,7 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     a CSV per chemical (each product's values, the headspace in every unit, the oil) or
     of the matching lines (with where each constant and vapor pressure is from, and the
     file's).
-- **ROI training**: of every glomeruli dataset with a diagnostic panel, each fly whose
+- **AL Segmentation**: of every glomeruli dataset with a diagnostic panel, each fly whose
   folder in the dataset's motion-corrected data (as al_analysis lays it out) has
   diagnostic recordings (folders with `trialmean_dff.tif`, the mean dF/F of each odor, and
   `trial_frames_and_odors.json`, more than half of whose odors are of the dataset's

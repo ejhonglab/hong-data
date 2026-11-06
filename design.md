@@ -236,7 +236,7 @@ between the frontend and the server. Using the app is described in
   Other…, hints, and checks. The defaults leave out what is of one dataset only (its
   uploader, manipulations, data paths and files), and require nothing; the server checks
   all of them as an upload's (`Metadata`).
-- **The ROI training download is tensor as it is, with a manifest.** Its files are where
+- **The AL Segmentation download is tensor as it is, with a manifest.** Its files are where
   al_analysis leaves them (paths from the top of tensor), not renamed into a layout of the
   training code's: al-diag-seg reads this one (its `alseg/olfdb.py`), through
   `roi_training.json`, which says what each file is and names every recording's odors as
@@ -248,7 +248,7 @@ between the frontend and the server. Using the app is described in
   few GB. Files are read eight at a time ahead of being sent, as each file on tensor
   takes a while to start reading (an anatomical stack's ~1000 files: 45 s one after
   another, 3 s eight at a time).
-- **The ROI training tab counts glomeruli as al-diag-seg trains on them** (`roi_training.roi_glomeruli`:
+- **The AL Segmentation tab counts glomeruli as al-diag-seg trains on them** (`roi_training.roi_glomeruli`:
   the same rules as its `alseg/olfdb.py`, through `movies.roi_kind`), from each fly's
   `RoiSet.zip` (read eight at a time, as the download's files are), so what it shows is what
   a model is trained on. A fly's panels are those it has a response in, in the datasets it

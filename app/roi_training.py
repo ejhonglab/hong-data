@@ -1,6 +1,6 @@
 """Data to train a model to draw glomerulus ROIs (al-diag-seg,
 https://github.com/tom-f-oconnell/al-diag-seg): what is on tensor of each fly of a glomeruli
-dataset with a diagnostic panel, and a download of it (ROI training tab).
+dataset with a diagnostic panel, and a download of it (AL Segmentation tab).
 
 A fly is exported if its folder in the dataset's motion-corrected data (as al_analysis lays
 it out) has:
@@ -503,7 +503,7 @@ def stream_zip(found: dict, root: Path, bases: list[Path], stacks: bool, top: st
 
 
 def summary(found: dict, root: Path, bases: list[Path]) -> dict:
-    """What the ROI training tab shows: each fly to export and those left out, with sizes;
+    """What the AL Segmentation tab shows: each fly to export and those left out, with sizes;
     and of each fly, its glomeruli (`roi_glomeruli`: ``glomeruli`` and ``tentative``, None
     with ``roi_error`` if its ROIs could not be read) and ``panels``: those but diagnostic ones."""
     with ThreadPoolExecutor(PREFETCH) as pool:  # (each file on tensor takes a while to start reading)
