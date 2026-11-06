@@ -1221,8 +1221,8 @@ try {
     </div>
     <div class="vt-group" data-role="cluster" title="Hierarchical clustering (average linkage) of trial-averaged responses, of the ROIs and odors not removed (whatever order they are shown in). ROIs are clustered all together, whichever fly they come from (they are shown ungrouped while this is on). Odors are clustered within each panel, by their responses across all ROIs.">
       <span class="vt-label">Cluster</span>
-      <label class="check"><input type="checkbox" data-opt="clusterRows"> ROIs</label>
-      <label class="check"><input type="checkbox" data-opt="clusterCols"> odors</label>
+      <label class="check"><input type="checkbox" data-opt="clusterRows"> <span data-role="cluster-rows">ROIs</span></label>
+      <label class="check"><input type="checkbox" data-opt="clusterCols"> <span data-role="cluster-cols">odors</span></label>
       <label>by <select data-opt="metric"><option value="correlation">correlation</option><option value="euclidean">Euclidean distance</option></select></label>
     </div>
     <div class="vt-group">

@@ -307,7 +307,17 @@ between the frontend and the server. Using the app is described in
   similarities, their correlations with others' and side by side are those of datasets.
   It is not compared on glomeruli (it has none) nor on a panel's odors (it has no panel).
   Its spike counts are shown on a log scale of 1 + each count (they are counts, most of
-  them 0), here and in the Models tab.
+  them 0), here and in the Models tab, white to red: the red half of the responses'
+  blue–white–red (`oklab-red`, its lightness linear too), so a model's counts read in the
+  same hue as the responses they are compared with, counts having no negative side.
+- **Matrices other than neural data are clustered only where they say what their rows and
+  columns are** (`cluster` of what `setGenericData` is given: so far a model run's, KCs
+  and odors), by `clusterMatrix`, as `clusterNeural` clusters a dataset's: its rows all
+  together (then ungrouped), its columns within each group, over what is not removed. Not
+  reference data, whose axes are often not alike enough to be (a chemical's pathways), nor
+  Compare's linked matrices, whose rows must stay level with each other's. Whether to is
+  kept by kind of viewer (`clustered` in the browser), apart from datasets', so that
+  clustering a model's 1,700 KCs does not start a 25,000-ROI clustering in Browse.
 - **The laser wavelength is never read from `Experiment.xml`**: ThorImage's
   `MultiPhotonLaser` value does not follow changes made to the wavelength at the laser,
   so the wavelength is only ever entered in the form.

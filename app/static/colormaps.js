@@ -38,7 +38,9 @@ function oklchToRgb8(L, C, hDeg) {
 }
 
 // Diverging: index 0 = negative pole, 127/128 = white, 255 = positive pole.
-function oklabDiverging({ lEnd = 0.36, cEnd = 0.15, hueNeg = 262, huePos = 27 } = {}) {
+const DIV = { lEnd: 0.36, cEnd: 0.15, hueNeg: 262, huePos: 27 };
+function oklabDiverging(opts = {}) {
+  const { lEnd, cEnd, hueNeg, huePos } = { ...DIV, ...opts };
   const lut = new Uint8ClampedArray(256 * 3);
   for (let i = 0; i < 256; i++) {
     const x = (i - 127.5) / 127.5; // -1 .. 1
@@ -46,6 +48,19 @@ function oklabDiverging({ lEnd = 0.36, cEnd = 0.15, hueNeg = 262, huePos = 27 } 
     const L = 1 - t * (1 - lEnd);
     const C = cEnd * t;
     const [r, g, b] = oklchToRgb8(L, C, x < 0 ? hueNeg : huePos);
+    lut[i * 3] = r; lut[i * 3 + 1] = g; lut[i * 3 + 2] = b;
+  }
+  return lut;
+}
+
+// Sequential: the positive half of oklabDiverging, white -> its red pole (lightness linear),
+// for magnitudes of what is otherwise shown diverging (e.g. spike counts beside responses)
+function oklabHalf(opts = {}) {
+  const { lEnd, cEnd, huePos } = { ...DIV, ...opts };
+  const lut = new Uint8ClampedArray(256 * 3);
+  for (let i = 0; i < 256; i++) {
+    const t = i / 255;
+    const [r, g, b] = oklchToRgb8(1 - t * (1 - lEnd), cEnd * t, huePos);
     lut[i * 3] = r; lut[i * 3 + 1] = g; lut[i * 3 + 2] = b;
   }
   return lut;
@@ -90,6 +105,7 @@ export const COLORMAPS = {
   'viridis': { label: 'viridis', kind: 'sequential', lut: fromMpl('viridis') },
   'plasma-r': { label: 'plasma, reversed (lowest brightest)', kind: 'sequential', lut: reversedLut(fromMpl('plasma')) },
   'oklab-seq': { label: 'White–blue (Oklab)', kind: 'sequential', lut: oklabSequential() },
+  'oklab-red': { label: 'White–red (Oklab, lightness-linear)', kind: 'sequential', lut: oklabHalf() },
   'binary': { label: 'Absent / present', kind: 'binary', lut: binary() },
 };
 

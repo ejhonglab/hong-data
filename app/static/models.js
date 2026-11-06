@@ -241,7 +241,8 @@ export class ModelsPage {
       const groups = run.kcs.groups;
       this.shown.set(key, {
         payload: {
-          meta: { kind: 'sequential', scale: 'log', value_label: 'spike count', row_label: run.kcs.levels[0] || 'KC', col_label: 'odor' },
+          meta: { kind: 'sequential', scale: 'log', colormap: 'oklab-red', value_label: 'spike count', row_label: run.kcs.levels[0] || 'KC', col_label: 'odor' },
+          cluster: { rows: 'KCs', cols: 'odors' },
           rows: keep.map((k) => ({ label: run.kcs.labels[k], group: groups ? groups[k] : null })),
           cols: run.odors.map((o) => ({ label: o.odor, chem: o.chem ? { ...o.chem, odor_id: o.odor_id } : null })),
           values: kept, chemicals: run.odors.some((o) => o.chem) ? { matched: true, axis: 'cols' } : null, kcAxis: 'rows',

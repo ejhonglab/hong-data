@@ -726,6 +726,47 @@ async function clusterNeural(pool, data, input, o, onProgress, kept = null) {
   return out;
 }
 
+// Orders the rows and/or columns of a matrix (not neural data: a MatrixViewer's generic model,
+// `b`) by hierarchical clustering of its values, as clusterNeural does a neural one's: its rows
+// all together, its columns within each run of one group (if they have groups). rows, cols:
+// indices in b of those not removed, in the order clustering starts from (ties keep it);
+// names: what they are ({rows, cols}). -> {rows, cols (each null unless clustered), rowTrees,
+// colTrees, notes}
+async function clusterMatrix(pool, b, rows, cols, names, o, onProgress) {
+  const nC = b.cols.length, jobs = [], plans = [], notes = [];
+  const add = (plan, items, d, vectors) => {
+    if (items.length < 2) return;
+    if (items.length > MAX_CLUSTER_ITEMS) {
+      notes.push(`${plan.what} not clustered (${items.length.toLocaleString()} is over the limit of ${MAX_CLUSTER_ITEMS.toLocaleString()})`);
+      return;
+    }
+    jobs.push({ data: vectors(), n: items.length, d, metric: o.metric });
+    plans.push({ ...plan, items });
+  };
+  // the values of items (rows or columns) across others, as vectors
+  const vectorsOf = (items, others, at) => {
+    const v = new Float32Array(items.length * others.length);
+    items.forEach((x, a) => others.forEach((y, k) => { v[a * others.length + k] = at(x, y); }));
+    return v;
+  };
+  if (o.clusterRows) add({ kind: 'rows', start: 0, what: names.rows }, rows, cols.length, () => vectorsOf(rows, cols, (i, j) => b.values[i * nC + j]));
+  if (o.clusterCols) {
+    for (const g of runsOf(cols, (j) => b.cols[j].group)) {
+      const items = cols.slice(g.start, g.end);
+      add({ kind: 'cols', start: g.start, what: g.key != null ? `${names.cols} of ${g.key}` : names.cols }, items, rows.length,
+        () => vectorsOf(items, rows, (j, i) => b.values[i * nC + j]));
+    }
+  }
+  const results = jobs.length ? await pool.run(jobs, onProgress) : [];
+  const out = { rows: o.clusterRows ? rows.slice() : null, cols: o.clusterCols ? cols.slice() : null, rowTrees: [], colTrees: [], notes };
+  results.forEach((res, k) => {
+    const p = plans[k], target = p.kind === 'rows' ? out.rows : out.cols;
+    res.order.forEach((i, t) => { target[p.start + t] = p.items[i]; });
+    (p.kind === 'rows' ? out.rowTrees : out.colTrees).push({ merges: res.merges, leaves: p.items });
+  });
+  return out;
+}
+
 // order: {unitIdx, conds, panelOrder} as shown unless clustered
 function buildNeuralModel(data, order, { mode, rowOrder }, clustering) {
   const { units, trials, values } = data;
@@ -906,6 +947,10 @@ function sortedByValues(idx, items, others, valueAt, how) {
 // columns the odors, however they are shown.
 const newEdits = () => ({ rows: { removed: new Set(), order: null }, cols: { removed: new Set(), order: null } });
 
+// the clustering last chosen for a kind of viewer other than neural data's (`MatrixViewer.kind`):
+// kept apart by kind, as neural data's is kept as it was before others could be clustered
+const clusteredOf = (saved, kind) => ({ clusterRows: !!saved.clustered?.[kind]?.rows, clusterCols: !!saved.clustered?.[kind]?.cols });
+
 class MatrixViewer {
   // cells: [width, height] of this viewer's cells to start with, not those of every viewer;
   // asUploaded: odors as named in the data, whatever Settings say (the upload preview)
@@ -945,6 +990,7 @@ class MatrixViewer {
       },
       saved,
       { transpose: !!saved.transposed?.[kind] },
+      kind === 'neural' ? {} : clusteredOf(saved, kind),
       cells ? { cellW: cells[0], cellH: cells[1] } : {},
       { scale: 'auto' }, // (as chosen for each matrix shown, see `_scaleFor`)
     );
@@ -1022,10 +1068,13 @@ class MatrixViewer {
   }
 
   _save() {
-    const o = this.opts, saved = LS.get('olfdb.viewer', {});
+    const o = this.opts, saved = LS.get('olfdb.viewer', {}), neural = this.kind === 'neural';
     LS.set('olfdb.viewer', {
       cellW: this.ownCells ? saved.cellW : o.cellW, cellH: this.ownCells ? saved.cellH : o.cellH, colormap: o.colormap, range: o.range, rowOrder: o.rowOrder, roiSort: o.roiSort, odorOrder: o.odorOrder,
-      clusterRows: o.clusterRows, clusterCols: o.clusterCols, metric: o.metric, chemLabels: o.chemLabels, sumKCs: o.sumKCs,
+      // (neural data's clustering as before; that of other kinds of matrix kept apart, by kind)
+      clusterRows: neural ? o.clusterRows : saved.clusterRows, clusterCols: neural ? o.clusterCols : saved.clusterCols,
+      clustered: neural ? saved.clustered : { ...saved.clustered, [this.kind]: { rows: o.clusterRows, cols: o.clusterCols } },
+      metric: o.metric, chemLabels: o.chemLabels, sumKCs: o.sumKCs,
       hideControls: o.hideControls, transposed: { ...saved.transposed, [this.kind]: o.transpose }, sortRows: o.sortRows,
       sortCols: o.sortCols, scales: { ...saved.scales, [this.fileStem]: o.scale === 'auto' ? undefined : o.scale },
     });
@@ -1041,14 +1090,26 @@ class MatrixViewer {
   _setKind(kind) {
     if (kind === this.kind) return;
     this.kind = kind;
-    this.opts.transpose = !!LS.get('olfdb.viewer', {}).transposed?.[kind];
+    const saved = LS.get('olfdb.viewer', {});
+    this.opts.transpose = !!saved.transposed?.[kind];
+    Object.assign(this.opts, kind === 'neural' ? { clusterRows: !!saved.clusterRows, clusterCols: !!saved.clusterCols } : clusteredOf(saved, kind));
   }
 
   _syncToolbar() {
     const tb = this.toolbar, o = this.opts;
     $$('[data-mode]', tb).forEach((b) => b.classList.toggle('active', b.dataset.mode === o.mode));
     const neural = this.kind === 'neural';
-    for (const role of ['mode', 'rows', 'cols', 'cluster']) $(`[data-role=${role}]`, tb).hidden = !neural;
+    for (const role of ['mode', 'rows', 'cols']) $(`[data-role=${role}]`, tb).hidden = !neural;
+    const cg = $('[data-role=cluster]', tb), cl = neural ? { rows: 'ROIs', cols: 'odors' } : this.data?.cluster;
+    cg.hidden = !cl;
+    cg.dataset.neural ??= cg.title;
+    if (cl) {
+      $('[data-role=cluster-rows]', cg).textContent = cl.rows;
+      $('[data-role=cluster-cols]', cg).textContent = cl.cols;
+      cg.title = neural ? cg.dataset.neural : `Hierarchical clustering (average linkage) of the values, of the ${cl.rows} and ${cl.cols} not removed
+        (whatever order they are shown in). ${cl.rows[0].toUpperCase() + cl.rows.slice(1)} are clustered all together (shown ungrouped while this is
+        on), ${cl.cols} within each group of them, if they have groups.`;
+    }
     $('[data-role=chem]', tb).hidden = neural || !this.data?.chemAxis;
     $('[data-role=sort]', tb).hidden = neural;
     $('[data-role=kc]', tb).hidden = neural ? !this.kc : !this.data?.kcAxis;
@@ -1108,13 +1169,16 @@ class MatrixViewer {
     const tb = this.toolbar, o = this.opts;
     const rows = $('select[data-opt=rowOrder]', tb), roi = $('select[data-opt=roiSort]', tb), odor = $('select[data-opt=odorOrder]', tb);
     const summing = this.kind === 'neural' && this._summing();
+    const summed = this.kind !== 'neural' && this._summing() ? this.data.kcAxis : null; // (its KCs summed: not clustered)
     rows.disabled = roi.disabled = o.clusterRows || summing;
     rows.value = o.clusterRows && !summing ? 'none' : summing ? 'fly' : o.rowOrder;
     odor.disabled = o.clusterCols;
     rows.title = roi.title = summing ? "Each fly's KCs are summed" : o.clusterRows ? 'ROIs are ordered by the clustering, across all flies' : '';
-    const clusterRows = $('input[data-opt=clusterRows]', tb);
-    clusterRows.disabled = summing;
-    clusterRows.parentElement.title = summing ? "Each fly's KCs are summed" : '';
+    const clusterRows = $('input[data-opt=clusterRows]', tb), clusterCols = $('input[data-opt=clusterCols]', tb);
+    clusterRows.disabled = summing || summed === 'rows';
+    clusterCols.disabled = summed === 'cols';
+    clusterRows.parentElement.title = summing ? "Each fly's KCs are summed" : summed === 'rows' ? 'They are summed' : '';
+    clusterCols.parentElement.title = summed === 'cols' ? 'They are summed' : '';
     odor.title = o.clusterCols ? 'odors are ordered by the clustering' : '';
     $('select[data-opt=metric]', tb).disabled = !(o.clusterRows || o.clusterCols);
     $('[data-role=rows-label]', tb).textContent = o.transpose ? 'Columns' : 'Rows';
@@ -1122,8 +1186,10 @@ class MatrixViewer {
     for (const [opt, axis] of [['sortRows', 'rows'], ['sortCols', 'cols']]) {
       const sel = $(`select[data-opt=${opt}]`, tb), shared = this._sharedAxis(this._editAxis(axis));
       const mirrored = opt === 'sortCols' && !!this.data?.square;
-      sel.disabled = shared || mirrored;
-      sel.title = mirrored ? 'In the order of the rows (the same, in the same order)' : shared ? 'In the order of the matrix beside it' : '';
+      const clustered = this.kind !== 'neural' && !!this._clusterOpts()[this._editAxis(axis) === 'rows' ? 'clusterRows' : 'clusterCols'];
+      sel.disabled = shared || mirrored || clustered;
+      sel.title = mirrored ? 'In the order of the rows (the same, in the same order)' : shared ? 'In the order of the matrix beside it'
+        : clustered ? 'In the order of the clustering' : '';
     }
   }
 
@@ -1158,6 +1224,9 @@ class MatrixViewer {
   // `distance` is set (colored apart, see `_genericColormap`); kind: of the viewer, for its
   // transposing kept apart; responseCalc: of a dataset's responses, how they were
   // calculated (`setResponseCalc`)
+  // it can be clustered (by rows and/or columns, as neural data can) if it says what its rows and
+  // columns are: `cluster` ({rows, cols}, e.g. 'KCs' and 'odors'); its meta's `colormap`: the
+  // sequential one to start with
   setGenericData(ref, { title = '', fileStem = 'heatmap', kind: viewerKind = 'generic', kc = false, responseCalc = null } = {}) {
     this._setKind(viewerKind);
     this.title = title;
@@ -1167,6 +1236,7 @@ class MatrixViewer {
     this.setResponseCalc(responseCalc);
     if (ref !== this.source) {
       this.source = ref;
+      this.clusterCache = new Map();
       this.hideBad = ref.cols.some((c) => c.bad);
       this._editsFor(ref);
       const values = matrixValues(ref), square = !!ref.square, nC = ref.cols.length;
@@ -1189,6 +1259,7 @@ class MatrixViewer {
         meta: ref.meta,
         chemAxis: ref.chemicals?.matched ? ref.chemicals.axis : null,
         kcAxis: 'kcAxis' in ref ? ref.kcAxis : kcAxisOf(ref),
+        cluster: ref.cluster || null, // {rows, cols}: what they are, of one that can be clustered
         model: {
           rows: rows.map((r) => ({ label: r.label, group: r.group, key: r.i, file: r.label, chem: r.chem, detail: r.detail })),
           cols: colIdx.map((j, l) => { const c = ref.cols[j]; return { label: c.label, group: square ? rows[l].group : null, sub: null, key: j, file: c.label, chem: c.chem, detail: c.detail, bad: c.bad }; }),
@@ -1251,7 +1322,8 @@ class MatrixViewer {
   _genericColormap() {
     const kind = this._valueKind(), seq = this._seqKey();
     this.opts.colormap = kind === 'binary' ? 'binary' : kind === 'diverging' ? 'oklab-div'
-      : COLORMAPS[this.opts[seq]]?.kind === 'sequential' ? this.opts[seq] : this.data?.distance ? 'plasma-r' : 'viridis';
+      : COLORMAPS[this.opts[seq]]?.kind === 'sequential' ? this.opts[seq]
+        : COLORMAPS[this.data?.meta?.colormap]?.kind === 'sequential' ? this.data.meta.colormap : this.data?.distance ? 'plasma-r' : 'viridis';
   }
 
   // the option of the sequential colormap last chosen for a matrix like the one shown
@@ -1287,17 +1359,77 @@ class MatrixViewer {
     const keptCols = colIdx.filter((j) => !this.edits.cols.removed.has(b.cols[j].key) && !hidden(j));
     if (byRows !== 'file' && !this._sharedAxis('rows')) rowIdx = sortedByValues(rowIdx, b.rows, keptCols, (i, j) => b.values[i * nC + j], byRows);
     if (byCols !== 'file' && !this._sharedAxis('cols')) colIdx = sortedByValues(colIdx, b.cols, keptRows, (j, i) => b.values[i * nC + j], byCols);
-    const rows = arrange(rowIdx, (i) => b.rows[i].key, this.edits.rows);
-    const cols = square ? rows : arrange(colIdx, (j) => b.cols[j].key, this.edits.cols).filter((j) => !hidden(j));
+    // (of an axis clustered, the clustering's order: of those not removed, as made by `_clusterGeneric`)
+    const cl = this.clustering;
+    const rows = cl?.rows ?? arrange(rowIdx, (i) => b.rows[i].key, this.edits.rows);
+    const cols = square ? rows : (cl?.cols ?? arrange(colIdx, (j) => b.cols[j].key, this.edits.cols)).filter((j) => !hidden(j));
     // (as given, if none are removed or moved: not copied, as it may be large)
     const same = rows.length === b.rows.length && cols.length === nC && rows.every((i, r) => i === r) && cols.every((j, c) => j === c);
     const values = same ? b.values : new Float32Array(rows.length * cols.length);
     if (!same) rows.forEach((i, r) => { cols.forEach((j, c) => { values[r * cols.length + c] = b.values[i * nC + j]; }); });
     const showAbbrev = abbrevShower([...b.rows, ...b.cols].map((it) => it.chem?.abbrev));
     const label = (it) => (it.chem ? { ...it, ...chemLabel(it, this.opts.chemLabels, showAbbrev) } : it);
-    const m = { ...b, rows: rows.map((i) => label(b.rows[i])), cols: cols.map((j) => label(b.cols[j])), values,
-      cellText: b.cellText && ((r, c) => b.cellText(b.rows[rows[r]].key, b.cols[cols[c]].key)) };
+    // (rows clustered all together are shown ungrouped, each with its group after its label)
+    const ungroup = (it) => ({ ...it, group: null, label: it.group != null && it.group !== '' ? `${it.label} (${it.group})` : it.label });
+    const dendro = (trees, items) => {
+      if (!trees?.length) return null;
+      const pos = new Map(items.map((x, k) => [x, k + 0.5]));
+      return layoutDendrogram(trees.map((t) => ({ merges: t.merges, leafPos: t.leaves.map((x) => pos.get(x)) })));
+    };
+    const m = { ...b, rows: rows.map((i) => (cl?.rows ? ungroup(label(b.rows[i])) : label(b.rows[i]))), cols: cols.map((j) => label(b.cols[j])), values,
+      cellText: b.cellText && ((r, c) => b.cellText(b.rows[rows[r]].key, b.cols[cols[c]].key)),
+      rowGroupTitle: cl?.rows ? null : b.rowGroupTitle, rowDendro: dendro(cl?.rowTrees, rows), colDendro: dendro(cl?.colTrees, cols) };
     return this._summing() ? sumOverAxis(m, this.data.kcAxis) : m;
+  }
+
+  // the clustering chosen for a matrix (not neural data) that can be clustered, but of an axis
+  // whose KCs are summed: {clusterRows, clusterCols, metric}
+  _clusterOpts() {
+    const o = this.opts, summed = this._summing() ? this.data.kcAxis : null;
+    if (!this.data?.cluster) return { clusterRows: false, clusterCols: false, metric: o.metric };
+    return { clusterRows: !!o.clusterRows && summed !== 'rows', clusterCols: !!o.clusterCols && summed !== 'cols', metric: o.metric };
+  }
+
+  // Of a matrix (not neural data) that can be clustered, its clustering as chosen (this.clustering,
+  // used by `_genericModel`; null if none), made if need be: of its rows and columns not removed,
+  // from the order they are given in, whatever order is shown; the matrix shown unclustered
+  // meanwhile, with its progress, if that takes more than a moment. Notes of it added to `notes`.
+  // False if another rebuild began meanwhile.
+  async _clusterGeneric(seq, notes) {
+    this.clustering = null;
+    const o = this._clusterOpts();
+    if (!o.clusterRows && !o.clusterCols) return true;
+    const b = this.data.model, hidden = (j) => this.kc && this.hideBad && b.cols[j].bad;
+    const rows = b.rows.map((_, i) => i).filter((i) => !this.edits.rows.removed.has(b.rows[i].key));
+    const cols = b.cols.map((_, j) => j).filter((j) => !this.edits.cols.removed.has(b.cols[j].key) && !hidden(j));
+    const key = [o.clusterRows, o.clusterCols, o.metric, rows.join(','), cols.join(',')].join('|');
+    let cl = this.clusterCache.get(key);
+    if (!cl) {
+      let shown = false, progress = 'clustering…';
+      const timer = setTimeout(() => {
+        if (seq !== this._seq) return;
+        shown = true;
+        this._show(this._genericModel(), progress);
+      }, 150);
+      try {
+        cl = await clusterMatrix(this.clusterPool, b, rows, cols, this.data.cluster, o, ({ distances, linkage }) => {
+          progress = distances < 1 ? `clustering… distances ${Math.floor(distances * 100)}%` : `clustering… linkage ${Math.floor(linkage * 100)}%`;
+          if (shown && seq === this._seq) this._setNote(progress);
+        });
+        this.clusterCache.set(key, cl);
+      } catch (e) {
+        if (e.cancelled) return false;
+        notes.push(`clustering failed: ${e.message}`);
+      } finally {
+        clearTimeout(timer);
+      }
+      if (seq !== this._seq) return false;
+    }
+    if (!cl) return true;
+    this.clustering = cl;
+    notes.push(...cl.notes);
+    if (cl.rowTrees.length || cl.colTrees.length) notes.unshift(`clustered by ${o.metric === 'euclidean' ? 'Euclidean distance' : 'correlation'}`);
+    return true;
   }
 
   async _rebuild() {
@@ -1310,7 +1442,8 @@ class MatrixViewer {
     const build = (cl) => { const m = buildNeuralModel(this.data, order, o, cl); return summing ? sumOverFlies(m, this.data.units) : m; };
     if (this.kind !== 'neural') {
       if (COLORMAPS[o.colormap]?.kind === 'sequential') { this.opts[this._seqKey()] = o.colormap; this._save(); }
-      this._show(this._genericModel(), this._badNote());
+      const notes = [this._badNote()].filter(Boolean);
+      if (await this._clusterGeneric(seq, notes)) this._show(this._genericModel(), notes.join(' · '));
       return;
     }
     const { cols } = this.edits, rows = this._rowEdits();
@@ -5851,7 +5984,7 @@ class ComparePage {
   _modelSpace(d) {
     return this._memo(`model:${d.id}:${this.o.metric}:${this.o.conc}`, () => {
       const sp = this._datasetSpace(d);
-      return { ...sp, data: { ...sp.data, meta: { kind: 'sequential', scale: 'log', value_label: 'spike count', col_label: 'KC' }, kcs: true } };
+      return { ...sp, data: { ...sp.data, meta: { kind: 'sequential', scale: 'log', colormap: 'oklab-red', value_label: 'spike count', col_label: 'KC' }, kcs: true } };
     });
   }
 
@@ -6315,7 +6448,7 @@ class ComparePage {
     if (this.o.show !== 'sim') {
       block(d.id, d.title, `KCs (model): ${d.rows.length} odors × ${d.cols.length.toLocaleString()} KCs, ${esc(modelKcs(d.model))} (of its
         ${d.nKcs.toLocaleString()}); spike counts`, this._memo(`modeldata:${d.id}`, () => ({
-        meta: { kind: 'sequential', scale: 'log', value_label: 'spike count', row_label: 'odor', col_label: 'KC' },
+        meta: { kind: 'sequential', scale: 'log', colormap: 'oklab-red', value_label: 'spike count', row_label: 'odor', col_label: 'KC' },
         rows, cols: d.cols, values: d.values, kcAxis: 'cols',
       })), `${stem}_spike_counts`);
     }

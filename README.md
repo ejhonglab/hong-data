@@ -469,7 +469,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   repeats or show individual trials; rows by fly→ROI, ROI→fly or ungrouped; odors as in
   the file or by name. The default colormap is blue–white–red, with lightness linear in
   |value| and white at 0, over the full data range (of other values, viridis; of
-  distances, such as MetaCyc's LCA distance, plasma reversed: the nearer, the brighter).
+  distances, such as MetaCyc's LCA distance, plasma reversed: the nearer, the brighter; of
+  models' spike counts, never negative, its red half, white to red, on a log scale).
   *Transpose* shows odors as rows and ROIs as columns (in reference data too, rows as
   columns). Every matrix shown (here, in reference data and in Compare) has *Full screen*
   (Esc, or the button again, to leave; the browser's window filled where full screen is
@@ -504,7 +505,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     clustered, and the result is the same whatever order it was shown in. A stored
     dataset's clusterings are kept on the server (its 24 most recently used, by what was
     clustered: the metric, and the ROIs and odors removed or hidden), so the next to
-    cluster it the same way, in any browser and after restarts, gets them at once.
+    cluster it the same way, in any browser and after restarts, gets them at once. A
+    model run's spike counts (Models tab) are clustered the same way by their KCs and/or
+    odors: the KCs all together (shown ungrouped, each with its type after its label),
+    not while they are summed; whether to is kept apart from datasets'.
   - *Export figure*: SVG, PDF or PNG of the whole matrix as shown (order, colors,
     cell size, dendrograms) with a colorbar; cells are an embedded image, labels and
     lines stay vector in SVG/PDF.
