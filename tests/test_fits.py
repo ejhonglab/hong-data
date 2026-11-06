@@ -299,3 +299,20 @@ def test_worker_with_alseg(main, tensor, monkeypatch):  # noqa: F811
     assert names and names <= set(GLOMS) | {n for n in names if n.isdigit()}, names
     assert (d / "model/model.json").is_file() and f["result"]["flies"][0]["fly"] == held
     assert "values not finite (NaN or inf), taken as 0" in (d / "log.txt").read_text()
+
+
+def test_worker_with_cellpose(main, tensor):  # noqa: F811
+    """The real al-diag-seg, training Cellpose for one epoch, where there is a GPU (the worker
+    image, given one): what the stand-in segmenter skips. Its weights are written in the fit's
+    work/ (which Cellpose does not make), saved with the model, and segment the held-out fly."""
+    pytest.importorskip("alseg.model")
+    torch = pytest.importorskip("torch")
+    if not torch.cuda.is_available():
+        pytest.skip("no GPU")
+    f = fits.create(main.db, "Ann", "10.1.2.3", fits.options({"held_out": 1, "epochs": 1, "atlas": False}))
+    fit_worker.run(main.db, fits.claim(main.db))
+    f = fits.get(main.db, f["id"])
+    d = fits.fit_dir(f["id"])
+    assert f["status"] == "done", (d / "log.txt").read_text()[-3000:]
+    assert any((d / "work/models").iterdir()) and (d / "model/model.json").is_file()
+    assert f["result"]["flies"][0]["fly"] == f["flies"]["held_out"][0]

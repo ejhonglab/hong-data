@@ -171,6 +171,7 @@ def run(db, fit: dict) -> None:
             from alseg import olfdb as ao
 
             data = ao.load_export(d / "manifest.json", tentative=o["tentative"], progress=prog)
+            (d / "work").mkdir()  # (Cellpose makes only its models/ in the folder it is given)
             model = am.fit(data["flies"], held, am.Options(epochs=o["epochs"], atlas=o["atlas"], tentative=o["tentative"]),
                            out=d / "work", progress=prog, odors=data["odors"], aliases=data["aliases"],
                            glomeruli=data["glomeruli"])

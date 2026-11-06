@@ -107,7 +107,8 @@ docker compose logs -f                       # Ctrl-C to stop following
 This starts two containers: `olfdb`, the site, and `olfdb-worker`, which runs fits (with
 the GPU: section 1). The first build takes a while: the worker's image has PyTorch, CUDA's
 libraries and Cellpose's weights in it (about 9 GB), installed again only when
-`requirements.txt` or `requirements-worker.txt` change.
+`requirements.txt` or `requirements-worker.txt` change (a new al-diag-seg, in
+`requirements-alseg.txt`, is installed on top of them in seconds).
 
 Go on only once the health check answers `{"ok":true,...}`: the systemd unit in section
 4 runs the same command, so whatever stops it here stops the unit too. Run `docker
@@ -307,10 +308,13 @@ compose logs worker` for the fit worker's; each fit's own log is in the tab, and
 ### Updating al-diag-seg
 
 The fit worker's al-diag-seg is installed from GitHub at the commit pinned in
-`requirements-worker.txt`. Push the al-diag-seg commit, pin it there (in full), and
-restart (`sudo systemctl restart olfdb`): the worker's image is rebuilt with it. Fits
-already done keep the model they made; each model's README says which al-diag-seg to
-install to run it.
+`requirements-alseg.txt`. Push the al-diag-seg commit, pin it there (in full), and
+restart (`sudo systemctl restart olfdb`): the worker's image is rebuilt with it, in
+seconds, as only that last layer changes. Its dependencies (PyTorch, Cellpose, ANTsPy)
+are in `requirements-worker.txt`, pinned, a layer of their own (several GB, a slow
+rebuild when changed): if a new al-diag-seg needs another, add it there, or the build
+stops at `pip check`, saying what is missing. Fits already done keep the model they
+made; each model's README says which al-diag-seg to install to run it.
 
 ### Updating chemutils
 

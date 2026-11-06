@@ -33,6 +33,11 @@ ENV CELLPOSE_LOCAL_MODELS_PATH=/srv/olfdb/cellpose_models
 # (downloaded as root, readable by root only: made readable by the user the worker runs as)
 RUN python -c "from cellpose.models import cache_model_path; cache_model_path('cpsam_v2')" \
  && chmod -R a+rX "$CELLPOSE_LOCAL_MODELS_PATH"
+# al-diag-seg alone, after what it needs (above) and Cellpose's weights: a new one rebuilds only this
+COPY requirements-alseg.txt .
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+ && pip install --no-cache-dir --no-deps -r requirements-alseg.txt && pip check \
+ && apt-get purge -y --auto-remove git && rm -rf /var/lib/apt/lists/*
 
 COPY app ./app
 COPY config ./config

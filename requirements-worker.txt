@@ -1,5 +1,10 @@
-# The fit worker's (fit_worker.py: the AL Segmentation tab's fits), on top of the web server's
 -r requirements.txt
-# al-diag-seg, with Cellpose 4 and PyTorch (with CUDA, from PyPI) and ANTsPy; installed with git. Its hong2p is the pin in
-# requirements.txt (it leaves it unpinned)
-al-diag-seg @ git+https://github.com/tom-f-oconnell/al-diag-seg@38864ef24badfbe9581c4c4b8bee59fdc637d1d5
+# al-diag-seg's dependencies, pinned as first installed: PyTorch (with CUDA, from PyPI), Cellpose 4
+# (Cellpose-SAM) and ANTsPy. al-diag-seg itself is installed after them, without them, in a layer
+# of its own (requirements-alseg.txt), so that a new al-diag-seg is installed in seconds; a
+# dependency it gains goes here (the build's `pip check` says so if not)
+torch==2.15.0
+cellpose==4.2.1.1
+antspyx==0.6.3
+scikit-image
+scipy

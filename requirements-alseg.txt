@@ -1,0 +1,3 @@
+# al-diag-seg, installed (with git) without its dependencies, which requirements-worker.txt has. Its
+# hong2p is the pin in requirements.txt (it leaves it unpinned)
+al-diag-seg @ git+https://github.com/tom-f-oconnell/al-diag-seg@54e513ce5d52dc84d9a14326b1678d07747bb743

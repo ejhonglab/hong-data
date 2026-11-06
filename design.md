@@ -267,6 +267,15 @@ between the frontend and the server. Using the app is described in
   GPU's device files, and to its own threads' entries in /proc, which CUDA does as it starts
   (without, it says the GPU is not there). al-diag-seg reads the flies where they are on tensor, through a
   manifest like the download's with every path absolute, so nothing is copied.
+- **al-diag-seg is installed in the worker's image apart from what it needs**: its
+  dependencies (PyTorch with CUDA, Cellpose, ANTsPy: several GB) pinned in one layer,
+  Cellpose's weights in the next, al-diag-seg itself (`--no-deps`, then `pip check`) last,
+  so that a new al-diag-seg, which this young code needs often, rebuilds only its own layer
+  rather than downloading PyTorch again while the site is down (a deploy stops the stack
+  before it builds). Cellpose-SAM's training batches are as large as fit in the GPU's
+  memory (al-diag-seg halves them from 8 until one does: 4 on the 24 GiB RTX 3090), and the
+  worker's tests include one epoch of real training where there is a GPU, as the stand-in
+  segmenter of its other tests skips what Cellpose writes and needs.
 - **A fit's held-out flies are taken from each dataset in turn**, spread through its flies,
   so that each uploader's are scored; their names are al-diag-seg's (top folder on tensor,
   date, number). A fit records who asked for it (the first name set in Settings: the box
