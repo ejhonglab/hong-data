@@ -496,9 +496,35 @@ try {
       <div id="rt-flies"></div>
     </div>
 
+    <div class="step" id="rt-glom-step" hidden>
+      <div class="step-head"><h2>Glomeruli</h2></div>
+      <label class="check"><input type="checkbox" id="rt-by-uploader"> Each uploader's flies separately</label>
+      <div id="rt-hist" class="rt-hist"></div>
+      <p class="muted small">A fly's glomeruli are those al-diag-seg trains on: its ROIs named as a glomerulus (or several joined by
+        <code>/</code>, that could not be told apart), and tentative ones (<code>DA1_t0</code>) as that glomerulus; not numbered ROIs,
+        nor names ending in <code>+</code> or <code>?</code>.</p>
+      <h3>Infrequently identified glomeruli</h3>
+      <div id="rt-rare"></div>
+    </div>
+
     <div class="step" id="rt-skipped-step" hidden>
       <div class="step-head"><h2>Left out</h2></div>
       <div id="rt-skipped"></div>
+    </div>
+
+    <div class="step" id="rt-cutoff-step" hidden>
+      <div class="step-head"><h2>Infrequently identified: the cutoff</h2></div>
+      <div class="rt-cutoff">
+        <span>A glomerulus is infrequently identified if the flies it is in are</span>
+        <select id="rt-cut-op" aria-label="Comparison"><option value="le">≤</option><option value="lt">&lt;</option></select>
+        <input type="number" id="rt-cut-n" min="0" step="any" value="50" aria-label="Cutoff">
+        <select id="rt-cut-unit" aria-label="Cutoff in"><option value="pct">% of the flies</option><option value="flies">flies</option></select>
+        <span class="muted" id="rt-cut-means"></span>
+      </div>
+      <label class="field rt-count"><span>Glomeruli counted (at the top, in the Flies table and in the histogram)</span>
+        <select id="rt-count"><option value="all">All of them</option><option value="frequent">Only those identified more often</option>
+          <option value="rare">Only infrequently identified ones</option></select></label>
+      <div class="actions"><button type="button" class="btn small" id="rt-cut-reset">Back to ≤ 50% of the flies, all counted</button></div>
     </div>
   </section>
 

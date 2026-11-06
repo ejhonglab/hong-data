@@ -318,6 +318,32 @@ dialog.confirm::backdrop { background: rgba(29,31,34,.45); }
 dialog.confirm p { font-size: 14.5px; margin: 0; }
 dialog.confirm .actions { justify-content: flex-end; }
 
+/* ---------------------------------------------------------- ROI training */
+/* categorical colors of a chart's series, in this order (the dataviz reference palette, checked
+   for colour blindness and contrast on --panel, light and dark) */
+:root { --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100;
+  --series-5: #e87ba4; --series-6: #008300; --series-7: #6250d6; --series-8: #e34948; }
+:root[data-theme="dark"] { --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
+  --series-5: #d55181; --series-6: #008300; --series-7: #9085e9; --series-8: #e66767; }
+.rt-hist { position: relative; max-width: 720px; margin: 6px 0 4px; }
+.rt-hist svg { display: block; width: 100%; height: auto; }
+.rt-hist text { fill: var(--ink-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.rt-hist .grid { stroke: var(--rule); stroke-width: 1; }
+.rt-hist .axis { stroke: var(--rule-strong); stroke-width: 1; }
+.rt-bin { outline: none; }
+.rt-bin:hover .bar, .rt-bin:focus-visible .bar { opacity: .72; }
+.rt-bin:focus-visible .hit { stroke: var(--accent); stroke-width: 1.5; }
+.rt-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12.5px; }
+.rt-legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.rt-key { display: inline-block; width: 12px; height: 2px; margin-right: 6px; vertical-align: middle; }
+#rt-glom-step h3 { margin: 18px 0 6px; }
+#rt-rare h4 { margin: 14px 0 6px; font-size: 13px; }
+.rt-cutoff { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.rt-cutoff input { width: 80px; }
+.rt-cutoff select, .rt-count select { width: auto; }
+.rt-count { margin-top: 12px; max-width: 520px; }
+#rt-rare .nowrap { white-space: nowrap; }
+
 /* --------------------------------------------------------------- odors */
 #tab-odors { overflow: auto; padding: 24px 20px 60px; }
 .odors-page { max-width: 1500px; margin: 0 auto; }

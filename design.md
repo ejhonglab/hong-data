@@ -248,6 +248,13 @@ between the frontend and the server. Using the app is described in
   few GB. Files are read eight at a time ahead of being sent, as each file on tensor
   takes a while to start reading (an anatomical stack's ~1000 files: 45 s one after
   another, 3 s eight at a time).
+- **The ROI training tab counts glomeruli as al-diag-seg trains on them** (`roi_training.roi_glomeruli`:
+  the same rules as its `alseg/olfdb.py`, through `movies.roi_kind`), from each fly's
+  `RoiSet.zip` (read eight at a time, as the download's files are), so what it shows is what
+  a model is trained on. A fly's panels are those it has a response in, in the datasets it
+  is exported through, not those its datasets have. Which glomeruli are infrequent, and
+  everything said of them, is worked out in the browser from each fly's glomeruli, so a new
+  cutoff needs no request.
 - **The laser wavelength is never read from `Experiment.xml`**: ThorImage's
   `MultiPhotonLaser` value does not follow changes made to the wavelength at the laser,
   so the wavelength is only ever entered in the form.
@@ -1127,8 +1134,9 @@ GET    /api/merge/download?coding_unit=&format=wide|long&mode=&by=a,b&target=&to
 GET    /api/merge/scales?(the same, without format)
                                             each dataset's group and scale factor (scaling.csv)
 GET    /api/roi_training[?datasets=1,2]     the flies of glomeruli datasets with a diagnostic panel to
-                                            export for ROI training (each its files' total size), and
-                                            those left out, with why (roi_training.py)
+                                            export for ROI training (each its files' total size, its
+                                            glomeruli and its panels but diagnostic ones), and those
+                                            left out, with why (roi_training.py)
 GET    /api/roi_training/download[?stacks=0&datasets=1,2]
                                             a zip of their files where they are on tensor, sent as it is
                                             written, with roi_training.json, and their anatomical stacks

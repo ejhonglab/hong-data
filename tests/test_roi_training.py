@@ -9,6 +9,7 @@ import zipfile
 
 import numpy as np
 import pytest
+import roifile
 import tifffile
 
 from app import config, odormeta, roi_training
@@ -27,6 +28,18 @@ def trials(*odors):
     names = {"va": "valeric acid", "ea": "ethyl acetate", "2h": "2-heptanone"}
     return json.dumps([{"start_frame": 0, "first_odor_frame": 1, "end_frame": 2, "odors": f"{names[a]} @ {c}", "name": names[a],
                         "abbrev": a, "log10_conc": c} for a, c in odors for _ in range(2)])
+
+
+# of a fly's ROIs: glomeruli (DM2 on two planes), tentative ones (DL5's only so; DA1's also not), several that could not
+# be told apart, and ROIs not trained on (numbered, or ending in ? or +)
+ROI_NAMES = ["DM2", "DM2", "DL5_t0", "DA1_t0", "DA1", "VA1d/VA1v", "12", "DC1?", "DC1+"]
+
+
+def roiset(path, names=ROI_NAMES) -> bytes:
+    """The bytes of a RoiSet.zip of ROIs of these names, as ImageJ saves them (written at `path`)."""
+    for i, n in enumerate(names):
+        roifile.ImagejRoi.frompoints(np.array([[1, 1], [3, 1], [2, 3]], "f4"), name=n).tofile(path, name=f"{i:04d}.roi")
+    return path.read_bytes()
 
 
 def recording(fly, name, *odors, roiset=None):
@@ -60,7 +73,7 @@ def export(main, root, tmp_path, monkeypatch):  # noqa: F811
             data_format=parsed.source_format, data_sha256=str(i) * 64, odor_yaml_files=[], experiment_xml_file=None,
             experiment_xml_info=None, summary=parsed.summary(), units=parsed.units, trials=parsed.trials, values=parsed.values))
     fly = root / "tom/analysis/2024-01-01/1"
-    recording(fly, "diagnostics1", ("va", -3), ("ea", -2), roiset=b"rois")
+    recording(fly, "diagnostics1", ("va", -3), ("ea", -2), roiset=roiset(tmp_path / "RoiSet.zip"))
     recording(fly, "megamat1", ("2h", -6))
     movie = np.arange(3 * np.prod(GRID), dtype=np.uint16).reshape(3, *GRID)
     tifffile.imwrite(fly / "mocorr_concat.tif", movie, imagej=True, metadata={"axes": "TZYX"})
@@ -85,12 +98,24 @@ def test_inventory(main, root, export):  # noqa: F811
     assert f["recordings"] == [{"name": "diagnostics1", "n_odors": 2, "xml": True}] and f["shape"] == list(GRID)
     assert f["average"] == "computed" and [s["name"] for s in f["stacks"]] == ["anat"]
     assert r["stack_bytes"] == f["stacks"][0]["bytes"] > 0
+    # its glomeruli, as al-diag-seg trains on them, and its panels but diagnostic ones (of both datasets)
+    assert f["glomeruli"] == ["DA1", "DL5", "DM2", "VA1d/VA1v"] and f["tentative"] == ["DL5"] and f["roi_error"] is None
+    assert f["panels"] == ["megamat"]
     # the others left out, with why; the KC dataset is not one to look at
     why = {(s["dataset"]["id"], s["date"], s["fly_num"]): s["why"] for s in r["skipped"]}
     assert set(why) == {(i, "2024-01-02", n) for i in (a, b) for n in (1, 2)}
     assert why[(a, "2024-01-02", 1)].startswith("no RoiSet.zip") and why[(a, "2024-01-02", 2)].startswith("no folder of it")
     # of the datasets asked for
     assert [s["dataset"]["id"] for s in call(main.roi_training_flies, params={"datasets": str(b)})[1]["skipped"]] == [b, b]
+
+
+def test_roi_glomeruli(root):  # noqa: F811
+    p = root / "RoiSet.zip"
+    roiset(p, ["DM2", "DM2_t1", "VM7d?"])
+    assert roi_training.roi_glomeruli(p) == ({"glomeruli": ["DM2"], "tentative": []}, None)
+    p.write_bytes(b"not a zip")
+    found, why = roi_training.roi_glomeruli(p)
+    assert found is None and why.startswith("its RoiSet.zip could not be read")
 
 
 def test_recording_odors(tmp_path):

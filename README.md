@@ -45,7 +45,8 @@ expected, and nothing secret is entered. If a download or the page is blocked, s
    them, and the dilutions in paraffin oil that would give the same headspace.
 8. **ROI training**: one download of what there is on tensor to train a model to draw
    glomerulus ROIs ([al-diag-seg](https://github.com/tom-f-oconnell/al-diag-seg)) of
-   every fly of a glomeruli dataset with a diagnostic panel, and the flies left out, with why.
+   every fly of a glomeruli dataset with a diagnostic panel, and the flies left out, with why;
+   how many glomeruli each fly has, and which glomeruli few of the flies have.
 
 The footer says which version of the site the page runs (its commit, and whether it had
 changes not yet committed). After the site is updated, a page left open says so once you
@@ -644,6 +645,17 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   files, each recording's odors as named in the odor table (alike in every fly), the
   glomerulus names uploads accept (to tell glomeruli from other ROIs, as the movie player
   does), and the flies left out. A fly in several datasets is in it once.
+  The page also counts each fly's glomeruli, as al-diag-seg trains on them (ROIs named as
+  a glomerulus, or several joined by `/`, and tentative ones, `DA1_t0`, as that glomerulus;
+  not numbered ROIs, nor names ending in `+` or `?`): their range and mean at the top, each
+  fly's in the *Flies* table, and a histogram of them (one per uploader, side by side, if
+  ticked). Under it, the glomeruli infrequently identified (by default in at most half the
+  flies): those labelled by one uploader only, then the others, each with how many flies
+  (of each uploader and dataset) have it, the datasets without it, and the panels (but
+  diagnostics) of the flies with it; then those only in flies with a panel not every fly
+  has. The box at the bottom sets the cutoff (a number or percent of the flies, `≤` or
+  `<`), and whether all glomeruli are counted at the top, in the table and in the
+  histogram, or only those identified more often, or only the infrequent ones.
 - **Admin** (to the right of Docs; it first asks whether you are Tom, Jon or Betty, or
   have asked one of them): settings for the whole site.
   - *Folders on the server* the app may read (by default tensor) and also write (none

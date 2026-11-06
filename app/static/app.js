@@ -7106,13 +7106,38 @@ class HeadspaceVcf {
 // glomerulus ROIs with (al-diag-seg) are on tensor, those left out, and a download of them
 // (roi_training.py): a link the browser saves as it comes, as it may be several GB.
 const fmtSize = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : fmtBytes(n));
+const natural = (a, b) => a.localeCompare(b, undefined, { numeric: true });
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+// the bar of a column chart: rounded at its data end, square at the baseline
+const barPath = (x, y, w, h) => {
+  const r = Math.min(4, w / 2, h);
+  return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`;
+};
+// clean steps for an axis of counts (1, 2, 5, 10, 20, ...), about `n` of them up to `max`
+const countTicks = (max, n = 4) => {
+  const raw = Math.max(1, max / n), mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 5, 10].map((k) => k * mag).find((x) => x >= raw);
+  return Array.from({ length: Math.floor(max / step) + 1 }, (_, i) => i * step);
+};
 
 class RoiTrainingPage {
   constructor() {
     this.data = null;
+    this.st = null;
     this._seq = 0;
     $('#rt-stacks').addEventListener('change', () => this._renderDownload());
     $('#rt-refresh').addEventListener('click', () => this.load(true));
+    $('#rt-by-uploader').addEventListener('change', () => this._renderHistogram());
+    for (const id of ['#rt-cut-op', '#rt-count']) $(id).addEventListener('change', () => this._render());
+    $('#rt-cut-n').addEventListener('input', () => this._render());
+    $('#rt-cut-unit').addEventListener('change', () => this._convertCutoff());
+    $('#rt-cut-reset').addEventListener('click', () => {
+      $('#rt-cut-op').value = 'le';
+      $('#rt-cut-n').value = '50';
+      $('#rt-cut-unit').value = 'pct';
+      $('#rt-count').value = 'all';
+      this._render();
+    });
   }
 
   async load(again = false) {
@@ -7130,23 +7155,72 @@ class RoiTrainingPage {
     this._render();
   }
 
+  // whose a fly's ROIs are: its datasets' uploaders
+  _uploader(f) { return [...new Set(f.datasets.map((d) => d.uploader || '?'))].sort(natural).join(' + '); }
+
+  // The flies whose ROIs could be read, how many of them each glomerulus is in, and those
+  // infrequently identified: in no more of them than the cutoff allows (`most`).
+  _stats() {
+    const flies = this.data.flies.filter((f) => f.glomeruli);
+    const n = flies.length, count = new Map();
+    for (const f of flies) for (const g of f.glomeruli) count.set(g, (count.get(g) || 0) + 1);
+    const le = $('#rt-cut-op').value === 'le', v = Number($('#rt-cut-n').value);
+    const limit = !Number.isFinite(v) ? 0 : $('#rt-cut-unit').value === 'pct' ? (v / 100) * n : v;
+    const most = le ? Math.floor(limit + 1e-9) : Math.ceil(limit - 1e-9) - 1;
+    const rare = new Set([...count].filter(([, c]) => c <= most).map(([g]) => g));
+    return { flies, n, count, most, rare, mode: $('#rt-count').value };
+  }
+
+  // the glomeruli of a fly counted (at the top, in the table and in the histogram)
+  _counted(f, st = this.st) {
+    return st.mode === 'all' ? f.glomeruli : f.glomeruli.filter((g) => st.rare.has(g) === (st.mode === 'rare'));
+  }
+
+  // the cutoff in the other unit, meaning the same flies
+  _convertCutoff() {
+    const n = this.st?.n, v = Number($('#rt-cut-n').value), le = $('#rt-cut-op').value === 'le';
+    if (n && Number.isFinite(v)) {
+      const toFlies = $('#rt-cut-unit').value === 'flies';
+      const x = toFlies ? (v / 100) * n : (v / n) * 1000;  // flies, or tenths of a percent
+      $('#rt-cut-n').value = String(toFlies ? (le ? Math.floor(x + 1e-9) : Math.ceil(x - 1e-9)) : (le ? Math.ceil(x - 1e-9) : Math.floor(x + 1e-9)) / 10);
+    }
+    this._render();
+  }
+
   _render() {
     const r = this.data;
+    if (!r) return;
+    const st = this.st = this._stats();
     const datasets = new Set(r.flies.flatMap((f) => f.datasets.map((d) => d.id)));
     const ds = (d) => `<a href="#browse/${d.id}">#${d.id}</a> <span class="muted">${esc(d.uploader)}</span>`;
     const fly = (f) => `<span title="${esc(f.dir)}">${esc(f.date)} fly ${f.fly_num}</span>`;
+    let glom = '';
+    if (st.n) {
+      const k = st.flies.map((f) => this._counted(f).length);
+      const what = { all: '', frequent: 'frequently identified ', rare: 'infrequently identified ' }[st.mode];
+      const unread = r.flies.length - st.n;
+      glom = `, ${Math.min(...k)}–${Math.max(...k)} (mean: ${(k.reduce((a, b) => a + b, 0) / k.length).toFixed(1)}) ${what}glomeruli`
+        + (unread ? ` (the ROIs of ${plural(unread, 'fly', 'flies')} could not be read)` : '');
+    }
     $('#rt-status').replaceChildren(msgBox(r.flies.length ? 'ok' : 'warn', r.flies.length
-      ? `${r.flies.length} fl${r.flies.length === 1 ? 'y' : 'ies'} of ${datasets.size} dataset${datasets.size === 1 ? '' : 's'}.`
+      ? `${plural(r.flies.length, 'fly', 'flies')} of ${plural(datasets.size, 'dataset', 'datasets')}${glom}.`
       : 'No fly has what is needed on tensor (see below).'));
     const stacked = r.flies.filter((f) => f.stacks.length).length;
     $('#rt-stacks-size').textContent = stacked ? `(${stacked} of the flies have one: ${fmtSize(r.stack_bytes)} more)` : '(none of the flies has one)';
     $('#rt-stacks').disabled = !stacked;
     if (!stacked) $('#rt-stacks').checked = false;
     this._renderDownload();
+    const glomCell = (f) => {
+      if (!f.glomeruli) return `<span class="muted" title="${esc(f.roi_error || '')}">could not be read</span>`;
+      const c = [...this._counted(f)].sort(natural), t = f.tentative.filter((g) => c.includes(g)).length;
+      return `<span title="${esc(c.join(', '))}">${c.length}</span>${t ? ` <span class="muted">(${t} tentative)</span>` : ''}`;
+    };
     $('#rt-flies').innerHTML = r.flies.length ? `<table class="odor-table"><thead><tr><th>Fly</th><th>Datasets</th>
-      <th>Diagnostic recordings <span class="muted">(odors)</span></th><th>Planes <span class="muted">(Z × Y × X)</span></th><th>Average image</th>
-      <th>Anatomical stack</th><th>Size</th></tr></thead><tbody>${r.flies.map((f) => `<tr><td>${fly(f)}</td><td>${f.datasets.map(ds).join(', ')}</td>
-      <td>${f.recordings.map((x) => `${esc(x.name)} <span class="muted">(${x.n_odors})</span>`).join('<br>')}</td><td>${f.shape.join(' × ')}</td>
+      <th>Diagnostic recordings <span class="muted">(odors)</span></th><th>Glomeruli</th><th>Planes <span class="muted">(Z × Y × X)</span></th>
+      <th>Average image</th><th>Anatomical stack</th><th>Size</th></tr></thead><tbody>${r.flies.map((f) => `<tr><td>${fly(f)}</td>
+      <td>${f.datasets.map(ds).join(', ')}</td>
+      <td>${f.recordings.map((x) => `${esc(x.name)} <span class="muted">(${x.n_odors})</span>`).join('<br>')}</td><td>${glomCell(f)}</td>
+      <td>${f.shape.join(' × ')}</td>
       <td>${f.average === 'computed' ? '<span title="mocorr_concat_avg.tif is not there: computed from mocorr_concat.tif, once">averaged on the server</span>' : 'al_analysis\'s'}</td>
       <td>${f.stacks.map((x) => `${esc(x.name)} <span class="muted">(${fmtSize(x.bytes)})</span>`).join('<br>') || '—'}</td>
       <td>${fmtSize(f.bytes)}</td></tr>`).join('')}</tbody></table>` : '';
@@ -7154,6 +7228,149 @@ class RoiTrainingPage {
     $('#rt-skipped').innerHTML = r.skipped.length ? `<table class="odor-table"><thead><tr><th>Dataset</th><th>Fly</th><th>Why</th></tr></thead>
       <tbody>${r.skipped.map((x) => `<tr><td>${ds(x.dataset)}</td><td>${x.date ? `${esc(x.date)} fly ${x.fly_num}` : 'all its flies'}</td>
       <td>${esc(x.why)}</td></tr>`).join('')}</tbody></table>` : '';
+    $('#rt-glom-step').hidden = $('#rt-cutoff-step').hidden = !st.n;
+    $('#rt-cut-means').textContent = st.n ? `(in at most ${st.most < 0 ? 'none' : st.most} of the ${st.n} flies)` : '';
+    this._renderHistogram();
+    this._renderRare();
+  }
+
+  // How many glomeruli each fly has (as counted: `_counted`): one histogram, or one per
+  // uploader, side by side in each bin. Each bar's flies in its tooltip; the Flies table has
+  // every fly's count.
+  _renderHistogram() {
+    const st = this.st, el = $('#rt-hist');
+    if (!st?.n) { el.replaceChildren(); return; }
+    const all = [...new Set(st.flies.map((f) => this._uploader(f)))].sort(natural);  // colors follow the uploader
+    const keys = $('#rt-by-uploader').checked && all.length > 1 ? all : [null];
+    const vals = st.flies.map((f) => ({ f, k: this._counted(f).length, who: this._uploader(f) }));
+    const lo = Math.min(...vals.map((v) => v.k)), hi = Math.max(...vals.map((v) => v.k));
+    const bw = Math.max(1, Math.ceil((hi - lo + 1) / 40));
+    const bins = Array.from({ length: Math.floor((hi - lo) / bw) + 1 }, (_, i) => lo + i * bw);
+    const series = keys.map((key) => ({
+      key, color: `var(--series-${key === null ? 1 : (all.indexOf(key) % 8) + 1})`,
+      bins: bins.map((b) => vals.filter((v) => (key === null || v.who === key) && v.k >= b && v.k < b + bw).map((v) => v.f)),
+    }));
+    const ymax = Math.max(1, ...series.flatMap((s) => s.bins.map((fs) => fs.length)));
+    const W = 720, H = 250, m = { l: 44, r: 10, t: 10, b: 42 }, pw = W - m.l - m.r, ph = H - m.t - m.b;
+    const band = pw / bins.length, per = series.length;
+    const barW = Math.max(1, Math.min(24, (band - 2 - 2 * (per - 1)) / per));
+    const y = (c) => m.t + ph - (c / ymax) * ph;
+    const what = { all: '', frequent: 'Frequently identified g', rare: 'Infrequently identified g' }[st.mode] || 'G';
+    const ticks = countTicks(ymax);
+    const every = Math.max(1, Math.ceil(30 / band));
+    const binName = (b) => (bw === 1 ? `${b}` : `${b}–${b + bw - 1}`);
+    let svg = ticks.map((t) => `<line class="${t ? 'grid' : 'axis'}" x1="${m.l}" x2="${W - m.r}" y1="${y(t)}" y2="${y(t)}"/>
+      <text x="${m.l - 6}" y="${y(t) + 4}" text-anchor="end">${t}</text>`).join('');
+    svg += bins.map((b, i) => (i % every ? '' : `<text x="${m.l + (i + 0.5) * band}" y="${H - m.b + 15}" text-anchor="middle">${b}</text>`)).join('');
+    svg += `<text x="${m.l + pw / 2}" y="${H - 6}" text-anchor="middle">${what}lomeruli per fly</text>
+      <text transform="translate(12 ${m.t + ph / 2}) rotate(-90)" text-anchor="middle">Flies</text>`;
+    const group = per * barW + (per - 1) * 2;
+    series.forEach((s, j) => s.bins.forEach((fs, i) => {
+      if (!fs.length) return;
+      const x = m.l + i * band + (band - group) / 2 + j * (barW + 2), h = (fs.length / ymax) * ph;
+      svg += `<g class="rt-bin" tabindex="0" data-s="${j}" data-b="${i}"><rect class="hit" x="${m.l + i * band + (j * band) / per}" y="${m.t}"
+        width="${band / per}" height="${ph}" fill="transparent"/><path class="bar" d="${barPath(x, y(fs.length), barW, h)}" fill="${s.color}"/></g>`;
+    }));
+    const legend = keys[0] === null ? '' : `<div class="rt-legend">${series.map((s) => `<span><span class="sw" style="background:${s.color}"></span>${esc(s.key)}
+      <span class="muted">(${plural(s.bins.reduce((a, fs) => a + fs.length, 0), 'fly', 'flies')})</span></span>`).join('')}</div>`;
+    el.innerHTML = `${legend}<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${what}lomeruli per fly: a histogram of the ${st.n} flies">${svg}</svg>
+      <div class="hm-tooltip" hidden></div>`;
+    const tip = $('.hm-tooltip', el);
+    const show = (g, at) => {
+      const s = series[+g.dataset.s], fs = s.bins[+g.dataset.b], b = bins[+g.dataset.b];
+      const names = fs.map((f) => `${esc(f.date)} fly ${f.fly_num}`);
+      tip.innerHTML = `<span class="val">${plural(fs.length, 'fly', 'flies')}</span>${s.key === null ? '' : `
+        <div><span class="rt-key" style="background:${s.color}"></span>${esc(s.key)}</div>`}
+        <div class="muted">with ${binName(b)} ${what.toLowerCase()}lomeruli</div>
+        <div>${names.slice(0, 12).join('<br>')}${names.length > 12 ? `<br><span class="muted">and ${names.length - 12} more</span>` : ''}</div>`;
+      tip.hidden = false;
+      // beside the pointer (or the bar, from the keyboard), so as not to hide the bar
+      const box = el.getBoundingClientRect(), mark = g.getBoundingClientRect();
+      const px = (at ? at.clientX : mark.left + mark.width / 2) - box.left, py = (at ? at.clientY : mark.top + mark.height / 2) - box.top;
+      const left = px + 14 + tip.offsetWidth > box.width ? px - 14 - tip.offsetWidth : px + 14;
+      tip.style.left = `${Math.max(0, left)}px`;
+      tip.style.top = `${Math.max(0, Math.min(py - tip.offsetHeight / 2, box.height - tip.offsetHeight))}px`;
+    };
+    for (const g of el.querySelectorAll('.rt-bin')) {
+      g.addEventListener('pointermove', (e) => show(g, e));
+      g.addEventListener('focus', () => show(g));
+      for (const ev of ['pointerleave', 'blur']) g.addEventListener(ev, () => { tip.hidden = true; });
+    }
+  }
+
+  // The infrequently identified glomeruli: those labelled by one uploader only, then the
+  // others, each with the flies, datasets and panels (but diagnostics) it is in; then those
+  // only in flies with a panel that not every fly has.
+  _renderRare() {
+    const st = this.st, el = $('#rt-rare');
+    if (!st?.n) { el.replaceChildren(); return; }
+    const who = new Map(st.flies.map((f) => [f, this._uploader(f)]));
+    const uploaders = [...new Set(who.values())].sort(natural);
+    const ofUploader = new Map(uploaders.map((u) => [u, st.flies.filter((f) => who.get(f) === u).length]));
+    const datasets = new Map(), panelFlies = new Map();
+    for (const f of st.flies) {
+      for (const d of f.datasets) (datasets.get(d.id) || datasets.set(d.id, { d, flies: [] }).get(d.id)).flies.push(f);
+      for (const p of f.panels) (panelFlies.get(p) || panelFlies.set(p, []).get(p)).push(f);
+    }
+    const info = (g) => {
+      const fs = st.flies.filter((f) => f.glomeruli.includes(g));
+      const panels = new Map();
+      for (const f of fs) for (const p of f.panels) panels.set(p, (panels.get(p) || 0) + 1);
+      return {
+        g, fs, tentative: fs.filter((f) => f.tentative.includes(g)).length,
+        by: uploaders.map((u) => ({ u, c: fs.filter((f) => who.get(f) === u).length, n: ofUploader.get(u) })).filter((x) => x.c),
+        ds: [...datasets.values()].map(({ d, flies }) => ({ d, c: flies.filter((f) => fs.includes(f)).length, n: flies.length })),
+        panels: [...panels].sort((a, b) => b[1] - a[1] || natural(a[0], b[0])),
+        // panels every fly with it has, though not every fly does
+        only: [...panelFlies].filter(([, pf]) => pf.length < st.n && fs.every((f) => pf.includes(f)))
+          .map(([p, pf]) => ({ p, n: pf.length, ds: [...new Set(pf.flatMap((f) => f.datasets.map((d) => d.id)))] })),
+      };
+    };
+    const dsLink = (d) => `<a href="#browse/${d.id}" title="${esc(d.title || '')}">#${d.id}</a>`;
+    const name = (i) => `${esc(i.g)}${i.tentative ? ` <span class="muted">(${i.tentative} tentative)</span>` : ''}`;
+    const withIt = (i) => i.ds.filter((x) => x.c).map((x) => `${dsLink(x.d)} ${x.c} <span class="muted">of ${x.n}</span>`).join('<br>');
+    const without = (i) => i.ds.filter((x) => !x.c).map((x) => dsLink(x.d)).join(', ') || '—';
+    const panels = (i) => i.panels.map(([p, c]) => `<span class="nowrap">${esc(p)} <span class="muted">${c}</span></span>`).join(', ')
+      || '<span class="muted">none</span>';
+    const table = (head, rows) => `<table class="odor-table"><thead><tr>${head.map((h) => `<th>${h}</th>`).join('')}</tr></thead>
+      <tbody>${rows.map((cells) => `<tr>${cells.map((c) => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+    const order = (a, b) => a.fs.length - b.fs.length || natural(a.g, b.g);
+    const rare = [...st.rare].map(info).sort(order);
+    const cut = `${$('#rt-cut-op').value === 'le' ? '≤' : '<'} ${$('#rt-cut-n').value}${$('#rt-cut-unit').value === 'pct' ? '% of the flies' : ' flies'}`;
+    let html = `<p>${rare.length ? `${rare.length} of the ${st.count.size} glomeruli are` : `None of the ${st.count.size} glomeruli is`}
+      each in at most ${st.most < 0 ? 'none' : st.most} of the ${st.n} flies (${esc(cut)}: the cutoff is set at the bottom of the page).
+      Flies are counted of those whose ROIs could be read; panels are those but diagnostic ones, each with how many of the flies have it.</p>`;
+    const panelHead = 'Their panels <span class="muted">(flies)</span>';
+    const one = uploaders.length > 1 ? rare.filter((i) => i.by.length === 1) : [];
+    const several = rare.filter((i) => !one.includes(i));
+    if (one.length) {
+      html += `<h4>Labelled by one uploader only</h4>${table(
+        ['Glomerulus', 'Only by', 'Flies with it <span class="muted">(of the uploader\'s)</span>', 'Datasets with it', 'Datasets without', panelHead],
+        one.map((i) => [name(i), esc(i.by[0].u), `${i.fs.length} <span class="muted">of ${i.by[0].n}</span>`, withIt(i), without(i), panels(i)]))}`;
+    }
+    const alsoOne = uploaders.length > 1 ? [...st.count.keys()].filter((g) => !st.rare.has(g)).map(info).filter((i) => i.by.length === 1) : [];
+    if (alsoOne.length) {
+      html += `<p>Also labelled by one uploader only, though identified more often: ${alsoOne.sort(order).reverse()
+        .map((i) => `${esc(i.g)} <span class="muted">(${esc(i.by[0].u)}: ${i.fs.length} of ${i.by[0].n})</span>`).join(', ')}.</p>`;
+    }
+    if (several.length) {
+      html += `<h4>${one.length || uploaders.length > 1 ? 'Labelled by several uploaders' : 'All of them'}</h4>${table(
+        ['Glomerulus', `Flies with it <span class="muted">(of ${st.n})</span>`, 'By uploader <span class="muted">(of theirs)</span>',
+          'Datasets with it', 'Datasets without', panelHead],
+        several.map((i) => [name(i), `${i.fs.length}`, i.by.map((x) => `${esc(x.u)} ${x.c} <span class="muted">of ${x.n}</span>`).join('<br>'),
+          withIt(i), without(i), panels(i)]))}`;
+    }
+    const onlyIn = rare.filter((i) => i.only.length);
+    if (onlyIn.length) {
+      html += `<h4>Only in flies with certain panels</h4>
+        <p class="muted small">Those every fly of which has a panel (but diagnostics) that not every fly has, with how many of that panel's flies have it.
+        Where all of a panel's flies are of one dataset, telling the panel from the dataset (and its uploader) is not possible here.</p>${table(
+        ['Glomerulus', 'Flies with it', 'Every one of them has', 'Of that panel\'s flies, with it'],
+        onlyIn.map((i) => [name(i), `${i.fs.length}`,
+          i.only.map((o) => `${esc(o.p)}${o.ds.length === 1 ? ` <span class="muted">(only ${dsLink(datasets.get(o.ds[0]).d)} has it)</span>` : ''}`).join('<br>'),
+          i.only.map((o) => `${i.fs.length} <span class="muted">of ${o.n}</span>`).join('<br>')]))}`;
+    }
+    el.innerHTML = html;
   }
 
   _renderDownload() {

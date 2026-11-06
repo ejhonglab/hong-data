@@ -42,9 +42,9 @@ from typing import Callable, Iterator, Optional
 import numpy as np
 
 from . import config, odormeta, sandbox, tensor
-from .movies import _natural
+from .movies import _natural, roi_kind
 from .glomeruli import load_glomeruli
-from .ingest import is_diagnostic_panel
+from .ingest import ROI_SUFFIX, is_diagnostic_panel
 from .metadata import is_kc
 from .odors import OdorFormatError, format_conc, parse_odor
 
@@ -152,6 +152,50 @@ def candidates(db) -> list[dict]:
     return [d for d in sorted(db.list_datasets(), key=lambda d: d["id"])
             if " ".join((d["coding_unit"] or "").split()).casefold() == "glomeruli" and not is_kc(d["coding_unit"])
             and any(is_diagnostic_panel(p["panel"]) for p in d.get("panels") or [])]
+
+
+def fly_panels(db, ds_id: int) -> dict[tuple[str, int], set[str]]:
+    """The panels (as shown) each fly of a dataset, by its date and number, has a response in."""
+    m = db.get_matrix_arrays(ds_id)
+    if m is None:
+        return {}
+    cols: dict[str, list[int]] = {}
+    for j, t in enumerate(m["trials"]):
+        if t["panel"] is not None:
+            cols.setdefault(t["panel"], []).append(j)
+    rows: dict[tuple[str, int], list[int]] = {}
+    for i, u in enumerate(m["units"]):
+        if u["date"] is not None:
+            rows.setdefault((u["date"], u["fly_num"]), []).append(i)
+    finite = np.isfinite(m["values"])
+    return {fly: {p for p, js in cols.items() if finite[np.ix_(idx, js)].any()} for fly, idx in rows.items()}
+
+
+def roi_glomeruli(path: Path) -> tuple[Optional[dict], Optional[str]]:
+    """The glomeruli of a fly's `ROISET`, as al-diag-seg trains on them: ROIs named as a
+    glomerulus (or several joined by /: `movies.roi_kind`), and tentative ones (``DA1_t0``) as
+    that glomerulus; not numbered ROIs, nor names ending in + or ?.
+
+    Returns:
+        ({``glomeruli``: their names, ``tentative``: those of them only named tentatively},
+        None), or (None, why the file could not be read).
+    """
+    import roifile
+
+    if not sandbox.can_read(path):
+        return None, "outside the folders the server may read"
+    try:
+        rois = roifile.ImagejRoi.fromfile(path)
+    except Exception as e:  # noqa: BLE001 (roifile raises many kinds)
+        return None, f"its {ROISET} could not be read ({e})"
+    plain, tentative = set(), set()
+    for r in rois if isinstance(rois, list) else [rois]:
+        kind = roi_kind(r.name or "")
+        if kind == "glomerulus":
+            plain.add(r.name)
+        elif kind == "tentative":
+            tentative.add(ROI_SUFFIX.sub("", r.name))
+    return {"glomeruli": sorted(plain | tentative), "tentative": sorted(tentative - plain)}, None
 
 
 def _roiset(fly_dir: Path, diagnostic: list[Path], others: list[Path]) -> Optional[Path]:
@@ -262,8 +306,8 @@ def inventory(db, root: Path, bases: list[Path]) -> dict:
 
     Returns:
         dict with ``flies`` (see `_fly`, each with ``datasets``: of each, ``id``, ``title``
-        and ``uploader``) and ``skipped`` (``dataset``, ``date``, ``fly_num`` (None for all of
-        a dataset's), ``why``).
+        and ``uploader``, and ``panels``: those it has a response in, in them) and ``skipped``
+        (``dataset``, ``date``, ``fly_num`` (None for all of a dataset's), ``why``).
     """
     index = odormeta.OdorIndex(db.list_odors())
     flies: dict[Path, dict] = {}
@@ -278,6 +322,7 @@ def inventory(db, root: Path, bases: list[Path]) -> dict:
             continue
         raw = Path(found["raw"]["path"]) if found["raw"]["status"] == "ok" and found["raw"]["is_dir"] else None
         keys = diagnostic_keys(ds, db.get_trials(ds["id"]), index, odormeta.dataset_yaml_odors(ds, config.DATASETS_DIR))
+        panels = fly_panels(db, ds["id"])
         for f in ds["summary"].get("flies") or []:
             if f.get("date") is None or f.get("fly_num") is None:
                 continue
@@ -286,8 +331,9 @@ def inventory(db, root: Path, bases: list[Path]) -> dict:
                 skipped.append({"dataset": about, "date": f["date"], "fly_num": f["fly_num"], "why": why})
             elif fly["dir"] in flies:
                 flies[fly["dir"]]["datasets"].append(about)
+                flies[fly["dir"]]["panels"] |= panels.get((f["date"], f["fly_num"]), set())
             else:
-                flies[fly["dir"]] = {**fly, "datasets": [about]}
+                flies[fly["dir"]] = {**fly, "datasets": [about], "panels": set(panels.get((f["date"], f["fly_num"]), set()))}
     return {"flies": list(flies.values()), "skipped": skipped}
 
 
@@ -457,9 +503,13 @@ def stream_zip(found: dict, root: Path, bases: list[Path], stacks: bool, top: st
 
 
 def summary(found: dict, root: Path, bases: list[Path]) -> dict:
-    """What the ROI training tab shows: each fly to export and those left out, with sizes."""
+    """What the ROI training tab shows: each fly to export and those left out, with sizes;
+    and of each fly, its glomeruli (`roi_glomeruli`: ``glomeruli`` and ``tentative``, None
+    with ``roi_error`` if its ROIs could not be read) and ``panels``: those but diagnostic ones."""
+    with ThreadPoolExecutor(PREFETCH) as pool:  # (each file on tensor takes a while to start reading)
+        rois = list(pool.map(lambda f: roi_glomeruli(f["roiset"]), found["flies"]))
     flies = []
-    for f in found["flies"]:
+    for f, (glomeruli, roi_error) in zip(found["flies"], rois):
         size = sum(_size(p) for p, get in files({"flies": [f]}, False) if not (p.name == CONCAT_AVG and f["average"]["computed"]))
         if f["average"]["computed"]:
             z, y, x = f["grid"]
@@ -471,6 +521,8 @@ def summary(found: dict, root: Path, bases: list[Path]) -> dict:
             "recordings": [{"name": r["dir"].name, "n_odors": len(r["odors"]), "xml": r["xml"] is not None} for r in f["recordings"]],
             "stacks": [{"name": s["dir"].name, "bytes": s["bytes"]} for s in f["stacks"]],
             "bytes": size, "problems": f["problems"],
+            "glomeruli": glomeruli and glomeruli["glomeruli"], "tentative": glomeruli and glomeruli["tentative"],
+            "roi_error": roi_error, "panels": sorted(p for p in f["panels"] if not is_diagnostic_panel(p)),
         })
     return {"flies": flies, "skipped": found["skipped"], "bytes": sum(f["bytes"] for f in flies),
             "stack_bytes": sum(s["bytes"] for f in flies for s in f["stacks"])}
