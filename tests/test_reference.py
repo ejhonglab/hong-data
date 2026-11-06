@@ -138,7 +138,8 @@ def test_add_readable(env, tmp_path):
     assert check(str(tmp_path / "refs"))["error"] == ("not a table it can read: give a .csv, .tsv, .tab, .txt, .parquet, .pq, .nc, .nc4 "
                                                        "or .netcdf file, or a MetaCyc or LOTUS bundle (.sqlite, .sqlite3, .db, "
                                                        "made by app/metacyc_build.py or app/lotus_build.py)")
-    assert "not found" in check(str(tmp_path / "refs/none.csv"))["error"] and "absolute" in check("refs/x.csv")["error"]
+    assert "not found" in check(str(tmp_path / "refs/none.csv"))["error"]
+    assert check("refs/x.csv")["path"] == f"{config.TENSOR_ROOT}/refs/x.csv"  # (from the top of tensor: see test_from_tensor)
     add = lambda **kw: call(env.admin_reference_add, body=kw)  # noqa: E731
     status, r = add(path=str(src))
     assert status == 422 and r["errors"] == ["give it a title"]
@@ -165,6 +166,19 @@ def test_add_readable(env, tmp_path):
     assert call(env.admin_reference_delete, path_params={"ref_id": "fruits"})[0] == 409
     assert call(env.admin_reference_delete, path_params={"ref_id": "nothing"})[0] == 404
     assert imported and src.read_text() == "nothing,here\n"
+
+
+def test_from_tensor(env):
+    # a path not absolute is from the top of tensor, kept as the absolute path
+    src = write(config.TENSOR_ROOT / "tom" / "refs" / "volatiles.csv", "chemical,banana\nlinalool,1\n")
+    sandbox.activate({"read_dirs": [str(config.TENSOR_ROOT)], "write_dirs": []})
+    c = call(env.admin_reference_check, body={"path": " tom/refs/volatiles.csv"})[1]
+    assert c["ok"] and c["readable"] and c["path"] == str(src) and c["preview"]["shape"] == [1, 1]
+    assert "'..' is not allowed" in call(env.admin_reference_check, body={"path": "tom/../x.csv"})[1]["error"]
+    status, r = call(env.admin_reference_add, body={"path": "tom/refs/volatiles.csv", "title": "Volatiles"})
+    assert status == 200 and r["state"] == "ok"
+    item = next(d for d in call(env.reference_list)[1]["datasets"] if d["id"] == "volatiles")
+    assert item["path"] == str(src)
 
 
 def test_examples(env, tmp_path):

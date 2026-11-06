@@ -798,7 +798,7 @@ try {
         <div id="admin-refs-list"></div>
         <h3 class="subhead" id="ref-form-head">Add one</h3>
         <div class="grid">
-          <label class="field span2"><span>File on the server *</span><input id="ref-path" spellcheck="false" autocomplete="off" placeholder="e.g. /local/tensor/tom/reference/fruit_volatiles.csv"><span class="path-msg" id="ref-path-msg" aria-live="polite"></span></label>
+          <label class="field span2"><span>File on the server * <span class="muted">(on tensor from its top, or any absolute path)</span></span><input id="ref-path" data-tensor-path data-files="reference" spellcheck="false" autocomplete="off" placeholder="e.g. tom/reference/fruit_volatiles.csv, or /srv/reference/fruit_volatiles.csv"><span class="path-msg" id="ref-path-msg" aria-live="polite"></span></label>
           <label class="field"><span>Title *</span><input id="ref-title" placeholder="e.g. Volatile concentrations across fruits"></label>
           <label class="field"><span>Source</span><input id="ref-source" placeholder="citation or URL"></label>
           <label class="field span2"><span>Description</span><input id="ref-description" placeholder="one or two sentences shown under the title"></label>

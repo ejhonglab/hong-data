@@ -1012,8 +1012,9 @@ def _described(path: Path) -> dict:
 
 def check(path_input: str, chemical_axis: str, kind: str, index: odormeta.OdorIndex, supervisor: Optional[str],
           fields: Any = None) -> dict:
-    """Check a file entered in the Admin tab as a reference dataset, made into a matrix by
-    `fields` (as `parse` takes them; else as suggested for it, see `describe_fields`).
+    """Check a file entered in the Admin tab as a reference dataset (`path_input`: absolute on
+    the server, or else from the top of tensor), made into a matrix by `fields` (as `parse`
+    takes them; else as suggested for it, see `describe_fields`).
 
     Returns:
         ``input``, ``path`` (normalized, or None), ``ok`` (it can be added), ``error``,
@@ -1026,8 +1027,11 @@ def check(path_input: str, chemical_axis: str, kind: str, index: odormeta.OdorIn
     """
     out = {"input": path_input, "path": None, "ok": False, "error": None, "readable": False, "preview": None,
            "grant": None, "restart": False, "steps": []}
+    given = path_input.strip()
+    if given and not given.startswith("/"):  # (from the top of tensor, as paths on tensor are given elsewhere)
+        given = f"{str(config.TENSOR_ROOT).rstrip('/')}/{given}"
     try:
-        p = out["path"] = sandbox.normalize(path_input)
+        p = out["path"] = sandbox.normalize(given)
     except sandbox.SandboxError as e:
         return {**out, "error": str(e)}
     if Path(p).suffix.lower() not in SUFFIXES:

@@ -721,8 +721,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     it is current (else what changed since: the database, or files new, changed or
     removed).
   - *Reference data*: add a CSV, TSV or parquet file on the server, or an xarray
-    DataArray saved as netCDF (`.nc`) (checked as you type its path, when the server may
-    read it: its size, and how many of its chemicals match the Odors tab), with a title,
+    DataArray saved as netCDF (`.nc`), by its path from the top of tensor (completed as you
+    type it, as other paths on tensor are, its folders and the files it can read listed) or
+    its absolute path (completed only under tensor's), checked as you type it (when the
+    server may read it: its size, and how many of its chemicals match the Odors tab), with a title,
     description, source, labels, colors (or from its values) and whether its rows or
     columns are chemicals (or found from identifier columns, e.g. `cid`, `pubchem_cid`,
     `inchi`, `cas`, `name`, or rows labelled so; of a DataArray, coordinates named so).

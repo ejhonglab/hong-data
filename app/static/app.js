@@ -353,13 +353,15 @@ async function checkPathInput(input, msg) {
 // so far (GET /api/tensor/list), those starting with what follows its last '/' (else
 // containing it), in a list under the field. Up and Down choose one, Enter or a click takes
 // it, Tab takes it too (else completes what they all start with), Escape closes the list; a
-// folder taken goes on to what is in it. archives: an archive's files are offered too.
-const pathListings = new Map(); // `${archives}|${folder}` -> {at, promise of the server's answer, value: it, once here}
-function tensorListing(folder, archives) {
-  const key = `${archives ? 1 : 0}|${folder}`, hit = pathListings.get(key);
+// folder taken goes on to what is in it. files: which files are offered too ('archives', or
+// 'reference': those a reference dataset can be read from), else none.
+const pathListings = new Map(); // `${files}|${folder}` -> {at, promise of the server's answer, value: it, once here}
+const LISTED_FILES = { archives: '&archives=1', reference: '&files=reference' };
+function tensorListing(folder, files) {
+  const key = `${files || ''}|${folder}`, hit = pathListings.get(key);
   if (hit && Date.now() - hit.at < 60e3) return hit.promise;
   const entry = { at: Date.now(), value: undefined };
-  entry.promise = api(`/api/tensor/list?path=${encodeURIComponent(folder)}${archives ? '&archives=1' : ''}`)
+  entry.promise = api(`/api/tensor/list?path=${encodeURIComponent(folder)}${LISTED_FILES[files] || ''}`)
     .catch(() => null).then((res) => { entry.value = res; return res; });
   pathListings.set(key, entry);
   if (pathListings.size > 200) pathListings.delete(pathListings.keys().next().value);
@@ -367,8 +369,8 @@ function tensorListing(folder, archives) {
 }
 
 // a folder's listing, if it was read lately (as tensorListing gives it); else undefined
-function cachedListing(folder, archives) {
-  const hit = pathListings.get(`${archives ? 1 : 0}|${folder}`);
+function cachedListing(folder, files) {
+  const hit = pathListings.get(`${files || ''}|${folder}`);
   return hit && Date.now() - hit.at < 60e3 ? hit.value : undefined;
 }
 
@@ -383,16 +385,22 @@ const pathSuggest = (() => {
   return box;
 })();
 
-function wirePathComplete(input, { archives = false } = {}) {
+// (A field taking absolute paths on the server too says where tensor is on it, data-tensor-root:
+// those under it are completed as from its top, the rest not at all.)
+function wirePathComplete(input, { files = '' } = {}) {
   if (input._pathComplete) return;
   input._pathComplete = true;
   input.autocomplete = 'off';
   input.setAttribute('aria-autocomplete', 'list');
   input.setAttribute('aria-controls', pathSuggest.id);
   let seq = 0, shown = null; // {folder, items: [{name, dir}], at: the one chosen (-1: none), value: what was typed then}
+  // what is typed: tensor's top as typed (`base`, if typed), then the rest (`rest`: the folder from there and what follows its last '/')
   const split = () => {
-    const v = input.value.replace(/\\/g, '/'), i = v.lastIndexOf('/');
-    return { folder: i < 0 ? '' : v.slice(0, i), part: v.slice(i + 1) };
+    let v = input.value.replace(/\\/g, '/'), base = '';
+    const root = input.dataset.tensorRoot?.replace(/\/+$/, '');
+    if (root && v.startsWith(`${root}/`)) { base = `${root}/`; v = v.slice(base.length); }
+    const i = v.lastIndexOf('/');
+    return { base, rest: v, folder: i < 0 ? '' : v.slice(0, i), part: v.slice(i + 1) };
   };
   const close = () => {
     shown = null;
@@ -407,7 +415,7 @@ function wirePathComplete(input, { archives = false } = {}) {
     if (!shown?.items.length || document.activeElement !== input) { close(); return; }
     pathSuggest._owner = input;
     pathSuggest.innerHTML = shown.items.map((it, k) => `<div role="option" id="path-suggest-${k}" class="${k === shown.at ? 'active' : ''}"
-      data-k="${k}" aria-selected="${k === shown.at}">${esc(it.name)}${it.dir ? '/' : ' <span class="muted">archive</span>'}</div>`).join('');
+      data-k="${k}" aria-selected="${k === shown.at}">${esc(it.name)}${it.dir ? '/' : files === 'archives' ? ' <span class="muted">archive</span>' : ''}</div>`).join('');
     pathSuggest.onclick = (e) => { const d = e.target.closest('[data-k]'); if (d) take(+d.dataset.k); };
     place();
     pathSuggest.hidden = false;
@@ -424,8 +432,8 @@ function wirePathComplete(input, { archives = false } = {}) {
   const take = (k) => {
     const it = shown?.items[k];
     if (!it) return;
-    const { folder } = split();
-    set(`${folder ? `${folder}/` : ''}${it.name}${it.dir ? '/' : ''}`);
+    const { base, folder } = split();
+    set(`${base}${folder ? `${folder}/` : ''}${it.name}${it.dir ? '/' : ''}`);
     if (!it.dir) close(); // (input's listener lists what is in a folder taken)
   };
   // what is offered of a folder's listing (`res`, as tensorListing gives it) for what is typed now
@@ -437,9 +445,9 @@ function wirePathComplete(input, { archives = false } = {}) {
     shown = items.length === 1 && items[0].name === part ? null : { folder, items: items.slice(0, 300), at: -1, value: input.value };
   };
   const suggest = async () => {
-    const { folder } = split(), mine = ++seq;
-    if (/^\s*([/~]|[A-Za-z]:)/.test(input.value) || folder.split('/').includes('..')) { close(); return; }
-    const res = await tensorListing(folder, archives);
+    const { rest, folder } = split(), mine = ++seq;
+    if (/^\s*([/~]|[A-Za-z]:)/.test(rest) || folder.split('/').includes('..')) { close(); return; }
+    const res = await tensorListing(folder, files);
     if (mine !== seq) return;
     offer(res);
     render();
@@ -451,7 +459,7 @@ function wirePathComplete(input, { archives = false } = {}) {
     // (typed on since the list was made, as a Tab right after typing is: made again now, from
     // the folder's listing if it was read, else none)
     if ((e.key === 'Tab' || e.key === 'Enter') && shown && shown.value !== input.value) {
-      const res = cachedListing(split().folder, archives);
+      const res = cachedListing(split().folder, files);
       if (res === undefined) close(); else { seq++; offer(res); render(); }
     }
     if (!shown || pathSuggest.hidden) return;
@@ -468,12 +476,12 @@ function wirePathComplete(input, { archives = false } = {}) {
       if (shown.at >= 0) { e.preventDefault(); take(shown.at); return; }
       if (n === 1) { e.preventDefault(); take(0); return; }
       // what they all start with, if it is more than is typed
-      const names = shown.items.map((it) => it.name), { folder, part } = split();
+      const names = shown.items.map((it) => it.name), { base, folder, part } = split();
       let common = names[0];
       for (const name of names) while (!name.toLowerCase().startsWith(common.toLowerCase())) common = common.slice(0, -1);
       if (common.length > part.length && names.every((name) => name.toLowerCase().startsWith(part.toLowerCase()))) {
         e.preventDefault();
-        set(`${folder ? `${folder}/` : ''}${names[0].slice(0, common.length)}`);
+        set(`${base}${folder ? `${folder}/` : ''}${names[0].slice(0, common.length)}`);
       }
     } else if (e.key === 'Escape') {
       e.preventDefault();
@@ -485,9 +493,12 @@ function wirePathComplete(input, { archives = false } = {}) {
   window.addEventListener('resize', () => { if (pathSuggest._owner === input) place(); });
 }
 
-// every field of a path on tensor (marked data-tensor-path; data-archives: archives too), completed once focused
+// every field of a path on tensor (marked data-tensor-path; data-archives: archives too; data-files:
+// which files, as wirePathComplete takes them), completed once focused
 document.addEventListener('focusin', (e) => {
-  if (e.target.matches?.('input[data-tensor-path]')) wirePathComplete(e.target, { archives: 'archives' in e.target.dataset });
+  if (!e.target.matches?.('input[data-tensor-path]')) return;
+  const d = e.target.dataset;
+  wirePathComplete(e.target, { files: d.files || ('archives' in d ? 'archives' : '') });
 });
 
 // shows a <dialog> of buttons; resolves to the value of the one chosen ('' if dismissed with Escape)
@@ -4311,7 +4322,8 @@ function showRefCheck(c, note = '') {
     return;
   }
   const p = c.preview, ch = p.chemicals;
-  msg.textContent = `✓ read: ${p.shape[0].toLocaleString()} rows × ${p.shape[1].toLocaleString()} columns, ${p.kind}`;
+  const fromTensor = c.input && !c.input.trim().startsWith('/'); // (said where that is)
+  msg.textContent = `✓ read${fromTensor ? ` ${c.path}` : ''}: ${p.shape[0].toLocaleString()} rows × ${p.shape[1].toLocaleString()} columns, ${p.kind}`;
   const lines = [];
   if (p.metacyc) lines.push(`Its values: ${esc(p.metacyc.described)}.`);
   if (p.lotus) lines.push(esc(p.lotus.summary));
@@ -4336,9 +4348,11 @@ function showRefCheck(c, note = '') {
   }
 }
 
-// what is wrong with a folder as typed, as far as can be told without the server
-function localServerDirProblem(path) {
-  if (!/^\s*\//.test(path)) return 'give the absolute path on the server, starting with /';
+// what is wrong with a folder as typed, as far as can be told without the server (tensor: a
+// path from tensor's top is taken too, else only absolute ones)
+function localServerDirProblem(path, { tensor = false } = {}) {
+  if (!tensor && !/^\s*\//.test(path)) return 'give the absolute path on the server, starting with /';
+  if (tensor && /^\s*(~|[A-Za-z]:)/.test(path)) return "give the path from tensor's top, or the absolute path on the server";
   if (path.split('/').includes('..')) return "'..' is not allowed: give the folder itself";
   return null;
 }
@@ -4424,7 +4438,7 @@ class AdminPage {
     $('#admin-confirm').addEventListener('close', () => this._answered());
     $('#ref-path').addEventListener('input', () => {
       clearTimeout(this._refTimer);
-      const problem = $('#ref-path').value.trim() ? localServerDirProblem($('#ref-path').value) : null;
+      const problem = $('#ref-path').value.trim() ? localServerDirProblem($('#ref-path').value, { tensor: true }) : null;
       showRefCheck(problem ? { ok: false, error: problem } : null);
       if (!problem && $('#ref-path').value.trim()) this._refTimer = setTimeout(() => this.checkRef(), 500);
     });
@@ -4542,6 +4556,7 @@ class AdminPage {
     $('#admin-data-dir').textContent = s.data_dir;
     $('#admin-data-dir-where').textContent = s.in_container ? ' in the container; on the server, the folder docker-compose.yml mounts there' : '';
     $('#admin-tensor-root').textContent = s.tensor_root;
+    $('#ref-path').dataset.tensorRoot = s.tensor_root; // (completed under it too)
     $('#admin-deleted-dir').textContent = s.deleted_dir;
     for (const kind of ADMIN_KINDS) {
       const list = $(`#admin-folders .dirlist[data-kind=${kind}]`);
@@ -5084,7 +5099,7 @@ class AdminPage {
   // the file, checked on the server: read now if it may be, else what adding it would take
   async checkRef() {
     const seq = ++this._refSeq, body = this._refBody();
-    if (!body.path || localServerDirProblem(body.path)) return;
+    if (!body.path || localServerDirProblem(body.path, { tensor: true })) return;
     this._refChecking = body.path;
     showRefCheck({ ok: true, checking: true });
     let c;

@@ -88,6 +88,9 @@ def test_list_dir(root, main):  # noqa: F811
     assert status == 200 and r["ok"] and [e["name"] for e in r["entries"]] == ["2023-11-19", "20231120"]
     assert [e["name"] for e in call(main.tensor_list, params={"path": "tom", "archives": "1"})[1]["entries"]] == [
         "mocorr", "raw", "raw.tar.gz", "stim"]
+    # or the files a reference dataset can be read from (the Admin tab's form adding one)
+    assert [e["name"] for e in call(main.tensor_list, params={"path": "tom", "files": "reference"})[1]["entries"]] == [
+        "mocorr", "notes.txt", "raw", "stim"]
     assert call(main.tensor_list, params={})[1]["path"] == ""
 
 
