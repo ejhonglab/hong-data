@@ -306,6 +306,20 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   sure (*No* is the default). Its title and panels follow, and its README too unless it
   was edited by hand; `metadata.json` keeps each edit (when, and each field before and
   after).
+- **Permalinks**: under a dataset's title, *Make a permalink…* names a link to it that
+  stays whatever its number, `http://<server>:8080/d/<name>` (lowercase letters, digits
+  and `-`; by default as its downloads are named, e.g. `megamat-tom-glomeruli-2023-06-22`),
+  with *Copy* and *Rename…*. An edit of its details that would change that default name
+  (its uploader, coding unit, manipulations, or panel names if its file has none) asks
+  first, saying what the permalink would be renamed to, unless it was renamed by hand.
+  A permalink keeps what its dataset is: its uploader, indicator, driver, coding unit,
+  manipulations and panels (but diagnostic ones), and its flies and trials. While it
+  points to a dataset, an upload of the same uploader, indicator, driver, coding unit,
+  manipulations and panels is refused, whatever its flies, odors and trials: one dataset
+  is kept of each (to replace one, delete it first in the Admin tab). Deleting a dataset
+  orphans its permalink (the Admin tab warns first): it then leads to what it was of,
+  until an upload like that dataset takes it over, at once if it is the same, else once
+  *Proceed* is pressed under a summary of what differs (its flies, odors or trials).
 - **Movies** ("Play movies…" in the Raw data or Motion corrected menu of a dataset whose
   folder is found): a player for the movies of the dataset's flies in that menu's data
   folder (raw, or motion corrected).
@@ -706,7 +720,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   - *Delete datasets*: every dataset, newest upload first (with a filter), each with a
     Delete button that asks first. A deleted dataset is gone from the site at once; its
     files (as uploaded, with `metadata.json` holding every detail entered) are moved to
-    `data/deleted/<id>/` on the server, from where it could be uploaded again.
+    `data/deleted/<id>/` on the server, from where it could be uploaded again. Below them,
+    the orphaned permalinks (of datasets deleted), each with what it was of, and a Delete
+    button.
   - *Odor sheet*: the Google sheet's link, used as soon as it is saved, and importing a
     CSV instead (with the template to start from). Below them, whether new odor names
     may only be lowercase: then uploads whose odors (as named in the data) have capital

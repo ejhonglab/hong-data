@@ -231,6 +231,17 @@ function unidentifiedBox(warning, labels, after, n = 20) {
   return box;
 }
 
+// why a permalink's name is refused, as the server says (permalinks.slug_problem); '' if it is not
+function slugProblem(s) {
+  if (!s) return 'give it a name';
+  if (s.length > 80) return 'at most 80 characters';
+  if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(s)) return "only lowercase letters, digits and '-' (not at either end, nor two together)";
+  if (!/[a-z]/.test(s)) return "it needs a letter (a number alone is a dataset's number)";
+  return '';
+}
+
+const permalinkUrl = (slug) => `${location.origin}/d/${encodeURIComponent(slug)}`;
+
 function listHtml(items) { return `<ul>${items.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`; }
 
 function fmtBytes(n) { return n < 1e6 ? `${Math.max(1, Math.round(n / 1e3))} kB` : `${(n / 1e6).toFixed(1)} MB`; }
@@ -2106,6 +2117,8 @@ class UploadFlow {
     $('#yaml-list').innerHTML = ''; $('#yaml-check').innerHTML = ''; $('#xml-info').innerHTML = ''; this._renderXml(); this._renderYamlStatus();
     $('#odor-table-check').innerHTML = '';
     $('#meta-errors').innerHTML = ''; $('#commit-errors').innerHTML = '';
+    this.permalinkProceed = null;
+    this._showPermalink(null);
     window.scrollTo(0, 0);
   }
 
@@ -2454,14 +2467,44 @@ class UploadFlow {
     settings.rememberName(meta.uploader_name);
     let res;
     try { res = await api(`/api/stage/${this.stage.stage_id}/readme`, { method: 'POST', json: { metadata: meta } }); } catch (e) { box.appendChild(msgBox('error', esc(e.message))); return; }
-    if (!res.ok) { box.appendChild(msgBox('error', `The server rejected the details:${listHtml(res.errors)}`)); return; }
+    if (!res.ok) { box.appendChild(msgBox('error', `The server rejected the details:${listHtml(res.errors)}`)); this._showPermalink(null); return; }
     if (res.warnings?.length) box.appendChild(msgBox('warn', `Worth a look:${listHtml(res.warnings)}`));
+    this._showPermalink(res.permalink);
     this.generatedReadme = res.readme;
     $('#readme-text').value = res.readme;
     $('#readme-preview').innerHTML = renderMarkdown(res.readme);
     $('#step-readme').hidden = false;
     this._save();
     $('#step-readme').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  // The orphaned permalink this upload takes over once saved, if any (the server's
+  // _permalink_check: {slug, exact, was, orphaned_at, differences}), said above the Save
+  // button; if it is not the same as the dataset it was of, what differs, and Proceed, to be
+  // pressed before it can be saved. A Proceed pressed is kept while it is the same one.
+  _showPermalink(p) {
+    this.permalink = p || null;
+    this.permalinkProceed = p && (p.exact || this.permalinkProceed === p.slug) ? p.slug : null;
+    this._renderPermalink();
+  }
+
+  _renderPermalink() {
+    const box = $('#upload-permalink'), p = this.permalink, btn = $('#commit-btn');
+    btn.disabled = !!p && this.permalinkProceed !== p.slug;
+    btn.title = btn.disabled ? 'Press Proceed (above) first' : '';
+    if (!p) { box.replaceChildren(); return; }
+    const link = `<a href="/d/${encodeURIComponent(p.slug)}" target="_blank" rel="noopener"><code>${esc(p.slug)}</code></a>`;
+    const was = `It was of dataset ${esc(p.was)}, deleted ${esc(fmtDay(p.orphaned_at))}.`;
+    if (p.exact) {
+      box.replaceChildren(msgBox('info', `This is the dataset the orphaned permalink ${link} was of. ${was} Once this is saved, the permalink points to it.`));
+    } else if (this.permalinkProceed === p.slug) {
+      box.replaceChildren(msgBox('warn', `Once this is saved, the orphaned permalink ${link} points to it, though they differ:${listHtml(p.differences)}${was}`));
+    } else {
+      const m = msgBox('warn', `<b>This is like the dataset the orphaned permalink ${link} was of, but not the same.</b> ${was} What differs:${listHtml(p.differences)}
+        <div class="actions"><button type="button" class="btn warn" data-proceed>Proceed</button><span>The permalink will then point to this dataset, once it is saved.</span></div>`);
+      $('[data-proceed]', m).addEventListener('click', () => { this.permalinkProceed = p.slug; this._renderPermalink(); });
+      box.replaceChildren(m);
+    }
   }
 
   async commit() {
@@ -2475,14 +2518,21 @@ class UploadFlow {
     btn.disabled = true; btn.textContent = 'Saving…';
     let res;
     try {
-      res = await api(`/api/stage/${this.stage.stage_id}/commit`, { method: 'POST', json: { metadata: meta, readme, readme_edited: readme !== this.generatedReadme } });
-    } catch (e) { box.appendChild(msgBox('error', esc(e.message))); btn.disabled = false; btn.textContent = 'Save to database'; return; }
-    btn.disabled = false; btn.textContent = 'Save to database';
-    if (!res.ok) { box.appendChild(msgBox('error', `Not saved:${listHtml(res.errors)}`)); return; }
+      res = await api(`/api/stage/${this.stage.stage_id}/commit`, { method: 'POST', json: { metadata: meta, readme, readme_edited: readme !== this.generatedReadme,
+        permalink_proceed: this.permalinkProceed } });
+    } catch (e) { box.appendChild(msgBox('error', esc(e.message))); btn.textContent = 'Save to database'; this._renderPermalink(); return; }
+    btn.textContent = 'Save to database';
+    if (!res.ok) {
+      box.appendChild(msgBox('error', `Not saved:${listHtml(res.errors)}`));
+      if ('permalink' in res) this._showPermalink(res.permalink); else this._renderPermalink();
+      return;
+    }
+    this._showPermalink(null);
     settings.rememberName(meta.uploader_name);
     LS.set(UPLOAD_KEY, null);
     $('#step-done').hidden = false;
-    $('#done-text').innerHTML = `Dataset <b>#${res.dataset_id}</b> — ${esc(res.title)} — is in the database.`;
+    $('#done-text').innerHTML = `Dataset <b>#${res.dataset_id}</b> — ${esc(res.title)} — is in the database.`
+      + (res.permalink ? ` Its permalink, taken over: <a href="/d/${encodeURIComponent(res.permalink)}">${esc(permalinkUrl(res.permalink))}</a>.` : '');
     $('#done-link').href = `#browse/${res.dataset_id}`;
     $('#step-done').scrollIntoView({ behavior: 'smooth', block: 'start' });
     browse.invalidate();
@@ -2603,6 +2653,22 @@ class Browse {
       $('#ds-edit-toggle').setAttribute('aria-expanded', 'false');
     });
     this.editCalc = wireFields(edit);
+    const link = $('#ds-permalink');
+    link.addEventListener('click', (e) => {
+      const act = e.target.closest('[data-act]')?.dataset.act, d = this.cache.get(this.selected)?.d;
+      if (!act || !d) return;
+      if (act === 'copy') navigator.clipboard?.writeText(permalinkUrl(d.permalink.slug)).then(() => { e.target.textContent = 'Copied'; }, () => {});
+      if (act === 'edit') this._editPermalink(d);
+      if (act === 'cancel') this._showPermalink(d);
+    });
+    link.addEventListener('input', (e) => {
+      if (e.target.name !== 'slug') return;
+      const problem = slugProblem(e.target.value), why = $('[data-role=why]', link);
+      why.textContent = problem;
+      why.className = problem ? 'bad small' : 'muted small';
+      $('button[type=submit]', link).disabled = !!problem;
+    });
+    link.addEventListener('submit', (e) => { e.preventDefault(); this._savePermalink(e.target.slug.value); });
     edit.uploader_name.addEventListener('input', () => showNameCheck(edit.uploader_name, this._editNameProblem()));
     edit.addEventListener('submit', (e) => { e.preventDefault(); this.saveEdit(); });
     this.odorCache = new Map();
@@ -2733,6 +2799,7 @@ class Browse {
     $$('#dataset-view details.menu').forEach((menu) => { menu.open = false; }); // they were about another dataset
     $('#ds-title').textContent = 'Loading…';
     $('#ds-sub').textContent = '';
+    $('#ds-permalink').replaceChildren();
     let d, m;
     try {
       if (!this.cache.has(id)) {
@@ -2750,6 +2817,7 @@ class Browse {
     if (md.power_mw) bits.push(`${md.power_mw} mW${md.power_tolerance_mw != null ? ' ±' + md.power_tolerance_mw : ''}`);
     if (md.recording_system) bits.push(md.recording_system);
     $('#ds-sub').textContent = bits.join('; ');
+    this._showPermalink(d);
     setStatus($('#ds-readme-status'), '');
     this._showReadme(id);
     $('#ds-files').innerHTML = d.files.map((f) => `<a href="/api/datasets/${id}/files/${encodeURI(f)}" download>${esc(f)}</a>`).join('');
@@ -2759,6 +2827,62 @@ class Browse {
     if (!$('#ds-odors').hidden) this.showOdors(id);
     if (!$('#ds-edit').hidden && this.editOf?.id !== id) this._fillEdit(id);
     this.showDataPaths(id);
+  }
+
+  // A dataset's permalink (permalinks.py): its link, with Copy and Rename…; or a button to make one
+  _showPermalink(d) {
+    const p = d.permalink, el = $('#ds-permalink');
+    el.innerHTML = p
+      ? `<span>Permalink</span> <a href="/d/${encodeURIComponent(p.slug)}">${esc(permalinkUrl(p.slug))}</a>
+         <button type="button" class="btn small" data-act="copy">Copy</button>
+         <button type="button" class="btn small" data-act="edit">Rename…</button>`
+      : `<button type="button" class="btn small" data-act="edit">Make a permalink…</button>
+         <span>a link to it that stays, whatever its number</span>`;
+  }
+
+  // its name being entered (as it is, else as it would be by default), checked as it is typed
+  _editPermalink(d) {
+    const el = $('#ds-permalink'), name = d.permalink?.slug || d.default_permalink;
+    el.innerHTML = `<form autocomplete="off"><label>Permalink <span>${esc(location.origin)}/d/</span><input name="slug" spellcheck="false" value="${esc(name)}"
+        aria-label="Permalink's name"></label>
+      <button type="submit" class="btn small primary">Save</button><button type="button" class="btn small" data-act="cancel">Cancel</button>
+      <span class="muted small" data-role="why"></span></form>
+      <span class="muted small">Lowercase letters, digits and '-'; by default <code>${esc(d.default_permalink)}</code>, as its downloads are named.
+      ${d.permalink ? 'Links to its old name will no longer work.' : ''}</span>`;
+    el.querySelector('input').focus();
+  }
+
+  async _savePermalink(slug) {
+    const id = this.selected, el = $('#ds-permalink'), why = $('[data-role=why]', el);
+    let res;
+    try { res = await api(`/api/datasets/${id}/permalink`, { method: 'PUT', json: { slug } }); } catch (e) {
+      why.textContent = `Not saved: ${e.message}`; why.className = 'bad small'; return;
+    }
+    if (!res.ok) { why.textContent = `Not saved: ${res.errors.join('; ')}`; why.className = 'bad small'; return; }
+    const c = this.cache.get(id);
+    if (c) c.d.permalink = res.permalink;
+    if (this.selected === id && c) this._showPermalink(c.d);
+  }
+
+  // A permalink followed (#browse/<name>): its dataset shown, or what it was of, if orphaned
+  async openPermalink(slug) {
+    let p;
+    try { p = await api(`/api/permalinks/${encodeURIComponent(slug)}`); } catch (e) {
+      this._noDataset(`There is no permalink <code>${esc(slug)}</code> (${esc(e.message)}).`);
+      return;
+    }
+    if (p.dataset_id != null) { this.show(p.dataset_id); return; }
+    this._noDataset(`<b>The permalink <code>${esc(slug)}</code> no longer points to a dataset.</b> It was of dataset ${esc(p.summary)},
+      deleted ${esc(fmtDay(p.orphaned_at))}. An upload like that dataset takes it over (Upload tab); it can be deleted in the Admin tab.`);
+  }
+
+  _noDataset(html) {
+    this.selected = null;
+    if (this.datasets) this.renderList();
+    $('#dataset-view').hidden = true;
+    const el = $('#browse-empty');
+    el.innerHTML = html;
+    el.hidden = false;
   }
 
   // The Edit panel filled in with a dataset's metadata as entered at upload (as shown)
@@ -2805,12 +2929,29 @@ class Browse {
     $('#edit-confirm-detail').textContent = `Changed: ${changed.map((k) => METADATA_FIELDS[k]).join(', ')}. `
       + (d.readme_edited ? 'Its README was edited by hand, so it will stay as it is.' : 'Its README will be written again from them.');
     if (await askDialog($('#edit-confirm')) !== 'yes') return;
+    await this._sendEdit(id, d, null);
+  }
+
+  // The Edit panel's changes sent; if they would rename its permalink, as its default name
+  // changes (and it has that name), what to, with Proceed to send them again for it to be
+  async _sendEdit(id, d, proceed) {
+    const f = $('#ds-edit'), status = $('#ds-edit-status'), errors = $('[data-role=errors]', f);
     setStatus(status, 'Saving…');
     let res;
     try {
-      res = await api(`/api/datasets/${id}/metadata`, { method: 'PUT', json: { metadata: this._editValues(), base: d.metadata } });
+      res = await api(`/api/datasets/${id}/metadata`, { method: 'PUT', json: { metadata: this._editValues(), base: d.metadata, permalink_proceed: proceed } });
     } catch (e) {
       setStatus(status, `Not saved: ${e.message}`, 'error');
+      return;
+    }
+    if (res.permalink_change) {
+      setStatus(status, '');
+      const { from, to } = res.permalink_change;
+      const m = msgBox('warn', `<b>This changes the name its permalink has by default:</b> <code>${esc(from)}</code> would become
+        <code>${esc(to)}</code>, and links to <code>${esc(from)}</code> would no longer work.
+        <div class="actions"><button type="button" class="btn warn" data-proceed>Proceed</button><span>Save these changes, with the permalink renamed.</span></div>`);
+      $('[data-proceed]', m).addEventListener('click', () => { errors.replaceChildren(); this._sendEdit(id, d, to); });
+      errors.replaceChildren(m);
       return;
     }
     if (!res.ok) {
@@ -2828,7 +2969,8 @@ class Browse {
     }
     const what = res.changed.map((k) => METADATA_FIELDS[k]).join(', ');
     setStatus(status, !res.changed.length ? 'Nothing was changed.'
-      : `✓ Saved: ${what}. ${res.readme === 'generated' ? 'Its README was written again.' : 'Its README, edited by hand, was left as it was.'}`);
+      : `✓ Saved: ${what}. ${res.readme === 'generated' ? 'Its README was written again.' : 'Its README, edited by hand, was left as it was.'}`
+        + (proceed ? ` Its permalink is now ${res.permalink}.` : ''));
   }
 
   // The links to the dataset's raw and motion-corrected data on tensor, red with the
@@ -4052,6 +4194,10 @@ class AdminPage {
       const b = e.target.closest('[data-delete]');
       if (b) this.deleteDataset(+b.dataset.delete);
     });
+    $('#admin-permalinks').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-delete-permalink]');
+      if (b) this.deletePermalink(b.dataset.deletePermalink);
+    });
   }
 
   // the tab was opened; `back`: the place to return to if the answer is not yes
@@ -4765,11 +4911,44 @@ class AdminPage {
   }
 
   async loadDatasets() {
+    this.loadPermalinks();
     try { this.datasets = (await api('/api/datasets')).datasets; } catch (e) {
       $('#admin-ds-list').replaceChildren(msgBox('error', `Could not load the datasets: ${esc(e.message)}`));
       return;
     }
     this._showDatasets();
+  }
+
+  // the permalinks whose datasets were deleted (permalinks.py), each with what it was of
+  async loadPermalinks() {
+    const box = $('#admin-permalinks');
+    let all;
+    try { all = (await api('/api/admin/permalinks')).permalinks; } catch (e) {
+      box.replaceChildren(msgBox('error', `Could not load the permalinks: ${esc(e.message)}`));
+      return;
+    }
+    this.orphaned = all.filter((p) => p.dataset_id == null);
+    if (!this.orphaned.length) { box.innerHTML = '<p class="muted">None.</p>'; return; }
+    box.innerHTML = `<table class="odor-table"><thead><tr><th>Permalink</th><th>Was of</th><th>Orphaned</th><th></th></tr></thead><tbody>
+      ${this.orphaned.map((p) => `<tr><td><code>${esc(p.slug)}</code></td><td>${esc(p.summary)}</td><td>${esc(fmtDay(p.orphaned_at))}</td>
+        <td><button type="button" class="btn small" data-delete-permalink="${esc(p.slug)}">Delete…</button></td></tr>`).join('')}</tbody></table>`;
+  }
+
+  async deletePermalink(slug) {
+    const p = this.orphaned?.find((x) => x.slug === slug), out = $('#admin-pl-result');
+    if (!p) return;
+    $('#delete-confirm-q').textContent = `Delete the permalink “${slug}”?`;
+    $('#delete-confirm-detail').innerHTML = `It was of dataset ${esc(p.summary)}, deleted ${esc(fmtDay(p.orphaned_at))}. Its links will lead nowhere,
+      and an upload like that dataset will no longer take it over.`;
+    $('#delete-confirm-warn').replaceChildren();
+    if (await askDialog($('#delete-confirm')) !== 'delete') return;
+    try { await api(`/api/admin/permalinks/${encodeURIComponent(slug)}`, { method: 'DELETE' }); } catch (e) {
+      out.replaceChildren(msgBox('error', `The permalink ${esc(slug)} was not deleted: ${esc(e.message)}`));
+      this.loadPermalinks();
+      return;
+    }
+    out.replaceChildren(msgBox('ok', `Deleted the permalink <code>${esc(slug)}</code>.`));
+    this.loadPermalinks();
   }
 
   // newest upload first, those with every word of the filter somewhere
@@ -4781,8 +4960,8 @@ class AdminPage {
     const text = (d) => `#${d.id} ${d.title} ${d.uploader_name} ${d.panel_names || ''} ${d.coding_unit}`.toLowerCase();
     const shown = this.datasets.filter((d) => words.every((w) => text(d).includes(w))).sort((a, b) => b.id - a.id);
     if (!shown.length) { box.innerHTML = '<p class="muted">No dataset matches.</p>'; return; }
-    box.innerHTML = `<table class="odor-table"><thead><tr><th>#</th><th>Dataset</th><th>Uploaded</th><th>Last fly</th><th>Flies</th><th>ROIs</th><th>Odors</th><th></th></tr></thead><tbody>
-      ${shown.map((d) => `<tr><td class="num">${d.id}</td><td><a href="#browse/${d.id}">${esc(d.title)}</a></td>
+    box.innerHTML = `<table class="odor-table"><thead><tr><th>#</th><th>Dataset</th><th>Permalink</th><th>Uploaded</th><th>Last fly</th><th>Flies</th><th>ROIs</th><th>Odors</th><th></th></tr></thead><tbody>
+      ${shown.map((d) => `<tr><td class="num">${d.id}</td><td><a href="#browse/${d.id}">${esc(d.title)}</a></td><td>${d.permalink ? `<code>${esc(d.permalink)}</code>` : ''}</td>
         <td>${esc(d.uploader_name)}, ${esc(fmtDay(d.created_at))}</td><td>${esc(d.last_fly_date || '')}</td>
         <td class="num">${d.n_flies || '<span class="muted" title="Flies not given: its columns are ROIs alone">—</span>'}</td><td class="num">${d.n_units.toLocaleString()}</td><td class="num">${d.n_odors}</td>
         <td><button type="button" class="btn small" data-delete="${d.id}">Delete…</button></td></tr>`).join('')}</tbody></table>`;
@@ -4795,6 +4974,9 @@ class AdminPage {
     $('#delete-confirm-q').textContent = `Delete dataset #${id}, “${d.title}”?`;
     $('#delete-confirm-detail').innerHTML = `Uploaded by ${esc(d.uploader_name)} on ${esc(fmtDay(d.created_at))}: ${fliesText(d)}, `
       + `${d.n_units.toLocaleString()} ROIs, ${d.n_odors} odors. It is gone from the site at once; its files are moved to <code>${esc(where)}</code> on the server.`;
+    $('#delete-confirm-warn').replaceChildren(...(d.permalink ? [msgBox('warn', `<b>Its permalink <code>${esc(d.permalink)}</code> will be orphaned</b>:
+      it will point to no dataset (listed under <i>Orphaned permalinks</i>, below the datasets) until an upload like this one takes it over,
+      or it is deleted there.`)] : []));
     if (await askDialog($('#delete-confirm')) !== 'delete') return;
     let res;
     try { res = await api(`/api/admin/datasets/${id}`, { method: 'DELETE' }); } catch (e) {
@@ -4802,9 +4984,11 @@ class AdminPage {
       this.loadDatasets();
       return;
     }
-    out.replaceChildren(msgBox('ok', `Deleted #${id}, ${esc(d.title)}. ${res.files ? `Its files are in <code>${esc(res.files)}</code> on the server.` : 'It had no files on the server.'}`));
+    out.replaceChildren(msgBox('ok', `Deleted #${id}, ${esc(d.title)}. ${res.files ? `Its files are in <code>${esc(res.files)}</code> on the server.` : 'It had no files on the server.'}`
+      + (res.orphaned ? ` Its permalink <code>${esc(res.orphaned)}</code> is orphaned (below).` : '')));
     this.datasets = this.datasets.filter((x) => x.id !== id);
     this._showDatasets();
+    if (res.orphaned) this.loadPermalinks();
     browse.forget(id);
   }
 
@@ -6963,6 +7147,8 @@ const player = new MoviePlayer($('#player'), { api, esc, fmtBytes });
 let currentTab = null;
 let lastPlace = 'browse'; // the hash of the last place shown other than the Admin tab
 
+const BROWSE_EMPTY = $('#browse-empty').innerHTML;
+
 function route() {
   const [tab, id] = location.hash.replace(/^#/, '').split('/');
   const name = ['upload', 'browse', 'merge', 'compare', 'odors', 'reference', 'settings', 'headspace', 'roi-training', 'admin'].includes(tab) ? tab : 'browse';
@@ -6971,7 +7157,7 @@ function route() {
   if (name === 'admin' && currentTab !== 'admin') admin.enter(lastPlace);
   if (name !== 'admin') { admin.leave(); lastPlace = location.hash.replace(/^#/, '') || 'browse'; }
   currentTab = name;
-  if (name === 'browse') { browse.load().then(() => { if (id) browse.show(+id); }); }
+  if (name === 'browse') { browse.load().then(() => { if (id) { if (/^\d+$/.test(id)) browse.show(+id); else browse.openPermalink(decodeURIComponent(id)); } }); }
   if (name === 'odors') { odorsPage.highlightId = id ? +id : null; odorsPage.load().then(() => { if (id) odorsPage.highlight(+id); }); }
   if (name === 'reference') { reference.load().then(() => { if (id) reference.show(id); }); }
   if (name === 'settings') settings.load();
@@ -6979,7 +7165,7 @@ function route() {
   if (name === 'headspace') headspacePage.load().then(() => headspaceVcf.load());
   if (name === 'merge') mergePage.load();
   if (name === 'compare') comparePage.load();
-  if (name === 'browse' && !id) { $('#browse-empty').hidden = false; $('#dataset-view').hidden = true; browse.selected = null; }
+  if (name === 'browse' && !id) { $('#browse-empty').innerHTML = BROWSE_EMPTY; $('#browse-empty').hidden = false; $('#dataset-view').hidden = true; browse.selected = null; }
   if (name === 'reference' && !id) { $('#reference-empty').hidden = false; $('#reference-view').hidden = true; reference.selected = null; }
 }
 

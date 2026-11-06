@@ -181,6 +181,7 @@ try {
         <textarea id="readme-text" rows="26" spellcheck="false"></textarea>
         <div class="readme-preview" id="readme-preview"></div>
       </div>
+      <div id="upload-permalink" aria-live="polite"></div>
       <div id="commit-errors"></div>
       <div class="actions">
         <button type="button" class="btn" id="readme-regenerate">Regenerate from the form</button>
@@ -234,6 +235,7 @@ try {
           <div>
             <h2 id="ds-title"></h2>
             <p class="muted" id="ds-sub"></p>
+            <div class="ds-permalink" id="ds-permalink"></div>
           </div>
           <div class="ds-actions">
             <div class="ds-data-links">
@@ -797,6 +799,11 @@ try {
         <input type="search" id="admin-ds-filter" spellcheck="false" autocomplete="off" placeholder="Filter by number, title, uploader, panel or coding unit" aria-label="Filter datasets">
         <div id="admin-ds-result" aria-live="polite"></div>
         <div id="admin-ds-list"></div>
+        <h3 class="subhead">Orphaned permalinks</h3>
+        <p class="muted">Permalinks whose datasets were deleted, each with what it was of. An upload like that dataset takes its
+          permalink over (asking first if they are not the same); delete one here for its links to lead nowhere for good.</p>
+        <div id="admin-pl-result" aria-live="polite"></div>
+        <div id="admin-permalinks"></div>
       </div>
 
       <div class="step" id="admin-odors">
@@ -903,6 +910,7 @@ try {
   <form method="dialog">
     <p id="delete-confirm-q">Delete this dataset?</p>
     <p class="muted small" id="delete-confirm-detail"></p>
+    <div id="delete-confirm-warn"></div>
     <div class="actions">
       <button type="submit" value="delete" class="btn danger">Delete</button>
       <button type="submit" value="cancel" class="btn" autofocus>Cancel</button>

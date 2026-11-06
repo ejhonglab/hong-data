@@ -132,6 +132,12 @@ def _ascii(s: str) -> str:
     return re.sub(r"[^A-Za-z0-9._+-]", "", re.sub(r"\s+", "-", s.strip()))
 
 
+def main_panels(panels: list[str]) -> list[str]:
+    """Of a dataset's panels, those that name it: all but diagnostic ones
+    (`is_diagnostic_panel`), unless there are only those."""
+    return list(panels) if all(map(is_diagnostic_panel, panels)) else [p for p in panels if not is_diagnostic_panel(p)]
+
+
 def dataset_stem(d: dict, trials: list[dict]) -> str:
     """Standard file name (without extension) for one dataset's matrix:
     ``<panels>_<uploader>_<coding unit>[_<manipulations>]_<date of the last fly>``.
@@ -145,9 +151,7 @@ def dataset_stem(d: dict, trials: list[dict]) -> str:
         d: as returned by `Database.get_dataset`.
         trials: as returned by `Database.get_matrix_arrays`.
     """
-    panels = list(dict.fromkeys(t["panel"] for t in trials if t["panel"])) or d["metadata"].get("panel_names") or []
-    if not all(map(is_diagnostic_panel, panels)):
-        panels = [p for p in panels if not is_diagnostic_panel(p)]
+    panels = main_panels(list(dict.fromkeys(t["panel"] for t in trials if t["panel"])) or d["metadata"].get("panel_names") or [])
     manipulations = [m["key"] if m.get("value") is None else f"{m['key']}-{m['value']}" for m in d.get("manipulations") or []]
     parts = [*sorted(panels, key=str.casefold), d["uploader_name"].lower().replace(".", ""), d["coding_unit"],
              *manipulations, d["last_fly_date"] or ""]

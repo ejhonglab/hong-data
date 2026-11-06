@@ -23,6 +23,7 @@ clusterings     clusterings of a dataset's ROIs or odors, as a browser computed 
 from __future__ import annotations
 
 import base64
+import datetime as dt
 import hashlib
 import json
 import re
@@ -208,6 +209,15 @@ CREATE TABLE IF NOT EXISTS vcf_properties (  -- what was looked up through chemu
     looked_up_at TEXT NOT NULL,
     chemutils TEXT,                    -- the chemutils that looked it up (chemprops.installed)
     PRIMARY KEY (cid, prop)
+);
+CREATE TABLE IF NOT EXISTS permalinks (  -- names of datasets that stay theirs whatever their numbers (see permalinks.py)
+    slug TEXT PRIMARY KEY,
+    dataset_id INTEGER UNIQUE REFERENCES datasets(id) ON DELETE SET NULL,  -- null: orphaned (its dataset deleted)
+    custom INTEGER NOT NULL DEFAULT 0,  -- 1: not named as its dataset would be by default (permalinks.default_slug)
+    keys_json TEXT NOT NULL,            -- what it points (or pointed) to: permalinks.dataset_keys
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    orphaned_at TEXT                    -- when its dataset was deleted (null while it points to one)
 );
 CREATE TABLE IF NOT EXISTS file_log (  -- files the server has read or written in its own folders (see filelog.py)
     path TEXT PRIMARY KEY,             -- as the server sees it (in Docker, in the container)
@@ -462,7 +472,9 @@ class Database:
         by_ds: dict[int, list[dict]] = {}
         for p in panels:
             by_ds.setdefault(p["dataset_id"], []).append({"panel": p["panel"], "source": p["source"]})
-        return [_diagnostics(self._renamed({**_parsed(dict(r)), "panels": by_ds.get(r["id"], [])}, renames)) for r in rows]
+        links = self._permalink_slugs()
+        return [_diagnostics(self._renamed({**_parsed(dict(r)), "panels": by_ds.get(r["id"], []), "permalink": links.get(r["id"])},
+                                           renames)) for r in rows]
 
     def panel_renames(self) -> dict[str, str]:
         """Panels shown under other names (the setting `PANEL_RENAMES`): {name in the data: name shown}."""
@@ -534,6 +546,7 @@ class Database:
         d["odor_yaml_files"] = json.loads(d.get("odor_yaml_files") or "[]")
         d["experiment_xml_info"] = json.loads(d["experiment_xml_info"]) if d.get("experiment_xml_info") else None
         d["panels"] = [dict(p) for p in panels]
+        d["permalink"] = self.permalink_of(ds_id)
         return _diagnostics(self._renamed(d, self.panel_renames()) if as_shown else d)
 
     def get_matrix_arrays(self, ds_id: int) -> Optional[dict]:
@@ -661,18 +674,89 @@ class Database:
         with self.connect() as con:
             con.execute("UPDATE datasets SET readme_md = ?, readme_edited = 1 WHERE id = ?", (readme_md, ds_id))
 
-    def delete_dataset(self, ds_id: int, before_commit: Optional[Callable[[], None]] = None) -> bool:
-        """Delete a dataset and all its rows; False if there is no such dataset.
+    def delete_dataset(self, ds_id: int, before_commit: Optional[Callable[[], None]] = None,
+                       permalink_keys: Optional[dict] = None, when: Optional[str] = None) -> bool:
+        """Delete a dataset and all its rows, its permalink (if any) orphaned; False if there
+        is no such dataset.
 
         Args:
             before_commit: called once the rows are deleted but before that is committed;
                 nothing is deleted if it raises.
+            permalink_keys: what its permalink keeps of it (`permalinks.dataset_keys`), as it
+                is deleted; `when`: then.
         """
+        when = when or dt.datetime.now().isoformat(timespec="seconds")
         with self.connect() as con:
+            if permalink_keys is not None:
+                con.execute("UPDATE permalinks SET keys_json = ? WHERE dataset_id = ?", (json.dumps(permalink_keys), ds_id))
+            con.execute("UPDATE permalinks SET dataset_id = NULL, orphaned_at = ?, updated_at = ? WHERE dataset_id = ?",
+                        (when, when, ds_id))
             cur = con.execute("DELETE FROM datasets WHERE id = ?", (ds_id,))
             if cur.rowcount and before_commit:
                 before_commit()
             return cur.rowcount > 0
+
+    # -------------------------------------------------------------- permalinks
+    @staticmethod
+    def _permalink(r: sqlite3.Row) -> dict:
+        return {"slug": r["slug"], "dataset_id": r["dataset_id"], "custom": bool(r["custom"]), "keys": json.loads(r["keys_json"]),
+                "created_at": r["created_at"], "updated_at": r["updated_at"], "orphaned_at": r["orphaned_at"]}
+
+    def _permalink_slugs(self) -> dict[int, str]:
+        with self.connect() as con:
+            return {r[0]: r[1] for r in con.execute("SELECT dataset_id, slug FROM permalinks WHERE dataset_id IS NOT NULL")}
+
+    def list_permalinks(self) -> list[dict]:
+        """Every permalink (see permalinks.py), the orphaned last, each newest first."""
+        with self.connect() as con:
+            rows = con.execute("SELECT * FROM permalinks ORDER BY dataset_id IS NULL, coalesce(orphaned_at, created_at) DESC, slug").fetchall()
+        return [self._permalink(r) for r in rows]
+
+    def get_permalink(self, slug: str) -> Optional[dict]:
+        with self.connect() as con:
+            r = con.execute("SELECT * FROM permalinks WHERE slug = ?", (slug,)).fetchone()
+        return self._permalink(r) if r else None
+
+    def permalink_of(self, ds_id: int) -> Optional[dict]:
+        """A dataset's permalink, if it has one."""
+        with self.connect() as con:
+            r = con.execute("SELECT * FROM permalinks WHERE dataset_id = ?", (ds_id,)).fetchone()
+        return self._permalink(r) if r else None
+
+    def set_permalink(self, slug: str, ds_id: int, keys: dict, custom: bool, when: str, old: Optional[str] = None) -> None:
+        """Name a dataset's permalink `slug`: a new one, or its permalink `old` renamed (to
+        itself, or an orphaned one taken over: then pointed to it), keeping `keys`
+        (`permalinks.dataset_keys`).
+
+        Raises:
+            sqlite3.IntegrityError: if `slug` is another permalink's, or the dataset has another.
+        """
+        with self.connect() as con:
+            if old is None:
+                con.execute("INSERT INTO permalinks (slug, dataset_id, custom, keys_json, created_at, updated_at) VALUES (?,?,?,?,?,?)",
+                            (slug, ds_id, int(custom), json.dumps(keys), when, when))
+            else:
+                cur = con.execute("UPDATE permalinks SET slug = ?, dataset_id = ?, custom = ?, keys_json = ?, updated_at = ?, "
+                                  "orphaned_at = NULL WHERE slug = ?", (slug, ds_id, int(custom), json.dumps(keys), when, old))
+                if not cur.rowcount:
+                    raise sqlite3.IntegrityError(f"no permalink {old!r}")
+
+    def update_permalink_keys(self, ds_id: int, keys: dict, when: str) -> None:
+        """What a dataset's permalink (if any) keeps of it, as it is now (its details edited)."""
+        with self.connect() as con:
+            con.execute("UPDATE permalinks SET keys_json = ?, updated_at = ? WHERE dataset_id = ?", (json.dumps(keys), when, ds_id))
+
+    def delete_permalink(self, slug: str) -> Optional[bool]:
+        """Delete an orphaned permalink: True; False if it points to a dataset (not deleted);
+        None if there is none of that name."""
+        with self.connect() as con:
+            r = con.execute("SELECT dataset_id FROM permalinks WHERE slug = ?", (slug,)).fetchone()
+            if r is None:
+                return None
+            if r["dataset_id"] is not None:
+                return False
+            con.execute("DELETE FROM permalinks WHERE slug = ?", (slug,))
+            return True
 
     # -------------------------------------------------------------- clusterings
     def get_clusterings(self, ds_id: int, keys: list[str], when: str) -> dict[str, tuple[bytes, bytes]]:

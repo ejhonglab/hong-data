@@ -141,6 +141,24 @@ between the frontend and the server. Using the app is described in
   again (`ingest.FLIES_NEEDED`, `TRIALS_NEEDED`), but those stored then are still shown,
   so storage, the viewer and downloads keep handling them, and files of ROIs alone are
   still read far enough to say what they lack.
+- **A permalink names a dataset by what it is, not its number** (`app/permalinks.py`,
+  table `permalinks`). Datasets are replaced by deleting and uploading again, which gives
+  them new numbers, so a permalink keeps what its dataset is (`dataset_keys`): its
+  identity (`IDENTITY`: uploader, indicator, driver, coding unit, manipulations and
+  the panels that name it, `export.main_panels`, as in its downloads' names), its flies
+  (date, fly_num) and its trials (panel, odor, repeat). Panels are part of the identity
+  because one person's datasets of a coding unit are told apart by them (Tom's megamat,
+  validation2 and kiwi glomeruli datasets). While a permalink points to a dataset, an
+  upload of its identity is refused, whatever its flies and trials (one dataset of
+  each); once its dataset is deleted (the permalink then kept as it was, `orphaned_at`),
+  an upload of that identity with some panels or flies in common (`compare`: related)
+  takes it over: at once if all is the same, else once Proceed is pressed under what
+  differs (`differences`), which saving checks again (`permalink_proceed`). Its name
+  follows its dataset's default (`default_slug`: its download's stem, ASCII, lowercase,
+  '-' for the rest) until renamed by hand (`custom`); an edit changing the default asks
+  before renaming it (409 `permalink_change` until `permalink_proceed` names the new one).
+  `/d/<name>` leads to `#browse/<name>`, which Browse looks up (an orphaned one says what
+  it was of); a name needs a letter, so `#browse/<number>` stays a dataset's number.
 - **Duplicates are the same data, or the same flies of one person, coding unit and manipulations.** A
   file is refused if it is any of a stored dataset's files byte for byte (`data_files`), or its data
   is (the same flies, ROIs, trials and values: `main._same_data`), whoever uploaded it,
@@ -1053,16 +1071,25 @@ POST   /api/stage/{id}/odor_yaml            multipart 'file' (repeatable), or {"
 DELETE /api/stage/{id}/odor_yaml/{name}     → the same, without that file
 POST   /api/stage/{id}/experiment_xml       multipart 'file', or {"tensor_path"}
 DELETE /api/stage/{id}/experiment_xml
-POST   /api/stage/{id}/readme               {"metadata": {...}} → README.md text
-POST   /api/stage/{id}/commit               {"metadata", "readme", "readme_edited"} → {"dataset_id"}
+POST   /api/stage/{id}/readme               {"metadata": {...}} → README.md text, and the orphaned
+                                            permalink it would take over: {slug, exact, differences}
+POST   /api/stage/{id}/commit               {"metadata", "readme", "readme_edited", "permalink_proceed"}
+                                            → {"dataset_id", "permalink": the one it took over}
                                             (422 unless each odor is one in the odor table)
 GET    /api/datasets                        list
-GET    /api/datasets/{id}                   metadata + README (markdown and HTML, and its path)
+GET    /api/datasets/{id}                   metadata + README (markdown and HTML, and its path), its
+                                            permalink and default_permalink (the name one would have)
 PUT    /api/datasets/{id}/readme            {"readme", "base"} → the README overwritten (409 if it is
                                             no longer "base", the one the edit started from)
 PUT    /api/datasets/{id}/metadata          {"metadata", "base"} → the values entered at upload replaced,
                                             checked as an upload's: {changed, readme: "generated" |
-                                            "kept"} (409 if they are no longer "base")
+                                            "kept", permalink} (409 if they are no longer "base"; 409
+                                            {permalink_change: {from, to}} until "permalink_proceed" is
+                                            "to", if they would rename its permalink)
+PUT    /api/datasets/{id}/permalink         {"slug"} → its permalink made or renamed (422 if not a
+                                            name; 409 if another's)
+GET    /api/permalinks/{name}               {slug, dataset_id (null: orphaned), custom, summary, …}
+GET    /d/{name}                            → #browse/{name}
 GET    /api/datasets/{id}/matrix            units, trials, base64 float32 values
 GET    /api/datasets/{id}/files/{path}      original files
 GET    /api/compare/datasets/{id}           its odors × glomeruli (or ROIs), every trial (and fly) averaged,
@@ -1187,7 +1214,10 @@ POST   /api/admin/chemutils/relookup        {"props": [...]}: look up again (in 
 POST   /api/admin/restart                   the server stops, for Docker or systemd to start it
                                             again (409 if neither would)
 DELETE /api/admin/datasets/{id}             the dataset deleted, its folder moved to
-                                            data/deleted/<id>/ → {"files": where it went}
+                                            data/deleted/<id>/ → {"files": where it went, "orphaned":
+                                            its permalink, if any}
+GET    /api/admin/permalinks                every permalink, the orphaned last
+DELETE /api/admin/permalinks/{name}         an orphaned permalink deleted (409 if it points to one)
 POST   /api/admin/references/check          {"path", "chemical_axis", "kind"} → whether it can be
                                             added, read now (a preview) or after a restart (steps)
 POST   /api/admin/references                {"path", "title", "description", "source", "kind",

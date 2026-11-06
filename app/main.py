@@ -23,6 +23,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
+from urllib.parse import quote
 
 import markdown
 import numpy as np
@@ -33,13 +34,13 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
-from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
+from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from . import (backup, bundle_import, chemprops, compare, config, dilution, export, filelog, headspace, lotus, lotus_import,
-               merge, metacyc, metacyc_import, movies, odormeta, reference, roi_training, sandbox, tensor, thorimage, vcf,
-               version, yamlcheck)
+               merge, metacyc, metacyc_import, movies, odormeta, permalinks, reference, roi_training, sandbox, tensor, thorimage,
+               vcf, version, yamlcheck)
 from .db import PANEL_RENAMES, PROPERTY_COLUMNS, Database, rename_panel
 from .glomeruli import GLOMERULI, load_glomeruli
 from .ingest import (ParsedData, ValidationError, combine, extra_text, files_text, fly_key, kc_id_problems, load_file,
@@ -373,6 +374,41 @@ def _duplicates(parsed: ParsedData, files: list[dict], uploader: Optional[str] =
             warnings.append(f"possible duplicate: {len(shared)} of its {len(flies)} flies ({_flies_text(shared)}) "
                             f"{'is' if len(shared) == 1 else 'are'} also in {which}, {tail}")
     return errors, warnings
+
+
+def _permalink_check(parsed: ParsedData, m: Metadata) -> tuple[list[str], Optional[dict]]:
+    """An upload (its data, and its metadata as entered) against the permalinks (permalinks.py):
+    errors (refusing it) for each that points to a dataset of its identity
+    (`permalinks.IDENTITY`), whatever their flies and trials, as one dataset is kept of each;
+    and of the orphaned ones it is like (`permalinks.compare`: related), the likest (the same
+    first, then the one with the most flies and trials in common), which it takes over once
+    saved: {slug, exact, was (what it pointed to), orphaned_at, differences}, or None."""
+    new = permalinks.upload_keys(parsed.units, parsed.trials, m.model_dump(), db.panel_renames())
+    errors, best, rank = [], None, None
+    for p in db.list_permalinks():
+        k, c = p["keys"], permalinks.compare(p["keys"], new)
+        if p["dataset_id"] is not None:
+            if c["same"]:
+                errors.append(
+                    f"the permalink '{p['slug']}' is of dataset #{p['dataset_id']} ({k.get('title')}), of the same uploader, "
+                    f"indicator, driver, coding unit, manipulations and panels ({', '.join(k.get('panels') or []) or 'none'}) as this, "
+                    "and one dataset is kept of each, whatever their flies, odors and trials. If this replaces it, delete "
+                    f"#{p['dataset_id']} first (Admin tab): its permalink then points to this, once saved")
+        elif c["related"] and (rank is None or (c["exact"], c["shared"]) > rank):
+            rank = (c["exact"], c["shared"])
+            best = {"slug": p["slug"], "exact": c["exact"], "was": permalinks.summary(k), "orphaned_at": _aware(p["orphaned_at"]),
+                    "differences": [] if c["exact"] else permalinks.differences(c, k, new)}
+    return errors, best
+
+
+def _public_permalink(p: Optional[dict]) -> Optional[dict]:
+    """A permalink as the API gives it: what it points (or pointed) to said, not all it keeps."""
+    if p is None:
+        return None
+    return {"slug": p["slug"], "dataset_id": p["dataset_id"], "custom": p["custom"],
+            **{k: _aware(p[k]) for k in ("created_at", "updated_at", "orphaned_at")},
+            "summary": permalinks.summary(p["keys"]), "panels": p["keys"].get("panels") or [],
+            "uploaded_at": _aware(p["keys"].get("uploaded_at"))}
 
 
 def _public_stage(meta: dict) -> dict:
@@ -731,6 +767,8 @@ async def stage_readme(request: Request) -> Response:
         return JSONResponse({"ok": False, "errors": [kc]}, status_code=422)
     errors, warnings = await run_in_threadpool(_duplicates, parsed, _stage_files(meta), m.uploader_name, m.coding_unit,
                                                m.manipulations, m.response_calc)
+    linked, orphan = await run_in_threadpool(_permalink_check, parsed, m)
+    errors += linked
     if errors:
         return JSONResponse({"ok": False, "errors": errors}, status_code=422)
     summary = parsed.summary()
@@ -744,7 +782,7 @@ async def stage_readme(request: Request) -> Response:
             "sources": _tensor_sources(meta),
         },
     )
-    return JSONResponse({"ok": True, "readme": readme, "title": dataset_title(m, summary), "warnings": warnings})
+    return JSONResponse({"ok": True, "readme": readme, "title": dataset_title(m, summary), "warnings": warnings, "permalink": orphan})
 
 
 def _kc_problem(units: list[dict], coding_unit: str) -> Optional[str]:
@@ -756,13 +794,20 @@ def _kc_problem(units: list[dict], coding_unit: str) -> Optional[str]:
     return kc_id_problems(units)
 
 
-def _commit(d: Path, meta: dict, m: Metadata, readme: str, readme_edited: bool) -> dict:
+def _commit(d: Path, meta: dict, m: Metadata, readme: str, readme_edited: bool, proceed: Optional[str] = None) -> dict:
+    """Save an upload, checked again; an orphaned permalink it is like (`_permalink_check`)
+    pointed to it, if the same, or if `proceed` names it (as the upload form's Proceed does)."""
     parsed = load_parsed(d / "parsed")
     summary = parsed.summary()
     # consistency checks that must pass before anything is written
     problems = [p for p in [_kc_problem(parsed.units, m.coding_unit)] if p]
     files = _stage_files(meta)
     problems += _duplicates(parsed, files, m.uploader_name, m.coding_unit, m.manipulations, m.response_calc)[0]
+    linked, orphan = _permalink_check(parsed, m)
+    problems += linked
+    if orphan and not orphan["exact"] and proceed != orphan["slug"]:
+        problems.append(f"it is like the dataset the orphaned permalink '{orphan['slug']}' was of, but not the same: Proceed "
+                        "(above the Save button) for that permalink to point to this, once saved")
     if meta["odor_yamls"]:
         check = _run_yaml_check(d, meta)
         if not check["ok"]:
@@ -780,7 +825,7 @@ def _commit(d: Path, meta: dict, m: Metadata, readme: str, readme_edited: bool) 
                         f"{', …' if len(unmatched) > 10 else ''}): add them to the odor sheet and sync it (the upload form "
                         "shows how), or attach an odor YAML naming them")
     if problems:
-        return {"ok": False, "errors": problems}
+        return {"ok": False, "errors": problems, "permalink": orphan}
 
     created_at = dt.datetime.now()
     title = dataset_title(m, summary)
@@ -835,8 +880,19 @@ def _commit(d: Path, meta: dict, m: Metadata, readme: str, readme_edited: bool) 
         ),
         encoding="utf-8",
     )
+    taken = None
+    if orphan:  # (the dataset is saved whatever happens to it)
+        try:
+            new, m_new = db.get_dataset(ds_id), db.get_matrix_arrays(ds_id)
+            db.set_permalink(orphan["slug"], ds_id, permalinks.dataset_keys(new, m_new),
+                             orphan["slug"] != permalinks.default_slug(new, m_new["trials"]),
+                             created_at.isoformat(timespec="seconds"), old=orphan["slug"])
+            taken = orphan["slug"]
+            log.info("dataset %d took over the orphaned permalink %s", ds_id, taken)
+        except sqlite3.IntegrityError as e:
+            log.warning("dataset %d could not take over the permalink %s: %s", ds_id, orphan["slug"], e)
     shutil.rmtree(d, ignore_errors=True)
-    return {"ok": True, "dataset_id": ds_id, "title": title}
+    return {"ok": True, "dataset_id": ds_id, "title": title, "permalink": taken}
 
 
 async def stage_commit(request: Request) -> Response:
@@ -851,7 +907,8 @@ async def stage_commit(request: Request) -> Response:
     readme = body.get("readme")
     if not isinstance(readme, str) or not readme.strip():
         return JSONResponse({"ok": False, "errors": ["README is empty"]}, status_code=422)
-    result = await run_in_threadpool(_commit, d, meta, m, readme, bool(body.get("readme_edited")))
+    proceed = body.get("permalink_proceed") if isinstance(body.get("permalink_proceed"), str) else None
+    result = await run_in_threadpool(_commit, d, meta, m, readme, bool(body.get("readme_edited")), proceed)
     return JSONResponse(result, status_code=200 if result["ok"] else 422)
 
 
@@ -885,7 +942,16 @@ async def dataset_get(request: Request) -> Response:
     if d.get("experiment_xml_file"):
         files.append(d["experiment_xml_file"])
     d["files"] = files
+    d["permalink"] = _public_permalink(d["permalink"])
+    d["default_permalink"] = await run_in_threadpool(_default_permalink, d)
     return JSONResponse(d)
+
+
+def _default_permalink(d: dict) -> str:
+    """The name a dataset's permalink would have by default (`permalinks.default_slug`), but
+    for those of others (with -2, -3... after it)."""
+    taken = {p["slug"] for p in db.list_permalinks() if p["dataset_id"] != d["id"]}
+    return permalinks.unique(permalinks.default_slug(d, db.get_trials(d["id"])), taken)
 
 
 _readme_lock = threading.Lock()
@@ -1051,9 +1117,11 @@ def _as_entered(metadata: dict) -> dict:
         return metadata
 
 
-def _save_metadata(ds_id: int, values: Any, base: dict) -> tuple[int, dict]:
+def _save_metadata(ds_id: int, values: Any, base: dict, proceed: Optional[str] = None) -> tuple[int, dict]:
     """Replace a dataset's metadata as entered at upload with `values` (checked as an upload's
-    are) if it is still `base` (as shown): (status, response)."""
+    are) if it is still `base` (as shown): (status, response). If its permalink is named as by
+    default and its default changes, it is renamed so, once `proceed` names the new one (409
+    with ``permalink_change`` {from, to} until it does)."""
     with _metadata_lock:  # one at a time, so that what is saved is what `base` was checked against
         shown, d = db.get_dataset(ds_id), db.get_dataset(ds_id, as_shown=False)
         if shown is None:
@@ -1081,6 +1149,18 @@ def _save_metadata(ds_id: int, values: Any, base: dict) -> tuple[int, dict]:
         changed = {k: [old.get(k), v] for k, v in new.items() if old.get(k) != v}
         if not changed:
             return 200, {"ok": True, "changed": [], "readme": "kept"}
+        link, rename = shown["permalink"], None
+        if link and not link["custom"]:
+            trials, renames = db.get_trials(ds_id), db.panel_renames()
+            edited = {**shown, "uploader_name": m.uploader_name, "coding_unit": m.coding_unit, "manipulations": m.manipulations or [],
+                      "metadata": {**shown["metadata"], "panel_names": [rename_panel(p, renames) for p in m.panel_names or []]}}
+            if permalinks.default_slug(edited, trials) != permalinks.default_slug(shown, trials):
+                to = permalinks.unique(permalinks.default_slug(edited, trials),
+                                       {p["slug"] for p in db.list_permalinks()} - {link["slug"]})
+                if to != link["slug"]:
+                    if proceed != to:
+                        return 409, {"ok": False, "errors": [], "permalink_change": {"from": link["slug"], "to": to}}
+                    rename = to
         title = dataset_title(m, d["summary"])
         folder = config.DATASETS_DIR / str(ds_id)
         try:
@@ -1093,6 +1173,14 @@ def _save_metadata(ds_id: int, values: Any, base: dict) -> tuple[int, dict]:
                      "sources": (saved or {}).get("tensor_sources") or {}}
             readme = generate_readme(m, d["summary"], files, created_at=dt.datetime.fromisoformat(d["created_at"]))
         db.update_metadata(ds_id, new, title, readme)
+        if link:  # (what it keeps of the dataset, as it is now)
+            when = dt.datetime.now().isoformat(timespec="seconds")
+            keys = permalinks.dataset_keys(db.get_dataset(ds_id), db.get_matrix_arrays(ds_id))
+            if rename:
+                db.set_permalink(rename, ds_id, keys, False, when, old=link["slug"])
+                log.info("permalink %s of dataset %d renamed %s, as its default", link["slug"], ds_id, rename)
+            else:
+                db.update_permalink_keys(ds_id, keys, when)
         if readme is not None:
             folder.mkdir(parents=True, exist_ok=True)
             (folder / "README.md").write_text(readme, encoding="utf-8")
@@ -1101,21 +1189,69 @@ def _save_metadata(ds_id: int, values: Any, base: dict) -> tuple[int, dict]:
             saved.setdefault("edits", []).append({"at": dt.datetime.now().isoformat(timespec="seconds"), "changed": changed})
             (folder / "metadata.json").write_text(json.dumps(saved, indent=1), encoding="utf-8")
     log.info("metadata of dataset %d edited: %s", ds_id, ", ".join(changed))
-    return 200, {"ok": True, "changed": list(changed), "readme": "kept" if readme is None else "generated"}
+    return 200, {"ok": True, "changed": list(changed), "readme": "kept" if readme is None else "generated",
+                 "permalink": rename or (link and link["slug"])}
 
 
 async def dataset_metadata_save(request: Request) -> Response:
     """Replace a dataset's metadata as entered at upload ({"metadata": every field, as an
     upload sends them; "base": its metadata as the edit started from}), checked as an
     upload's (its data paths, those changed); its title and panels follow, and its README if
-    it was not edited by hand. 409 if it was changed on the server since `base`."""
+    it was not edited by hand. 409 if it was changed on the server since `base`, or (with
+    ``permalink_change``) if its permalink would be renamed and "permalink_proceed" does not
+    name the new one (see `_save_metadata`)."""
     ds_id = int(request.path_params["ds_id"])
     body = await request.json()
     values, base = (body.get("metadata"), body.get("base")) if isinstance(body, dict) else (None, None)
     if not isinstance(values, dict) or not isinstance(base, dict):
         return json_error(400, 'expected {"metadata": {...}, "base": {...}}')
-    status, result = await run_in_threadpool(_save_metadata, ds_id, values, base)
+    proceed = body.get("permalink_proceed") if isinstance(body.get("permalink_proceed"), str) else None
+    status, result = await run_in_threadpool(_save_metadata, ds_id, values, base, proceed)
     return JSONResponse(result, status_code=status)
+
+
+def _save_permalink(ds_id: int, slug: Any) -> tuple[int, dict]:
+    """Name a dataset's permalink `slug` (a new one, or its own renamed): (status, response)."""
+    if not isinstance(slug, str):
+        return 400, {"error": 'expected {"slug": ...}'}
+    problem = permalinks.slug_problem(slug)
+    if problem:
+        return 422, {"ok": False, "errors": [f"not a permalink's name: {problem}"]}
+    with _metadata_lock:
+        d = db.get_dataset(ds_id)
+        if d is None:
+            return 404, {"error": "dataset not found"}
+        other, own = db.get_permalink(slug), d["permalink"]
+        if other and other["dataset_id"] != ds_id:
+            whose = (f"dataset #{other['dataset_id']}'s" if other["dataset_id"] is not None
+                     else "an orphaned permalink's (its dataset was deleted; it can be deleted in the Admin tab)")
+            return 409, {"ok": False, "errors": [f"'{slug}' is {whose} already"]}
+        m = db.get_matrix_arrays(ds_id)
+        db.set_permalink(slug, ds_id, permalinks.dataset_keys(d, m), slug != permalinks.default_slug(d, m["trials"]),
+                         dt.datetime.now().isoformat(timespec="seconds"), old=own and own["slug"])
+    log.info("permalink of dataset %d: %s%s", ds_id, slug, f" (was {own['slug']})" if own and own["slug"] != slug else "")
+    return 200, {"ok": True, "permalink": _public_permalink(db.permalink_of(ds_id))}
+
+
+async def dataset_permalink_save(request: Request) -> Response:
+    """Name a dataset's permalink ({"slug"}): lowercase letters, digits and '-' (see permalinks.py)."""
+    body = await request.json()
+    status, result = await run_in_threadpool(_save_permalink, int(request.path_params["ds_id"]),
+                                             body.get("slug") if isinstance(body, dict) else None)
+    return JSONResponse(result, status_code=status)
+
+
+async def permalink_get(request: Request) -> Response:
+    """A permalink: the dataset it points to (``dataset_id``, null if orphaned) and what it is (or was)."""
+    p = await run_in_threadpool(db.get_permalink, request.path_params["slug"])
+    if p is None:
+        return json_error(404, "no permalink of that name")
+    return JSONResponse(_public_permalink(p))
+
+
+async def permalink_follow(request: Request) -> Response:
+    """A permalink followed (/d/<name>): its dataset in Browse (which says if it points to none)."""
+    return RedirectResponse(f"/#browse/{quote(request.path_params['slug'], safe='')}", status_code=302)
 
 
 # ---------------------------------------------------------------------- movies
@@ -2780,14 +2916,39 @@ def _delete_dataset(ds_id: int) -> tuple[int, dict]:
             shutil.move(str(src), dest)
             moved.append(dest)
 
+    link = db.permalink_of(ds_id)
+    keys = None
+    if link:  # (what its permalink keeps of it, as it is deleted)
+        d, m = db.get_dataset(ds_id), db.get_matrix_arrays(ds_id)
+        keys = permalinks.dataset_keys(d, m) if d and m else None
     try:
         with _readme_lock:  # not while its README is being overwritten
-            if not db.delete_dataset(ds_id, before_commit=move):
+            if not db.delete_dataset(ds_id, before_commit=move, permalink_keys=keys,
+                                     when=dt.datetime.now().isoformat(timespec="seconds")):
                 return 404, {"error": "dataset not found"}
     except OSError as e:
         return 500, {"error": f"its folder could not be moved to {dest.parent}, so nothing was deleted ({e})"}
-    log.info("dataset %d deleted in the Admin tab; its files: %s", ds_id, moved[0] if moved else "none")
-    return 200, {"ok": True, "files": str(moved[0]) if moved else None}
+    log.info("dataset %d deleted in the Admin tab; its files: %s%s", ds_id, moved[0] if moved else "none",
+             f"; its permalink {link['slug']} orphaned" if link else "")
+    return 200, {"ok": True, "files": str(moved[0]) if moved else None, "orphaned": link and link["slug"]}
+
+
+async def admin_permalinks(request: Request) -> Response:
+    """Every permalink (see permalinks.py), the orphaned last."""
+    rows = await run_in_threadpool(db.list_permalinks)
+    return JSONResponse({"permalinks": [_public_permalink(p) for p in rows]})
+
+
+async def admin_permalink_delete(request: Request) -> Response:
+    """Delete an orphaned permalink (409 if it points to a dataset)."""
+    slug = request.path_params["slug"]
+    done = await run_in_threadpool(db.delete_permalink, slug)
+    if done is None:
+        return json_error(404, "no permalink of that name")
+    if not done:
+        return json_error(409, "it points to a dataset: rename it in Browse, or delete the dataset first")
+    log.info("orphaned permalink %s deleted in the Admin tab", slug)
+    return JSONResponse({"ok": True})
 
 
 async def admin_reference_check(request: Request) -> Response:
@@ -2999,6 +3160,9 @@ routes = [
     Route("/api/datasets/{ds_id:int}/matrix", dataset_matrix),
     Route("/api/datasets/{ds_id:int}/readme", dataset_readme_save, methods=["PUT"]),
     Route("/api/datasets/{ds_id:int}/metadata", dataset_metadata_save, methods=["PUT"]),
+    Route("/api/datasets/{ds_id:int}/permalink", dataset_permalink_save, methods=["PUT"]),
+    Route("/api/permalinks/{slug}", permalink_get),
+    Route("/d/{slug}", permalink_follow),
     Route("/api/datasets/{ds_id:int}/files/{path:path}", dataset_file),
     Route("/api/datasets/{ds_id:int}/odors", dataset_odor_table),
     Route("/api/datasets/{ds_id:int}/odors.{fmt}", dataset_odors_file),
@@ -3056,6 +3220,8 @@ routes = [
     Route("/api/admin/chemutils/relookup", admin_chemutils_relookup, methods=["POST"]),
     Route("/api/admin/restart", admin_restart, methods=["POST"]),
     Route("/api/admin/datasets/{ds_id:int}", admin_dataset_delete, methods=["DELETE"]),
+    Route("/api/admin/permalinks", admin_permalinks),
+    Route("/api/admin/permalinks/{slug}", admin_permalink_delete, methods=["DELETE"]),
     Route("/api/admin/references/check", admin_reference_check, methods=["POST"]),
     Route("/api/admin/references", admin_reference_add, methods=["POST"]),
     Route("/api/admin/references/{ref_id}", admin_reference_delete, methods=["DELETE"]),

@@ -107,6 +107,6 @@ def test_edit_first_name(main, stored):  # noqa: F811
 def test_edit_readme_by_hand(main, stored):  # noqa: F811
     ds_id = stored(readme_edited=True)
     status, r = save(main, ds_id, {**MD, "genotype": "w;+;+"})
-    assert status == 200 and r == {"ok": True, "changed": ["genotype"], "readme": "kept"}
+    assert status == 200 and r == {"ok": True, "changed": ["genotype"], "readme": "kept", "permalink": None}
     assert main.db.get_dataset(ds_id)["readme_md"] == "# by hand\n"
     assert (config.DATASETS_DIR / str(ds_id) / "README.md").read_text() == "# by hand\n"
