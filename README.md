@@ -513,7 +513,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   with it ticked; under the list, a link to the Admin tab to add reference datasets.
   Their chemicals are labelled by
   their names in the Odors tab where they can be matched (or abbreviations, or as in the
-  file: *Chemicals* in the viewer), the rest as in the file. A yellow warning is by a
+  file: *Chemicals* in the viewer), the rest as in the file; those written as datasets
+  write odors keep their concentration (`2-heptanone @ -3`). Odors so written that are
+  not in the Odors table are listed above its matrix as an upload's are, with their rows
+  for the odor sheet and a button to sync it. A yellow warning is by a
   table with chemicals not identified by a CID or InChI (in the file, or through the
   Odors tab), naming the first of them, with all of them to show and copy (also when
   adding one in the Admin tab); these are left out of its matrix unless a box by the
@@ -521,8 +524,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   its notes shows only those that are (and of its other axis, only what any of them is
   not 0 or missing in, e.g. the pathways they are in). One that cannot be read is listed
   by its name alone, with why.
-  A table of glomeruli (by their labels) has no chemicals, and so no warning: it says it
-  can be compared with datasets on their glomeruli. Its other axis is taken to be KCs:
+  A table of glomeruli (by their labels) says it can be compared with datasets on their
+  glomeruli. Unless its other axis is odors (as datasets write them, e.g. ORN responses),
+  it has no chemicals, and so no warning, and its other axis is taken to be KCs:
   *Sum over KCs* in the viewer (here and in the Compare tab) shows each glomerulus's
   values summed over them (those not removed; missing values left out), as one row or
   column.
@@ -723,7 +727,12 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     to them (itself, to read only), and read once the server restarts, with what that
     takes in Docker or systemd. Chemicals are matched to the Odors table by CID, else
     InChI, else CAS, MetaCyc or LOTUS ID, name or abbreviation, never against a CID or
-    InChI given. Deleting one deletes the copy (never the file), and takes its file off
+    InChI given. An axis whose labels are mostly odors as datasets write them
+    (`<abbreviation> @ <log10 conc>`, e.g. `2h @ -3`; at least 3) is taken to be its
+    chemicals (unless *Chemicals are* says otherwise), matched by abbreviation as a
+    dataset's odors are; those not in the Odors table are listed as an upload's are, with
+    their rows to copy into the odor sheet and a button to sync it, here and by the dataset
+    in the Reference data tab. Deleting one deletes the copy (never the file), and takes its file off
     the folders the server may read if it was added there for it. When one cannot be
     read, it says why, with a red dot on the Admin tab.
     *Import MetaCyc*, below it, does what the script does ([Scripting](#scripting)) from

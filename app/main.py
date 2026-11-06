@@ -2473,6 +2473,12 @@ def _odor_matches(trials: list[dict], yaml_odors: list[yamlcheck.YamlOdor]) -> d
     return {"rows": rows, "odors": odors, "missing": missing, "sheet": sheet}
 
 
+def _label_odor_matches(labels: list[str]) -> dict:
+    """`_odor_matches` of odors as a reference dataset's labels name them (as datasets write
+    them, '<abbreviation> @ <log10 conc>'), each as a trial of its own, of no panel."""
+    return _odor_matches([{"panel": None, "components": [lab]} for lab in labels], [])
+
+
 def _unmatched(rows: list[dict]) -> list[str]:
     """The odors (as in the data) of `_odor_matches` rows not one odor in the odor table."""
     return list(dict.fromkeys(r["odor"] for r in rows if r["odor_id"] is None))
@@ -2693,6 +2699,9 @@ async def reference_get(request: Request) -> Response:
     if data is None:
         return json_error(404, "reference dataset not found")
     data["imported_at"] = _aware(data.get("imported_at"))
+    c = data.get("chemicals") or {}
+    if c.get("odors"):  # (its odors checked against the odor table as an upload's are: what the odor sheet needs)
+        data["odor_check"] = await run_in_threadpool(_label_odor_matches, [it["label"] for it in data[c["axis"]]])
     body = await run_in_threadpool(lambda: json.dumps(data, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode())
     if len(body) > 1_000_000 and "gzip" in request.headers.get("accept-encoding", ""):
         body = await run_in_threadpool(gzip.compress, body, 6)
@@ -3039,8 +3048,12 @@ async def admin_reference_check(request: Request) -> Response:
         return json_error(400, 'expected {"path": ...}')
     axis = body.get("chemical_axis") if body.get("chemical_axis") in reference.AXES else "detect"
     kind = body.get("kind") if body.get("kind") in reference.KINDS else "detect"
-    return JSONResponse(await run_in_threadpool(
-        lambda: reference.check(str(body.get("path") or ""), axis, kind, _odor_index(), _supervisor(), body.get("fields"))))
+    c = await run_in_threadpool(
+        lambda: reference.check(str(body.get("path") or ""), axis, kind, _odor_index(), _supervisor(), body.get("fields")))
+    labels = (c.get("preview") or {}).pop("odor_labels", None)
+    if labels:  # (its odors checked against the odor table as an upload's are: what the odor sheet needs)
+        c["odor_check"] = await run_in_threadpool(_label_odor_matches, labels)
+    return JSONResponse(c)
 
 
 async def admin_reference_add(request: Request) -> Response:

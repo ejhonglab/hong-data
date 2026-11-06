@@ -472,8 +472,18 @@ between the frontend and the server. Using the app is described in
   the odor table when it is served, not when it is read, so that the names shown follow
   the Odors tab: by CID, else InChI, else CAS, MetaCyc or LOTUS ID, name or
   abbreviation, never against a CID or InChI given (a name alone can name another
-  isomer). A MetaCyc view's are matched as `metacyc.match_odors` matched them when it
-  was made (its record's `matched`), each identified by its frame ID: matched again by
+  isomer). An axis whose labels are odors as datasets write them (`reference.odor_axis`:
+  `<abbreviation> @ <log10 conc>`, at least 3 and over half of its labels, e.g. ORN
+  responses by glomeruli) is its chemicals unless the file gives identifiers or the Admin
+  says otherwise (before the guess from labels, which would be no chemicals at all for
+  such labels), matched as a dataset's odors are (`OdorIndex.match`: the abbreviation,
+  then the name), as they are the same odors, written by the same people; each keeps its
+  concentration to label it by. They are then checked as an upload's are
+  (`main._odor_matches`, each label a trial of no panel: `odor_check` beside the
+  dataset, and beside the Admin tab's check of a file), so the odor sheet's missing rows
+  and its sync are offered by the same code in the browser (`odorSheetHelp`). A MetaCyc
+  view's are matched as `metacyc.match_odors` matched them when it was made (its
+  record's `matched`), each identified by its frame ID: matched again by
   label or CID, a second compound of one odor (its other stereoisomer, or the acid of
   the anion MetaCyc keeps) would be it too.
 - **MetaCyc** (`metacyc_build.py`, `metacyc.py`, `static/metacyc.js`) is a reference
@@ -1228,7 +1238,8 @@ GET    /api/headspace.csv, .tex             a calculation's table as a file: ?so
                                             what was looked up for it), units= (for LaTeX), lower=1
 GET    /api/reference                       every reference dataset: whether it can be read (why
                                             not), how many of its chemicals are identified
-GET    /api/reference/{id}                  one, for the viewer (its chemicals as in the odor table)
+GET    /api/reference/{id}                  one, for the viewer (its chemicals as in the odor table;
+                                            of odors as datasets write them, "odor_check")
 GET    /api/reference/{id}/metacyc/pathway/{frame}    of a MetaCyc bundle's: a pathway, to draw (its
                                             reactions' main and side compounds) and describe
                                             (classes, superpathways, species and their genomes,
@@ -1275,7 +1286,9 @@ DELETE /api/admin/datasets/{id}             the dataset deleted, its folder move
 GET    /api/admin/permalinks                every permalink, the orphaned last
 DELETE /api/admin/permalinks/{name}         an orphaned permalink deleted (409 if it points to one)
 POST   /api/admin/references/check          {"path", "chemical_axis", "kind"} → whether it can be
-                                            added, read now (a preview) or after a restart (steps)
+                                            added, read now (a preview) or after a restart (steps);
+                                            of odors as datasets write them, "odor_check" (as an
+                                            upload's)
 POST   /api/admin/references                {"path", "title", "description", "source", "kind",
                                             "chemical_axis", "value_label", "row_label", "col_label"}
                                             → added (its file to the folders it may read, if need be)

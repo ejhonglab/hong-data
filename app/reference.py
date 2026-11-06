@@ -45,6 +45,7 @@ import numpy as np
 import pandas as pd
 
 from . import config, glomeruli as glom, lotus, metacyc, odormeta, sandbox
+from .odors import Odor, OdorFormatError, format_conc, parse_odor
 from .sparse import Sparse
 
 NETCDF_SUFFIXES = (".nc", ".nc4", ".netcdf")  # xarray DataArrays
@@ -729,37 +730,76 @@ def _values(ref_id: str, record: dict) -> np.ndarray | Sparse:
 # ------------------------------------------------------------------ chemicals
 
 
+def _odor_string(label: str) -> Optional[Odor]:
+    """A label as a dataset writes an odor ('<abbreviation> @ <log10 conc>', `parse_odor`),
+    read; None if it is not one (or is the solvent)."""
+    try:
+        o = parse_odor(label, strict=False)
+    except OdorFormatError:
+        return None
+    return None if o.is_solvent else o
+
+
+def odor_axis(record: dict) -> Optional[str]:
+    """The axis whose labels are odors as datasets write them (`_odor_string`): at least 3 of
+    them, and more than half of its labels; of both, the one with more. None if neither."""
+    best, most = None, 0
+    for axis in ("rows", "cols"):
+        k = sum(_odor_string(it["label"]) is not None for it in record[axis])
+        if k >= 3 and 2 * k > len(record[axis]) and k > most:
+            best, most = axis, k
+    return best
+
+
 def chemicals(record: dict, index: odormeta.OdorIndex) -> dict:
     """A reference dataset's chemicals matched to the odor table (`OdorIndex.match_chemical`).
 
     Of a bundle's view, they are as its module matched them (its record's ``matched``),
-    each identified by the bundle's ID of it.
+    each identified by the bundle's ID of it. An axis whose labels are odors as datasets
+    write them (`odor_axis`: '<abbreviation> @ <log10 conc>') is its chemicals (unless
+    another is said), matched as a dataset's odors are: by their abbreviations
+    (`OdorIndex.match`).
 
     Returns:
         ``axis`` ('rows' | 'cols' | None), ``items`` (per item of that axis: ``odor_id``,
         ``how``, the odor's ``name`` and ``abbrev`` if matched, its ``cid`` and
-        ``inchi``, from the file or else the odor table, and whether it is
-        ``identified``), ``n``, ``matched`` (to the odor table), ``identified`` (with a
+        ``inchi``, from the file or else the odor table, whether it is ``identified``,
+        and ``conc``: its log10 concentration as written, if an odor as datasets write
+        them), ``n``, ``matched`` (to the odor table), ``identified`` (with a
         CID or InChI, or a bundle's ID), ``unidentified`` and ``ambiguous`` (labels), and
         ``unrecognized`` (looked for but none found: no identifiers, and no labels the odor
-        table knows).
+        table knows), and ``odors`` (its labels odors as datasets write them).
     """
     out = {"axis": None, "items": [], "n": 0, "matched": 0, "identified": 0, "unidentified": [], "ambiguous": [],
-           "unrecognized": False}
+           "unrecognized": False, "odors": False}
     setting, given = record["chemical_axis"], record["ids"]
     if setting == "none":
         return out
+    odors_on = odor_axis(record) if record.get("matched") is None else None
 
     def match(axis: str) -> list[tuple[Optional[int], str]]:
         if record.get("matched") is not None:  # (as the bundle's module matched them)
             return [(m[0], m[1]) if m and m[0] in index.by_id else (None, "none") for m in record["matched"]]
         ids = given[axis] or [{}] * len(record[axis])
-        return [index.match_chemical(i, it["label"]) for i, it in zip(ids, record[axis])]
+        if axis != odors_on:
+            return [index.match_chemical(i, it["label"]) for i, it in zip(ids, record[axis])]
+        # odors as datasets write them: by their abbreviations, as a dataset's odors are matched (but by
+        # identifiers given for one, if any)
+        found = []
+        for i, it in zip(ids, record[axis]):
+            o = _odor_string(it["label"])
+            if o is None or i:
+                found.append(index.match_chemical(i, o.name if o else it["label"]))
+            else:
+                found.append(index.match(o.name)[:2])
+        return found
 
     if setting in ("rows", "cols"):
         axis = setting
     elif given["rows"] or given["cols"]:
         axis = "rows" if given["rows"] else "cols"
+    elif odors_on:  # (its labels odors as datasets write them, e.g. its other axis glomeruli)
+        axis = odors_on
     else:  # by labels alone: the axis more of whose labels the odor table knows
         found = {a: sum(m[0] is not None for m in match(a)) for a in ("rows", "cols")}
         if not any(found.values()):
@@ -768,18 +808,19 @@ def chemicals(record: dict, index: odormeta.OdorIndex) -> dict:
     items, bundled = [], record.get("matched") is not None
     for ids, it, (odor_id, how) in zip(given[axis] or [{}] * len(record[axis]), record[axis], match(axis)):
         o = index.by_id.get(odor_id) or {}
+        given_odor = _odor_string(it["label"]) if axis == odors_on else None
         # (a bundle's chemical matched as the same but for charge or stereochemistry: the odor's)
         first = (o, ids) if bundled else (ids, o)
         cid, inchi = first[0].get("cid") or first[1].get("cid"), first[0].get("inchi") or first[1].get("inchi")
         identified = bool(cid or inchi) or bundled
         items.append({"odor_id": odor_id, "how": how, "name": o.get("name"), "abbrev": o.get("abbrev"), "cid": cid, "inchi": inchi,
-                      "identified": identified})
+                      "identified": identified, "conc": format_conc(given_odor.log10_conc) if given_odor else None})
         if how == "ambiguous":
             out["ambiguous"].append(it["label"])
         if not identified:
             out["unidentified"].append(it["label"])
     return {**out, "axis": axis, "items": items, "n": len(items), "matched": sum(i["odor_id"] is not None for i in items),
-            "identified": sum(i["identified"] for i in items)}
+            "identified": sum(i["identified"] for i in items), "odors": axis == odors_on}
 
 
 def glomeruli(record: dict) -> dict:
@@ -808,6 +849,10 @@ def warning(chem: dict, glomeruli: Optional[dict] = None) -> Optional[str]:
     if chem["unrecognized"]:
         return ("no chemicals recognized: no identifier columns or rows (CID, InChI, ...), and no labels the Odors "
                 "table knows (if it has none, say so when adding it)")
+    if chem.get("odors") and chem["matched"] < chem["n"]:
+        k = chem["n"] - chem["matched"]
+        return (f"{k} of its {chem['n']} odors {'is' if k == 1 else 'are'} not one odor in the Odors table (by abbreviation, "
+                f"as a dataset's are): add {'it' if k == 1 else 'them'} to the odor sheet and sync it")
     n = len(chem["unidentified"])
     if n:
         return f"{n} of {chem['n']} chemicals could not be identified: no CID or InChI, in the file or the Odors table"
@@ -925,6 +970,8 @@ def load(db, ref_id: str, index: odormeta.OdorIndex) -> Optional[dict[str, Any]]
     if chem["axis"]:
         for it, c in zip(rows if chem["axis"] == "rows" else cols, chem["items"]):
             it["chem"] = {k: c[k] for k in ("odor_id", "name", "abbrev", "cid", "how", "identified")}
+            if c["conc"] is not None:  # (an odor as datasets write them)
+                it["chem"]["conc"] = c["conc"]
         if record.get("pairwise"):  # (its columns are its rows)
             for it, r in zip(cols, rows):
                 it["chem"] = r["chem"]
@@ -1008,8 +1055,10 @@ def check(path_input: str, chemical_axis: str, kind: str, index: odormeta.OdorIn
     chem, gl = chemicals(record, index), glomeruli(record)
     preview = {"shape": record["shape"], "kind": record["kind"], "notes": record["notes"], "warning": warning(chem, gl),
                "pairwise": record.get("pairwise"), "metacyc": record.get("metacyc"), "lotus": record.get("lotus"),
-               "chemicals": {k: chem[k] for k in ("axis", "n", "matched", "identified", "unidentified", "ambiguous")},
-               "glomeruli": {k: gl[k] for k in ("axis", "n", "matched")}}
+               "chemicals": {k: chem[k] for k in ("axis", "n", "matched", "identified", "unidentified", "ambiguous", "odors")},
+               "glomeruli": {k: gl[k] for k in ("axis", "n", "matched")},
+               # (its odors as datasets write them, to be checked against the odor table as a dataset's are)
+               "odor_labels": [it["label"] for it in record[chem["axis"]]] if chem["odors"] else None}
     return {**out, "ok": True, "readable": True, "preview": preview}
 
 

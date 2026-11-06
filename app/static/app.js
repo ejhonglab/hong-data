@@ -759,11 +759,13 @@ function buildNeuralModel(data, order, { mode, rowOrder }, clustering) {
 
 // A chemical of a reference dataset labelled by its name or abbreviation in the odor table
 // (as matched there; the abbreviation as `showAbbrev` shows it), or as in the file:
-// {label, detail (the rest, for the tooltip)}
+// {label, detail (the rest, for the tooltip)}. One written as datasets write odors keeps its
+// concentration (`conc`).
 function chemLabel(it, by, showAbbrev = (a) => a) {
-  const c = it.chem, abbrev = showAbbrev(c.abbrev);
-  const label = (by === 'abbrev' && (abbrev || c.name)) || (by === 'name' && c.name) || it.file;
-  const others = [c.name, abbrev].filter((n) => n && n !== label);
+  const c = it.chem, abbrev = showAbbrev(c.abbrev), at = c.conc != null ? ` @ ${c.conc}` : '';
+  const named = (by === 'abbrev' && (abbrev || c.name)) || (by === 'name' && c.name);
+  const label = named ? named + at : it.file;
+  const others = [c.name, abbrev].filter((n) => n && n + at !== label);
   if (it.file.toLowerCase() !== label.toLowerCase() && !others.some((n) => n.toLowerCase() === it.file.toLowerCase())) others.push(`“${it.file}” in the file`);
   if (c.cid) others.push(`CID ${c.cid}`);
   if (!c.name) others.push('not in the Odors table');
@@ -2000,10 +2002,7 @@ class UploadFlow {
       const sync = e.target.closest('[data-sync-sheet]');
       if (sync) { this.syncSheet(sync); return; }
       const b = e.target.closest('[data-copy-sheet]');
-      if (!b) return;
-      try { await copyText(this.odorCheck.sheet.paste); setStatus(b.nextElementSibling, '✓ Copied'); } catch (err) {
-        setStatus(b.nextElementSibling, `Could not copy: ${err.message}`, 'error');
-      }
+      if (b) copySheetRows(b, this.odorCheck);
     });
 
     setFieldValue(form, 'manipulations', []);
@@ -2457,52 +2456,22 @@ class UploadFlow {
         : `<div class="yaml-file-check ok">✓ Each of its ${n} odors is in the ${table}.${note}</div>${clashes ? `<div class="msg info">${clashes}</div>` : ''}`;
       return;
     }
-    const parts = [`<p><b>${k} of its ${n} odors ${k === 1 ? 'is' : 'are'} not in the ${table}</b>: the dataset can be saved once ${k === 1 ? 'it is' : 'they are'}.</p>`, caps, clashes];
-    if (c.missing.length) parts.push(`<p>Not in it:</p>${missingRowsHtml(c.missing, c.sheet, 'sync it here (below)')}`);
-    const ambiguous = ambiguousOdors(c.rows);
-    if (ambiguous.length) {
-      parts.push(`<p>More than one odor in it goes by ${odorLabels(ambiguous)}: attach an odor YAML naming the dataset's (above), or give
-        them abbreviations of their own in the sheet and sync it here.</p>`);
-    }
     const hours = this.options?.stage_ttl_hours ?? 48;
-    parts.push(`<div class="actions"><button type="button" class="btn" data-sync-sheet>Sync from the odor sheet</button><span class="status">${esc(this.syncNote)}</span></div>
-      <p class="small">Adds the odors new in the sheet to the odor table, then checks these again (changes to odors already in it are
-      left for the <a href="#odors">Odors tab</a>). You can leave this page meanwhile: this upload is kept for ${hours} hours after you
-      last worked on it, and continues where you left it when you open the Upload tab again in this browser.</p>`);
-    box.innerHTML = `<div class="msg error">${parts.join('')}</div>`;
+    box.innerHTML = odorSheetHelp(c, `<p><b>${k} of its ${n} odors ${k === 1 ? 'is' : 'are'} not in the ${table}</b>: the dataset can be saved once ${k === 1 ? 'it is' : 'they are'}.</p>${caps}${clashes}`, {
+      note: this.syncNote,
+      ambiguousFix: 'attach an odor YAML naming the dataset\'s (above), or give them abbreviations of their own in the sheet and sync it here.',
+      after: ` You can leave this page meanwhile: this upload is kept for ${hours} hours after you last worked on it, and continues where you
+        left it when you open the Upload tab again in this browser.`,
+    });
   }
 
-  // Syncs the odor table from the odor sheet as far as needs no one to confirm it: the
-  // odors new in the sheet (changes and deletions wait for the Odors tab).
+  // Syncs the odor table from the odor sheet (`syncOdorSheet`), then checks its odors again
   async syncSheet(btn) {
-    const out = btn.nextElementSibling;
-    btn.disabled = true;
-    setStatus(out, 'Reading the odor sheet…');
-    try {
-      const p = await api('/api/odors/preview', { method: 'POST', json: {} });
-      odorsPage.loadStatus();
-      if (p.errors.length) {
-        setStatus(out, `Not synced: the sheet has ${p.errors.length} error${p.errors.length === 1 ? '' : 's'} to fix first (${p.errors.slice(0, 2).join('; ')}${p.errors.length > 2 ? '; …' : ''})`, 'error');
-        return;
-      }
-      let added = 0;
-      if (p.added.length) {
-        setStatus(out, `Adding ${p.added.length} new odor${p.added.length === 1 ? '' : 's'} to the odor table…`);
-        const r = await api('/api/odors/apply', { method: 'POST', json: { fingerprint: p.fingerprint, changes: [], deletions: [] } });
-        if (!r.ok) { setStatus(out, `Not synced: ${r.errors.join('; ')}`, 'error'); return; }
-        added = r.added;
-        browse.odorCache.clear();
-        comparePage.invalidate(); // its odors' matches to the table
-        reference.invalidate();
-        headspacePage.invalidate();
-        odorsPage.odors = null; // read again when the Odors tab is opened
-      }
-      const waiting = p.changed.length + p.missing.length;
-      this.syncNote = `${added ? `${added} new odor${added === 1 ? '' : 's'} added from the odor sheet` : 'nothing new in the odor sheet'}`
-        + `${waiting ? `; ${waiting} other change${waiting === 1 ? '' : 's'} to the odor table wait${waiting === 1 ? 's' : ''} for the Odors tab` : ''}`;
-      setStatus(out, 'Checking its odors again…');
-      await this.checkOdors();
-    } catch (e) { setStatus(out, `Not synced: ${e.message}`, 'error'); } finally { btn.disabled = false; }
+    const note = await syncOdorSheet(btn);
+    if (note == null) return;
+    this.syncNote = note;
+    setStatus(btn.nextElementSibling, 'Checking its odors again…');
+    await this.checkOdors();
   }
 
   // files: File objects, or {tensorPaths} for files on tensor
@@ -3425,6 +3394,75 @@ function missingRowsHtml(missing, sheet, sync) {
     ${sheet.url ? extLink(sheet.url, 'the odor sheet') : 'the odor sheet'}${naming}, fill in what else you know, then ${sync}.</p>`;
 }
 
+// Syncs the odor table from the odor sheet as far as needs no one to confirm it: the odors
+// new in the sheet (changes and deletions wait for the Odors tab), saying how it goes by
+// `btn` (in the element after it). Resolves to what to say of it once done (as an upload's
+// odor check says it), or null if it was not synced.
+async function syncOdorSheet(btn) {
+  const out = btn.nextElementSibling;
+  btn.disabled = true;
+  setStatus(out, 'Reading the odor sheet…');
+  try {
+    const p = await api('/api/odors/preview', { method: 'POST', json: {} });
+    odorsPage.loadStatus();
+    if (p.errors.length) {
+      setStatus(out, `Not synced: the sheet has ${p.errors.length} error${p.errors.length === 1 ? '' : 's'} to fix first (${p.errors.slice(0, 2).join('; ')}${p.errors.length > 2 ? '; …' : ''})`, 'error');
+      return null;
+    }
+    let added = 0;
+    if (p.added.length) {
+      setStatus(out, `Adding ${p.added.length} new odor${p.added.length === 1 ? '' : 's'} to the odor table…`);
+      const r = await api('/api/odors/apply', { method: 'POST', json: { fingerprint: p.fingerprint, changes: [], deletions: [] } });
+      if (!r.ok) { setStatus(out, `Not synced: ${r.errors.join('; ')}`, 'error'); return null; }
+      added = r.added;
+      browse.odorCache.clear();
+      comparePage.invalidate(); // its odors' matches to the table
+      reference.invalidate();
+      headspacePage.invalidate();
+      odorsPage.odors = null; // read again when the Odors tab is opened
+    }
+    const waiting = p.changed.length + p.missing.length;
+    return `${added ? `${added} new odor${added === 1 ? '' : 's'} added from the odor sheet` : 'nothing new in the odor sheet'}`
+      + `${waiting ? `; ${waiting} other change${waiting === 1 ? '' : 's'} to the odor table wait${waiting === 1 ? 's' : ''} for the Odors tab` : ''}`;
+  } catch (e) { setStatus(out, `Not synced: ${e.message}`, 'error'); return null; } finally { btn.disabled = false; }
+}
+
+// What a matrix's odors not each one odor in the odor table need, as an upload's check says
+// it (`c`: the server's _odor_matches of them): those not in it as rows for the odor sheet (a
+// button copying them: data-copy-sheet), those more than one odor in it goes by (`ambiguousFix`:
+// what to do), and a button syncing it (data-sync-sheet, `note` after it: how the last went).
+// head: what is said first (and anything after it); after: said under the sync button.
+function odorSheetHelp(c, head, { note = '', ambiguousFix = '', after = '' } = {}) {
+  const parts = [head];
+  if (c.missing.length) parts.push(`<p>Not in it:</p>${missingRowsHtml(c.missing, c.sheet, 'sync it here (below)')}`);
+  const ambiguous = ambiguousOdors(c.rows);
+  if (ambiguous.length) parts.push(`<p>More than one odor in it goes by ${odorLabels(ambiguous)}: ${ambiguousFix}</p>`);
+  parts.push(`<div class="actions"><button type="button" class="btn" data-sync-sheet>Sync from the odor sheet</button><span class="status">${esc(note)}</span></div>
+    <p class="small">Adds the odors new in the sheet to the odor table, then checks these again (changes to odors already in it are
+    left for the <a href="#odors">Odors tab</a>).${after}</p>`);
+  return `<div class="msg error">${parts.join('')}</div>`;
+}
+
+// A reference dataset's odors (as datasets write them: `chem`, its chemicals) not each one
+// odor in the odor table, said as an upload's are (`check`: the server's _odor_matches of
+// them; `note`: how the last sync went), as an element: the Reference data tab, and the Admin
+// tab's form adding one
+function referenceOdorHelp(check, chem, note = '') {
+  const n = chem.n, k = chem.n - chem.matched;
+  const box = document.createElement('div');
+  box.innerHTML = odorSheetHelp(check, `<p><b>${k} of its ${n} odors ${k === 1 ? 'is' : 'are'} not in the <a href="#odors">odor table</a></b>
+    (by their abbreviations, as a dataset's odors are): ${k === 1 ? 'it is' : 'they are'} left out of comparisons with datasets until then.</p>`,
+  { note, ambiguousFix: 'give them abbreviations of their own in the sheet and sync it here.' });
+  return box.firstElementChild;
+}
+
+// copies the rows for the odor sheet of an odor check (`c`, as `odorSheetHelp` shows it), saying so by `btn`
+async function copySheetRows(btn, c) {
+  try { await copyText(c.sheet.paste); setStatus(btn.nextElementSibling, '✓ Copied'); } catch (err) {
+    setStatus(btn.nextElementSibling, `Could not copy: ${err.message}`, 'error');
+  }
+}
+
 // the odors (`dataset_odors` rows, one per label) more than one odor in the odor table goes by
 const ambiguousOdors = (rows) => [...new Map(rows.filter((r) => r.match === 'ambiguous').map((r) => [r.label, r])).values()];
 const odorLabels = (rows) => rows.map((r) => `<code>${esc(r.label)}</code>`).join(', ');
@@ -3708,6 +3746,17 @@ class Reference {
     this.showUnidentified = false; // chemicals with no CID or InChI shown in the matrix
     this.onlyOdors = false; // only the chemicals in the Odors table shown (where some are not)
     this.shownOf = new WeakMap(); // a dataset as loaded -> {[how it is shown]: it as shown so}
+    this.syncNote = ''; // how the last sync from the odor sheet went (`referenceOdorHelp`)
+    $('#ref-msgs').addEventListener('click', async (e) => {
+      const copy = e.target.closest('[data-copy-sheet]'), sync = e.target.closest('[data-sync-sheet]');
+      if (copy) copySheetRows(copy, this.cache.get(this.selected)?.odor_check);
+      if (!sync) return;
+      const note = await syncOdorSheet(sync);
+      if (note == null) return;
+      this.syncNote = note;
+      this.cache.delete(this.selected); // (its odors matched to the odor table again)
+      this.show(this.selected);
+    });
   }
 
   // ECFP: not a dataset kept here, but how to compare with it in the Compare tab
@@ -3795,7 +3844,9 @@ class Reference {
     $('#ref-desc').textContent = [m.description, m.source ? `Source: ${m.source}` : ''].filter(Boolean).join(' ');
     const c = ref.chemicals, msgs = [];
     if (ref.warning) {
-      const box = unidentifiedBox(ref.warning, c.unidentified, 'Add them to the Odors table (with their CID), or give their CIDs or InChIs in the file.', 30);
+      // (of odors as datasets write them: what the odor sheet needs, as an upload's check says it)
+      const box = c.odors && ref.odor_check && c.matched < c.n ? referenceOdorHelp(ref.odor_check, c, this.syncNote)
+        : unidentifiedBox(ref.warning, c.unidentified, 'Add them to the Odors table (with their CID), or give their CIDs or InChIs in the file.', 30);
       if (c.axis && c.identified < c.n) {
         const n = c.n - c.identified, toggle = document.createElement('label');
         toggle.className = 'check ref-unidentified';
@@ -3807,7 +3858,10 @@ class Reference {
       msgs.push(box);
     }
     const notes = [];
-    if (c.axis) notes.push(`Its ${c.axis === 'rows' ? 'rows' : 'columns'} are chemicals: ${c.matched.toLocaleString()} of ${c.n.toLocaleString()} matched to the Odors table, labelled as there.`);
+    if (c.axis && c.odors) {
+      notes.push(`Its ${c.axis === 'rows' ? 'rows' : 'columns'} are odors as datasets write them (<code>&lt;abbreviation&gt; @ &lt;log10 conc&gt;</code>):
+        ${c.matched.toLocaleString()} of ${c.n.toLocaleString()} in the Odors table, by abbreviation as a dataset's are, and labelled as there.`);
+    } else if (c.axis) notes.push(`Its ${c.axis === 'rows' ? 'rows' : 'columns'} are chemicals: ${c.matched.toLocaleString()} of ${c.n.toLocaleString()} matched to the Odors table, labelled as there.`);
     const g = ref.glomeruli;
     const kc = kcAxisOf(ref), axisName = (a) => (a === 'rows' ? 'rows' : 'columns');
     if (g?.axis) notes.push(`Its ${axisName(g.axis)} are glomeruli (${g.matched} of ${g.n})${kc ? `, and its ${axisName(kc)} taken to be KCs (<i>Sum over KCs</i> sums them)` : ''}: it can be compared with datasets on their glomeruli (Compare tab).`);
@@ -3818,7 +3872,7 @@ class Reference {
     if (canOnlyOdors(ref)) {
       const toggle = document.createElement('label'), other = (c.axis === 'rows' ? m.col_label : m.row_label) || (c.axis === 'rows' ? 'column' : 'row');
       toggle.className = 'check ref-only-odors';
-      toggle.innerHTML = `<input type="checkbox"${this.onlyOdors ? ' checked' : ''}> Only the ${c.matched.toLocaleString()} chemicals in the Odors table
+      toggle.innerHTML = `<input type="checkbox"${this.onlyOdors ? ' checked' : ''}> Only the ${c.matched.toLocaleString()} ${c.odors ? 'odors' : 'chemicals'} in the Odors table
         <span class="muted">(${ref.square ? `of its ${c.n.toLocaleString()}` : `and each ${esc(other)} where any of them is not 0 or missing`})</span>`;
       $('input', toggle).addEventListener('change', (e) => { this.onlyOdors = e.target.checked; this.show(id); });
       msgs.push(toggle);
@@ -4238,8 +4292,9 @@ class MergePage {
 // Shown each time the tab is opened, once the user says they may change these settings.
 const ADMIN_KINDS = ['read_dirs', 'write_dirs'];
 
-// A reference dataset's file as checked (see /api/admin/references/check), under its field
-function showRefCheck(c) {
+// A reference dataset's file as checked (see /api/admin/references/check), under its field;
+// note: how the last sync from the odor sheet went (of odors as datasets write them)
+function showRefCheck(c, note = '') {
   const input = $('#ref-path'), msg = $('#ref-path-msg'), box = $('#ref-check');
   input.classList.toggle('invalid', !!c && !c.ok);
   input.classList.toggle('path-warn', !!c?.restart);
@@ -4259,7 +4314,10 @@ function showRefCheck(c) {
   const lines = [];
   if (p.metacyc) lines.push(`Its values: ${esc(p.metacyc.described)}.`);
   if (p.lotus) lines.push(esc(p.lotus.summary));
-  if (ch.axis) lines.push(`Its ${ch.axis === 'rows' ? 'rows' : 'columns'} are chemicals: ${ch.matched} of ${ch.n} matched to the Odors table, ${ch.identified} identified by CID or InChI.`);
+  if (ch.axis && ch.odors) {
+    lines.push(`Its ${ch.axis === 'rows' ? 'rows' : 'columns'} are odors as datasets write them (<code>&lt;abbreviation&gt; @ &lt;log10 conc&gt;</code>):
+      ${ch.matched} of ${ch.n} in the Odors table, by abbreviation as a dataset's are.`);
+  } else if (ch.axis) lines.push(`Its ${ch.axis === 'rows' ? 'rows' : 'columns'} are chemicals: ${ch.matched} of ${ch.n} matched to the Odors table, ${ch.identified} identified by CID or InChI.`);
   const g = p.glomeruli;
   if (g?.axis) lines.push(`Its ${g.axis === 'rows' ? 'rows' : 'columns'} are glomeruli (${g.matched} of ${g.n}, by name): it can be compared with datasets on their glomeruli.`);
   lines.push(...p.notes.map((n) => `${esc(n[0].toUpperCase() + n.slice(1))}.`));
@@ -4268,7 +4326,11 @@ function showRefCheck(c) {
     box.appendChild(Object.assign(document.createElement('div'), { className: 'lt-check',
       innerHTML: `<b>How its matrix is made</b> (shown with it in the Reference data tab):${decisionsHtml(p.lotus, esc)}` }));
   }
-  if (p.warning) {
+  if (p.warning && ch.odors && c.odor_check && ch.matched < ch.n) {
+    const help = referenceOdorHelp(c.odor_check, ch, note);
+    help.insertAdjacentHTML('beforeend', '<p class="small">It can be added anyway: the Reference data tab says so by it, with this.</p>');
+    box.appendChild(help);
+  } else if (p.warning) {
     box.appendChild(unidentifiedBox(p.warning, ch.unidentified || [], 'It can be added anyway, with a warning by it in the Reference data tab, where they are listed too.'));
   }
 }
@@ -4365,10 +4427,23 @@ class AdminPage {
       showRefCheck(problem ? { ok: false, error: problem } : null);
       if (!problem && $('#ref-path').value.trim()) this._refTimer = setTimeout(() => this.checkRef(), 500);
     });
-    $('#ref-path').addEventListener('change', () => { clearTimeout(this._refTimer); this.checkRef(); });
-    $('#ref-path').addEventListener('input', () => { this.refFields = null; }); // another file: as suggested for it
+    $('#ref-path').addEventListener('change', () => { // (as last checked: not again, so what was done by it stays, e.g. a sync)
+      clearTimeout(this._refTimer);
+      if ($('#ref-path').value.trim() !== this._refChecking) this.checkRef();
+    });
+    $('#ref-path').addEventListener('input', () => { this.refFields = null; this.refSyncNote = ''; }); // another file: as suggested for it
     $('#ref-fields').addEventListener('change', () => { this.refFields = this._readFields(); this.checkRef(); });
     for (const sel of ['#ref-axis', '#ref-kind']) $(sel).addEventListener('change', () => this.checkRef());
+    this.refSyncNote = '';
+    $('#ref-check').addEventListener('click', async (e) => {
+      const copy = e.target.closest('[data-copy-sheet]'), sync = e.target.closest('[data-sync-sheet]');
+      if (copy) copySheetRows(copy, this.refCheck?.odor_check);
+      if (!sync) return;
+      const note = await syncOdorSheet(sync);
+      if (note == null) return;
+      this.refSyncNote = note;
+      this.checkRef();
+    });
     $('#ref-add').addEventListener('click', () => (this.editing ? this.saveRef() : this.addRef()));
     $('#ref-cancel').addEventListener('click', () => { this._resetRefForm(); $('#ref-result').replaceChildren(); });
     $('#admin-refs-list').addEventListener('click', (e) => {
@@ -4985,11 +5060,13 @@ class AdminPage {
   async checkRef() {
     const seq = ++this._refSeq, body = this._refBody();
     if (!body.path || localServerDirProblem(body.path)) return;
+    this._refChecking = body.path;
     showRefCheck({ ok: true, checking: true });
     let c;
     try { c = await api('/api/admin/references/check', { method: 'POST', json: body }); } catch (e) { c = { ok: false, error: e.message }; }
     if (seq === this._refSeq && $('#ref-path').value.trim() === body.path) {
-      showRefCheck(c);
+      this.refCheck = c;
+      showRefCheck(c, this.refSyncNote);
       this._renderFields(c);
       if (c.preview?.lotus) this._lotusSuggest(c.preview.lotus);
     }

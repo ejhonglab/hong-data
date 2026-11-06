@@ -118,6 +118,7 @@ def test_builtin_and_chemicals(env):
     status, r = call(env.reference_get, path_params={"ref_id": "fruits"})
     assert status == 200 and r["rows"][0]["chem"] == {"odor_id": 1, "name": "ethyl acetate", "abbrev": "ea", "cid": 8857,
                                                       "how": "name", "identified": True}
+    assert "odor_check" not in r
     assert r["rows"][1]["chem"]["cid"] is None and r["meta"]["kind"] == "sequential" and r["meta"]["scale"] is None
     values = np.frombuffer(base64.b64decode(r["values_b64"]), "<f4").reshape(r["shape"])
     assert values[0].tolist() == [1, 2] and np.isnan(values[1, 1])
@@ -131,7 +132,9 @@ def test_add_readable(env, tmp_path):
     check = lambda path, **kw: call(env.admin_reference_check, body={"path": path, **kw})[1]  # noqa: E731
     c = check(str(src))
     assert c["ok"] and c["readable"] and not c["restart"] and c["grant"] is None
-    assert c["preview"]["chemicals"] == {"axis": "rows", "n": 3, "matched": 2, "identified": 2, "unidentified": ["foo"], "ambiguous": []}
+    assert c["preview"]["chemicals"] == {"axis": "rows", "n": 3, "matched": 2, "identified": 2, "unidentified": ["foo"], "ambiguous": [],
+                                         "odors": False}
+    assert "odor_labels" not in c["preview"] and "odor_check" not in c
     assert check(str(tmp_path / "refs"))["error"] == ("not a table it can read: give a .csv, .tsv, .tab, .txt, .parquet, .pq, .nc, .nc4 "
                                                        "or .netcdf file, or a MetaCyc or LOTUS bundle (.sqlite, .sqlite3, .db, "
                                                        "made by app/metacyc_build.py or app/lotus_build.py)")
@@ -241,6 +244,44 @@ def test_glomeruli(env, tmp_path):
     assert item["glomeruli"] == {"axis": "rows", "n": 4, "matched": 3, "names": ["DM2", "VA2", "DL5"]} and item["warning"] is None
     r = call(env.reference_get, path_params={"ref_id": "glom"})[1]
     assert [x.get("glomerulus") for x in r["rows"]] == ["DM2", "VA2", "DL5", None] and r["glomeruli"]["axis"] == "rows"
+
+
+def test_odor_strings(env, tmp_path):
+    # odors as datasets write them, by glomeruli: the columns its chemicals, matched by abbreviation
+    text = "glomerulus,2h @ -3,ea @ -2,hex @ -1.5,lin @ -3,pa @ -3\nDM2,1,2,3,4,5\nVA2,0,1,0,1,0\nDL5,2,2,2,2,2\n"
+    src = write(tmp_path / "refs" / "orn.csv", text)
+    record, _ = reference.parse(src)
+    assert reference.odor_axis(record) == "cols"
+    chem, gl = reference.chemicals(record, index(env)), reference.glomeruli(record)
+    assert chem["axis"] == "cols" and chem["odors"] and gl["axis"] == "rows"
+    assert [(i["abbrev"], i["how"], i["conc"]) for i in chem["items"]] == [
+        ("2h", "abbrev", "-3"), ("ea", "abbrev", "-2"), ("hex", "abbrev", "-1.5"), ("lin", "abbrev", "-3"), (None, "none", "-3")]
+    assert chem["matched"] == 4 and chem["unidentified"] == ["hex @ -1.5", "pa @ -3"]
+    assert reference.warning(chem, gl) == ("1 of its 5 odors is not one odor in the Odors table (by abbreviation, as a dataset's are): "
+                                           "add it to the odor sheet and sync it")
+    # too few odor strings, or under half of an axis's labels, are none; a name is not an abbreviation
+    for t in ("x,ea @ -2,2h @ -3,y\na,1,2,3\n", "x,ea @ -2,2h @ -3,lin @ -3,p,q,r,s\nt,1,2,3,4,5,6,7\n"):
+        assert reference.odor_axis(reference.parse(write(tmp_path / "o.csv", t))[0]) is None
+    names = reference.parse(write(tmp_path / "n.csv", "glomerulus,ethyl acetate @ -2,2h @ -3,lin @ -3\nDM2,1,2,3\n"))[0]
+    assert [i["how"] for i in reference.chemicals(names, index(env))["items"]] == ["name", "abbrev", "abbrev"]
+    # the Admin tab's check: with what the odor sheet needs, as an upload's check says it
+    sandbox.activate({"read_dirs": [str(tmp_path / "refs")], "write_dirs": []})
+    c = call(env.admin_reference_check, body={"path": str(src)})[1]
+    assert c["preview"]["chemicals"]["odors"] and "odor_labels" not in c["preview"]
+    assert [m["abbrev"] for m in c["odor_check"]["missing"]] == ["pa"] and c["odor_check"]["sheet"]["paste"]
+    assert [r["match"] for r in c["odor_check"]["rows"]] == ["abbrev"] * 4 + ["none"]
+    # and the Reference data tab's, once added
+    assert call(env.admin_reference_add, body={"path": str(src), "title": "ORN deltas"})[0] == 200
+    r = call(env.reference_get, path_params={"ref_id": "orn-deltas"})[1]
+    assert r["chemicals"]["odors"] and r["warning"].startswith("1 of its 5 odors")
+    assert [m["abbrev"] for m in r["odor_check"]["missing"]] == ["pa"]
+    assert [c["chem"]["conc"] for c in r["cols"]] == ["-3", "-2", "-1.5", "-3", "-3"]
+    # once the odor is in the odor table: all of them
+    rows, _, _ = odormeta.parse_sheet("name,abbrev,aliases,cid,cas\npentyl acetate,pa,,12348,\n")
+    env.db.apply_odor_sync(added=rows, changed=[], deleted=[], source="test", fingerprint="1",
+                           details={}, when="2026-10-19T00:00:00")
+    r = call(env.reference_get, path_params={"ref_id": "orn-deltas"})[1]
+    assert r["chemicals"]["matched"] == 5 and not r["odor_check"]["missing"] and r["warning"].startswith("1 of 5 chemicals")
 
 
 def test_dataarray(env, tmp_path):
