@@ -407,6 +407,13 @@ def run_file(db, run_id: str, root: Path) -> tuple[dict, Path, dict]:
     """The source, spike count file and experiment (as `scan`'s) of a run (its file's path on
     tensor, from its top: in the folder added nearest it). Raises LookupError for one that is
     not a run of a folder added (or no longer readable)."""
+    i = run_info(db, run_id, root)
+    return i["source"], i["path"], i["experiment"]
+
+
+def run_info(db, run_id: str, root: Path) -> dict:
+    """`run_file`'s, as ``source``, ``path`` and ``experiment``, with the ``folder`` added (on
+    the server), the run's ``file`` there and its ``model`` (as `scan`'s)."""
     srcs = [s for s in sources(db) if run_id.startswith(s["path"] + "/")]
     src = max(srcs, key=lambda s: len(s["path"]), default=None)
     rel = run_id[len(src["path"]) + 1:] if src else ""
@@ -420,10 +427,18 @@ def run_file(db, run_id: str, root: Path) -> tuple[dict, Path, dict]:
         s = scan(folder)
     except ScanError as e:
         raise LookupError(str(e)) from None
-    key = next((m["experiment"] for m in s["models"] if any(r["file"] == rel for r in m["runs"])), None)
-    if key is None:
+    model = next((m for m in s["models"] if any(r["file"] == rel for r in m["runs"])), None)
+    if model is None:
         raise LookupError(f"{rel} is not a model run of {src['path']} (any more)")
-    return src, folder / rel, next(e for e in s["experiments"] if e["key"] == key)
+    return {"source": src, "folder": folder, "file": rel, "path": folder / rel, "model": model,
+            "experiment": next(e for e in s["experiments"] if e["key"] == model["experiment"])}
+
+
+def run_frame(path: Path) -> tuple[pd.DataFrame, bool]:
+    """A run's spike counts as in its file, KCs as rows (and whether its file has them as columns)."""
+    df = pd.read_parquet(path)
+    transposed = _odor_axis(df.index) and not _odor_axis(df.columns)
+    return (df.T if transposed else df), transposed
 
 
 def read_run(path: Path, index: OdorIndex) -> dict:
@@ -437,16 +452,21 @@ def read_run(path: Path, index: OdorIndex) -> dict:
         table alone, else None), ``transposed`` (whether the file had KCs as columns) and
         ``values_b64`` (float32, KCs × odors, NaN where missing).
     """
-    df = pd.read_parquet(path)
-    transposed = _odor_axis(df.index) and not _odor_axis(df.columns)
-    if transposed:
-        df = df.T
+    df, transposed = run_frame(path)
     ix = df.index
     names = [str(n) if n is not None else f"level {i}" for i, n in enumerate(ix.names)]
     level = lambda i: [str(x) for x in ix.get_level_values(i)]  # noqa: E731
     groups = level(names.index("kc_type")) if "kc_type" in names else None
+    odors = run_odors(df.columns, index)
+    values = df.apply(pd.to_numeric, errors="coerce").to_numpy(dtype=np.float32)
+    return {"kcs": {"labels": level(0), "groups": groups, "levels": names}, "odors": odors, "transposed": transposed,
+            "values_b64": base64.b64encode(np.ascontiguousarray(values).tobytes()).decode()}
+
+
+def run_odors(columns: pd.Index, index: OdorIndex) -> list[dict]:
+    """A run's odors (`run_frame`'s columns) as `read_run` gives them."""
     odors = []
-    for col in df.columns:
+    for col in columns:
         label = str(col)
         odor_id = conc = None
         try:
@@ -458,9 +478,7 @@ def read_run(path: Path, index: OdorIndex) -> dict:
         chem = index.by_id.get(odor_id) if odor_id is not None else None
         odors.append({"odor": label, "odor_id": odor_id, "log10_conc": conc,
                       "chem": {"name": chem["name"], "abbrev": chem.get("abbrev"), "cid": chem.get("cid")} if chem else None})
-    values = df.apply(pd.to_numeric, errors="coerce").to_numpy(dtype=np.float32)
-    return {"kcs": {"labels": level(0), "groups": groups, "levels": names}, "odors": odors, "transposed": transposed,
-            "values_b64": base64.b64encode(np.ascontiguousarray(values).tobytes()).decode()}
+    return odors
 
 
 def run(db, run_id: str, index: OdorIndex, root: Optional[Path] = None) -> dict:

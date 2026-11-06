@@ -265,13 +265,13 @@ function setStatus(el, text, kind = '') {
 }
 
 // Fetched (rather than a plain link) so that the wait while the server builds a large
-// zip (or CSV), and any error, show up in `status`.
-async function download(url, status) {
+// zip (or CSV), and any error, show up in `status`. json: POSTed, if given.
+async function download(url, status, { json } = {}) {
   if (status.dataset.busy) return;
   status.dataset.busy = '1';
   setStatus(status, 'Preparing the download…');
   try {
-    const res = await fetch(url);
+    const res = await fetch(url, json ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(json) } : undefined);
     if (!res.ok) {
       const body = await res.json().catch(() => null);
       throw new Error(body?.error || `${res.status} ${res.statusText}`);
@@ -1260,6 +1260,18 @@ class MatrixViewer {
   _editsFor(payload) {
     if (!this.editsOf.has(payload)) this.editsOf.set(payload, newEdits());
     this.edits = this.editsOf.get(payload);
+  }
+
+  // Of a matrix (not neural data), what is shown, for a download of it as shown: the keys of
+  // its rows and columns (as given to setGenericData: their indices there) in the order they
+  // are drawn (of an axis summed over, null: all of them), and whether it is transposed;
+  // null if none is shown
+  shownKeys() {
+    const m = this.model;
+    if (!m || !this.data || this.kind === 'neural') return null;
+    const keys = (items) => (items.some((it) => !(it.key >= 0)) ? null : items.map((it) => it.key));
+    const [rows, cols] = m.transposed ? [m.cols, m.rows] : [m.rows, m.cols];
+    return { rows: keys(rows), cols: keys(cols), transpose: !!m.transposed };
   }
 
   // the matrix less the rows and columns removed, in the order they were dragged into,
@@ -3769,6 +3781,23 @@ class Reference {
       this.cache.delete(this.selected); // (its odors matched to the odor table again)
       this.show(this.selected);
     });
+    wireMenu($('#ref-download'), ({ format }) => this.save(format));
+  }
+
+  // the dataset shown, to save: its files, or its matrix as shown (`MatrixViewer.shownKeys`,
+  // as indices in it as loaded: the viewer is given a subset of it, `_shown`)
+  save(format) {
+    const id = this.selected, ref = this.cache.get(id);
+    if (!ref || ref.state !== 'ok') return;
+    const json = { format }, shown = this.viewer?.source;
+    const k = format === 'wide' && shown === this._shown(ref) ? this.viewer.shownKeys() : null;
+    if (k) {
+      const at = (all) => new Map(all.map((it, i) => [it, i])), rows = at(ref.rows), cols = at(ref.cols);
+      // (of an axis summed over, all of those shown, in their order in it)
+      const index = (keys, given, of) => (keys ? keys.map((i) => given[i]) : given).map((it) => of.get(it));
+      Object.assign(json, { rows: index(k.rows, shown.rows, rows), cols: index(k.cols, shown.cols, cols), transpose: k.transpose });
+    }
+    download(`/api/reference/${encodeURIComponent(id)}/download`, $('#ref-download-status'), { json });
   }
 
   // ECFP: not a dataset kept here, but how to compare with it in the Compare tab
@@ -3832,6 +3861,7 @@ class Reference {
     if (this.items) this.load();
     $('#reference-empty').hidden = true;
     $('#reference-view').hidden = false;
+    $('#ref-actions').hidden = true; // (until it is shown)
     if (id === ECFP_REF) { this._showEcfp(); return; }
     $('#ref-view-title').textContent = 'Loading…';
     $('#ref-desc').textContent = '';
@@ -3854,6 +3884,7 @@ class Reference {
       return;
     }
     $('#ref-desc').textContent = [m.description, m.source ? `Source: ${m.source}` : ''].filter(Boolean).join(' ');
+    $('#ref-actions').hidden = false;
     const c = ref.chemicals, msgs = [];
     if (ref.warning) {
       // (of odors as datasets write them: what the odor sheet needs, as an upload's check says it)
@@ -7886,7 +7917,7 @@ const reference = new Reference();
 const mergePage = new MergePage();
 const comparePage = new ComparePage();
 const modelsPage = new ModelsPage({
-  $, esc, api, msgBox, fmtWhen, LS, decodeValues, fitViewer, MatrixViewer,
+  $, esc, api, msgBox, fmtWhen, LS, decodeValues, fitViewer, MatrixViewer, download, wireMenu,
   onCompare: (m) => { comparePage.addModel(m); location.hash = '#compare'; },
 });
 const settings = new SettingsPage();

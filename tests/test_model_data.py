@@ -5,13 +5,14 @@ from __future__ import annotations
 
 import base64
 import json
+import zipfile
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from app import model_data, odormeta
-from tests.test_tensor import call, main, root  # noqa: F401 (fixtures)
+from tests.test_tensor import call, main, post, root  # noqa: F401 (fixtures)
 
 ODORS = ["2h @ -3", "eb @ -3", "nope @ -2", "pa @ -3"]
 PROVENANCE = {"generated": "2026-11-05T03:11:26+00:00", "script": "E1.py", "claw_thr": 70.0, "inhadd": [1, 2], "empty": {},
@@ -170,3 +171,44 @@ def test_api(main, outputs, odor_table):  # noqa: F811
     assert call(main.admin_models_delete, path_params={"id": sid})[1] == {"deleted": True}
     assert call(main.admin_models_delete, path_params={"id": sid})[0] == 404
     assert call(main.models_list)[1]["sources"] == [] and (outputs / "E1_apl/params.csv").is_file()
+
+
+def test_download(main, outputs, odor_table, tmp_path, monkeypatch):  # noqa: F811
+    from app import config, matrix_download
+
+    assert call(main.admin_models_add, body={"path": "tom/model_outputs"})[0] == 200
+    run_id, index = "tom/model_outputs/E1_apl/claw_sp0.05_k0_on_spike_counts.parquet", odormeta.OdorIndex(main.db.list_odors())
+    stem = "olfdb_model_E1_apl_claw_sp0.05_k0_on_spike_counts"
+
+    def wide(run=run_id, **picked):
+        dest = tmp_path / "wide.csv"
+        assert matrix_download.model_download(main.db, run, index, "wide", dest, config.TENSOR_ROOT, **picked)[1] == "text/csv"
+        return dest
+
+    # its KCs' levels as in its file; its odors as there, with the odor table's name, abbreviation and CID, and their concentrations
+    df = pd.read_csv(wide(), header=[0, 1, 2, 3, 4], index_col=[0, 1])
+    assert df.index.names == ["kc_id", "kc_type"] and df.index.tolist()[:2] == [(100, "g"), (101, "ab")]
+    assert df.columns.names == ["odor", "odor_table_name", "odor_table_abbrev", "cid", "log10_conc"]
+    assert df.columns.tolist()[0] == ("2h @ -3", "2-heptanone", "2h", "8051", "-3")
+    assert df.columns.get_level_values("odor").tolist() == ODORS and np.array_equal(df.to_numpy(), counts(6).to_numpy())
+    # as shown: of the KCs and odors picked, in that order, transposed
+    df = pd.read_csv(wide(rows=[3, 1], cols=[3, 0], transpose=True), header=[0, 1], index_col=[0, 1, 2, 3, 4])
+    assert df.index.get_level_values("odor").tolist() == ["pa @ -3", "2h @ -3"] and df.columns.tolist() == [("103", "ab"), ("101", "ab")]
+    assert np.array_equal(df.to_numpy(), counts(6).to_numpy()[[3, 1]][:, [3, 0]].T)
+    assert len(pd.read_csv(wide("tom/model_outputs/E2_gain/f2_on_spike_counts.parquet"), header=[0, 1, 2, 3, 4], index_col=0)) == 5
+    # its files: as on tensor, with its experiment's, and a README of its model
+    dest = tmp_path / "files.zip"
+    assert matrix_download.model_download(main.db, run_id, index, "files", dest, config.TENSOR_ROOT)[0] == f"{stem}_files.zip"
+    with zipfile.ZipFile(dest) as zf:
+        assert sorted(zf.namelist()) == [f"{stem}/{n}" for n in ("README.md", "claw_sp0.05_k0_on_spike_counts.parquet", "params.csv",
+                                                                 "provenance.json")]
+        assert zf.read(f"{stem}/params.csv") == (outputs / "E1_apl/params.csv").read_bytes()
+        readme = zf.read(f"{stem}/README.md").decode()
+    assert "row 1 of `tom/model_outputs/E1_apl/params.csv`" in readme and "- tag: k0\n" in readme and "- claw_thr: \n" in readme
+    # through the API
+    monkeypatch.setattr(config, "EXPORTS_DIR", tmp_path / "exports")
+    config.EXPORTS_DIR.mkdir()
+    r = post(main.models_run_download, {"id": run_id, "format": "files"})
+    assert r.status_code == 200 and f'filename="{stem}_files.zip"' in r.headers["content-disposition"] and zipfile.is_zipfile(r.path)
+    assert post(main.models_run_download, {"id": "tom/model_outputs/stray_on_spike_counts.parquet", "format": "wide"}).status_code == 404
+    assert post(main.models_run_download, {"id": run_id, "format": "wide", "rows": [6]}).status_code == 422

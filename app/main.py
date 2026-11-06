@@ -39,8 +39,8 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from . import (backup, bundle_import, chemprops, compare, config, dilution, export, filelog, fits, headspace, lotus,
-               lotus_import, merge, metacyc, metacyc_import, model_data, movies, odormeta, permalinks, reference, roi_training,
-               sandbox, tensor, thorimage, vcf, version, yamlcheck)
+               lotus_import, matrix_download, merge, metacyc, metacyc_import, model_data, movies, odormeta, permalinks, reference,
+               roi_training, sandbox, tensor, thorimage, vcf, version, yamlcheck)
 from .db import PANEL_RENAMES, PROPERTY_COLUMNS, Database, rename_panel
 from .glomeruli import GLOMERULI, load_glomeruli
 from .ingest import (ParsedData, ValidationError, combine, extra_text, files_text, fly_key, kc_id_problems, load_file,
@@ -1578,6 +1578,39 @@ async def models_run(request: Request) -> Response:
         return json_error(422, f"it could not be read: {e}")
 
 
+async def models_run_download(request: Request) -> Response:
+    """A model run to save (POST {"id", "format": "files" | "wide", and of "wide", as shown: "rows"
+    (its KCs), "cols" (its odors), "transpose"}), see `matrix_download.model_download`."""
+    return await _matrix_download(request, lambda body, fmt, dest, picked: matrix_download.model_download(
+        db, str(body.get("id") or ""), _odor_index(), fmt, dest, config.TENSOR_ROOT, **picked))
+
+
+async def _matrix_download(request: Request, write) -> Response:
+    """A matrix's download (`matrix_download`), of a POST of {"format", "rows", "cols",
+    "transpose", ...}: `write(body, format, dest, {rows, cols, transpose})` writes it to dest."""
+    body = await request.json()
+    if not isinstance(body, dict) or body.get("format") not in matrix_download.FORMATS:
+        return json_error(400, f'expected {{"format": {" | ".join(map(repr, matrix_download.FORMATS))}, ...}}')
+    picked = {"rows": body.get("rows"), "cols": body.get("cols"), "transpose": bool(body.get("transpose"))}
+    for k in ("rows", "cols"):
+        if picked[k] is not None and not isinstance(picked[k], list):
+            return json_error(400, f'"{k}" must be a list of numbers')
+    cleanup_exports()
+    dest = config.EXPORTS_DIR / secrets.token_urlsafe(9)
+    try:
+        name, media_type = await run_in_threadpool(lambda: write(body, body["format"], dest, picked))
+    except LookupError as e:
+        dest.unlink(missing_ok=True)
+        return json_error(404, str(e))
+    except matrix_download.DownloadError as e:
+        dest.unlink(missing_ok=True)
+        return json_error(422, str(e))
+    except BaseException:
+        dest.unlink(missing_ok=True)
+        raise
+    return FileResponse(dest, filename=name, media_type=media_type, background=BackgroundTask(dest.unlink, missing_ok=True))
+
+
 async def merge_download(request: Request) -> Response:
     """Every dataset of a coding unit, in one download (``?format=wide|long``, and the options of
     `merge_preview`; ``lower=1`` for odor names in lowercase): a zip, with the datasets scaled as
@@ -2733,6 +2766,15 @@ async def reference_get(request: Request) -> Response:
     return Response(body, media_type="application/json")
 
 
+async def reference_download(request: Request) -> Response:
+    """A reference dataset to save (POST {"format": "files" | "wide", and of "wide", as shown:
+    "rows", "cols" (indices in it as read, in order), "transpose"}), see
+    `matrix_download.reference_download`."""
+    ref_id = request.path_params["ref_id"]
+    return await _matrix_download(request, lambda body, fmt, dest, picked: matrix_download.reference_download(
+        db, ref_id, _odor_index(), fmt, dest, **picked))
+
+
 # ----------------------------------------------------------------------- admin
 
 RESTART_DEADLINE_S = 30
@@ -3389,6 +3431,7 @@ routes = [
     Route("/api/fits/{id:int}/download", fits_download),
     Route("/api/models", models_list),
     Route("/api/models/run", models_run),
+    Route("/api/models/run/download", models_run_download, methods=["POST"]),
     Route("/api/merge", merge_units),
     Route("/api/merge/preview", merge_preview, methods=["POST"]),
     Route("/api/merge/download", merge_download),
@@ -3407,6 +3450,7 @@ routes = [
     Route("/api/headspace/vcf", headspace_vcf, methods=["GET", "POST"]),
     Route("/api/reference", reference_list),
     Route("/api/reference/{ref_id}", reference_get),
+    Route("/api/reference/{ref_id}/download", reference_download, methods=["POST"]),
     Route("/api/reference/{ref_id}/metacyc/pathway/{frame:path}", metacyc_pathway),
     Route("/api/reference/{ref_id}/metacyc/compound/{frame:path}", metacyc_compound),
     Route("/api/reference/{ref_id}/metacyc/structure/{frame:path}", metacyc_structure),

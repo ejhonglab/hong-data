@@ -517,6 +517,14 @@ between the frontend and the server. Using the app is described in
   record's `matched`), each identified by its frame ID: matched again by
   label or CID, a second compound of one odor (its other stereoisomer, or the acid of
   the anion MetaCyc keeps) would be it too.
+- **Downloads of a reference dataset or a model run** (`matrix_download.py`) are written by
+  the server, as a dataset's are (a matrix may be MetaCyc's 43 million cells), but of what
+  the browser shows: it sends the rows and columns drawn, as their indices in the matrix as
+  read, in the order drawn (`MatrixViewer.shownKeys`, read off the model drawn, so whatever
+  ordered it, dragging, sorting or clustering, needs no copy on the server), and whether it
+  is transposed. Each item of a table of one value per line or a DataArray keeps its value
+  of each field (`fields`, imports of record version 2), so that each is a level of its own
+  (VCF's product and reference): its label alone joins them into one text.
 - **MetaCyc** (`metacyc_build.py`, `metacyc.py`, `static/metacyc.js`) is a reference
   dataset of a kind of its own: a bundle (one SQLite file, read only and immutable, so no
   locks on NFS) built by a script from MetaCyc's SmartTables, not a matrix. Two views,
@@ -1239,6 +1247,9 @@ GET    /api/models                          every model of the folders of model 
                                             parameters), models (params.csv rows, runs) and files of none
 GET    /api/models/run?id=<path on tensor>  a run's spike counts: KCs (labels, types) × odors (matched to
                                             the odor table), float32 base64, and its provenance.json
+POST   /api/models/run/download             {"id", "format": "files" | "wide", "rows", "cols", "transpose"}
+                                            → its files (zip) or its spike counts as shown (CSV), see
+                                            matrix_download.py
 GET    /api/roi_training/download[?stacks=0&datasets=1,2]
                                             a zip of their files where they are on tensor, sent as it is
                                             written, with roi_training.json, and their anatomical stacks
@@ -1284,6 +1295,8 @@ GET    /api/reference                       every reference dataset: whether it 
                                             not), how many of its chemicals are identified
 GET    /api/reference/{id}                  one, for the viewer (its chemicals as in the odor table;
                                             of odors as datasets write them, "odor_check")
+POST   /api/reference/{id}/download         {"format": "files" | "wide", "rows", "cols", "transpose"} → its
+                                            files (zip) or its matrix as shown (CSV), see matrix_download.py
 GET    /api/reference/{id}/metacyc/pathway/{frame}    of a MetaCyc bundle's: a pathway, to draw (its
                                             reactions' main and side compounds) and describe
                                             (classes, superpathways, species and their genomes,

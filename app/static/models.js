@@ -24,7 +24,7 @@ function cmpValues(a, b) {
 
 export class ModelsPage {
   // helpers: { $, esc, api, msgBox, fmtWhen, LS, decodeValues, fitViewer, MatrixViewer (class),
-  // onCompare(model: {id, title, filter, nSpikes, run}) }
+  // download(url, status, {json}), wireMenu(menu, onPick), onCompare(model: {id, title, filter, nSpikes, run}) }
   constructor(h) {
     this.h = h;
     this.data = null; // as from /api/models
@@ -55,6 +55,7 @@ export class ModelsPage {
     $('#model-spiking').addEventListener('change', (e) => { this.filter.spiking = e.target.checked; this._showRun(); });
     $('#model-responding').addEventListener('change', (e) => { this.filter.responding = e.target.checked; this._showRun(); });
     $('#model-compare').addEventListener('click', () => this._compare());
+    h.wireMenu($('#model-download'), ({ format }) => this._download(format));
   }
 
   _save() { this.h.LS.set(KEY, { hideSame: this.o.hideSame, sort: this.o.sort }); }
@@ -246,6 +247,7 @@ export class ModelsPage {
           values: kept, chemicals: run.odors.some((o) => o.chem) ? { matched: true, axis: 'cols' } : null, kcAxis: 'rows',
         },
         n: keep.length,
+        keep, // (each row's KC in its file)
       });
     }
     const shown = this.shown.get(key), nK = run.kcs.labels.length, nO = run.odors.length;
@@ -261,6 +263,18 @@ export class ModelsPage {
     }
     const stem = `olfdb_model_${c.title}`.replace(/[^\w.-]+/g, '_');
     this.viewer.setGenericData(shown.payload, { title: c.title, fileStem: stem, kind: 'model' });
+  }
+
+  // the run shown, to save: its files, or its spike counts as shown (`MatrixViewer.shownKeys`:
+  // of the KCs kept, their rows in its file)
+  _download(format) {
+    const c = this.current;
+    if (!c) return;
+    const json = { id: c.id, format }, shown = this.shown.get(`${c.id}|${this._filterName()}`);
+    const k = format === 'wide' && shown && this.viewer?.source === shown.payload ? this.viewer.shownKeys() : null;
+    // (of KCs summed over, all of those kept)
+    if (k) Object.assign(json, { rows: (k.rows || shown.keep.map((_, i) => i)).map((i) => shown.keep[i]), cols: k.cols, transpose: k.transpose });
+    this.h.download('/api/models/run/download', this.h.$('#model-download-status'), { json });
   }
 
   // the run shown compared with datasets: in the Compare tab, with the KCs as shown

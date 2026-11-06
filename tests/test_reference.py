@@ -6,6 +6,7 @@ import asyncio
 import base64
 import gzip
 import json
+import zipfile
 from collections import OrderedDict
 
 import numpy as np
@@ -14,7 +15,7 @@ import pytest
 from starlette.requests import Request
 
 from app import config, odormeta, reference, sandbox
-from tests.test_tensor import call, main, root  # noqa: F401 (fixtures)
+from tests.test_tensor import call, main, post, root  # noqa: F401 (fixtures)
 
 SHEET = "name,abbrev,aliases,cid,cas\nethyl acetate,ea,,8857,141-78-6\n2-heptanone,2h,,8051,\nhexanal,hex,caproaldehyde,,\nlinalool,lin,,6549,\n"
 INCHI_LIN = "InChI=1S/C10H18O/c1-5-10(4,11)8-6-7-9(2)3/h5,7,11H,1,6,8H2,2-4H3"
@@ -296,6 +297,64 @@ def test_odor_strings(env, tmp_path):
                            details={}, when="2026-10-19T00:00:00")
     r = call(env.reference_get, path_params={"ref_id": "orn-deltas"})[1]
     assert r["chemicals"]["matched"] == 5 and not r["odor_check"]["missing"] and r["warning"].startswith("1 of 5 chemicals")
+
+
+def test_download(env, tmp_path, monkeypatch):
+    # one value per line (as VCF's): a level for each field of its rows and of its columns
+    src = write(tmp_path / "refs" / "vcf.csv", "compound,cid,product,reference,amount\nlinalool,6549,apple,A 2001,1\n"
+                                               "linalool,6549,apple,B 2003,3\nethyl acetate,8857,apple,A 2001,2\nfoo,,pear,A 2001,5\n")
+    sandbox.activate({"read_dirs": [str(tmp_path / "refs")], "write_dirs": []})
+    fields = {"layout": "list", "rows": {"label": "compound", "keep": ["cid"]}, "cols": {"label": "product", "keep": ["reference"]},
+              "value": "amount"}
+    assert call(env.admin_reference_add, body={"path": str(src), "title": "VCF", "fields": fields})[0] == 200
+    from app import matrix_download
+
+    def wide(**picked):
+        dest = tmp_path / "wide.csv"
+        assert matrix_download.reference_download(env.db, "vcf", index(env), "wide", dest, **picked) == ("olfdb_reference-vcf.csv", "text/csv")
+        return dest
+
+    df = pd.read_csv(wide(), header=[0, 1], index_col=[0, 1, 2, 3])
+    assert df.index.names == ["compound", "cid", "odor_table_name", "odor_table_abbrev"] and df.columns.names == ["product", "reference"]
+    assert df.columns.tolist() == [("apple", "A 2001"), ("apple", "B 2003"), ("pear", "A 2001")]
+    text = lambda ix, level: [x if isinstance(x, str) else None for x in ix.get_level_values(level)]  # noqa: E731
+    assert text(df.index, "compound") == ["linalool", "ethyl acetate", "foo"] and text(df.index, "odor_table_abbrev") == ["lin", "ea", None]
+    assert np.array_equal(df.to_numpy(), [[1, 3, np.nan], [2, np.nan, np.nan], [np.nan, np.nan, 5]], equal_nan=True)
+    # as shown: of rows and columns picked, in that order, transposed
+    df = pd.read_csv(wide(rows=[2, 0], cols=[1, 0], transpose=True), header=[0, 1, 2, 3], index_col=[0, 1])
+    assert df.index.tolist() == [("apple", "B 2003"), ("apple", "A 2001")] and text(df.columns, "compound") == ["foo", "linalool"]
+    assert np.array_equal(df.to_numpy(), [[np.nan, 3], [np.nan, 1]], equal_nan=True)
+    with pytest.raises(matrix_download.DownloadError, match="numbered from 0 to 2"):
+        wide(rows=[3])
+    # a table laid out as its matrix: its first column's header names its rows' labels
+    write(tmp_path / "refs" / "orn.csv", "glomerulus,ea @ -2,2h @ -3,lin @ -3\nDM2,1,2,3\nva2,4,5,6\nDL5,7,8,9\n")
+    assert call(env.admin_reference_add, body={"path": str(tmp_path / "refs" / "orn.csv"), "title": "ORN"})[0] == 200
+    dest = tmp_path / "orn.csv"
+    matrix_download.reference_download(env.db, "orn", index(env), "wide", dest)
+    df = pd.read_csv(dest, header=[0, 1, 2, 3, 4], index_col=[0, 1])
+    # (and its glomeruli as the app names them, where not as labelled)
+    assert df.index.names == ["glomerulus", "glomerulus_2"] and df.index.tolist() == [("DM2", "DM2"), ("va2", "VA2"), ("DL5", "DL5")]
+    assert df.columns.names == ["odor", "odor_table_name", "odor_table_abbrev", "cid", "log10_conc"]
+    assert df.columns.tolist()[0] == ("ea @ -2", "ethyl acetate", "ea", "8857", "-2")
+    # its original files: the file as added, with a README
+    zipped = tmp_path / "files.zip"
+    assert matrix_download.reference_download(env.db, "vcf", index(env), "files", zipped)[0] == "olfdb_reference-vcf_files.zip"
+    with zipfile.ZipFile(zipped) as zf:
+        assert sorted(zf.namelist()) == ["olfdb_reference-vcf/README.md", "olfdb_reference-vcf/vcf.csv"]
+        assert zf.read("olfdb_reference-vcf/vcf.csv").decode() == src.read_text()
+        readme = zf.read("olfdb_reference-vcf/README.md").decode()
+    assert readme.startswith("# VCF\n") and '"product"' in readme and "3 rows × 3 columns" in readme
+    # through the API
+    monkeypatch.setattr(config, "EXPORTS_DIR", tmp_path / "exports")
+    config.EXPORTS_DIR.mkdir()
+    r = post(env.reference_download, {"format": "wide", "rows": [0], "cols": [0, 2]}, {"ref_id": "vcf"})
+    assert r.status_code == 200 and 'filename="olfdb_reference-vcf.csv"' in r.headers["content-disposition"]
+    assert pd.read_csv(r.path, header=[0, 1], index_col=[0, 1, 2, 3]).shape == (1, 2)
+    for body, ref_id, status in (({"format": "png"}, "vcf", 400), ({"format": "wide", "cols": 3}, "vcf", 400),
+                                 ({"format": "wide", "cols": [9]}, "vcf", 422), ({"format": "files"}, "nothing", 404)):
+        r = post(env.reference_download, body, {"ref_id": ref_id})
+        assert r.status_code == status, body
+    assert len(list(config.EXPORTS_DIR.iterdir())) == 1  # (nothing left of those refused)
 
 
 def test_dataarray(env, tmp_path):

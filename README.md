@@ -514,6 +514,15 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   only until there is any other. The list ends with *ECFP*, not a table: how to compare
   data with chemical structure (ECFP6 fingerprints) in the Compare tab, with a link there
   with it ticked; under the list, a link to the Admin tab to add reference datasets.
+  *Download* (by its title) saves one as its matrix, a wide CSV of its rows and columns as
+  shown (those not removed, in the order shown, transposed if so; of KCs summed over, each
+  of them), each row's details in its first columns and each column's in its header lines,
+  a level each: each field chosen for them (e.g. of VCF, a product and a reference each a
+  level), else its labels (headed as its first column is), groups, identifiers and what is
+  said of each; of chemicals, the Odors table's name, abbreviation, CID and concentration
+  too. Read it with pandas as `pd.read_csv(f, header=[0, …], index_col=[0, …])`, one for
+  each level. Or as its original files: a zip of the file as added (of a MetaCyc or LOTUS
+  import, the files uploaded), with a README of how it is read.
   Their chemicals are labelled by
   their names in the Odors tab where they can be matched (or abbreviations, or as in the
   file: *Chemicals* in the viewer), the rest as in the file; those written as datasets
@@ -594,6 +603,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   tab with it at the top of the list on the left (its KCs as shown), to tick datasets to
   compare with: there it is shown as a dataset is (odors by KCs, or its odor–odor
   similarity), correlated with the others' similarities, and side by side, on odors only.
+  *Download* saves its spike counts as shown (as a reference dataset's matrix is, above:
+  each KC's levels as in its file, and each odor's, with the Odors table's name,
+  abbreviation, CID and concentration), or its original files: its spike count file, its
+  experiment's `params.csv` and `provenance.json`, and a README of its model's parameters.
 - **Headspace calculator**: odors are added by any part of a name, abbreviation, alias,
   CID or CAS number, or a mixture starts from a panel of the datasets: its odors in the
   odor table with a CID, but solvents, each at the highest concentration presented (what

@@ -193,8 +193,10 @@ def parse(path: Path, chemical_axis: str = "detect", kind: str = "detect", field
             bundle's view is made.
 
     Returns:
-        record: ``rows`` [{label, group}], ``cols`` [{label}], ``ids`` {rows, cols: per
-        item, the identifiers given for it, or None}, ``chemical_axis``, ``kind``,
+        record: ``rows`` [{label, group}], ``cols`` [{label}] (of a table of one value per
+        line or a DataArray, each with its ``detail`` and ``fields``, see `_items`), ``ids``
+        {rows, cols: per item, the identifiers given for it, or None}, of a table laid out
+        as its matrix ``label_fields`` {rows: its first column's header}, ``chemical_axis``, ``kind``,
         ``shape``, ``notes`` (what was left out or not understood); a MetaCyc view's also
         ``metacyc`` (its options) and, of distances between chemicals, ``pairwise``
         ('distance': its columns are its rows); a LOTUS view's ``lotus`` (its options, and
@@ -278,6 +280,7 @@ def parse(path: Path, chemical_axis: str = "detect", kind: str = "detect", field
     record = {
         "rows": [{"label": labels[i], "group": _text(df.iat[i, group_col]) or "" if group_col is not None else None} for i in rows],
         "cols": [{"label": headers[j]} for j in cols],
+        "label_fields": {"rows": _text(df.index.name), "cols": None},  # (what its rows' labels are headed, if anything)
         "ids": {"rows": ids(rows, id_cols, lambda i, j: df.iat[i, j]), "cols": ids(cols, id_rows, lambda j, i: df.iat[i, j])},
         "chemical_axis": chemical_axis,
         "kind": kind if kind != "detect" else _detect_kind(values),
@@ -293,10 +296,11 @@ def _items(labels: list[str], coords: dict[str, list[Optional[str]]], label_key:
     the values of `coords` (each item's, by field) that differ among them (coarsest first:
     the fields with the fewest values; not `label_key`'s, identifiers or links), all of
     which are each item's ``detail``; and each item's identifiers (`id_fields`: field ->
-    identifier, of `coords`), or None if none are.
+    identifier, of `coords`), or None if none are. Each keeps its value of every field too
+    (``fields``, in their order: `label_key`'s first), a level each in a download of it.
 
     Returns:
-        ([{label, detail}], [{identifier: value}] or None)
+        ([{label, detail, fields}], [{identifier: value}] or None)
     """
     links = lambda vs: all(v is None or re.match(r"https?://", v) for v in vs)
     told = sorted((k for k in coords if k != label_key and k not in id_fields and not links(coords[k])), key=lambda k: len(set(coords[k])))
@@ -308,7 +312,8 @@ def _items(labels: list[str], coords: dict[str, list[Optional[str]]], label_key:
         same = alike[lab]
         apart = [coords[k][i] for k in told if len(same) > 1 and len({coords[k][j] for j in same}) > 1 and coords[k][i]]
         detail = " · ".join(f"{k.replace('_', ' ')}: {coords[k][i]}" for k in told if coords[k][i])
-        out.append({"label": f"{lab} — {' · '.join(apart)}" if apart else lab, "detail": detail or None})
+        out.append({"label": f"{lab} — {' · '.join(apart)}" if apart else lab, "detail": detail or None,
+                    "fields": {k: coords[k][i] for k in coords}})
     n, seen = Counter(o["label"] for o in out), Counter()
     for o in out:  # still alike: numbered
         if n[o["label"]] > 1:
@@ -385,8 +390,8 @@ def _parse_dataarray(path: Path, chemical_axis: str, kind: str, fields: Optional
     rows, row_ids = axis(rows_dim, fields.get("rows"), chemical_axis not in ("cols", "none"), "rows")
     cols, col_ids = axis(cols_dim, fields.get("cols"), chemical_axis not in ("rows", "none") and not row_ids, "columns")
     record = {
-        "rows": [{"label": r["label"], "group": None, "detail": r["detail"]} for r in rows],
-        "cols": [{"label": c["label"], "detail": c["detail"]} for c in cols],
+        "rows": [{"label": r["label"], "group": None, "detail": r["detail"], "fields": r["fields"]} for r in rows],
+        "cols": [{"label": c["label"], "detail": c["detail"], "fields": c["fields"]} for c in cols],
         "ids": {"rows": row_ids, "cols": col_ids},
         "chemical_axis": chemical_axis,
         "kind": kind if kind != "detect" else _detect_kind(values),
@@ -477,8 +482,8 @@ def _parse_list(path: Path, chemical_axis: str, kind: str, fields: dict) -> tupl
     rows, row_ids = axis(row_keys, row_of, chemical_axis not in ("cols", "none"))
     cols, col_ids = axis(col_keys, col_of, chemical_axis not in ("rows", "none") and not row_ids)
     record = {
-        "rows": [{"label": r["label"], "group": None, "detail": r["detail"]} for r in rows],
-        "cols": [{"label": c["label"], "detail": c["detail"]} for c in cols],
+        "rows": [{"label": r["label"], "group": None, "detail": r["detail"], "fields": r["fields"]} for r in rows],
+        "cols": [{"label": c["label"], "detail": c["detail"], "fields": c["fields"]} for c in cols],
         "ids": {"rows": row_ids, "cols": col_ids},
         "chemical_axis": chemical_axis,
         "kind": kind if kind != "detect" else _detect_kind(np.nan_to_num(values)),
@@ -642,6 +647,11 @@ def _parsed(path: Path, chemical_axis: str, kind: str, fields: Optional[dict] = 
 # --------------------------------------------------------------------- imports
 
 
+# of an import's record of a file (not a bundle): one of an older version is read again
+# (2: its items' fields kept, a level each in a download, see `_items`)
+RECORD_VERSION = 2
+
+
 def cache_dir(ref_id: str) -> Path:
     return config.REFERENCE_CACHE_DIR / ref_id
 
@@ -683,7 +693,7 @@ def state(ref: dict, odors: Optional[list[dict]] = None) -> dict:
     d = cache_dir(ref["id"])
     fields = _fields(ref.get("fields"))
     settings = {"source": source, "chemical_axis": ref["chemical_axis"], "kind_setting": ref["kind"], "fields": fields,
-                **_odor_settings(path, odors)}
+                **_odor_settings(path, odors), **({} if bundle_kind(path) else {"record_version": RECORD_VERSION})}
     with _lock:
         try:
             record = json.loads((d / "import.json").read_text())
@@ -946,27 +956,38 @@ def listing(db, index: odormeta.OdorIndex) -> list[dict]:
     return out
 
 
-def load(db, ref_id: str, index: odormeta.OdorIndex) -> Optional[dict[str, Any]]:
-    """A reference dataset for the viewer (None if there is none by that id; ``error`` set if it cannot be read)."""
+def opened(db, ref_id: str, index: odormeta.OdorIndex) -> Optional[dict[str, Any]]:
+    """A reference dataset as read (None if there is none by that id): its entry (`entries`),
+    ``meta``, ``state`` and ``error``, and if it can be read, its ``record``, ``values`` (an
+    array, or `Sparse`), ``chem`` (`chemicals`) and ``gl`` (`glomeruli`)."""
     odors = list(index.by_id.values())
     e = next((e for e in entries(db, odors) if e["id"] == ref_id), None)
     if e is None:
         return None
     meta = {k: e.get(k) for k in ("id", "title", "description", "origin", "path", "value_label", "row_label", "col_label", "source")}
     if e["state"] != "ok":
-        return {"meta": meta, "state": e["state"], "error": e["error"]}
+        return {"entry": e, "meta": meta, "state": e["state"], "error": e["error"]}
     record = e["record"]
     if e["origin"] == "admin":
         values = _values(ref_id, record)
     else:
         values = _parsed(Path(e["path"]), e.get("chemical_axis", "detect"), e.get("kind") or "detect", _fields(e.get("fields")), odors)[1]
+    return {"entry": e, "meta": meta, "state": "ok", "error": None, "record": record, "values": values,
+            "chem": chemicals(record, index), "gl": glomeruli(record)}
+
+
+def load(db, ref_id: str, index: odormeta.OdorIndex) -> Optional[dict[str, Any]]:
+    """A reference dataset for the viewer (None if there is none by that id; ``error`` set if it cannot be read)."""
+    o = opened(db, ref_id, index)
+    if o is None or o["state"] != "ok":
+        return o and {k: o[k] for k in ("meta", "state", "error")}
+    meta, record, values, chem, gl = o["meta"], o["record"], o["values"], o["chem"], o["gl"]
     meta["kind"] = record["kind"]
     meta["metacyc"] = record.get("metacyc")
     meta["lotus"] = record.get("lotus")
     meta["scale"] = lotus.scale(lotus.options(record["lotus"])) if record.get("lotus") else None
-    chem, gl = chemicals(record, index), glomeruli(record)
-    rows = [dict(r) for r in record["rows"]]
-    cols = [dict(c) for c in record["cols"]]
+    rows = [{k: v for k, v in r.items() if k != "fields"} for r in record["rows"]]  # (the fields: for downloads)
+    cols = [{k: v for k, v in c.items() if k != "fields"} for c in record["cols"]]
     if chem["axis"]:
         for it, c in zip(rows if chem["axis"] == "rows" else cols, chem["items"]):
             it["chem"] = {k: c[k] for k in ("odor_id", "name", "abbrev", "cid", "how", "identified")}

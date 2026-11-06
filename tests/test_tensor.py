@@ -315,6 +315,18 @@ def call(endpoint, *, body=None, params=None, path_params=None) -> tuple[int, di
     return response.status_code, json.loads(response.body)
 
 
+def post(endpoint, body: dict, path_params: dict | None = None):
+    """An endpoint's response to a POST of `body` as JSON, as it is (e.g. a FileResponse, its ``path``)."""
+    raw = json.dumps(body).encode()
+    scope = {"type": "http", "method": "POST", "path": "/", "headers": [(b"content-type", b"application/json")],
+             "query_string": b"", "path_params": path_params or {}}
+
+    async def receive():
+        return {"type": "http.request", "body": raw, "more_body": False}
+
+    return asyncio.run(endpoint(Request(scope, receive)))
+
+
 def test_user_api(main):
     save = lambda body: call(main.user_save, body=body)[1]
     get = lambda name: call(main.user_get, params={"name": name})[1]

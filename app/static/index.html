@@ -984,6 +984,22 @@ try {
       <div id="reference-view" hidden>
         <div class="ds-head">
           <div><h2 id="ref-view-title"></h2><p class="muted" id="ref-desc"></p></div>
+          <div class="ds-actions" id="ref-actions" hidden>
+            <div class="ds-buttons">
+              <span class="dl-status" id="ref-download-status"></span>
+              <details class="menu menu-right" id="ref-download">
+                <summary class="btn">Download</summary>
+                <div class="menu-list">
+                  <button type="button" data-format="wide">Matrix, wide CSV <span class="muted">as shown</span></button>
+                  <button type="button" data-format="files">Original files <span class="muted">with a README</span></button>
+                  <p class="menu-note">Matrix: its rows and columns as shown below (but for any removed, in the order shown, transposed if so;
+                    not summed over KCs), each row's details in its first columns and each column's in its header lines, a level each
+                    (each field chosen for them; of chemicals, the Odors table's name, abbreviation and CID).<br><br>Original files: a zip of
+                    the file as added (of a MetaCyc or LOTUS import, the files uploaded), with a README saying how it is read.</p>
+                </div>
+              </details>
+            </div>
+          </div>
         </div>
         <div id="ref-msgs"></div>
         <div id="ref-lotus-made" hidden></div>
@@ -1023,6 +1039,19 @@ try {
             <label class="check" title="Of its parameters, n_spikes_for_response: how many spikes are a response"><input type="checkbox" id="model-responding">
               Only KCs with at least <span id="model-n-spikes">n</span> spikes to some odor <span class="muted" id="model-responding-from"></span></label>
             <button type="button" class="btn" id="model-compare" title="Compare its responses with datasets' (and other models'), in the Compare tab">Compare</button>
+            <details class="menu" id="model-download">
+              <summary class="btn">Download</summary>
+              <div class="menu-list">
+                <button type="button" data-format="wide">Spike counts, wide CSV <span class="muted">as shown</span></button>
+                <button type="button" data-format="files">Original files <span class="muted">with a README</span></button>
+                <p class="menu-note">Spike counts: its KCs and odors as shown below (the KCs kept by the boxes above, but for any removed, in
+                  the order shown, transposed if so; not summed over KCs), each KC's levels as in its file in the first columns, and each
+                  odor's (as in its file; the Odors table's name, abbreviation and CID; its concentration) in the header lines.<br><br>Original
+                  files: a zip of its spike count file as on tensor, its experiment's <code>params.csv</code> and <code>provenance.json</code>,
+                  with a README of its model's parameters.</p>
+              </div>
+            </details>
+            <span class="dl-status" id="model-download-status"></span>
           </div>
           <p class="muted small" id="model-sub"></p>
           <div id="model-viewer" class="viewer"></div>
