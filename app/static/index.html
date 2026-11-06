@@ -24,6 +24,7 @@ try {
     <a href="#compare" data-tab="compare">Compare</a>
     <span class="tabs-sep" aria-hidden="true"></span>
     <a href="#reference" data-tab="reference">Reference data</a>
+    <a href="#models" data-tab="models">Models</a>
     <a href="#odors" data-tab="odors">Odors<span class="tab-badge" id="odors-badge" hidden title="The odor sheet changed since it was last synced"></span></a>
     <span class="tabs-sep" aria-hidden="true"></span>
     <a href="#headspace" data-tab="headspace">Headspace calculator</a>
@@ -865,6 +866,32 @@ try {
         <div class="imp-list" id="lt-import-list"></div>
       </div>
 
+      <div class="step" id="admin-models">
+        <div class="step-head"><h2>Model data</h2></div>
+        <p class="muted">Outputs of models of KCs, shown in the Models tab: folders on tensor, read there (never copied, nor changed) each time
+          that tab is opened, so models added to them are shown without adding them again. In a folder, each <code>params.csv</code> (at any depth)
+          is an experiment: a row per model, its parameters, with the keys of the <code>provenance.json</code> beside it as parameters of each
+          (nested ones as <code>key-&gt;key</code>, e.g. <code>base-&gt;n_spikes_for_response</code>); a model's responses are the
+          <code>*_spike_counts.parquet</code> files (KCs × odors, one per condition) there or in folders under it, found by its <code>tag</code> or
+          <code>variant</code> in their names. Deleting one here forgets it, and touches nothing on tensor.</p>
+        <div id="admin-models-list"></div>
+        <h3 class="subhead" id="model-form-head">Add a folder</h3>
+        <label class="field imp-tensor"><span>Choose a folder on tensor <span class="muted">(its path from the top of tensor)</span></span>
+          <input id="model-path" data-tensor-path spellcheck="false" autocomplete="off" placeholder="e.g. Tom/claude_kc_remapping/data/model_outputs"><span class="path-msg" id="model-path-msg" aria-live="polite"></span></label>
+        <div class="grid">
+          <label class="field"><span>Parameters not shown</span><input id="model-hidden" spellcheck="false" autocomplete="off" value="n_kcs,n_glomeruli"></label>
+          <label class="field"><span>Parameters first, in order</span><input id="model-first" spellcheck="false" autocomplete="off" value="base"></label>
+          <label class="field span2"><span>Parameters last, in order</span><input id="model-last" spellcheck="false" autocomplete="off" value="tag,variant,rate_on,rate_off,source_table"></label>
+        </div>
+        <p class="muted small">Each a comma-separated list of parameter names. The table's first column is when its models were generated (the
+          <code>generated</code> of their <code>provenance.json</code>); then the parameters first; then the others, those in more of the files
+          (<code>params.csv</code> and <code>provenance.json</code>) first, and of those in as many, in the order they first come there; then the
+          parameters last.</p>
+        <div id="model-result" aria-live="polite"></div>
+        <div class="actions"><button type="button" class="btn primary" id="model-add">Add</button>
+          <button type="button" class="btn" id="model-cancel" hidden>Cancel</button></div>
+      </div>
+
       <div class="step" id="admin-datasets">
         <div class="step-head"><h2>Delete datasets</h2></div>
         <p class="muted">A dataset deleted here is gone from the site at once: from Browse, downloads and merges. Its files (the data file as uploaded, odor YAMLs, <code>Experiment.xml</code>, README and <code>metadata.json</code>, which has every detail entered) are moved on the server to <code id="admin-deleted-dir">…</code>, from where it could be uploaded again. Delete them there to free the space.</p>
@@ -963,6 +990,43 @@ try {
         <div id="reference-viewer" class="viewer viewer-main"></div>
         <div id="ref-metacyc" class="mc-panel" hidden></div>
         <div id="ref-lotus" class="mc-panel lt-panel" hidden></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================================================== MODELS -->
+  <section id="tab-models" class="tab" hidden>
+    <div class="models-page">
+      <div class="page-head">
+        <h1>Models</h1>
+        <p class="lede">Models of KCs' responses to odors: each a row of the table below, by its parameters (its experiment's <code>params.csv</code>
+          row, and the keys of the <code>provenance.json</code> beside it), read from the folders of model data on tensor added in the
+          <a href="#admin">Admin tab</a>. Click a parameter to sort by it. Open a run of a model (its condition: <i>on</i>, <i>acute_off</i>, …) to see its
+          KCs' spike counts to each odor, and to compare them with datasets.</p>
+      </div>
+      <div id="models-status" aria-live="polite"></div>
+      <div class="step" id="models-table-step" hidden>
+        <div class="step-head"><h2>Every model <span class="muted" id="models-count"></span></h2></div>
+        <div class="actions models-tools">
+          <label class="check"><input type="checkbox" id="models-hide-same"> Hide parameters the same for every model that has them</label>
+          <span class="muted small" id="models-shown"></span>
+        </div>
+        <div id="models-table" class="models-table-wrap"></div>
+      </div>
+      <div class="step" id="model-view" hidden>
+        <div class="step-head"><h2 id="model-title"></h2></div>
+        <div id="model-msgs"></div>
+        <div id="model-body">
+          <details class="model-prov" id="model-prov-box"><summary>Its experiment's <code>provenance.json</code></summary><pre id="model-prov"></pre></details>
+          <div class="actions model-opts">
+            <label class="check"><input type="checkbox" id="model-spiking" checked> Only KCs that spike to some odor</label>
+            <label class="check" title="Of its parameters, n_spikes_for_response: how many spikes are a response"><input type="checkbox" id="model-responding">
+              Only KCs with at least <span id="model-n-spikes">n</span> spikes to some odor <span class="muted" id="model-responding-from"></span></label>
+            <button type="button" class="btn" id="model-compare" title="Compare its responses with datasets' (and other models'), in the Compare tab">Compare</button>
+          </div>
+          <p class="muted small" id="model-sub"></p>
+          <div id="model-viewer" class="viewer"></div>
+        </div>
       </div>
     </div>
   </section>

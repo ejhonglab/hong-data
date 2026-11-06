@@ -252,7 +252,7 @@ input[data-src], select[data-src], textarea[data-src] { background: var(--src-so
 .readme-html ul, .readme-preview ul { padding-left: 20px; }
 
 /* ------------------------------------------------------------- settings */
-#tab-settings, #tab-headspace, #tab-al-segmentation { overflow: auto; padding: 24px 20px 60px; }
+#tab-settings, #tab-headspace, #tab-al-segmentation, #tab-models { overflow: auto; padding: 24px 20px 60px; }
 .folders-help { margin-top: 12px; }
 #settings-display .grid + p { margin: 6px 0 14px; }
 .dir-section { margin-top: 16px; }
@@ -375,6 +375,28 @@ button.link { background: none; border: 0; padding: 0; color: var(--accent); tex
 .glom-names { margin-top: 10px; }
 .glom-names summary { cursor: pointer; font-weight: 500; }
 .glom-names .actions { margin: 6px 0; }
+/* the Models tab (models.js): its table of models scrolls in both directions, its header and runs kept in view */
+.models-page { max-width: 1600px; margin: 0 auto; }
+.models-page .page-head, .models-page .step { max-width: none; }
+.models-tools { margin: 0 0 10px; }
+.models-table-wrap { max-height: 62vh; overflow: auto; border: 1px solid var(--rule); border-radius: var(--radius); }
+.models-table { width: auto; min-width: 100%; }
+.models-table th { padding: 0; white-space: nowrap; z-index: 2; }
+.models-table td { white-space: nowrap; max-width: 16em; overflow: hidden; text-overflow: ellipsis; }
+.models-table th:first-child, .models-table td.model-runs { position: sticky; left: 0; background: var(--panel); z-index: 1; padding: 4px 8px; }
+.models-table th:first-child { z-index: 3; }
+.models-table td.model-runs { white-space: normal; min-width: 12em; max-width: 16em; box-shadow: 1px 0 0 var(--rule); }
+.models-table td.model-runs .btn { margin: 1px 4px 1px 0; }
+.models-table tr.hl td.model-runs { background: var(--accent-soft); }
+.th-sort { background: none; border: 0; font: inherit; font-weight: 600; color: inherit; padding: 6px 8px; cursor: pointer; text-align: left; width: 100%; }
+.th-sort:hover, .th-sort.on { color: var(--ink); }
+.model-prov { margin: 0 0 10px; }
+.model-prov summary { cursor: pointer; font-weight: 500; }
+.model-prov pre { max-height: 50vh; overflow: auto; font-size: 12px; background: var(--surface-2); border: 1px solid var(--rule); border-radius: var(--radius); padding: 8px 10px; margin: 6px 0 0; }
+.model-opts { margin: 0 0 6px; gap: 16px; flex-wrap: wrap; }
+.actions.models-tools .check input, .actions.model-opts .check input { width: auto; }
+#model-viewer { min-height: 300px; }
+#model-path-msg, #model-path-msg:empty { display: block; min-height: 1.4em; } /* (its line kept, so what is below it does not move as it changes) */
 ul.missing-odors { margin: 4px 0 8px; padding-left: 20px; }
 .odor-table .notes { max-width: 300px; color: var(--ink-muted); }
 .odor-table td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }

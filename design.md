@@ -277,6 +277,37 @@ between the frontend and the server. Using the app is described in
   loaded, per epoch and training fly, per fly in the atlas, per held-out fly), and for the
   stage it is in, from how far it has got; a fit waiting starts when those before it end.
   Before any fit has finished, the estimate is a guess, and says so.
+- **Model data is read where it is, never imported** (`model_data.py`): the Admin tab keeps
+  only a folder's path on tensor and its lists of parameters (`model_sources`), and the
+  Models tab scans it each time it is opened (its `params.csv`, `provenance.json` and spike
+  count files, by name, size and time: a few tenths of a second for 2,000 files; parsed
+  again only when they changed), so experiments archived into it since are listed without
+  adding it again, and nothing of it is backed up or kept stale. A run is read from its
+  parquet file when opened. Its id is its file's path on tensor, so links to it, and
+  Compare's list of runs (in the browser), outlive the folder's being deleted and added
+  again.
+- **A model is a `params.csv` row; its experiment's `provenance.json` adds parameters** to
+  each of its rows (flattened: a nested key by its path, `base->n_spikes_for_response`; a
+  list as its JSON), the row's own column winning where both have one, even when empty
+  (the archive leaves a cell empty where its experiment's value does not apply, e.g.
+  `claw_thr` of a model with no per-claw threshold). A parameter is "the same for every
+  model" when the models that have it agree: with blanks counted as values, every one of
+  the 380 parameters of the KC-remapping archive would differ, as most are of one
+  experiment.
+- **A spike count file is matched to a model by name**, as the archive names them
+  (`[<base>_sp<rate>_]<tag>_<condition>_spike_counts.parquet`, with no separator between
+  the parts but `_`, which tags have too): the model whose tag (or variant) is in it as
+  whole `_`-separated parts, the longest such; of models with one tag (E14's, of two bases),
+  the one whose base begins the name. What follows is its condition. A file of a folder
+  with a `provenance.json` of its own and no `params.csv` (E5's `hal_probe/`, models named
+  otherwise) is of no model of its parent's, rather than matched to one by a shared tag.
+- **A model run is compared as a dataset is, on odors only**: in the Compare tab its odors
+  (matched to the odor table as a dataset's are: as `<abbreviation> @ <log10 conc>`) by its
+  KCs (those the Models tab kept: spiking to any odor, by default), so its odorâ€“odor
+  similarities, their correlations with others' and side by side are those of datasets.
+  It is not compared on glomeruli (it has none) nor on a panel's odors (it has no panel).
+  Its spike counts are shown on a log scale of 1 + each count (they are counts, most of
+  them 0), here and in the Models tab.
 - **The laser wavelength is never read from `Experiment.xml`**: ThorImage's
   `MultiPhotonLaser` value does not follow changes made to the wavelength at the laser,
   so the wavelength is only ever entered in the form.
@@ -1026,6 +1057,8 @@ app/yamlcheck.py   odor YAML parsing, what looks wrong in one, and the matrix âŠ
 app/thorimage.py   Experiment.xml summary, and a .raw file's layout (with hong2p.thor)
 app/fits.py        fits of al-diag-seg models: records, options, held-out flies, their manifest, time estimates
 app/fit_worker.py  the fit worker (python -m app.fit_worker): runs fits one at a time, with al-diag-seg
+app/model_data.py  model data for the Models tab: folders of model outputs on tensor, scanned into a table of
+                   models (params.csv rows, provenance.json keys), their spike count files matched, a run read
 app/metadata.py    form model (pydantic) and README.md generation
 app/db.py          SQLite schema and queries
 app/reference.py   reference datasets: built-in and added ones, reading them, matching their chemicals
@@ -1065,7 +1098,8 @@ app/static/        frontend: index.html, app.js, heatmap.js, colormaps.js (+ mpl
                    pvalue-worker.js their p-values), metacyc.js (MetaCyc below its matrices: pathways
                    drawn, compounds, LCA paths, search), lotus.js (LOTUS with its matrices: how
                    made, a cell's organisms and papers), imports.js (MetaCyc and LOTUS imported
-                   in the Admin tab), fits.js (the AL Segmentation tab's fits), latex.js (labels with
+                   in the Admin tab), fits.js (the AL Segmentation tab's fits), models.js (the Models
+                   tab: its table of models and a run's viewer), latex.js (labels with
                    LaTeX math, by MathJax: vendor/mathjax/)
 manage.py          list / show / export / delete datasets from the server
 deploy/            systemd units; Dockerfile + docker-compose.yml at the top level
@@ -1083,7 +1117,9 @@ estimated vapor pressure, molar mass, density and Henry's law constants in water
 with where it is from, when it was looked up, the chemutils commit that did, whether measured, and for
 constants in oil what they were estimated with), `vcf_properties` (the same of VCF's chemicals, and
 estimated Henry's law constants, by CID and property, apart from the odor table's), `settings` (site-wide settings from the Admin tab:
-the odor sheet's link, panels shown renamed), `reference_datasets` (reference datasets added there) and
+the odor sheet's link, panels shown renamed), `reference_datasets` (reference datasets added there),
+`model_sources` (folders of model data added there, by their path on tensor, with their lists of parameters), `fits`
+(fits of al-diag-seg models) and
 `file_log` (the files the server has read or written in its own folders). Files:
 `data/datasets/<id>/` holds the original data file (or files, if several were combined:
 `datasets.data_files`, with each one's sha256; `data_file` and `data_sha256` are the first's),
@@ -1195,6 +1231,12 @@ POST   /api/fits/{id}/cancel                stop a fit (one waiting now, one run
 DELETE /api/fits/{id}                       delete a fit and its files (409 while it runs)
 GET    /api/fits/{id}/log                   its log
 GET    /api/fits/{id}/download              its model and results, as a zip sent as it is written
+GET    /api/models                          every model of the folders of model data added (model_data.listing):
+                                            the folders (whether they can be read), the table's columns,
+                                            experiments (params.csv's columns, provenance.json as
+                                            parameters), models (params.csv rows, runs) and files of none
+GET    /api/models/run?id=<path on tensor>  a run's spike counts: KCs (labels, types) Ã— odors (matched to
+                                            the odor table), float32 base64, and its provenance.json
 GET    /api/roi_training/download[?stacks=0&datasets=1,2]
                                             a zip of their files where they are on tensor, sent as it is
                                             written, with roi_training.json, and their anatomical stacks
@@ -1299,6 +1341,11 @@ DELETE /api/admin/references/{id}           its copy deleted (never its file) â†
                                             taken off the folders it may read, if any; "moved": where
                                             MetaCyc or LOTUS imported for it was moved, if it was
                                             the last of it}
+POST   /api/admin/models                    {"path" (on tensor, from its top), "hidden", "first", "last"
+                                            (comma-separated parameters)} â†’ the folder added, with what
+                                            it has (400 if it has no params.csv; 409 if added already)
+PATCH  /api/admin/models/{id}               {"hidden", "first", "last"}: its lists changed
+DELETE /api/admin/models/{id}               forgotten (nothing on tensor touched)
 GET    /api/admin/metacyc                   MetaCyc imported here: what an upload is to have (each
                                             role's files and what it is, and how they are found:
                                             "how"), the import under way or the last ({"running",

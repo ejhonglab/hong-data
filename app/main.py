@@ -39,8 +39,8 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from . import (backup, bundle_import, chemprops, compare, config, dilution, export, filelog, fits, headspace, lotus,
-               lotus_import, merge, metacyc, metacyc_import, movies, odormeta, permalinks, reference, roi_training, sandbox, tensor,
-               thorimage, vcf, version, yamlcheck)
+               lotus_import, merge, metacyc, metacyc_import, model_data, movies, odormeta, permalinks, reference, roi_training,
+               sandbox, tensor, thorimage, vcf, version, yamlcheck)
 from .db import PANEL_RENAMES, PROPERTY_COLUMNS, Database, rename_panel
 from .glomeruli import GLOMERULI, load_glomeruli
 from .ingest import (ParsedData, ValidationError, combine, extra_text, files_text, fly_key, kc_id_problems, load_file,
@@ -1552,6 +1552,27 @@ async def fits_download(request: Request) -> Response:
     top = f"olfdb_fit_{fit_id}"
     return StreamingResponse(fits.stream_zip(fit_id, top), media_type="application/zip",
                              headers={"content-disposition": f'attachment; filename="{top}.zip"'})
+
+
+async def models_list(request: Request) -> Response:
+    """The Models tab's table: every model of the folders of model data added in the Admin tab
+    (`model_data.listing`)."""
+    out = await run_in_threadpool(model_data.listing, db, config.TENSOR_ROOT)
+    for s in out["sources"]:
+        s["created_at"] = _aware(s["created_at"])
+    return JSONResponse(out)
+
+
+async def models_run(request: Request) -> Response:
+    """A model run's spike counts (?id=<its file's path on tensor>), KCs × odors, its odors matched
+    to the odor table (`model_data.run`). 404 for one that is not a run of a folder added."""
+    run_id = request.query_params.get("id", "")
+    try:
+        return JSONResponse(await run_in_threadpool(lambda: model_data.run(db, run_id, _odor_index())))
+    except LookupError as e:
+        return json_error(404, str(e))
+    except (OSError, ValueError) as e:  # (pyarrow's errors are ValueErrors and OSErrors)
+        return json_error(422, f"it could not be read: {e}")
 
 
 async def merge_download(request: Request) -> Response:
@@ -3102,6 +3123,38 @@ async def admin_reference_delete(request: Request) -> Response:
     return JSONResponse(result, status_code=status)
 
 
+async def admin_models_add(request: Request) -> Response:
+    """Add a folder of model data on tensor ({"path", "hidden", "first", "last"}: the last three
+    comma-separated parameters), see `model_data.add`."""
+    body = await request.json()
+    if not isinstance(body, dict):
+        return json_error(400, 'expected {"path": ...}')
+    status, result = await run_in_threadpool(model_data.add, db, body, config.TENSOR_ROOT)
+    if status == 200:
+        log.info("model data %s added in the Admin tab: %s", result["id"], result["path"])
+        result["created_at"] = _aware(result["created_at"])
+    return JSONResponse(result, status_code=status)
+
+
+async def admin_models_update(request: Request) -> Response:
+    """Change a folder of model data's lists of parameters ({"hidden", "first", "last"})."""
+    body = await request.json()
+    if not isinstance(body, dict):
+        return json_error(400, 'expected {"hidden": ..., "first": ..., "last": ...}')
+    status, result = await run_in_threadpool(model_data.update, db, request.path_params["id"], body)
+    if status == 200:
+        result["created_at"] = _aware(result["created_at"])
+    return JSONResponse(result, status_code=status)
+
+
+async def admin_models_delete(request: Request) -> Response:
+    """Forget a folder of model data (nothing on tensor is touched)."""
+    if not await run_in_threadpool(model_data.delete, db, request.path_params["id"]):
+        return json_error(404, "no such folder of model data")
+    log.info("model data %s deleted in the Admin tab", request.path_params["id"])
+    return JSONResponse({"deleted": True})
+
+
 # bundles of reference data imported in the Admin tab, by kind (see bundle_import.py)
 IMPORTERS = {imp.key: imp for imp in (metacyc_import.importer, lotus_import.importer)}
 
@@ -3331,6 +3384,8 @@ routes = [
     Route("/api/fits/{id:int}/cancel", fits_cancel, methods=["POST"]),
     Route("/api/fits/{id:int}/log", fits_log),
     Route("/api/fits/{id:int}/download", fits_download),
+    Route("/api/models", models_list),
+    Route("/api/models/run", models_run),
     Route("/api/merge", merge_units),
     Route("/api/merge/preview", merge_preview, methods=["POST"]),
     Route("/api/merge/download", merge_download),
@@ -3376,6 +3431,9 @@ routes = [
     Route("/api/admin/references", admin_reference_add, methods=["POST"]),
     Route("/api/admin/references/{ref_id}", admin_reference_delete, methods=["DELETE"]),
     Route("/api/admin/references/{ref_id}", admin_reference_update, methods=["PATCH"]),
+    Route("/api/admin/models", admin_models_add, methods=["POST"]),
+    Route("/api/admin/models/{id:int}", admin_models_update, methods=["PATCH"]),
+    Route("/api/admin/models/{id:int}", admin_models_delete, methods=["DELETE"]),
     Route("/api/admin/metacyc", admin_metacyc),
     Route("/api/admin/metacyc", admin_metacyc_import, methods=["POST"]),
     Route("/api/admin/lotus", admin_lotus),

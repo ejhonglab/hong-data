@@ -242,6 +242,14 @@ CREATE TABLE IF NOT EXISTS fits (  -- al-diag-seg models fit in the AL Segmentat
     error TEXT,
     model_bytes INTEGER
 );
+CREATE TABLE IF NOT EXISTS model_sources (  -- folders of model outputs added in the Admin tab, for the Models tab (see model_data.py)
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    path TEXT NOT NULL UNIQUE,         -- on tensor, from its top (read there, never copied)
+    created_at TEXT NOT NULL,
+    hidden TEXT NOT NULL,              -- parameters not shown in the table (comma-separated)
+    first TEXT NOT NULL,               -- shown first (after when they were generated), in order
+    last TEXT NOT NULL                 -- shown last, in order
+);
 """
 # columns added since the first release: (table, column, type)
 # what is looked up through chemutils for an odor CID (chemprops.PROPERTIES): property -> the

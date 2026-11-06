@@ -38,13 +38,16 @@ expected, and nothing secret is entered. If a download or the page is blocked, s
    with groups of datasets (by experimenter, rig or power) scaled to each other first.
 6. **Compare**: tick datasets to see them side by side, averaged, with how alike their
    odors are, and how that compares with chemical structure or reference data.
-7. **Headspace calculator**: search for odors of the odor table to put in a mixture (or
+7. **Models**: models of KCs (their outputs on tensor, added in the Admin tab), each by its
+   parameters, in a table sorted by any of them; open one to see its KCs' spike counts to
+   each odor, or compare them with datasets in the Compare tab.
+8. **Headspace calculator**: search for odors of the odor table to put in a mixture (or
    start from a panel's odors), give each a concentration (log10 v/v, as in your data),
    and calculate how much of each is in the air above it (in ppm, µg/L and other units).
    Below it, how to make each odor from its neat chemical by serial dilutions; then
    search VCF's foods (e.g. `kiwi`) for their volatiles, the headspace over
    them, and the dilutions in paraffin oil that would give the same headspace.
-8. **AL Segmentation**: one download of what there is on tensor to train a model to draw
+9. **AL Segmentation**: one download of what there is on tensor to train a model to draw
    glomerulus ROIs ([al-diag-seg](https://github.com/tom-f-oconnell/al-diag-seg)) of
    every fly of a glomeruli dataset with a diagnostic panel, and the flies left out, with why;
    how many glomeruli each fly has, and which glomeruli few of the flies have. Models fit to
@@ -574,6 +577,23 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   magnitude (*Scale*: auto, saying which it chose, or linear or log, 0 then the lowest color; kept for each matrix), as VCF's do, and
   LOTUS's counts of organisms or papers always are; counts with some 0, such as LOTUS's,
   are on a log scale of 1 + each, so 0 is the lowest color and 1 apart from it.
+- **Models**: every model of the folders of model data added in the Admin tab (read where
+  they are on tensor each time the tab is opened, so models added to them since are listed),
+  a row each: an experiment's `params.csv` row, with the keys of the `provenance.json`
+  beside it as parameters too (nested ones by their path, as `base->n_spikes_for_response`;
+  where both have one, the row's), first when they were generated (its `generated`). Click
+  a parameter to sort by it (again: the other way), and tick *Hide parameters the same for
+  every model that has them* to see what differs. Each row's buttons open its runs, one per
+  condition (`on`, `acute_off`, …): its `*_spike_counts.parquet` files, there or in a folder
+  under it, found by its `tag` or `variant` in their names (models of two bases with one
+  tag told apart by the base their names begin with). A run is shown below the table, its
+  KCs (grouped by type) by its odors (labelled as in the Odors tab), on a log scale (of 1 +
+  each count), KCs that spike to no odor left out unless unticked, and with *Only KCs with
+  at least n spikes to some odor* those below the model's `n_spikes_for_response` too.
+  Above it, its experiment's `provenance.json` (click to open). *Compare* opens the Compare
+  tab with it at the top of the list on the left (its KCs as shown), to tick datasets to
+  compare with: there it is shown as a dataset is (odors by KCs, or its odor–odor
+  similarity), correlated with the others' similarities, and side by side, on odors only.
 - **Headspace calculator**: odors are added by any part of a name, abbreviation, alias,
   CID or CAS number, or a mixture starts from a panel of the datasets: its odors in the
   odor table with a CID, but solvents, each at the highest concentration presented (what
@@ -765,6 +785,15 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     on tensor, give its path there). The bundle takes about a minute to build; its
     reference dataset (chemicals by families) is then added, its settings changed after by
     *Change settings…*.
+  - *Model data*: folders of model outputs on tensor for the Models tab (*Choose a folder
+    on tensor*: its path from the top of tensor, completed as it is typed), read there,
+    never copied. Each `params.csv` in it, at any depth, is an experiment (a subfolder with
+    a `provenance.json` and no `params.csv` is of other models: its spike counts are
+    listed as of no model). Three comma-separated lists of parameters: those not shown
+    (`n_kcs,n_glomeruli` by default), those first, in order (`base`), and those last
+    (`tag,variant,rate_on,rate_off,source_table`); the rest come between, those in more of
+    the files first. *Change…* changes these lists after; *Delete…* forgets a folder
+    (nothing on tensor is touched).
   - *Delete datasets*: every dataset, newest upload first (with a filter), each with a
     Delete button that asks first. A deleted dataset is gone from the site at once; its
     files (as uploaded, with `metadata.json` holding every detail entered) are moved to

@@ -10,6 +10,7 @@ import { MetacycPanel } from './metacyc.js';
 import { LotusPanel, decisionsHtml } from './lotus.js';
 import { BundleImport } from './imports.js';
 import { FitsPanel } from './fits.js';
+import { ModelsPage } from './models.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -4461,6 +4462,29 @@ class AdminPage {
       new BundleImport('lt', 'lotus', { ...helpers, noLabel: '(no date in its names)',
         done: ' Its settings (columns, cells, stereochemistry, taxonomy) can be changed by <i>Change settings…</i>, above.' }),
     ];
+    // folders of model data, for the Models tab (model_data.py)
+    this.modelSources = null;
+    this.editingModel = null; // the id of the folder whose lists are being changed
+    this._modelTimer = 0;
+    // (a path checked already is not again as the field is left, e.g. for Add: its message would
+    // go and come back, moving the button from under the click)
+    const checkModelPath = () => {
+      clearTimeout(this._modelTimer);
+      const v = $('#model-path').value.trim();
+      if (v === this._modelChecked) return;
+      this._modelChecked = v;
+      checkPathInput($('#model-path'), $('#model-path-msg'));
+    };
+    $('#model-path').addEventListener('input', () => { clearTimeout(this._modelTimer); this._modelTimer = setTimeout(checkModelPath, 500); });
+    $('#model-path').addEventListener('change', checkModelPath);
+    $('#model-add').addEventListener('click', () => this.saveModels());
+    $('#model-cancel').addEventListener('click', () => { this._resetModelForm(); $('#model-result').replaceChildren(); });
+    $('#admin-models-list').addEventListener('click', (e) => {
+      const c = e.target.closest('[data-edit-model]');
+      if (c) this.editModels(+c.dataset.editModel);
+      const d = e.target.closest('[data-delete-model]');
+      if (d) this.deleteModels(+d.dataset.deleteModel);
+    });
     $('#admin-ds-filter').addEventListener('input', () => this._showDatasets());
     $('#admin-ds-list').addEventListener('click', (e) => {
       const b = e.target.closest('[data-delete]');
@@ -4502,6 +4526,7 @@ class AdminPage {
     this.loadPanels();
     this.loadDatasets();
     this.loadRefs();
+    this.loadModels();
     for (const i of this.imports) i.load();
     $('#ref-result').replaceChildren();
     $('#admin-result').replaceChildren();
@@ -5187,6 +5212,101 @@ class AdminPage {
     by?.load();
   }
 
+  // the folders of model data added, each with what it has (as the Models tab reads it)
+  async loadModels() {
+    const box = $('#admin-models-list');
+    try { this.modelSources = (await api('/api/models')).sources; } catch (e) {
+      box.replaceChildren(msgBox('error', `Could not load the model data: ${esc(e.message)}`));
+      return;
+    }
+    if (!this.modelSources.length) { box.innerHTML = '<p class="muted">None added yet.</p>'; return; }
+    const what = (m) => {
+      if (!m.ok) return `<span class="bad">Cannot be read: ${esc(m.error)}</span>`;
+      const c = m.scan;
+      return `${c.models.toLocaleString()} models of ${c.experiments} experiment${c.experiments === 1 ? '' : 's'}, ${c.runs.toLocaleString()} runs`
+        + (c.unmatched ? `<br><span class="muted small">${c.unmatched.toLocaleString()} spike count file${c.unmatched === 1 ? '' : 's'} of no model</span>` : '');
+    };
+    const lists = (m) => [['not shown', m.hidden], ['first', m.first], ['last', m.last]]
+      .map(([k, v]) => `<span class="muted">${k}:</span> ${v ? `<code>${esc(v.replaceAll(',', ', '))}</code>` : '—'}`).join('<br>');
+    box.innerHTML = `<table class="odor-table"><thead><tr><th>Folder on tensor</th><th>Has</th><th>Parameters</th><th></th></tr></thead><tbody>
+      ${this.modelSources.map((m) => `<tr><td><a href="#models"><code>${esc(m.path)}</code></a><br><span class="muted small">added ${esc(fmtWhen(m.created_at))}</span></td>
+        <td>${what(m)}</td><td class="small">${lists(m)}</td>
+        <td><button type="button" class="btn small" data-edit-model="${m.id}">Change…</button>
+          <button type="button" class="btn small" data-delete-model="${m.id}">Delete…</button></td></tr>`).join('')}</tbody></table>`;
+  }
+
+  _modelBody() { return { hidden: $('#model-hidden').value, first: $('#model-first').value, last: $('#model-last').value }; }
+
+  // the form as for adding a folder again (its lists as they are by default)
+  _resetModelForm() {
+    this.editingModel = null;
+    $('#model-form-head').textContent = 'Add a folder';
+    $('#model-path').disabled = false;
+    $('#model-path').value = '';
+    this._modelChecked = '';
+    showPathCheck($('#model-path'), $('#model-path-msg'), null);
+    for (const [k, v] of Object.entries({ hidden: 'n_kcs,n_glomeruli', first: 'base', last: 'tag,variant,rate_on,rate_off,source_table' })) $(`#model-${k}`).value = v;
+    $('#model-add').textContent = 'Add';
+    $('#model-cancel').hidden = true;
+  }
+
+  // a folder's lists of parameters, changed in the form
+  editModels(id) {
+    const m = this.modelSources?.find((x) => x.id === id);
+    if (!m) return;
+    this.editingModel = id;
+    $('#model-form-head').textContent = `Change ${m.path}`;
+    $('#model-path').value = m.path;
+    $('#model-path').disabled = true;
+    showPathCheck($('#model-path'), $('#model-path-msg'), null);
+    for (const k of ['hidden', 'first', 'last']) $(`#model-${k}`).value = m[k];
+    $('#model-add').textContent = 'Save';
+    $('#model-cancel').hidden = false;
+    $('#model-result').replaceChildren();
+    $('#model-form-head').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  async saveModels() {
+    const out = $('#model-result'), editing = this.editingModel, path = $('#model-path').value.trim();
+    if (!editing && !path) { out.replaceChildren(msgBox('error', 'Choose a folder on tensor first.')); return; }
+    $('#model-add').disabled = true;
+    try {
+      const res = editing
+        ? await api(`/api/admin/models/${editing}`, { method: 'PATCH', json: this._modelBody() })
+        : await api('/api/admin/models', { method: 'POST', json: { path, ...this._modelBody() } });
+      const c = res.scan;
+      out.replaceChildren(msgBox('ok', editing ? `Saved: the <a href="#models">Models tab</a> shows <code>${esc(res.path)}</code>'s parameters so.`
+        : `Added <code>${esc(res.path)}</code>: ${c.models.toLocaleString()} models of ${c.experiments} experiment${c.experiments === 1 ? '' : 's'},
+          ${c.runs.toLocaleString()} runs of them, in the <a href="#models">Models tab</a>.${c.unmatched ? ` ${c.unmatched.toLocaleString()} spike count
+          file${c.unmatched === 1 ? ' is' : 's are'} of no model of a params.csv (not shown).` : ''}`));
+      this._resetModelForm();
+      modelsPage.invalidate();
+      this.loadModels();
+    } catch (e) {
+      out.replaceChildren(msgBox('error', `${editing ? 'Not saved' : 'Not added'}: ${esc(e.message)}`));
+    } finally {
+      $('#model-add').disabled = false;
+    }
+  }
+
+  async deleteModels(id) {
+    const m = this.modelSources?.find((x) => x.id === id), out = $('#model-result');
+    if (!m) return;
+    $('#delete-confirm-q').textContent = `Delete the model data of ${m.path}?`;
+    $('#delete-confirm-detail').textContent = 'Its models are no longer shown in the Models tab (nor compared with). Nothing on tensor is deleted: it can be added again.';
+    $('#delete-confirm-warn').replaceChildren();
+    if (await askDialog($('#delete-confirm')) !== 'delete') return;
+    try { await api(`/api/admin/models/${id}`, { method: 'DELETE' }); } catch (e) {
+      out.replaceChildren(msgBox('error', `Not deleted: ${esc(e.message)}`));
+      this.loadModels();
+      return;
+    }
+    out.replaceChildren(msgBox('ok', `Deleted <code>${esc(m.path)}</code> from the Models tab; nothing on tensor was touched.`));
+    if (this.editingModel === id) this._resetModelForm();
+    modelsPage.invalidate();
+    this.loadModels();
+  }
+
   async loadDatasets() {
     this.loadPermalinks();
     try { this.datasets = (await api('/api/datasets')).datasets; } catch (e) {
@@ -5349,6 +5469,31 @@ function neuralSpaceName(d) {
   return driver.includes('pebbled') ? 'ORNs' : driver.includes('gh146') ? 'PNs' : 'glomeruli';
 }
 
+// the KCs of a model run compared (ComparePage's o.models), as the Models tab kept them
+function modelKcs(m) {
+  return m.filter === 'all' ? 'every KC' : m.filter === 'spiking' ? 'its KCs that spike to some odor'
+    : `its KCs with at least ${m.nSpikes} spikes to some odor`;
+}
+
+// A model run (from /api/models/run) as the Compare tab has a dataset: its odors (rows) by its
+// KCs (those of the filter chosen), the odors of the odor table alone identified
+function modelDataset(m, run) {
+  const nK = run.kcs.labels.length, nO = run.odors.length, v = decodeValues(run.values_b64), keep = [];
+  for (let k = 0; k < nK; k++) {
+    let max = -Infinity;
+    for (let o = 0; o < nO; o++) if (v[k * nO + o] > max) max = v[k * nO + o];
+    if (m.filter === 'all' || (m.filter === 'spiking' ? max > 0 : max >= m.nSpikes)) keep.push(k);
+  }
+  const values = new Float32Array(nO * keep.length);
+  for (let o = 0; o < nO; o++) keep.forEach((k, j) => { values[o * keep.length + j] = v[k * nO + o]; });
+  const cols = keep.map((k) => ({ label: run.kcs.labels[k] }));
+  return {
+    id: `model:${m.key}`, model: m, title: m.title, coding_unit: 'KCs (model)', kind: 'rois', response_calc: 'spike count', nKcs: nK,
+    rows: run.odors.map((o) => ({ panel: null, odor: o.odor, odor_id: o.odor_id, log10_conc: o.log10_conc, chem: o.chem })),
+    cols, values, all: { cols, values }, nBad: 0,
+  };
+}
+
 // the Holm–Bonferroni method, by which the p-values of correlations between similarities are adjusted
 const HOLM_URL = 'https://en.wikipedia.org/wiki/Holm%E2%80%93Bonferroni_method';
 
@@ -5454,7 +5599,7 @@ class ComparePage {
     // pair: the keys of two spaces shown side by side (null: not chosen)
     this.o = {
       group: 'panel', unit: '', picked: [], on: 'odors', metric: 'pearson', refMetric: 'pearson', show: 'data', spaces: [], ecfpD: 6, conc: 'max',
-      rsa: false, rsaMethod: 'spearman', bootN: 5000, pBy: 'permute', pair: [null, null], panel: null, ...LS.get(COMPARE_KEY, {}),
+      rsa: false, rsaMethod: 'spearman', bootN: 5000, pBy: 'permute', pair: [null, null], panel: null, models: [], ...LS.get(COMPARE_KEY, {}),
     };
     // `place` once, for datasets alone: under their data ('below'), instead of it, or 'none'
     if (this.o.place) this.o.show = this.o.place === 'instead' ? 'sim' : 'data';
@@ -5466,6 +5611,8 @@ class ComparePage {
     this.refs = []; // reference datasets with chemicals or glomeruli, as listed
     this.data = new Map(); // dataset id -> as from /api/compare/datasets/<id>, with its values
     this.refData = new Map(); // reference id -> as from /api/reference/<id>
+    this.modelRuns = new Map(); // model run id -> as from /api/models/run (o.models: those to compare, from the Models tab)
+    this.modelData = new Map(); // o.models' key -> the run as a dataset is here (`modelDataset`)
     this.ecfp = new Map(); // diameter -> fingerprints
     this.memo = new Map(); // what is computed, by what it is of
     this.blocks = new Map(); // key -> {el, viewer}, kept while shown
@@ -5483,7 +5630,19 @@ class ComparePage {
     const tab = $('#tab-compare');
     $$('.seg button', tab).forEach((b) => b.addEventListener('click', () => { this.o.group = b.dataset.group; this._save(); this.renderList(); }));
     $('#compare-unit').addEventListener('change', (e) => { this.o.unit = e.target.value; this._save(); this.renderList(); });
+    $('#compare-list').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-forget-model]');
+      if (!b) return;
+      e.preventDefault();
+      this.o.models = this.o.models.filter((m) => m.key !== b.dataset.forgetModel);
+      this._changed();
+    });
     $('#compare-list').addEventListener('change', (e) => {
+      if (e.target.matches('.pick-model')) {
+        this.o.models = this.o.models.map((m) => (m.key === e.target.dataset.key ? { ...m, shown: e.target.checked } : m));
+        this._changed();
+        return;
+      }
       const ids = e.target.matches('.pick') ? [+e.target.dataset.id] : e.target.matches('.pick-group') ? e.target.dataset.ids.split(',').map(Number) : null;
       if (!ids) return;
       const picked = new Set(this.o.picked);
@@ -5522,6 +5681,16 @@ class ComparePage {
 
   _changed() { this._save(); this.renderList(); this.render(); }
 
+  // a model run to compare (the Models tab's Compare: {id, title, filter, nSpikes, run}), shown
+  // at the top of the list on the left; on odors, as the Compare tab compares models
+  addModel({ id, title, filter, nSpikes, run }) {
+    if (run) this.modelRuns.set(id, run);
+    const key = `${id}|${filter}`;
+    this.o.models = [{ key, id, title, filter, nSpikes, shown: true }, ...this.o.models.filter((m) => m.key !== key)];
+    this.o.on = 'odors';
+    this._save();
+  }
+
   // ECFP6 ticked to compare with (from the Reference data tab's ECFP), each space shown as
   // its odor–odor similarity, on odors
   useEcfp() {
@@ -5541,17 +5710,32 @@ class ComparePage {
     const ids = new Set(this.datasets.map((d) => d.id));
     this.o.picked = this.o.picked.filter((id) => ids.has(id));
     this.o.spaces = this.o.spaces.filter((k) => k === 'ecfp' || this.refs.some((r) => `ref:${r.id}` === k));
+    for (const [k, d] of this.modelData) if (d.error) { this.modelData.delete(k); this.modelRuns.delete(d.model.id); } // (tried again)
     this.renderList();
     await this.render();
   }
 
-  invalidate() { this.data.clear(); this.memo.clear(); }
+  invalidate() { this.data.clear(); this.memo.clear(); this.modelData.clear(); this.modelRuns.clear(); }
+
+  // the model runs to compare, as the list on the left shows them
+  _modelsHtml() {
+    const ms = this.o.models;
+    if (!ms.length) return '';
+    const item = (m) => `<label class="ds-item${m.shown ? ' active' : ''}">
+        <input type="checkbox" class="pick-model" data-key="${esc(m.key)}"${m.shown ? ' checked' : ''}>
+        <span class="list-item"><span class="t">${esc(m.title)}</span>
+          <span class="s">${esc(modelKcs(m))}</span>
+          <span class="s"><a href="#models/${encodeURIComponent(m.id)}" title="Open it in the Models tab">Models tab</a> ·
+            <button type="button" class="link" data-forget-model="${esc(m.key)}" title="Take it off this list">remove</button></span>
+        </span></label>`;
+    return `<div class="list-section"><div class="list-group"><label>Models <span class="muted">(${ms.length})</span></label></div>${ms.map(item).join('')}</div>`;
+  }
 
   renderList() {
     $$('#tab-compare .seg button').forEach((b) => b.classList.toggle('active', b.dataset.group === this.o.group));
     const list = $('#compare-list');
     if (!this.datasets) return;
-    if (!this.datasets.length) { list.innerHTML = '<div class="empty">Nothing uploaded yet. Use the Upload tab.</div>'; return; }
+    if (!this.datasets.length) { list.innerHTML = `${this._modelsHtml()}<div class="empty">Nothing uploaded yet. Use the Upload tab.</div>`; return; }
     const picked = new Set(this.o.picked);
     const item = (d) => `<label class="ds-item${picked.has(d.id) ? ' active' : ''}">
         <input type="checkbox" class="pick" data-id="${d.id}"${picked.has(d.id) ? ' checked' : ''}>
@@ -5566,10 +5750,11 @@ class ComparePage {
       return `<div class="list-group"><label><input type="checkbox" class="pick-group" data-ids="${g.datasets.map((d) => d.id).join(',')}"${all ? ' checked' : ''}>
         ${esc(g.label)} <span class="muted">(${g.datasets.length})</span></label></div>`;
     };
-    list.innerHTML = datasetGroups(filterByUnit(this.datasets, $('#compare-unit'), this.o.unit), this.o.group)
+    list.innerHTML = this._modelsHtml() + datasetGroups(filterByUnit(this.datasets, $('#compare-unit'), this.o.unit), this.o.group)
       .map((g) => `<div class="list-section${g.diag ? ' diag' : ''}">${head(g)}${g.datasets.map(item).join('')}</div>`).join('');
-    const n = this.o.picked.length;
-    $('#compare-count').textContent = n ? `${n} dataset${n === 1 ? '' : 's'} shown` : '';
+    const n = this.o.picked.length, nm = this.o.models.filter((m) => m.shown).length;
+    $('#compare-count').textContent = [n ? `${n} dataset${n === 1 ? '' : 's'}` : '', nm ? `${nm} model run${nm === 1 ? '' : 's'}` : '']
+      .filter(Boolean).join(', ') + (n || nm ? ' shown' : '');
     $('#compare-clear').hidden = !n;
   }
 
@@ -5613,6 +5798,14 @@ class ComparePage {
         ids, sim: similarityMatrix(vectors, this.o.metric),
         data: { vectors, cols: d.cols.map((c) => ({ label: c.label })), meta: { kind: 'diverging', col_label: d.kind === 'glomeruli' ? 'glomerulus' : 'ROI' } },
       };
+    });
+  }
+
+  // a model run's (`modelDataset`), as a dataset's, its data its spike counts
+  _modelSpace(d) {
+    return this._memo(`model:${d.id}:${this.o.metric}:${this.o.conc}`, () => {
+      const sp = this._datasetSpace(d);
+      return { ...sp, data: { ...sp.data, meta: { kind: 'sequential', scale: 'log', value_label: 'spike count', col_label: 'KC' }, kcs: true } };
     });
   }
 
@@ -5894,8 +6087,14 @@ class ComparePage {
   }
 
   async render() {
-    const seq = ++this._seq, view = $('#compare-view');
-    $('#compare-empty').hidden = !!this.o.picked.length;
+    const seq = ++this._seq, view = $('#compare-view'), models = this.o.models.filter((m) => m.shown);
+    $('#compare-empty').hidden = !!this.o.picked.length || !!models.length;
+    await Promise.all(models.filter((m) => !this.modelData.has(m.key)).map(async (m) => {
+      try {
+        if (!this.modelRuns.has(m.id)) this.modelRuns.set(m.id, await api(`/api/models/run?id=${encodeURIComponent(m.id)}`));
+        this.modelData.set(m.key, modelDataset(m, this.modelRuns.get(m.id)));
+      } catch (e) { this.modelData.set(m.key, { id: `model:${m.key}`, model: m, title: m.title, error: e.message }); }
+    }));
     await Promise.all(this.o.picked.filter((id) => !this.data.has(id)).map(async (id) => {
       try {
         const d = await api(`/api/compare/datasets/${id}`), values = decodeValues(d.values_b64);
@@ -5909,7 +6108,8 @@ class ComparePage {
     if (on === 'odors') try { await this._fingerprints(); } catch { /* said so when compared to */ }
     const spaces = await this._spaces();
     if (seq !== this._seq) return;
-    const datasets = this.o.picked.map((id) => this.data.get(id));
+    // the model runs shown (first, as listed), as datasets
+    const datasets = [...models.map((m) => this.modelData.get(m.key)), ...this.o.picked.map((id) => this.data.get(id))];
     // on a panel: those of the datasets shown, and the one compared on
     const panels = on === 'panel' ? this._panels(datasets) : null, panel = panels && this._panelKey(panels), pname = panel && panels.get(panel).name;
     this.panel = panel;
@@ -5925,6 +6125,7 @@ class ComparePage {
     const short = loaded.map(neuralSpaceName);
     const all = [
       ...loaded.map((d, i) => {
+        if (d.model) return { key: d.id, title: d.title, space: this._modelSpace(d), simLabel: metric, responseCalc: d.response_calc };
         const full = `#${d.id} ${d.title}`;
         return { key: `ds:${d.id}`, title: short.filter((n) => n === short[i]).length > 1 ? full : short[i], fullTitle: full,
           space: on === 'odors' ? this._datasetSpace(d) : on === 'panel' ? this._datasetPanelSpace(d, panel) : this._datasetGlomSpace(d), simLabel: metric,
@@ -5974,6 +6175,7 @@ class ComparePage {
     if (pair) parts.push(pair);
     for (const s of spaces.filter((x) => x.error)) parts.push(msgBox('error', `${esc(s.title)} could not be compared to: ${esc(s.error)}`));
     for (const d of datasets) {
+      if (d.model) { this._modelBlocks(d, block, info, parts); continue; }
       if (d.error) { parts.push(msgBox('error', `Dataset #${d.id} could not be shown: ${esc(d.error)}`)); continue; }
       if (on === 'panel') {
         if (!loaded.includes(d)) {
@@ -6050,6 +6252,35 @@ class ComparePage {
     for (const key of [...this.blocks.keys()]) if (!used.has(key)) this.blocks.delete(key);
     view.replaceChildren(...parts);
     shows.forEach((show) => show());
+  }
+
+  // a model run's blocks (`render`'s): its spike counts (odors × KCs) or their odor–odor
+  // similarity, as a dataset's are shown; on anything but odors, why it is left out
+  _modelBlocks(d, block, info, parts) {
+    if (d.error) { parts.push(msgBox('error', `${esc(d.title)} could not be shown: ${esc(d.error)}`)); return; }
+    const on = this.o.on;
+    if (on !== 'odors') {
+      info(`${esc(d.title)}: a model's responses are compared on odors (of the odor table) alone, so it is left out when comparing on
+        ${on === 'panel' ? "a panel's odors" : 'glomeruli'}.`);
+      return;
+    }
+    const metric = SIMILARITIES[this.o.metric].label, stem = `model_${d.title}`.replace(/[^\w.-]+/g, '_');
+    const rows = d.rows.map((r) => ({ label: r.odor })); // (as a dataset's: as named in its file)
+    if (this.o.show !== 'sim') {
+      block(d.id, d.title, `KCs (model): ${d.rows.length} odors × ${d.cols.length.toLocaleString()} KCs, ${esc(modelKcs(d.model))} (of its
+        ${d.nKcs.toLocaleString()}); spike counts`, this._memo(`modeldata:${d.id}`, () => ({
+        meta: { kind: 'sequential', scale: 'log', value_label: 'spike count', row_label: 'odor', col_label: 'KC' },
+        rows, cols: d.cols, values: d.values, kcAxis: 'cols',
+      })), `${stem}_spike_counts`);
+    }
+    if (this.o.show !== 'data') {
+      block(`sim${d.id}`, `${d.title}: odor–odor similarity`, `${esc(metric)} of their spike counts across its KCs (${esc(modelKcs(d.model))})`,
+        this._memo(`modelsim:${d.id}:${this.o.metric}`, () => {
+          const nC = d.cols.length, vectors = d.rows.map((_, i) => d.values.subarray(i * nC, (i + 1) * nC));
+          return { meta: { kind: 'diverging', row_label: 'odor', col_label: 'odor', value_label: metric }, rows, cols: rows,
+            values: similarityMatrix(vectors, this.o.metric), square: true };
+        }), `${stem}_similarity`);
+    }
   }
 
   // what every space's similarities (and so the correlations between them) depend on, but which spaces
@@ -7639,6 +7870,10 @@ const odorsPage = new OdorsPage();
 const reference = new Reference();
 const mergePage = new MergePage();
 const comparePage = new ComparePage();
+const modelsPage = new ModelsPage({
+  $, esc, api, msgBox, fmtWhen, LS, decodeValues, fitViewer, MatrixViewer,
+  onCompare: (m) => { comparePage.addModel(m); location.hash = '#compare'; },
+});
 const settings = new SettingsPage();
 const roiTraining = new RoiTrainingPage();
 const headspacePage = new HeadspacePage();
@@ -7654,7 +7889,7 @@ const BROWSE_EMPTY = $('#browse-empty').innerHTML;
 
 function route() {
   const [tab, id] = location.hash.replace(/^#/, '').split('/');
-  const name = ['upload', 'browse', 'merge', 'compare', 'odors', 'reference', 'settings', 'headspace', 'al-segmentation', 'admin'].includes(tab) ? tab : 'browse';
+  const name = ['upload', 'browse', 'merge', 'compare', 'odors', 'reference', 'models', 'settings', 'headspace', 'al-segmentation', 'admin'].includes(tab) ? tab : 'browse';
   $$('.tab').forEach((s) => { s.hidden = s.id !== `tab-${name}`; });
   $$('.tabs a').forEach((a) => a.classList.toggle('active', a.dataset.tab === name));
   if (name === 'admin' && currentTab !== 'admin') admin.enter(lastPlace);
@@ -7663,6 +7898,7 @@ function route() {
   if (name === 'browse') { browse.load().then(() => { if (id) { if (/^\d+$/.test(id)) browse.show(+id); else browse.openPermalink(decodeURIComponent(id)); } }); }
   if (name === 'odors') { odorsPage.highlightId = id ? +id : null; odorsPage.load().then(() => { if (id) odorsPage.highlight(+id); }); }
   if (name === 'reference') { reference.load().then(() => { if (id) reference.show(id); }); }
+  if (name === 'models') modelsPage.load().then(() => (id ? modelsPage.show(decodeURIComponent(id)) : modelsPage.close()));
   if (name === 'settings') settings.load().then(() => { if (id === 'name') settings.focusName(); });
   if (name === 'al-segmentation') roiTraining.load();
   if (name === 'headspace') headspacePage.load().then(() => headspaceVcf.load());
