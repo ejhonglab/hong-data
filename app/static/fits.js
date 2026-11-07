@@ -23,6 +23,14 @@ export function fmtDuration(s) {
 
 const pct = (v) => (v == null ? '—' : `${Math.round(v * 100)}%`);
 const num2 = (v) => (v == null ? '—' : v.toFixed(2));
+// the final ROIs, by their kind (al-diag-seg's)
+const FINAL_NAMES = { pred: "Cellpose's own, named", refined_prior: 'refined with the atlas', refined_tuning: 'refined by tuning' };
+
+// a score plane by plane and as 3D objects ('46% · 30%'), or as 3D objects alone (fits before
+// al-diag-seg scored them plane by plane)
+export function both(x, key, fmt = pct) {
+  return x[`${key}_2d`] == null ? fmt(x[key]) : `${fmt(x[`${key}_2d`])} <span class="muted">· ${fmt(x[key])}</span>`;
+}
 
 export class FitsPanel {
   // helpers: { $, esc, api, msgBox, askDialog, fmtWhen, fmtSize, getName (the name in Settings, '' if none) }
@@ -81,8 +89,8 @@ export class FitsPanel {
     const past = fits.filter((f) => f.status !== 'queued' && f.status !== 'running');
     $('#fits-past-step').hidden = !past.length;
     $('#fits-past').innerHTML = past.length ? `<table class="odor-table fits-table"><thead><tr><th>Fit</th><th>Asked for by</th>
-      <th>From</th><th>Started</th><th>Took</th><th>Status</th><th title="Of the held-out flies, the final ROIs: found (IoU ≥ 0.5) of their own ROIs, and of the ROIs predicted; mean Dice of those found; and ROIs named as the ROI of theirs they overlap">Held-out flies:
-      found, right, Dice, named</th><th></th></tr></thead><tbody>${past.map((f) => this._pastHtml(f)).join('')}</tbody></table>` : '';
+      <th>From</th><th>Started</th><th>Took</th><th>Status</th><th title="Of the held-out flies, the final ROIs: found (IoU ≥ 0.5) of their own ROIs, and of the ROIs predicted; mean Dice of those found (each plane by plane: a glomerulus's outline on each plane, as ROIs are drawn; then as 3D objects: its outlines on all its planes as one); and ROIs named as the ROI of theirs they overlap">Held-out flies:
+      found, right, Dice <span class="muted">(per plane · 3D)</span>, named</th><th></th></tr></thead><tbody>${past.map((f) => this._pastHtml(f)).join('')}</tbody></table>` : '';
   }
 
   _who(f) {
@@ -114,7 +122,7 @@ export class FitsPanel {
     const { esc, fmtWhen, fmtSize } = this.h;
     const took = f.started_at && f.finished_at ? (new Date(f.finished_at) - new Date(f.started_at)) / 1000 : null;
     const r = f.result;
-    const scores = r ? `${pct(r.mean.recall)}, ${pct(r.mean.precision)}, ${num2(r.mean.dice)}, ${r.named}/${r.named_of}` : '—';
+    const scores = r ? `${both(r.mean, 'recall')}, ${both(r.mean, 'precision')}, ${both(r.mean, 'dice', num2)}, ${r.named}/${r.named_of}` : '—';
     const status = `${STATUS_NAMES[f.status] || esc(f.status)}${f.error ? ` <span class="muted" title="${esc(f.error)}">(${esc(f.error.slice(0, 80))}${f.error.length > 80 ? '…' : ''})</span>` : ''}`;
     const open = this.open.has(f.id);
     return `<tr data-id="${f.id}"><td>#${f.id}</td><td>${esc(f.name)}</td><td>${esc(f.ip || '?')}</td>
@@ -129,16 +137,18 @@ export class FitsPanel {
   _detailsHtml(f) {
     const { esc } = this.h;
     const r = f.result, o = f.options || {};
-    const flies = r.flies.map((x) => `<tr><td>${esc(x.fly)}</td><td>${x.n}</td><td>${pct(x.recall)}</td><td>${pct(x.precision)}</td>
-      <td>${num2(x.dice)}</td><td>${num2(x.leak)} <span class="muted">(${num2(x.manual_leak)})</span></td><td>${x.named}/${x.named_of}</td></tr>`).join('');
+    const flies = r.flies.map((x) => `<tr><td>${esc(x.fly)}</td><td>${x.n}</td><td>${both(x, 'recall')}</td><td>${both(x, 'precision')}</td>
+      <td>${both(x, 'dice', num2)}</td><td>${num2(x.leak)} <span class="muted">(${num2(x.manual_leak)})</span></td><td>${x.named}/${x.named_of}</td></tr>`).join('');
     const missed = r.glomeruli.filter((g) => g.detected < g.flies);
     const refs = refNames(o).map(esc);
     return `<p class="small">${f.flies ? `Fit to ${f.flies.train.length} flies, ${o.held_out} held out, ${o.epochs} epochs${o.atlas
       ? `, with the atlas${refs.length ? ` (and ${refs.join(' and ')}'s in it)` : ''}` : ''}.` : ''}
-      Scored are the final ROIs (${r.final === 'refined_prior' ? 'refined with the atlas' : 'refined by tuning'}), against each held-out fly's own.</p>
-      <table class="odor-table"><thead><tr><th>Held-out fly</th><th>ROIs</th><th>Found</th><th>Right</th><th>Dice</th>
+      Scored are the final ROIs (${esc(FINAL_NAMES[r.final] || r.final)}), against each held-out fly's own${r.mean.recall_2d == null ? ', as 3D objects'
+      : ": plane by plane (each glomerulus's outline on a plane, as ROIs are drawn), then as 3D objects (its outlines on all its planes as one)"}.</p>
+      <table class="odor-table"><thead><tr><th>Held-out fly</th><th>ROIs</th>${['Found', 'Right', 'Dice'].map((h) => `<th>${h}${r.mean.recall_2d == null
+        ? '' : ' <span class="muted">(per plane · 3D)</span>'}</th>`).join('')}
       <th title="Signal from neighbors in an ROI's border (its manual ROIs' in brackets)">Leak <span class="muted">(manual)</span></th><th>Named</th></tr></thead><tbody>${flies}</tbody></table>
-      ${missed.length ? `<p class="small">Glomeruli not found in every held-out fly with one: ${missed.map((g) => `${esc(g.glomerulus)}
+      ${missed.length ? `<p class="small">Glomeruli not found (as 3D objects) in every held-out fly with one: ${missed.map((g) => `${esc(g.glomerulus)}
         <span class="muted">${g.detected}/${g.flies}</span>`).join(', ')}.</p>` : '<p class="small">Every glomerulus of the held-out flies was found.</p>'}`;
   }
 

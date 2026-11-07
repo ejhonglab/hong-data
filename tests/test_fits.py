@@ -227,7 +227,7 @@ def fake_alseg(monkeypatch, calls):
             (out / "summary.csv").write_text("fly\n")
             progress("evaluate", len(flies), len(flies))
             row = lambda f, kind, leak: {"fly": f["name"], "rois": kind, "n": 4, "recall": 0.5, "precision": 1.0,  # noqa: E731
-                                         "dice": 0.8, "leak": leak}
+                                         "dice": 0.8, "recall_2d": 0.6, "precision_2d": 0.9, "dice_2d": 0.85, "leak": leak}
             return {"final": "refined_tuning", "summary": [r for f in flies for r in (row(f, "manual", 0.03), row(f, "refined_tuning", 0.05))],
                     "identity": [{"fly": f["name"], "rois": "refined_tuning", "correct": 3, "total": 4} for f in flies],
                     "glomeruli": [{"glomerulus": "DM2", "flies": len(flies), "detected": 1, "dice": 0.8, "named": 1}]}
@@ -263,7 +263,9 @@ def test_worker(main, tensor, monkeypatch):  # noqa: F811
     assert f["flies"]["held_out"] == calls["held_out"] == ["ann_2024-01-01_2"] and len(f["flies"]["train"]) == 2
     # each stage timed, with its size, for estimates of later fits
     assert set(f["stages"]) == set(fits.STAGES) and f["stages"]["train"]["size"] == 20 and f["stages"]["load"]["seconds"] > 0
-    assert f["result"]["mean"] == {"recall": 0.5, "precision": 1.0, "dice": 0.8, "leak": 0.05, "manual_leak": 0.03}
+    # (as 3D objects, and plane by plane)
+    assert f["result"]["mean"] == {"recall": 0.5, "precision": 1.0, "dice": 0.8, "recall_2d": 0.6, "precision_2d": 0.9, "dice_2d": 0.85,
+                                   "leak": 0.05, "manual_leak": 0.03}
     assert (f["result"]["named"], f["result"]["named_of"], f["model_bytes"]) == (3, 4, 1000 + 2 + len((fits.fit_dir(f["id"]) / "model/README.txt").read_bytes()))
     readme = (fits.fit_dir(f["id"]) / "model/README.txt").read_text()
     assert "fit #1" in readme and "al-diag-seg@abc" in readme and "alseg-predict model/" in readme

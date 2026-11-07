@@ -276,6 +276,16 @@ between the frontend and the server. Using the app is described in
   memory (al-diag-seg halves them from 8 until one does: 4 on the 24 GiB RTX 3090), and the
   worker's tests include one epoch of real training where there is a GPU, as the stand-in
   segmenter of its other tests skips what Cellpose writes and needs.
+- **A fit's ROIs are Cellpose's own, named** (al-diag-seg's `Options.final`, since 97aba30):
+  on fit 2's held-out flies, its odor-tuning and atlas refinements shrank Cellpose's ROIs and
+  broke them into pieces (plane by plane, 46% of the manual ROIs found at IoU ≥ 0.5 before,
+  29% after), as voxel-wise tuning is too noisy to judge borders by. Cellpose trains on every
+  outline of one glomerulus, named or not (numbered and `?` ROIs were half of those drawn,
+  and were taught as background); naming, the atlas and scores use the named ones.
+- **Scores are shown plane by plane and as 3D objects** (al-diag-seg's `*_2d` columns,
+  `metrics.match_report_2d`): ROIs are drawn and used per plane, and planes 10 µm apart make
+  Cellpose's per-plane masks, stitched into objects, reach other planes than the manual ones,
+  which the 3D match counts against them (46% found per plane, 30% as objects, for fit 2).
 - **A fit's held-out flies are taken from each dataset in turn**, spread through its flies,
   so that each uploader's are scored; their names are al-diag-seg's (top folder on tensor,
   date, number). A fit records who asked for it (the first name set in Settings: the box

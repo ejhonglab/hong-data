@@ -720,15 +720,17 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   histogram, or only those identified more often, or only the infrequent ones.
   *Fit a model* fits [al-diag-seg](https://github.com/tom-f-oconnell/al-diag-seg)'s
   model to those flies, read where they are on tensor, on the server's GPU (Cellpose
-  fine-tuned on their ROIs, an atlas of where each glomerulus is, and each one's odor
-  tuning), holding out a few flies (from each dataset in turn) to score its predicted ROIs
-  against theirs; with how many to hold out, Cellpose's epochs, whether to build the atlas
+  fine-tuned on their ROIs: every outline of one glomerulus, numbered and uncertain ones
+  too, but not `+` ROIs or outlines of the whole AL; an atlas of where each glomerulus is,
+  and each one's odor tuning), holding out a few flies (from each dataset in turn) to score
+  its predicted ROIs (Cellpose's own, named) against theirs; with how many to hold out, Cellpose's epochs, whether to build the atlas
   (and add the [Grabe et al. 2016](https://doi.org/10.1016/j.celrep.2016.08.063) atlas to
   it), and whether to train on tentative ROIs. Anyone may start one, once their first name is set in
   Settings (the box links to it). One runs at a time; those running and waiting say who
   asked for them, from which IP address, when, how far they have got, and when they should
   end (estimated from how long earlier fits took, stage by stage). *Past fits*, above it,
-  has every fit's scores (each held-out fly's, and the glomeruli not found, when
+  has every fit's scores, plane by plane (each glomerulus's outline on a plane, as ROIs
+  are drawn) and as 3D objects (each held-out fly's, and the glomeruli not found, when
   clicked), its log, and its download: its model, with how to run it on your own flies
   (`alseg-predict`, which writes their ROIs as RoiSets named by glomerulus), and its
   held-out flies' predicted ROIs. Anyone may delete one (it asks first). The bottom of

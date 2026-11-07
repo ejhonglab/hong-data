@@ -153,20 +153,23 @@ class Progress:
             self.stage = None
 
 
+SCORES = ("recall", "precision", "dice", "recall_2d", "precision_2d", "dice_2d", "leak")
+
+
 def summary(res: dict) -> dict:
     """What the tab shows of a fit's scores (al-diag-seg's ``Model.evaluate``): per held-out fly,
-    its final ROIs' recall, precision, Dice and leak (and its manual ROIs' leak), and how
+    its final ROIs' recall, precision and Dice, matched to its own as 3D objects and (``*_2d``,
+    where al-diag-seg scores them so) plane by plane, their leak (and its manual ROIs'), and how
     many were named as the manual ROI they overlap; their means; and per glomerulus."""
     final = res["final"]
     rows = {r["fly"]: r for r in res["summary"] if r["rois"] == final}
     manual = {r["fly"]: r for r in res["summary"] if r["rois"] == "manual"}
     named = {r["fly"]: r for r in res["identity"] if r["rois"] == final}
     num = lambda v: v if isinstance(v, (int, float)) else None  # noqa: E731
-    flies = [{"fly": f, "n": r["n"], **{k: num(r[k]) for k in ("recall", "precision", "dice", "leak")},
-              "manual_leak": num(manual.get(f, {}).get("leak")), "named": named.get(f, {}).get("correct", 0),
-              "named_of": named.get(f, {}).get("total", 0)} for f, r in rows.items()]
+    flies = [{"fly": f, "n": r["n"], **{k: num(r.get(k)) for k in SCORES}, "manual_leak": num(manual.get(f, {}).get("leak")),
+              "named": named.get(f, {}).get("correct", 0), "named_of": named.get(f, {}).get("total", 0)} for f, r in rows.items()]
     mean = {}
-    for k in ("recall", "precision", "dice", "leak", "manual_leak"):
+    for k in (*SCORES, "manual_leak"):
         vs = [f[k] for f in flies if f[k] is not None]
         mean[k] = sum(vs) / len(vs) if vs else None
     return {"final": final, "flies": flies, "mean": mean, "named": sum(f["named"] for f in flies),
@@ -279,7 +282,7 @@ log.txt             what it printed
 
 To make these again elsewhere, download fit #{fit}'s model, and run alseg-predict on the fly, as its README says.
 """
-KINDS = {"pred": "Cellpose's", "refined_tuning": "refined by odor tuning", "refined_prior": "refined with the atlas"}
+KINDS = {"pred": "Cellpose's own, named", "refined_tuning": "refined by odor tuning", "refined_prior": "refined with the atlas"}
 
 
 def _free_gpu() -> None:
@@ -374,8 +377,9 @@ def run_prediction(db, p: dict, on_gpu: bool, why_cpu: Optional[str] = None) -> 
                 row = lambda kind: next(r for r in res["summary"] if r["rois"] == kind)  # noqa: E731
                 num = lambda v: v if isinstance(v, (int, float)) else None  # noqa: E731
                 ident = next((r for r in res["identity"] if r["rois"] == final), {})
-                scores = {"manual": row("manual")["n"], **{k: num(row(final)[k]) for k in ("recall", "precision", "dice", "leak")},
-                          "manual_leak": num(row("manual")["leak"]), "named": ident.get("correct", 0), "named_of": ident.get("total", 0)}
+                scores = {"manual": row("manual")["n"], "manual_2d": row("manual").get("n_2d"),
+                          **{k: num(row(final).get(k)) for k in SCORES}, "manual_leak": num(row("manual")["leak"]),
+                          "named": ident.get("correct", 0), "named_of": ident.get("total", 0)}
                 n = row(final)["n"]
                 with open(d / f"{name}_identities_{final}.csv", newline="") as fh:
                     named = sorted({r["assigned"] for r in csv.DictReader(fh) if r["assigned"]})

@@ -155,8 +155,10 @@ def test_worker_prediction(main, tensor, monkeypatch):  # noqa: F811
     d = predictions.pred_dir(p["id"])
     assert p["status"] == "done", (d / "log.txt").read_text()[-3000:]
     r = p["result"]
-    assert r["final"] == "refined_tuning" and r["n"] >= 1 and r["device"] == "CPU" and set(r["named"]) <= set(GLOMS)
-    assert r["scores"]["manual"] == len(GLOMS) and r["scores"]["recall"] > 0
+    assert r["final"] == "pred" and r["n"] >= 1 and r["device"] == "CPU" and set(r["named"]) <= set(GLOMS)
+    # (its own ROIs grown, as the stand-in segmenter predicts: found as 3D objects and plane by plane)
+    assert r["scores"]["manual"] == len(GLOMS) and r["scores"]["recall"] > 0 and r["scores"]["recall_2d"] > 0
+    assert r["scores"]["manual_2d"] == len(GLOMS) * 3
     names = {x.name for x in roifile.ImagejRoi.fromfile(d / f"{held}_RoiSet.zip")}
     assert names and names <= set(GLOMS) | {x for x in names if x.isdigit()}
     prov = json.loads((d / "provenance.json").read_text())

@@ -529,7 +529,9 @@ try {
     <div class="step" id="fits-past-step" hidden>
       <div class="step-head"><h2>Past fits</h2></div>
       <p class="muted small">Anyone's, newest first. A fit's scores (click them for each held-out fly's, and the glomeruli not found)
-        are of its final ROIs against the held-out flies' own. Its download is its model, with how to run it on your flies, and its
+        are of its final ROIs against the held-out flies' own: plane by plane (each glomerulus's outline on a plane, as ROIs are
+        drawn), then as 3D objects (its outlines on all its planes as one, which counts an object reaching other planes than the
+        fly's own against it). Earlier fits have the 3D scores only. Its download is its model, with how to run it on your flies, and its
         held-out flies' predicted ROIs (as named RoiSets too).</p>
       <div id="fits-past"></div>
     </div>
@@ -566,11 +568,11 @@ try {
           odors, flies and al-diag-seg), <code>segmenter</code> (Cellpose's fine-tuned weights: about 1.2 GB),
           <code>pca.npz</code> and <code>template.json</code> (each glomerulus' odor tuning), and, with the atlas,
           <code>atlas.npz</code> (where each glomerulus is);</li>
-        <li><code>results/</code>, its held-out flies' predicted ROIs: each kind (<code>pred</code>: Cellpose's;
-          <code>refined_tuning</code>: refined by odor tuning; <code>refined_prior</code>: refined with the atlas, the final ones
-          when there is one) as labels (<code>&lt;fly&gt;_&lt;kind&gt;.tif</code>, Z × Y × X) and as named RoiSets
+        <li><code>results/</code>, its held-out flies' predicted ROIs: each kind (<code>pred</code>: Cellpose's own, named, the
+          final ones; <code>refined_tuning</code>: refined by odor tuning; <code>refined_prior</code>: refined with the atlas) as labels (<code>&lt;fly&gt;_&lt;kind&gt;.tif</code>, Z × Y × X) and as named RoiSets
           (<code>&lt;fly&gt;_&lt;kind&gt;_RoiSet.zip</code>), the names given (<code>&lt;fly&gt;_identities_&lt;kind&gt;.csv</code>),
-          and their scores against the flies' own ROIs (<code>summary.csv</code>, <code>glomeruli.csv</code>).</li>
+          and their scores against the flies' own ROIs (<code>summary.csv</code>: as 3D objects, and plane by plane,
+          <code>*_2d</code>; <code>glomeruli.csv</code>).</li>
       </ul>
       <p class="small">To run it on a fly (with Python 3.11 to 3.13; a GPU makes it faster, but is not needed), as
         <a href="https://github.com/tom-f-oconnell/al-diag-seg#readme" target="_blank" rel="noopener">al-diag-seg's README</a> says
