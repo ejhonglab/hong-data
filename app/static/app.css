@@ -348,6 +348,14 @@ dialog.confirm .actions { justify-content: flex-end; }
 .rt-count { margin-top: 12px; max-width: 520px; }
 #rt-rare .nowrap { white-space: nowrap; }
 .fit-options { grid-template-columns: repeat(auto-fill, minmax(200px, 260px)); }
+.predict-options, .predict-paths { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); margin-bottom: 8px; }
+.predict-options select { width: 100%; }
+.predict-pair { margin-top: 8px; }
+.predictions-table td.acts { white-space: nowrap; }
+.fit-zip { margin: 4px 0 8px; padding-left: 20px; }
+.fit-zip li { margin: 2px 0; }
+.code-block { overflow: auto; font-size: 12px; line-height: 1.5; background: var(--surface-2); border: 1px solid var(--rule);
+  border-radius: var(--radius); padding: 8px 10px; margin: 6px 0 0; }
 .step > .check.fit-sub { margin-left: 24px; }
 .step > .check.fit-sub.disabled { opacity: 0.5; }
 .fit-active { border: 1px solid var(--rule); border-radius: var(--radius); padding: 10px 12px; margin-top: 10px; }
@@ -751,6 +759,11 @@ dialog.player::backdrop { background: rgba(29,31,34,.55); }
 .player-roi-legend:empty { display: none; }
 .player-roi-legend .above { color: #d23c3c; }
 .player-roi-legend .below { color: #2f7fd6; }
+/* a prediction's (AL segmentation tab): only the ROIs of the plane shown, and which are predicted */
+.player.player-prediction .player-roi-planes-row, .player.player-prediction .player-max-row { display: none; }
+.player-roi-sources { display: flex; flex-direction: column; gap: 3px; margin-bottom: 6px; font-size: 12px; }
+.player-roi-sources[hidden] { display: none; }
+.player-roi-sources label { display: flex; align-items: center; gap: 5px; }
 .player-roi { display: flex; align-items: center; gap: 6px; width: 100%; border: 0; background: none; text-align: left; padding: 3px 6px; border-radius: 4px; cursor: pointer; font-size: 12.5px; }
 .player-roi .muted { margin-left: auto; font-size: 11.5px; }
 .player-roi:hover { background: var(--surface-2); }

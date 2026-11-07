@@ -32,8 +32,9 @@ services:
       driver: json-file
       options: { max-size: "20m", max-file: "5" }
 
-  # Runs the fits asked for in the AL Segmentation tab (app/fit_worker.py), one at a time, with
-  # al-diag-seg on the GPU: the same app, and folders, as the web server's, but an image with PyTorch
+  # Runs the fits asked for in the AL segmentation tab (app/fit_worker.py), one at a time, with
+  # al-diag-seg on the GPU, and its predictions of flies' ROIs beside them (on the CPU while a fit
+  # has the GPU): the same app, and folders, as the web server's, but an image with PyTorch
   # and al-diag-seg too (about 9 GB), and the only one given the GPU. Needs the NVIDIA Container
   # Toolkit (DEPLOY.md, "GPU"); without a GPU, remove this service (fits then wait, and the tab says so).
   worker:

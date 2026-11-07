@@ -36,7 +36,7 @@ Docker) when the other set is already there.
 
 ### GPU (the fit worker)
 
-The AL Segmentation tab's fits run in a second container, `olfdb-worker`, given the
+The AL segmentation tab's fits run in a second container, `olfdb-worker`, given the
 server's NVIDIA GPU. That needs the NVIDIA driver (`nvidia-smi` lists the GPU) and the
 NVIDIA Container Toolkit, set up for Docker; this prints the GPU if both are there:
 

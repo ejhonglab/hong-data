@@ -1,6 +1,6 @@
 """Data to train a model to draw glomerulus ROIs (al-diag-seg,
 https://github.com/tom-f-oconnell/al-diag-seg): what is on tensor of each fly of a glomeruli
-dataset with a diagnostic panel, and a download of it (AL Segmentation tab).
+dataset with a diagnostic panel, and a download of it (AL segmentation tab).
 
 A fly is exported if its folder in the dataset's motion-corrected data (as al_analysis lays
 it out) has:
@@ -503,7 +503,7 @@ def stream_zip(found: dict, root: Path, bases: list[Path], stacks: bool, top: st
 
 
 def summary(found: dict, root: Path, bases: list[Path]) -> dict:
-    """What the AL Segmentation tab shows: each fly to export and those left out, with sizes;
+    """What the AL segmentation tab shows: each fly to export and those left out, with sizes;
     and of each fly, its glomeruli (`roi_glomeruli`: ``glomeruli`` and ``tentative``, None
     with ``roi_error`` if its ROIs could not be read) and ``panels``: those but diagnostic ones."""
     with ThreadPoolExecutor(PREFETCH) as pool:  # (each file on tensor takes a while to start reading)
@@ -516,7 +516,8 @@ def summary(found: dict, root: Path, bases: list[Path]) -> dict:
             size += z * y * x * 4
         flies.append({
             "date": f["date"], "fly_num": f["fly_num"], "datasets": f["datasets"],
-            "dir": _arcname(f["dir"], root, bases), "roiset": _arcname(f["roiset"], root, bases), "shape": list(f["grid"]),
+            "dir": _arcname(f["dir"], root, bases), "raw_dir": _arcname(f["raw_dir"], root, bases) if f["raw_dir"] else None,
+            "roiset": _arcname(f["roiset"], root, bases), "shape": list(f["grid"]),
             "average": "computed" if f["average"]["computed"] else "al_analysis",
             "recordings": [{"name": r["dir"].name, "n_odors": len(r["odors"]), "xml": r["xml"] is not None} for r in f["recordings"]],
             "stacks": [{"name": s["dir"].name, "bytes": s["bytes"]} for s in f["stacks"]],

@@ -1,6 +1,6 @@
-// Fits of al-diag-seg models in the AL Segmentation tab (fits.py, fit_worker.py): asking for one
+// Fits of al-diag-seg models in the AL segmentation tab (fits.py, fit_worker.py): asking for one
 // (as the name set in Settings), those queued and running (who asked, from where, when, how far,
-// and when it should end), and past ones at the bottom of the tab (their scores on the held-out
+// and when it should end), and past ones above them (their scores on the held-out
 // flies, and their model to download, or to delete).
 
 const STAGE_NAMES = { load: 'Finding and loading the flies', train: 'Training Cellpose', atlas: 'Building the atlas',

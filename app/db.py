@@ -225,7 +225,7 @@ CREATE TABLE IF NOT EXISTS file_log (  -- files the server has read or written i
     wrote INTEGER NOT NULL DEFAULT 0,
     first_at TEXT                      -- null: in the data folder when the record began
 );
-CREATE TABLE IF NOT EXISTS fits (  -- al-diag-seg models fit in the AL Segmentation tab, by the fit worker (see fits.py)
+CREATE TABLE IF NOT EXISTS fits (  -- al-diag-seg models fit in the AL segmentation tab, by the fit worker (see fits.py)
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,                -- who asked for it (their first name, from Settings)
     ip TEXT,                           -- from where
@@ -241,6 +241,23 @@ CREATE TABLE IF NOT EXISTS fits (  -- al-diag-seg models fit in the AL Segmentat
     result_json TEXT,                  -- its scores on the held-out flies
     error TEXT,
     model_bytes INTEGER
+);
+CREATE TABLE IF NOT EXISTS predictions (  -- glomerulus ROIs a fit's model predicted for a fly, by the fit worker (see predictions.py)
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fit_id INTEGER NOT NULL,           -- the fit whose model (kept when the fit is deleted)
+    fly_dir TEXT NOT NULL,             -- the fly's motion-corrected data folder, on the server
+    raw_dir TEXT,                      -- its raw data folder, on the server
+    fly TEXT NOT NULL,                 -- its name, as al-diag-seg's
+    name TEXT NOT NULL,                -- who asked for it (last), from Settings
+    ip TEXT,
+    created_at TEXT NOT NULL,          -- when it was asked for (last)
+    started_at TEXT,
+    finished_at TEXT,
+    status TEXT NOT NULL,              -- queued, running, done, failed, interrupted
+    progress_json TEXT,                -- the stage it is at, and on what (GPU or CPU)
+    result_json TEXT,                  -- its ROIs, and their scores against the fly's own
+    error TEXT,
+    UNIQUE (fit_id, fly_dir)
 );
 CREATE TABLE IF NOT EXISTS model_sources (  -- folders of model outputs added in the Admin tab, for the Models tab (see model_data.py)
     id INTEGER PRIMARY KEY AUTOINCREMENT,

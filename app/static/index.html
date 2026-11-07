@@ -29,7 +29,7 @@ try {
     <span class="tabs-sep" aria-hidden="true"></span>
     <a href="#headspace" data-tab="headspace">Headspace calculator</a>
     <span class="tabs-sep" aria-hidden="true"></span>
-    <a href="#al-segmentation" data-tab="al-segmentation">AL Segmentation</a>
+    <a href="#al-segmentation" data-tab="al-segmentation">AL segmentation</a>
   </nav>
   <span class="topbar-status" id="topbar-status"></span>
   <nav class="tabs" aria-label="Settings, help and administration">
@@ -473,15 +473,41 @@ try {
   <!-- ================================================= ROI TRAINING -->
   <section id="tab-al-segmentation" class="tab" hidden>
     <div class="page-head">
-      <h1>AL Segmentation</h1>
-      <p class="lede">Data to train a model to draw glomerulus ROIs (<a href="https://github.com/tom-f-oconnell/al-diag-seg" target="_blank" rel="noopener">al-diag-seg</a>):
-        each fly of a glomeruli dataset with a diagnostic panel whose ROIs (<code>RoiSet.zip</code>) are on tensor, with its
-        diagnostic odors' mean dF/F, its average image, its voxel sizes and, where it has one, its anatomical stack, as al_analysis
-        leaves them there.</p>
+      <h1>AL segmentation</h1>
+      <p class="lede">Glomerulus ROIs drawn by models (<a href="https://github.com/tom-f-oconnell/al-diag-seg" target="_blank" rel="noopener">al-diag-seg</a>)
+        fit to the flies of the site's datasets: a fly's ROIs predicted, and the data to fit a model to: each fly of a glomeruli
+        dataset with a diagnostic panel whose ROIs (<code>RoiSet.zip</code>) are on tensor, with its diagnostic odors' mean dF/F,
+        its average image, its voxel sizes and, where it has one, its anatomical stack, as al_analysis leaves them there.</p>
+    </div>
+
+    <div class="step" id="predict-step">
+      <div class="step-head"><h2>Predict glomerulus ROIs</h2></div>
+      <p class="muted small">Draws a fly's glomerulus ROIs, named, with a fit's model (see <i>Past fits</i>, below), on the server's
+        GPU (on its CPU while a fit is using the GPU: slower). They are kept on the server with what they were made from, to view
+        here (beside the fly's own ROIs, if it has them) or download: a <code>RoiSet.zip</code> for ImageJ and al_analysis.</p>
+      <div class="grid predict-options">
+        <label class="field"><span>Model</span><select id="predict-model"></select></label>
+        <label class="field"><span>Fly</span><select id="predict-fly"></select></label>
+      </div>
+      <div class="grid predict-paths" id="predict-paths" hidden>
+        <label class="field"><span>Its motion-corrected data folder <span class="muted">(from the top of tensor: its recordings'
+          <code>trialmean_dff.tif</code>, as al_analysis leaves them)</span></span>
+          <input id="predict-dir" data-tensor-path spellcheck="false" placeholder="e.g. Ann/analysis/2026-03-31/1"></label>
+        <label class="field"><span>Its raw data folder <span class="muted">(its recordings' <code>Experiment.xml</code>: their voxel
+          sizes; and its anatomical stack)</span></span>
+          <input id="predict-raw" data-tensor-path spellcheck="false" placeholder="e.g. Ann/raw/2026-03-31/1"></label>
+      </div>
+      <p class="small" id="predict-who"></p>
+      <div class="actions">
+        <button type="button" class="btn primary" id="predict-start">Predict its ROIs</button>
+        <button type="button" class="btn" id="predict-view" disabled>View the ROIs</button>
+      </div>
+      <div id="predict-status" aria-live="polite"></div>
+      <div id="predict-list"></div>
     </div>
 
     <div class="step">
-      <div class="step-head"><h2>Download</h2></div>
+      <div class="step-head"><h2>Download training data</h2></div>
       <div id="rt-status" aria-live="polite"></div>
       <label class="check"><input type="checkbox" id="rt-stacks" checked> Their anatomical stacks <span class="muted" id="rt-stacks-size"></span></label>
       <div class="actions">
@@ -498,6 +524,14 @@ try {
         functional data. al-diag-seg registers flies to each other through these (much better than through a few planes),
         and finds out which way round each goes. <code>roi_training.json</code> says which file is what, and names
         each recording's odors as in the odor table. Unzip it and give its folder to al-diag-seg's <code>run_pipeline.py</code>.</p>
+    </div>
+
+    <div class="step" id="fits-past-step" hidden>
+      <div class="step-head"><h2>Past fits</h2></div>
+      <p class="muted small">Anyone's, newest first. A fit's scores (click them for each held-out fly's, and the glomeruli not found)
+        are of its final ROIs against the held-out flies' own. Its download is its model, with how to run it on your flies, and its
+        held-out flies' predicted ROIs (as named RoiSets too).</p>
+      <div id="fits-past"></div>
     </div>
 
     <div class="step" id="fit-step">
@@ -523,16 +557,25 @@ try {
       <div id="fit-status" aria-live="polite"></div>
       <div id="fit-worker"></div>
       <div id="fits-list"></div>
-    </div>
-
-    <div class="step">
-      <div class="step-head"><h2>Flies</h2></div>
-      <div id="rt-flies"></div>
-    </div>
-
-    <div class="step" id="rt-skipped-step" hidden>
-      <div class="step-head"><h2>Left out</h2></div>
-      <div id="rt-skipped"></div>
+      <h3>Running a model yourself</h3>
+      <p class="small">A past fit's model can also be downloaded (its <i>Download</i>, above, under <i>Past fits</i>), to run on
+        flies elsewhere. The zip has one folder, <code>olfdb_fit_&lt;fit&gt;/</code>, with:</p>
+      <ul class="small fit-zip">
+        <li><code>README.txt</code>: how to run it, with the al-diag-seg (and hong2p) it was made with;</li>
+        <li><code>model/</code>, the model, for al-diag-seg's <code>alseg-predict</code>: <code>model.json</code> (its options,
+          odors, flies and al-diag-seg), <code>segmenter</code> (Cellpose's fine-tuned weights: about 1.2 GB),
+          <code>pca.npz</code> and <code>template.json</code> (each glomerulus' odor tuning), and, with the atlas,
+          <code>atlas.npz</code> (where each glomerulus is);</li>
+        <li><code>results/</code>, its held-out flies' predicted ROIs: each kind (<code>pred</code>: Cellpose's;
+          <code>refined_tuning</code>: refined by odor tuning; <code>refined_prior</code>: refined with the atlas, the final ones
+          when there is one) as labels (<code>&lt;fly&gt;_&lt;kind&gt;.tif</code>, Z × Y × X) and as named RoiSets
+          (<code>&lt;fly&gt;_&lt;kind&gt;_RoiSet.zip</code>), the names given (<code>&lt;fly&gt;_identities_&lt;kind&gt;.csv</code>),
+          and their scores against the flies' own ROIs (<code>summary.csv</code>, <code>glomeruli.csv</code>).</li>
+      </ul>
+      <p class="small">To run it on a fly (with Python 3.11 to 3.13; a GPU makes it faster, but is not needed), as
+        <a href="https://github.com/tom-f-oconnell/al-diag-seg#readme" target="_blank" rel="noopener">al-diag-seg's README</a> says
+        more about:</p>
+      <pre class="code-block" id="fit-howto"></pre>
     </div>
 
     <div class="step" id="rt-glom-step" hidden>
@@ -561,12 +604,14 @@ try {
       <div class="actions"><button type="button" class="btn small" id="rt-cut-reset">Back to ≤ 50% of the flies, all counted</button></div>
     </div>
 
-    <div class="step" id="fits-past-step" hidden>
-      <div class="step-head"><h2>Past fits</h2></div>
-      <p class="muted small">Anyone's, newest first. A fit's scores (click them for each held-out fly's, and the glomeruli not found)
-        are of its final ROIs against the held-out flies' own. Its download is its model, with how to run it on your flies, and its
-        held-out flies' predicted ROIs (as named RoiSets too).</p>
-      <div id="fits-past"></div>
+    <div class="step">
+      <div class="step-head"><h2>Flies</h2></div>
+      <div id="rt-flies"></div>
+    </div>
+
+    <div class="step" id="rt-skipped-step" hidden>
+      <div class="step-head"><h2>Left out</h2></div>
+      <div id="rt-skipped"></div>
     </div>
   </section>
 
@@ -1088,6 +1133,18 @@ try {
   </form>
 </dialog>
 
+<dialog id="predict-again" class="confirm" aria-labelledby="predict-again-q">
+  <form method="dialog">
+    <p id="predict-again-q">This model has predicted this fly's ROIs already.</p>
+    <p class="muted small" id="predict-again-detail"></p>
+    <div class="actions">
+      <button type="submit" value="view" class="btn primary" autofocus>View those ROIs</button>
+      <button type="submit" value="rerun" class="btn danger">Predict again, replacing them</button>
+      <button type="submit" value="cancel" class="btn">Cancel</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="player" class="player" aria-labelledby="player-title">
   <div class="player-head">
     <h2 class="player-title" id="player-title">Movies</h2>
@@ -1112,7 +1169,7 @@ try {
           <span class="muted">Plane</span>
           <input type="range" class="player-z" min="0" max="0" value="0" aria-label="Z plane">
           <span class="player-z-out"></span>
-          <label class="check"><input type="checkbox" class="player-max"> max projection</label>
+          <label class="check player-max-row"><input type="checkbox" class="player-max"> max projection</label>
         </div>
         <div class="player-row">
           <label class="player-crow">Channel <select class="player-c"></select></label>
@@ -1155,6 +1212,7 @@ try {
         <label class="check player-roi-tentative-row" hidden title="ROIs named as a glomerulus with _t0, _t1, … after it (a name not certain)">
           <input type="checkbox" class="player-roi-tentative" checked> tentative (_t0, _t1, …) <span class="player-roi-tentative-n muted"></span></label>
       </div>
+      <div class="player-roi-sources" hidden></div>
       <div class="player-roi-legend muted small"></div>
       <div class="player-roi-list"></div>
     </aside>

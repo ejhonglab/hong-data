@@ -236,7 +236,7 @@ between the frontend and the server. Using the app is described in
   Other…, hints, and checks. The defaults leave out what is of one dataset only (its
   uploader, manipulations, data paths and files), and require nothing; the server checks
   all of them as an upload's (`Metadata`).
-- **The AL Segmentation download is tensor as it is, with a manifest.** Its files are where
+- **The AL segmentation download is tensor as it is, with a manifest.** Its files are where
   al_analysis leaves them (paths from the top of tensor), not renamed into a layout of the
   training code's: al-diag-seg reads this one (its `alseg/olfdb.py`), through
   `roi_training.json`, which says what each file is and names every recording's odors as
@@ -248,7 +248,7 @@ between the frontend and the server. Using the app is described in
   few GB. Files are read eight at a time ahead of being sent, as each file on tensor
   takes a while to start reading (an anatomical stack's ~1000 files: 45 s one after
   another, 3 s eight at a time).
-- **The AL Segmentation tab counts glomeruli as al-diag-seg trains on them** (`roi_training.roi_glomeruli`:
+- **The AL segmentation tab counts glomeruli as al-diag-seg trains on them** (`roi_training.roi_glomeruli`:
   the same rules as its `alseg/olfdb.py`, through `movies.roi_kind`), from each fly's
   `RoiSet.zip` (read eight at a time, as the download's files are), so what it shows is what
   a model is trained on. A fly's panels are those it has a response in, in the datasets it
@@ -293,6 +293,25 @@ between the frontend and the server. Using the app is described in
   loaded, per epoch and training fly, per fly or reference atlas in the atlas, per held-out fly), and for the
   stage it is in, from how far it has got; a fit waiting starts when those before it end.
   Before any fit has finished, the estimate is a guess, and says so.
+- **Predictions of a fly's ROIs run in the fit worker, beside fits** (`predictions.py`,
+  `fit_worker.run_prediction`): only its image has al-diag-seg and PyTorch. A thread of
+  their own takes them one at a time, on the GPU when no fit holds it (a lock: a fit
+  claimed waits for a prediction on it to end, minutes at most), else on the CPU, so a
+  prediction never waits hours for a fit, nor takes GPU memory a fit's training needs (it
+  would halve its batches, or start again). A child process would separate them better,
+  but it inherits the worker's Landlock rules, which let CUDA write only the worker's own
+  /proc entries, so it would not find the GPU; the two threads' printing goes each to its
+  own log instead (`_Streams`: sys.stdout and sys.stderr dispatched by thread).
+- **A prediction is one per fit and fly**, the fly known by its motion-corrected data
+  folder (its real path, however it was entered), so asking again replaces it (the tab
+  asks first). Its folder keeps what al-diag-seg's `alseg-predict` would write, the fly's
+  average image (for the viewer: al_analysis' `mocorr_concat_avg.tif` is saved as frames,
+  not planes), and `provenance.json`; a prediction outlives its fit's deletion (its
+  provenance has the model's details), but cannot be made again then. The movie player
+  shows a prediction's files as it shows tensor's: `_server_file` also allows the
+  predictions folder (only it, of the data folder). Odors are matched to the model's as
+  for a fit's flies, through the odor table, so a fly's odors named otherwise than the
+  training flies' still count.
 - **Model data is read where it is, never imported** (`model_data.py`): the Admin tab keeps
   only a folder's path on tensor and its lists of parameters (`model_sources`), and the
   Models tab scans it each time it is opened (its `params.csv`, `provenance.json` and spike
@@ -1090,7 +1109,10 @@ app/glomeruli.py   accepted glomerulus names (config/glomeruli.txt overrides)
 app/yamlcheck.py   odor YAML parsing, what looks wrong in one, and the matrix ⊂ YAML check
 app/thorimage.py   Experiment.xml summary, and a .raw file's layout (with hong2p.thor)
 app/fits.py        fits of al-diag-seg models: records, options, held-out flies, their manifest, time estimates
-app/fit_worker.py  the fit worker (python -m app.fit_worker): runs fits one at a time, with al-diag-seg
+app/fit_worker.py  the fit worker (python -m app.fit_worker): runs fits one at a time, with al-diag-seg,
+                   and predictions beside them (GPU or CPU)
+app/predictions.py predictions of flies' glomerulus ROIs by fits' models: records, the fly's folders, the viewer's
+                   images, downloads
 app/model_data.py  model data for the Models tab: folders of model outputs on tensor, scanned into a table of
                    models (params.csv rows, provenance.json keys), their spike count files matched, a run read
 app/metadata.py    form model (pydantic) and README.md generation
@@ -1132,7 +1154,8 @@ app/static/        frontend: index.html, app.js, heatmap.js, colormaps.js (+ mpl
                    pvalue-worker.js their p-values), metacyc.js (MetaCyc below its matrices: pathways
                    drawn, compounds, LCA paths, search), lotus.js (LOTUS with its matrices: how
                    made, a cell's organisms and papers), imports.js (MetaCyc and LOTUS imported
-                   in the Admin tab), fits.js (the AL Segmentation tab's fits), models.js (the Models
+                   in the Admin tab), fits.js and predictions.js (the AL segmentation tab's fits and
+                   predictions), models.js (the Models
                    tab: its table of models and a run's viewer), latex.js (labels with
                    LaTeX math, by MathJax: vendor/mathjax/)
 manage.py          list / show / export / delete datasets from the server

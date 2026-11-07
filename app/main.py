@@ -39,8 +39,8 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from . import (backup, bundle_import, chemprops, compare, config, dilution, export, filelog, fits, headspace, lotus,
-               lotus_import, matrix_download, merge, metacyc, metacyc_import, model_data, movies, odormeta, permalinks, reference,
-               roi_training, sandbox, tensor, thorimage, vcf, version, yamlcheck)
+               lotus_import, matrix_download, merge, metacyc, metacyc_import, model_data, movies, odormeta, permalinks,
+               predictions, reference, roi_training, sandbox, tensor, thorimage, vcf, version, yamlcheck)
 from .db import PANEL_RENAMES, PROPERTY_COLUMNS, Database, rename_panel
 from .glomeruli import GLOMERULI, load_glomeruli
 from .ingest import (ParsedData, ValidationError, combine, extra_text, files_text, fly_key, kc_id_problems, load_file,
@@ -1269,13 +1269,14 @@ async def permalink_follow(request: Request) -> Response:
 
 
 def _server_file(path: Any, suffixes: tuple[str, ...]) -> Path:
-    """A file on the server named by the browser (a movie, its ROIs or trials): it must be on tensor
-    or in a folder set in the Admin tab, and one the server may read (raises HTTPException)."""
+    """A file on the server named by the browser (a movie, its ROIs or trials): it must be on tensor,
+    in a folder set in the Admin tab, or of a prediction of glomerulus ROIs (its fly's average image
+    and ROIs), and one the server may read (raises HTTPException)."""
     p = str(path or "")
     if not os.path.isabs(p) or not p.lower().endswith(suffixes):
         raise HTTPException(400, f"expected the path on the server of a {' / '.join(suffixes)} file")
     real = os.path.realpath(p)
-    tops = [os.path.realpath(t).rstrip("/") for t in [config.TENSOR_ROOT, *sandbox.folders()]]
+    tops = [os.path.realpath(t).rstrip("/") for t in [config.TENSOR_ROOT, *sandbox.folders(), predictions.root()]]
     if not any(real == t or real.startswith(t + "/") for t in tops) or not sandbox.can_read(real):
         raise HTTPException(403, tensor.NOT_ALLOWED)
     if not os.path.isfile(real):
@@ -1474,7 +1475,7 @@ async def roi_training_flies(request: Request) -> Response:
 
 
 async def roi_training_download(request: Request) -> Response:
-    """A zip of what the AL Segmentation tab lists of each fly, with its anatomical stack if it
+    """A zip of what the AL segmentation tab lists of each fly, with its anatomical stack if it
     has one (but with ``?stacks=0``), sent as it is written (`roi_training.stream_zip`): it may
     be several GB."""
     found, bases = await run_in_threadpool(_roi_training_found, request)
@@ -1554,6 +1555,86 @@ async def fits_download(request: Request) -> Response:
         return json_error(409, "only a fit that is done has a model to download")
     top = f"olfdb_fit_{fit_id}"
     return StreamingResponse(fits.stream_zip(fit_id, top), media_type="application/zip",
+                             headers={"content-disposition": f'attachment; filename="{top}.zip"'})
+
+
+# ----------------------------------------------------------------- predictions
+
+async def predictions_list(request: Request) -> Response:
+    """Every prediction of glomerulus ROIs, the models to predict with, and the fit worker (`predictions.listing`)."""
+    return JSONResponse(await run_in_threadpool(predictions.listing, db, config.TENSOR_ROOT))
+
+
+async def predictions_create(request: Request) -> Response:
+    """Asks for a fly's glomerulus ROIs, predicted by a fit's model: {"name" (as for a fit), "fit" (its
+    id), "dir", "raw_dir" (the fly's motion-corrected and raw data folders, from the top of tensor or
+    absolute), "overwrite"}. 201 if queued now; 200 for one already queued or running; 409 (with
+    ``prediction``) if that model has predicted that fly already, unless ``overwrite`` (then it is
+    run again, its files replaced). 422 without a name; 400 for a fit with no model, or a fly not found."""
+    body = await request.json()
+    if not isinstance(body, dict):
+        return json_error(400, "expected a JSON object")
+    name = _user_name(body.get("name"))
+    if not name:
+        return json_error(422, "say who you are: enter your first name in Settings")
+    if first_name_problem(name):
+        return json_error(422, "the name must be a first name alone, with no spaces (e.g. Ann)")
+    try:
+        fit_id = int(body.get("fit"))
+    except (TypeError, ValueError):
+        return json_error(400, "fit: the id of a fit")
+
+    def run():
+        f = fits.get(db, fit_id)
+        if f is None or f["status"] != "done" or not (fits.fit_dir(fit_id) / "model" / "model.json").is_file():
+            raise ValueError(f"fit #{fit_id} has no model to predict with (only fits done have one)")
+        fly = predictions.locate(body.get("dir"), body.get("raw_dir"), config.TENSOR_ROOT, [Path(p) for p in sandbox.folders()])
+        return predictions.create(db, fit_id, fly, name, _client_ip(request), overwrite=bool(body.get("overwrite")))
+
+    try:
+        p, queued = await run_in_threadpool(run)
+    except predictions.Exists as e:
+        return json_error(409, str(e), prediction=e.prediction)
+    except ValueError as e:
+        return json_error(400, str(e))
+    return JSONResponse(p, status_code=201 if queued else 200)
+
+
+async def predictions_delete(request: Request) -> Response:
+    """Deletes a prediction and its files. 409 while it runs."""
+    done = await run_in_threadpool(predictions.delete, db, request.path_params["id"])
+    if done is None:
+        return json_error(404, "no such prediction")
+    if done is False:
+        return json_error(409, "it is running: wait for it to end")
+    return JSONResponse({"deleted": True})
+
+
+async def predictions_log(request: Request) -> Response:
+    """A prediction's log (its last 200 kB)."""
+    p = predictions.pred_dir(request.path_params["id"]) / "log.txt"
+    if not p.is_file():
+        return json_error(404, "no log of that prediction (it has not started, or is deleted)")
+    with open(p, "rb") as f:
+        f.seek(max(0, p.stat().st_size - 200_000))
+        return PlainTextResponse(f.read().decode("utf-8", errors="replace"))
+
+
+async def predictions_view(request: Request) -> Response:
+    """What the tab's viewer shows of a prediction done (`predictions.view`): its fly's movies, each
+    with the predicted ROIs and the fly's own."""
+    v = await run_in_threadpool(predictions.view, db, request.path_params["id"])
+    return JSONResponse(v) if v else json_error(404, "no such prediction done")
+
+
+async def predictions_download(request: Request) -> Response:
+    """A prediction's folder, as a zip sent as it is written (`predictions.stream_zip`)."""
+    pred_id = request.path_params["id"]
+    p = await run_in_threadpool(predictions.get, db, pred_id)
+    if p is None or p["status"] != "done":
+        return json_error(404, "no such prediction done")
+    top = f"olfdb_prediction_{pred_id}_{p['fly']}_fit_{p['fit_id']}"
+    return StreamingResponse(predictions.stream_zip(pred_id, top), media_type="application/zip",
                              headers={"content-disposition": f'attachment; filename="{top}.zip"'})
 
 
@@ -3429,6 +3510,12 @@ routes = [
     Route("/api/fits/{id:int}/cancel", fits_cancel, methods=["POST"]),
     Route("/api/fits/{id:int}/log", fits_log),
     Route("/api/fits/{id:int}/download", fits_download),
+    Route("/api/predictions", predictions_list),
+    Route("/api/predictions", predictions_create, methods=["POST"]),
+    Route("/api/predictions/{id:int}", predictions_delete, methods=["DELETE"]),
+    Route("/api/predictions/{id:int}/log", predictions_log),
+    Route("/api/predictions/{id:int}/view", predictions_view),
+    Route("/api/predictions/{id:int}/download", predictions_download),
     Route("/api/models", models_list),
     Route("/api/models/run", models_run),
     Route("/api/models/run/download", models_run_download, methods=["POST"]),

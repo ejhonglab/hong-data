@@ -47,11 +47,13 @@ expected, and nothing secret is entered. If a download or the page is blocked, s
    Below it, how to make each odor from its neat chemical by serial dilutions; then
    search VCF's foods (e.g. `kiwi`) for their volatiles, the headspace over
    them, and the dilutions in paraffin oil that would give the same headspace.
-9. **AL Segmentation**: one download of what there is on tensor to train a model to draw
-   glomerulus ROIs ([al-diag-seg](https://github.com/tom-f-oconnell/al-diag-seg)) of
-   every fly of a glomeruli dataset with a diagnostic panel, and the flies left out, with why;
-   how many glomeruli each fly has, and which glomeruli few of the flies have. Models fit to
-   them on the server's GPU, scored on flies held out, and downloaded to run on your own flies.
+9. **AL segmentation**: a fly's glomerulus ROIs drawn and named by a model
+   ([al-diag-seg](https://github.com/tom-f-oconnell/al-diag-seg)) fit on the server, viewed
+   beside the fly's own and downloaded; one download of what there is on tensor to train
+   such a model, of every fly of a glomeruli dataset with a diagnostic panel, and the flies
+   left out, with why; how many glomeruli each fly has, and which glomeruli few of the flies
+   have. Models fit to them on the server's GPU, scored on flies held out, and downloaded to
+   run on your own flies.
 
 The footer says which version of the site the page runs (its commit, and whether it had
 changes not yet committed). After the site is updated, a page left open says so once you
@@ -675,7 +677,21 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     a CSV per chemical (each product's values, the headspace in every unit, the oil) or
     of the matching lines (with where each constant and vapor pressure is from, and the
     file's).
-- **AL Segmentation**: of every glomeruli dataset with a diagnostic panel, each fly whose
+- **AL segmentation**: *Predict glomerulus ROIs*, at the top, draws a fly's glomerulus ROIs
+  with a fit's model (by default the last fit done; each says how many flies it was fit
+  to): a fly of the site's datasets (saying which the model was trained on or held out),
+  or any on tensor, by its motion-corrected and raw data folders. The fit worker makes them,
+  on the GPU, or on the CPU while a fit is using the GPU (slower, but not hours later), and
+  keeps them on the server (`data/predictions/<id>/`): its ROIs as a `RoiSet.zip` named by
+  glomerulus, each kind al-diag-seg makes, the fly's average image, and `provenance.json`
+  (the model and its fit, the fly's files read with their sizes and times, the software,
+  who asked). Asked for again, of the same model and fly, it asks whether to view those or
+  make them again, replacing them. *View the ROIs* opens them in the movie player, on the
+  fly's average image (as the model saw it) and its motion-corrected movies: only the ROIs
+  of the plane shown, those predicted and the fly's own (if it has them) in two colours,
+  each shown or not. Where the fly has ROIs of its own, the predicted ones are scored
+  against them. Every prediction is listed below, to view, download or delete.
+  *Download training data*: of every glomeruli dataset with a diagnostic panel, each fly whose
   folder in the dataset's motion-corrected data (as al_analysis lays it out) has
   diagnostic recordings (folders with `trialmean_dff.tif`, the mean dF/F of each odor, and
   `trial_frames_and_odors.json`, more than half of whose odors are of the dataset's
@@ -699,7 +715,7 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   flies): those labelled by one uploader only, then the others, each with how many flies
   (of each uploader and dataset) have it, the datasets without it, and the panels (but
   diagnostics) of the flies with it; then those only in flies with a panel not every fly
-  has. The box at the bottom sets the cutoff (a number or percent of the flies, `≤` or
+  has. The box below it sets the cutoff (a number or percent of the flies, `≤` or
   `<`), and whether all glomeruli are counted at the top, in the table and in the
   histogram, or only those identified more often, or only the infrequent ones.
   *Fit a model* fits [al-diag-seg](https://github.com/tom-f-oconnell/al-diag-seg)'s
@@ -711,11 +727,13 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   it), and whether to train on tentative ROIs. Anyone may start one, once their first name is set in
   Settings (the box links to it). One runs at a time; those running and waiting say who
   asked for them, from which IP address, when, how far they have got, and when they should
-  end (estimated from how long earlier fits took, stage by stage). *Past fits*, at the
-  bottom, has every fit's scores (each held-out fly's, and the glomeruli not found, when
+  end (estimated from how long earlier fits took, stage by stage). *Past fits*, above it,
+  has every fit's scores (each held-out fly's, and the glomeruli not found, when
   clicked), its log, and its download: its model, with how to run it on your own flies
   (`alseg-predict`, which writes their ROIs as RoiSets named by glomerulus), and its
-  held-out flies' predicted ROIs. Anyone may delete one (it asks first).
+  held-out flies' predicted ROIs. Anyone may delete one (it asks first). The bottom of
+  *Fit a model* says what such a download has, and how to install al-diag-seg and run a
+  model on a fly (the versions the fit worker has filled in).
 - **Admin** (to the right of Docs; it first asks whether you are Tom, Jon or Betty, or
   have asked one of them): settings for the whole site.
   - *Folders on the server* the app may read (by default tensor) and also write (none

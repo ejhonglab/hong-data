@@ -1,5 +1,5 @@
 """Fits of al-diag-seg models (https://github.com/tom-f-oconnell/al-diag-seg) to the flies the
-AL Segmentation tab lists, asked for there, and run one at a time by the fit worker
+AL segmentation tab lists, asked for there, and run one at a time by the fit worker
 (`fit_worker`): a process of its own (in Docker, a container of its own, with the GPU).
 
 A fit is a row of the ``fits`` table and a folder, `fit_dir`: ``manifest.json`` (its flies, as

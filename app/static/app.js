@@ -10,6 +10,7 @@ import { MetacycPanel } from './metacyc.js';
 import { LotusPanel, decisionsHtml } from './lotus.js';
 import { BundleImport } from './imports.js';
 import { FitsPanel } from './fits.js';
+import { PredictPanel } from './predictions.js';
 import { ModelsPage } from './models.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -118,7 +119,7 @@ async function api(path, { method = 'GET', json, form } = {}) {
   if (!res.ok && !(body && (body.errors || body.error))) {
     throw new Error(`${res.status} ${res.statusText}${text ? ': ' + text.slice(0, 200) : ''}`);
   }
-  if (!res.ok && body && body.error && !body.errors) throw new Error(body.error);
+  if (!res.ok && body && body.error && !body.errors) throw Object.assign(new Error(body.error), { status: res.status, body });
   return body;
 }
 
@@ -7804,10 +7805,13 @@ class RoiTrainingPage {
       this._render();
     });
     this.fits = new FitsPanel({ $, esc, api, msgBox, askDialog, fmtWhen, fmtSize, getName: () => settings.current().name });
+    this.predict = new PredictPanel({ $, esc, api, msgBox, askDialog, fmtWhen, getName: () => settings.current().name,
+      player: () => player, flies: () => this.data?.flies || null });
   }
 
   async load(again = false) {
     this.fits.load();
+    this.predict.load();
     if (this.data && !again) return;
     const seq = ++this._seq;
     $('#rt-download').hidden = true;
@@ -7820,6 +7824,7 @@ class RoiTrainingPage {
     if (seq !== this._seq) return;
     this.data = r;
     this._render();
+    this.predict.renderFlies();
   }
 
   // whose a fly's ROIs are: its datasets' uploaders
@@ -8005,7 +8010,7 @@ class RoiTrainingPage {
     const rare = [...st.rare].map(info).sort(order);
     const cut = `${$('#rt-cut-op').value === 'le' ? '≤' : '<'} ${$('#rt-cut-n').value}${$('#rt-cut-unit').value === 'pct' ? '% of the flies' : ' flies'}`;
     let html = `<p>${rare.length ? `${rare.length} of the ${st.count.size} glomeruli are` : `None of the ${st.count.size} glomeruli is`}
-      each in at most ${st.most < 0 ? 'none' : st.most} of the ${st.n} flies (${esc(cut)}: the cutoff is set at the bottom of the page).
+      each in at most ${st.most < 0 ? 'none' : st.most} of the ${st.n} flies (${esc(cut)}: the cutoff is set in the box below).
       Flies are counted of those whose ROIs could be read; panels are those but diagnostic ones, each with how many of the flies have it.</p>`;
     const panelHead = 'Their panels <span class="muted">(flies)</span>';
     const one = uploaders.length > 1 ? rare.filter((i) => i.by.length === 1) : [];
