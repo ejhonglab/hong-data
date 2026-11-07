@@ -4554,17 +4554,23 @@ function fileTreeHtml(node, label, open) {
     label += `${name}/`;
     node = child;
   }
-  const t = fileTreeTotals(node);
-  const counts = [`${t.n.toLocaleString()} file${t.n === 1 ? '' : 's'}`, t.gone && `${t.gone.toLocaleString()} deleted since`,
-    t.size && fmtBytes(t.size)].filter(Boolean).join(', ');
-  const dirs = [...node.dirs].sort(([a], [b]) => a.localeCompare(b)).map(([name, child]) => `<li>${fileTreeHtml(child, `${name}/`, false)}</li>`);
-  const files = node.files.map((f) => {
+  const t = fileTreeTotals(node), present = t.n - t.gone;
+  const files = (n) => `${n.toLocaleString()} file${n === 1 ? '' : 's'}`;
+  const counts = [files(t.n), t.gone && `${t.gone.toLocaleString()} deleted since`, t.size && fmtBytes(t.size)].filter(Boolean).join(', ');
+  // (and as counted with those deleted hidden: the tree's .hide-gone)
+  const shown = [files(present), t.gone && `${t.gone.toLocaleString()} deleted hidden`, t.size && fmtBytes(t.size)].filter(Boolean).join(', ');
+  const dirs = [...node.dirs].sort(([a], [b]) => a.localeCompare(b)).map(([name, child]) => {
+    const c = fileTreeTotals(child);
+    return `<li${c.n && c.gone === c.n ? ' class="gone"' : ''}>${fileTreeHtml(child, `${name}/`, false)}</li>`;
+  });
+  const leaves = node.files.map((f) => {
     const did = [f.read && 'read', f.wrote && 'written'].filter(Boolean).join(', ');
     const state = f.size === null ? 'deleted since' : `${f.size ? fmtBytes(f.size) : 'empty'} · modified ${fmtEpoch(f.mtime)}`;
     const when = f.first_at ? `first read or written ${fmtWhen(f.first_at)}` : 'in the data folder when this record began';
     return `<li class="file${f.size === null ? ' gone' : ''}" title="${esc(when)}"><code>${esc(f.name)}</code> <span class="muted">${state} · ${did}</span></li>`;
   });
-  return `<details${open ? ' open' : ''}><summary><code>${esc(label)}</code> <span class="muted">${counts}</span></summary><ul>${[...dirs, ...files].join('')}</ul></details>`;
+  return `<details${open ? ' open' : ''}><summary><code>${esc(label)}</code> <span class="muted"><span class="tree-all">${counts}</span><span
+    class="tree-present">${shown}</span></span></summary><ul>${[...dirs, ...leaves].join('')}</ul></details>`;
 }
 
 class AdminPage {
@@ -4587,6 +4593,7 @@ class AdminPage {
     });
     $('#admin-save').addEventListener('click', () => this.save());
     $('#admin-backup-btn').addEventListener('click', () => this.backup());
+    $('#admin-files-hide-gone').addEventListener('change', (e) => $('#admin-files').classList.toggle('hide-gone', e.target.checked));
     this._backupTimer = 0;
     this._watchingBackup = false; // a backup started here is being made
     $('#admin-sheet-save').addEventListener('click', () => this.saveSheet());
@@ -4847,6 +4854,8 @@ class AdminPage {
     try { res = await api('/api/admin/files'); } catch (e) { box.replaceChildren(msgBox('error', `Could not list them: ${esc(e.message)}`)); return; }
     $('#admin-files-root').textContent = res.root;
     $('#admin-files-since').textContent = res.since ? ` since ${fmtWhen(res.since)}` : '';
+    const gone = res.files.filter((f) => f.size === null).length;
+    $('#admin-files-gone').textContent = `(${gone ? gone.toLocaleString() : 'none'})`;
     const tree = document.createElement('div');
     tree.innerHTML = res.files.length ? fileTreeHtml(fileTree(res.files), `${res.root.replace(/\/$/, '')}/`, true) : '<p class="muted">None yet.</p>';
     box.replaceChildren(...(res.note ? [msgBox('warn', `Paths as in the Docker container: ${esc(res.note)}.`)] : []), ...tree.childNodes);

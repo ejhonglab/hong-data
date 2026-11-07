@@ -773,6 +773,7 @@ try {
         <div class="dir-section">
           <h3>Its own files</h3>
           <p class="muted">Each file the server has read or written in the folder it runs from (<code id="admin-files-root">…</code>)<span id="admin-files-since"></span>: its database, uploads and the rest of its data folder. Not listed: the repository's own files (its code and configuration), and those in the folders above or of reference data. Struck through: deleted since.</p>
+          <label class="check"><input type="checkbox" id="admin-files-hide-gone"><span>Hide those deleted since <span class="muted" id="admin-files-gone"></span></span></label>
           <div id="admin-files" class="file-tree"></div>
         </div>
       </div>

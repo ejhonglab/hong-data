@@ -726,8 +726,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     [DEPLOY.md](DEPLOY.md#folders-it-may-read-and-write). Below them, a tree of each
     file the server has read or written in the folder it runs from (e.g. `/opt/olfdb`,
     as a path on the server even in Docker), with sizes and modification times, those
-    deleted since struck through: its database, uploads and the rest of `data/`, but not
-    the repository's own files, nor those in the folders above or of reference data.
+    deleted since struck through (or hidden, with the box above it): its database, uploads
+    and the rest of `data/`, but not the repository's own files, nor those in the folders
+    above or of reference data.
   - *Backups*: a button copying everything the site keeps into one of the folders it may
     write: the SQLite database (a consistent copy), and every dataset's files as uploaded,
     odor YAMLs, `Experiment.xml`, README and `metadata.json`, with reference data as read
