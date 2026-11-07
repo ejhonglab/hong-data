@@ -37,6 +37,10 @@ ODOR_TEMPLATE = ROOT / "config" / "odor_sheet_template.csv"
 # the lab NAS as mounted on the server; users' data folders are given relative to it
 TENSOR_ROOT = Path(os.environ.get("OLFDB_TENSOR_ROOT", "/local/tensor"))
 
+# fixed reference atlases a fit may add to its flies' atlas (fits.REFERENCES), a folder each as al_atlas
+# (https://github.com/ejhonglab/al_atlas) exports them: in the fit worker's image, as its Dockerfile downloads them
+AL_ATLAS_DIR = ROOT / "al_atlas"
+
 # the server's /etc/hostname, as docker-compose.yml mounts it into the container (whose own name is random)
 HOST_HOSTNAME_FILE = Path("/etc/host_hostname")
 

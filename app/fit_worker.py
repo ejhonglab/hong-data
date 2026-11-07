@@ -153,6 +153,11 @@ def run(db, fit: dict) -> None:
         logging.getLogger().addHandler(handler)
         try:
             print(f"fit {fit['id']}, asked for by {fit['name']} ({fit['ip']}) at {fit['created_at']}; options {json.dumps(o)}")
+            refs = [fits.reference_dir(r) for r in o["refs"]]
+            for r, p in zip(o["refs"], refs):
+                if not (p / "labels.tif").is_file():
+                    raise FileNotFoundError(f"{p}: no labels.tif, so not the {fits.REFERENCES[r]} atlas, which the "
+                                            "worker's image has (its Dockerfile downloads it)")
             prog("load", 0, 0)
             bases = [Path(p) for p in sandbox.folders()]
             found = roi_training.inventory(db, config.TENSOR_ROOT, bases)
@@ -172,7 +177,8 @@ def run(db, fit: dict) -> None:
 
             data = ao.load_export(d / "manifest.json", tentative=o["tentative"], progress=prog)
             (d / "work").mkdir()  # (Cellpose makes only its models/ in the folder it is given)
-            model = am.fit(data["flies"], held, am.Options(epochs=o["epochs"], atlas=o["atlas"], tentative=o["tentative"]),
+            model = am.fit(data["flies"], held, am.Options(epochs=o["epochs"], atlas=o["atlas"], tentative=o["tentative"],
+                                                           refs=[str(p) for p in refs]),
                            out=d / "work", progress=prog, odors=data["odors"], aliases=data["aliases"],
                            glomeruli=data["glomeruli"])
             model.info["olfdb"] = {"fit": fit["id"], "by": fit["name"], "datasets": flies["datasets"]}

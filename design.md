@@ -281,9 +281,16 @@ between the frontend and the server. Using the app is described in
   date, number). A fit records who asked for it (the first name set in Settings: the box
   sends people there, its name field selected) and from which IP address; anyone may
   delete any fit, as anyone may start one.
+- **A fit may add the Grabe et al. 2016 atlas to its flies' atlas** (al-diag-seg's `refs`,
+  `fits.REFERENCES`), only with that atlas, which it is aligned to (by the glomeruli both
+  have). It is downloaded into the worker's image as al_atlas exported it, at a pinned
+  commit and checked against checksums (the Dockerfile), rather than kept in this
+  repository, a second copy, or read from a home folder the worker cannot see. Its
+  glomeruli are saved in the model's atlas, so the model runs without it. al_atlas'
+  hemibrain export is not offered: some of its glomeruli are fragments of them.
 - **A fit's time left is estimated stage by stage** (loading, training, atlas, scoring),
   from how long each took per unit of work in the last ten fits that finished (per fly
-  loaded, per epoch and training fly, per fly in the atlas, per held-out fly), and for the
+  loaded, per epoch and training fly, per fly or reference atlas in the atlas, per held-out fly), and for the
   stage it is in, from how far it has got; a fit waiting starts when those before it end.
   Before any fit has finished, the estimate is a guess, and says so.
 - **Model data is read where it is, never imported** (`model_data.py`): the Admin tab keeps

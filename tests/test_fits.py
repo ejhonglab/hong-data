@@ -18,6 +18,7 @@ import tifffile
 from starlette.requests import Request
 
 from app import config, fit_worker, fits, odormeta
+from app.glomeruli import load_glomeruli
 from app.ingest import load_file
 from tests.test_ingest import make_wide, write_csv
 from tests.test_tensor import main, root  # noqa: F401 (fixtures)
@@ -114,7 +115,11 @@ def tensor(main, root, data, tmp_path):  # noqa: F811
 def test_options():
     assert fits.options({}) == fits.DEFAULTS
     assert fits.options({"held_out": "3", "epochs": 50, "atlas": False}) == {**fits.DEFAULTS, "held_out": 3, "epochs": 50, "atlas": False}
-    for bad in ({"epochs": 0}, {"held_out": "x"}, {"held_out": 31}):
+    # reference atlases: those it has, once each, only added to the atlas
+    assert fits.options({"refs": ["grabe2016", "grabe2016"]})["refs"] == ["grabe2016"]
+    assert fits.options({"refs": None, "atlas": False})["refs"] == []
+    for bad in ({"epochs": 0}, {"held_out": "x"}, {"held_out": 31}, {"refs": ["hemibrain"]}, {"refs": "grabe2016"},
+                {"refs": [{}]}, {"refs": ["grabe2016"], "atlas": False}):
         with pytest.raises(ValueError):
             fits.options(bad)
 
@@ -160,6 +165,8 @@ def test_estimates():
     fit = {"options": {"held_out": 2, "epochs": 100, "atlas": False},
            "flies": {"train": ["a"] * 8, "held_out": ["b", "c"], "stacks": 0}}
     assert fits.sizes(fit) == {"load": 10, "train": 800, "atlas": 0, "evaluate": 2}
+    # the atlas: a registration per training fly and anatomical stack, and per reference atlas
+    assert fits.sizes({**fit, "options": {"refs": ["grabe2016"]}, "flies": {**fit["flies"], "stacks": 3}})["atlas"] == 12
     # not started: every stage from the rates; halfway through training: what is left of it as it has gone, and the rest
     assert fits.remaining(fit, r, 1000.0) == pytest.approx(10 * 2 + 800 * 0.1 + 2 * 10)
     fit["progress"] = {"stage": "train", "done": 50, "total": 100, "stage_started": 900.0}
@@ -251,7 +258,8 @@ def test_worker(main, tensor, monkeypatch):  # noqa: F811
     f = fits.create(main.db, "Ann", "10.1.2.3", fits.options({"held_out": 1, "epochs": 10, "atlas": False}))
     fit_worker.run(main.db, fits.claim(main.db))
     f = fits.get(main.db, f["id"])
-    assert f["status"] == "done" and f["error"] is None and calls["options"] == {"epochs": 10, "atlas": False, "tentative": True}
+    assert f["status"] == "done" and f["error"] is None and calls["options"] == {"epochs": 10, "atlas": False, "tentative": True,
+                                                                                 "refs": []}
     assert f["flies"]["held_out"] == calls["held_out"] == ["ann_2024-01-01_2"] and len(f["flies"]["train"]) == 2
     # each stage timed, with its size, for estimates of later fits
     assert set(f["stages"]) == set(fits.STAGES) and f["stages"]["train"]["size"] == 20 and f["stages"]["load"]["seconds"] > 0
@@ -278,6 +286,37 @@ def test_worker(main, tensor, monkeypatch):  # noqa: F811
     assert "Traceback" in (fits.fit_dir(h["id"]) / "log.txt").read_text()
     # estimates from the fit that finished
     assert fits.listing(main.db)["rates"]["from"] == 1
+
+
+def test_worker_refs(main, tensor, monkeypatch, tmp_path):  # noqa: F811
+    """A reference atlas asked for is given to al-diag-seg as its folder; without it there, a fit fails at once."""
+    calls = {"db": main.db}
+    fake_alseg(monkeypatch, calls)
+    monkeypatch.setattr(config, "AL_ATLAS_DIR", tmp_path / "al_atlas")
+    f = fits.create(main.db, "Ann", None, fits.options({"held_out": 1, "refs": ["grabe2016"]}))
+    fit_worker.run(main.db, fits.claim(main.db))
+    f = fits.get(main.db, f["id"])
+    assert f["status"] == "failed" and "grabe2016: no labels.tif" in f["error"] and "options" not in calls
+    d = tmp_path / "al_atlas/grabe2016"
+    d.mkdir(parents=True)
+    (d / "labels.tif").write_bytes(b"")
+    g = fits.create(main.db, "Ann", None, fits.options({"held_out": 1, "refs": ["grabe2016"]}))
+    fit_worker.run(main.db, fits.claim(main.db))
+    assert fits.get(main.db, g["id"])["status"] == "done" and calls["options"]["refs"] == [str(d)]
+
+
+def test_references():
+    """The Grabe et al. 2016 atlas, where it is (the worker's image), as al-diag-seg loads it: either side's 54
+    glomeruli, named as the database names them but VP1 (the database's VP1d, VP1l and VP1m)."""
+    reference = pytest.importorskip("alseg.reference")
+    d = fits.reference_dir("grabe2016")
+    if not d.is_dir():
+        pytest.skip(f"no {d} (the worker's image has it)")
+    accepted = {g.casefold() for g in load_glomeruli()}
+    assert reference.sides(d) == ["left", "right"]
+    for side in ("left", "right"):
+        names = reference.load_reference(d, side).names.values()
+        assert len(names) == 54 and {n for n in names if n.casefold() not in accepted} == {"VP1"}
 
 
 def test_worker_with_alseg(main, tensor, monkeypatch):  # noqa: F811

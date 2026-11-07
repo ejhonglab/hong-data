@@ -316,6 +316,12 @@ rebuild when changed): if a new al-diag-seg needs another, add it there, or the 
 stops at `pip check`, saying what is missing. Fits already done keep the model they
 made; each model's README says which al-diag-seg to install to run it.
 
+The Grabe et al. 2016 atlas, which a fit may add to its flies' atlas, is downloaded into
+the worker's image from [al_atlas](https://github.com/ejhonglab/al_atlas) at the commit
+`AL_ATLAS` in the Dockerfile, its `labels.tif` and `structures.csv` checked against
+the checksums there. For a newer export, push it, set the commit, and replace the
+checksums with those of the files at it (`git show <commit>:grabe2016/labels.tif | sha256sum`).
+
 ### Updating chemutils
 
 chemutils (vapor pressures, molar masses and what the Headspace calculator needs) is

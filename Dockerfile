@@ -33,6 +33,13 @@ ENV CELLPOSE_LOCAL_MODELS_PATH=/srv/olfdb/cellpose_models
 # (downloaded as root, readable by root only: made readable by the user the worker runs as)
 RUN python -c "from cellpose.models import cache_model_path; cache_model_path('cpsam_v2')" \
  && chmod -R a+rX "$CELLPOSE_LOCAL_MODELS_PATH"
+# the Grabe et al. 2016 atlas, for fits that add it to their flies' atlas (fits.REFERENCES), as al_atlas exported it at
+# this commit (https://github.com/ejhonglab/al_atlas: its labels and their names; checksums of them at that commit)
+ARG AL_ATLAS=88ebada36bed414e7799d887b6fceca034bbc0cb
+ADD --chmod=u=rwX,go=rX --checksum=sha256:5e0fa4bceb09e58832c84b9fe3b64ac742cf5beda429f8435733315b0d0cd815 \
+    https://raw.githubusercontent.com/ejhonglab/al_atlas/${AL_ATLAS}/grabe2016/labels.tif al_atlas/grabe2016/
+ADD --chmod=u=rwX,go=rX --checksum=sha256:4717da31369525b539d77bbfbb7f1834ac1fb921fc1464771e5528e7e82d253e \
+    https://raw.githubusercontent.com/ejhonglab/al_atlas/${AL_ATLAS}/grabe2016/structures.csv al_atlas/grabe2016/
 # al-diag-seg alone, after what it needs (above) and Cellpose's weights: a new one rebuilds only this
 COPY requirements-alseg.txt .
 RUN apt-get update && apt-get install -y --no-install-recommends git \

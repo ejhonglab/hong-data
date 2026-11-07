@@ -706,8 +706,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   model to those flies, read where they are on tensor, on the server's GPU (Cellpose
   fine-tuned on their ROIs, an atlas of where each glomerulus is, and each one's odor
   tuning), holding out a few flies (from each dataset in turn) to score its predicted ROIs
-  against theirs; with how many to hold out, Cellpose's epochs, and whether to build the
-  atlas and train on tentative ROIs. Anyone may start one, once their first name is set in
+  against theirs; with how many to hold out, Cellpose's epochs, whether to build the atlas
+  (and add the [Grabe et al. 2016](https://doi.org/10.1016/j.celrep.2016.08.063) atlas to
+  it), and whether to train on tentative ROIs. Anyone may start one, once their first name is set in
   Settings (the box links to it). One runs at a time; those running and waiting say who
   asked for them, from which IP address, when, how far they have got, and when they should
   end (estimated from how long earlier fits took, stage by stage). *Past fits*, at the

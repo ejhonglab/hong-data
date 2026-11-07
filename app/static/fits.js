@@ -7,6 +7,10 @@ const STAGE_NAMES = { load: 'Finding and loading the flies', train: 'Training Ce
   evaluate: 'Scoring the held-out flies' };
 const STATUS_NAMES = { queued: 'Queued', running: 'Running', done: 'Done', failed: 'Failed', cancelled: 'Stopped',
   interrupted: 'Interrupted' };
+const REF_NAMES = { grabe2016: 'Grabe et al. 2016' }; // fits.REFERENCES
+
+// a fit's reference atlases, by name
+const refNames = (o) => (o.refs || []).map((r) => REF_NAMES[r] || r);
 
 // a duration in seconds as '1 h 5 min', '12 min', '40 s'
 export function fmtDuration(s) {
@@ -29,6 +33,10 @@ export class FitsPanel {
     this.open = new Set(); // past fits whose details are shown
     const { $ } = h;
     $('#fit-start').addEventListener('click', () => this.start());
+    const atlas = $('#fit-atlas'), grabe = $('#fit-grabe');
+    const sync = () => { grabe.disabled = !atlas.checked; grabe.closest('label').classList.toggle('disabled', !atlas.checked); };
+    atlas.addEventListener('change', sync);
+    sync();
     $('#fits-list').addEventListener('click', (e) => this._action(e));
     $('#fits-past').addEventListener('click', (e) => this._action(e));
   }
@@ -97,7 +105,8 @@ export class FitsPanel {
         <button type="button" class="btn small" data-act="cancel" ${f.cancel ? 'disabled' : ''}>${f.cancel ? 'Stopping…' : f.status === 'queued' ? 'Cancel' : 'Stop'}</button></div>
       <div class="fit-stage">${esc(stage)}${p.total ? ` <span class="muted">(${p.done} of ${p.total})</span>` : ''}</div>
       <progress max="1" value="${frac}"></progress>
-      <div class="muted small">${eta}${eta ? ' · ' : ''}${o.held_out} held out, ${o.epochs} epochs${o.atlas ? ', atlas' : ', no atlas'}${o.tentative ? '' : ', no tentative ROIs'}
+      <div class="muted small">${eta}${eta ? ' · ' : ''}${o.held_out} held out, ${o.epochs} epochs${o.atlas
+        ? `, atlas${refNames(o).map((r) => ` + ${esc(r)}`).join('')}` : ', no atlas'}${o.tentative ? '' : ', no tentative ROIs'}
         ${f.status === 'running' ? ` · <a href="/api/fits/${f.id}/log" target="_blank" rel="noopener">log</a>` : ''}</div></div>`;
   }
 
@@ -123,7 +132,9 @@ export class FitsPanel {
     const flies = r.flies.map((x) => `<tr><td>${esc(x.fly)}</td><td>${x.n}</td><td>${pct(x.recall)}</td><td>${pct(x.precision)}</td>
       <td>${num2(x.dice)}</td><td>${num2(x.leak)} <span class="muted">(${num2(x.manual_leak)})</span></td><td>${x.named}/${x.named_of}</td></tr>`).join('');
     const missed = r.glomeruli.filter((g) => g.detected < g.flies);
-    return `<p class="small">${f.flies ? `Fit to ${f.flies.train.length} flies, ${o.held_out} held out, ${o.epochs} epochs${o.atlas ? ', with the atlas' : ''}.` : ''}
+    const refs = refNames(o).map(esc);
+    return `<p class="small">${f.flies ? `Fit to ${f.flies.train.length} flies, ${o.held_out} held out, ${o.epochs} epochs${o.atlas
+      ? `, with the atlas${refs.length ? ` (and ${refs.join(' and ')}'s in it)` : ''}` : ''}.` : ''}
       Scored are the final ROIs (${r.final === 'refined_prior' ? 'refined with the atlas' : 'refined by tuning'}), against each held-out fly's own.</p>
       <table class="odor-table"><thead><tr><th>Held-out fly</th><th>ROIs</th><th>Found</th><th>Right</th><th>Dice</th>
       <th title="Signal from neighbors in an ROI's border (its manual ROIs' in brackets)">Leak <span class="muted">(manual)</span></th><th>Named</th></tr></thead><tbody>${flies}</tbody></table>
@@ -163,8 +174,9 @@ export class FitsPanel {
     const { $, api, msgBox, esc } = this.h;
     const name = this.h.getName();
     if (!name) { this.render(); return; }
-    const options = { held_out: $('#fit-held-out').value, epochs: $('#fit-epochs').value, atlas: $('#fit-atlas').checked,
-      tentative: $('#fit-tentative').checked };
+    const atlas = $('#fit-atlas').checked;
+    const options = { held_out: $('#fit-held-out').value, epochs: $('#fit-epochs').value, atlas,
+      tentative: $('#fit-tentative').checked, refs: atlas && $('#fit-grabe').checked ? ['grabe2016'] : [] };
     $('#fit-start').disabled = true;
     try {
       const f = await api('/api/fits', { method: 'POST', json: { name, options } });

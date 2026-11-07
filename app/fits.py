@@ -28,8 +28,11 @@ from .glomeruli import load_glomeruli
 STATUSES = ("queued", "running", "done", "failed", "cancelled", "interrupted")
 ACTIVE = ("queued", "running")
 STAGES = ("load", "train", "atlas", "evaluate")
-DEFAULTS = {"held_out": 4, "epochs": 200, "atlas": True, "tentative": True}
+DEFAULTS = {"held_out": 4, "epochs": 200, "atlas": True, "tentative": True, "refs": []}
 LIMITS = {"held_out": (1, 30), "epochs": (1, 5000)}
+# the fixed reference atlases a fit may add to its flies' atlas (``refs``, al-diag-seg's): folders of config.AL_ATLAS_DIR.
+# (Not al_atlas' hemibrain export: some of its glomeruli are fragments of them.)
+REFERENCES = {"grabe2016": "Grabe et al. 2016"}
 # seconds per unit of each stage (see `sizes`), until fits have finished to estimate from
 GUESSES = {"load": 1.5, "train": 0.05, "atlas": 60.0, "evaluate": 45.0}
 RECENT = 10  # the finished fits estimates are made from (the last ones)
@@ -55,7 +58,8 @@ def options(body: dict) -> dict:
     """The options of a fit asked for, `DEFAULTS` for those not given.
 
     Raises:
-        ValueError: for one out of `LIMITS`, or not a whole number.
+        ValueError: for one out of `LIMITS`, or not a whole number; for ``refs`` not a list
+            of `REFERENCES`, or given without the atlas (which they are added to).
     """
     out = dict(DEFAULTS)
     for k, (lo, hi) in LIMITS.items():
@@ -70,7 +74,18 @@ def options(body: dict) -> dict:
     for k in ("atlas", "tentative"):
         if k in body:
             out[k] = bool(body[k])
+    refs = body.get("refs") or []
+    if not isinstance(refs, list) or not all(isinstance(r, str) and r in REFERENCES for r in refs):
+        raise ValueError(f"reference atlases: a list of {', '.join(REFERENCES)}")
+    out["refs"] = list(dict.fromkeys(refs))
+    if out["refs"] and not out["atlas"]:
+        raise ValueError("a reference atlas is added to the atlas of the flies: it needs the atlas")
     return out
+
+
+def reference_dir(name: str) -> Path:
+    """The folder of the reference atlas `name` (of `REFERENCES`)."""
+    return config.AL_ATLAS_DIR / name
 
 
 # ------------------------------------------------------------------- records
@@ -235,14 +250,15 @@ def manifest(found: dict, bases: list[Path]) -> dict:
 
 def sizes(fit: dict, n_flies: Optional[int] = None) -> dict[str, float]:
     """How much work each stage of a fit is: flies loaded, epochs x training flies, flies (and
-    anatomical stacks) registered into the atlas, held-out flies. From its flies once the
-    worker has listed them, else ``n_flies`` (a guess)."""
+    anatomical stacks, and reference atlases) registered into the atlas, held-out flies. From
+    its flies once the worker has listed them, else ``n_flies`` (a guess)."""
     o = {**DEFAULTS, **(fit.get("options") or {})}
     fl = fit.get("flies") or {}
     n = len(fl.get("train", [])) + len(fl.get("held_out", [])) if fl else (n_flies or DEFAULT_FLIES)
     val = len(fl.get("held_out", [])) if fl else min(o["held_out"], n - 1)
     train = n - val
-    return {"load": n, "train": o["epochs"] * train, "atlas": (train + fl.get("stacks", 0)) if o["atlas"] else 0,
+    return {"load": n, "train": o["epochs"] * train,
+            "atlas": (train + fl.get("stacks", 0) + len(o["refs"])) if o["atlas"] else 0,
             "evaluate": val}
 
 

@@ -344,6 +344,8 @@ dialog.confirm .actions { justify-content: flex-end; }
 .rt-count { margin-top: 12px; max-width: 520px; }
 #rt-rare .nowrap { white-space: nowrap; }
 .fit-options { grid-template-columns: repeat(auto-fill, minmax(200px, 260px)); }
+.step > .check.fit-sub { margin-left: 24px; }
+.step > .check.fit-sub.disabled { opacity: 0.5; }
 .fit-active { border: 1px solid var(--rule); border-radius: var(--radius); padding: 10px 12px; margin-top: 10px; }
 .fit-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .fit-stage { margin: 6px 0 4px; }
