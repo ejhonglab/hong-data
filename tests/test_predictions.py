@@ -253,7 +253,8 @@ def test_loops(main, tensor, monkeypatch):  # noqa: F811
 
     monkeypatch.setattr(fit_worker, "run", run)
     monkeypatch.setattr(fit_worker, "run_prediction", run_prediction)
-    monkeypatch.setattr(fit_worker, "_free_gpu", lambda: None)
+    freed = []  # (each time the GPU's memory is given back)
+    monkeypatch.setattr(fit_worker, "_free_gpu", lambda: freed.append(1))
     f = done_fit(main.db)
     fly = predictions.locate(FLY, RAW, config.TENSOR_ROOT, [])
     state, lock, stop = {"fit": None, "prediction": None}, threading.Lock(), threading.Event()
@@ -270,14 +271,15 @@ def test_loops(main, tensor, monkeypatch):  # noqa: F811
         assert ran == [(p["id"], False, "a fit is using the GPU", g["id"])]
         fit_go.set()
         assert wait(lambda: fits.get(main.db, g["id"])["status"] == "done") and wait(lambda: not lock.locked())
+        assert len(freed) == 1  # (after the fit; not after the prediction on the CPU)
         pred_go.clear()
         predictions.create(main.db, f["id"], fly, "Bob", None, overwrite=True)
-        assert wait(lambda: len(ran) == 2) and ran[1][1:] == (True, None, None) and lock.locked()
+        assert wait(lambda: len(ran) == 2) and ran[1][1:] == (True, None, None) and lock.locked() and len(freed) == 1
         h = fits.create(main.db, "Ann", None, fits.options({}))
         fitting.clear()
         assert not fitting.wait(0.3)  # (waits for the prediction on the GPU)
         pred_go.set()
-        assert fitting.wait(10) and fits.get(main.db, h["id"])["status"] in ("running", "done")
+        assert fitting.wait(10) and fits.get(main.db, h["id"])["status"] in ("running", "done") and len(freed) >= 2
     finally:
         stop.set()
         fit_go.set()

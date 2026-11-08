@@ -20,6 +20,7 @@ from __future__ import annotations
 import contextlib
 import csv
 import datetime as dt
+import gc
 import glob
 import json
 import logging
@@ -286,12 +287,21 @@ KINDS = {"pred": "Cellpose's own, named", "refined_tuning": "refined by odor tun
 
 
 def _free_gpu() -> None:
-    """Gives back the GPU memory PyTorch keeps for reuse, so a fit (or anything else) has it."""
+    """Gives back to the GPU the memory PyTorch keeps for reuse once a fit or prediction is done
+    with it (its cache: what a fit's training peaked at, about 18 GB), so that other programs, and
+    a prediction beside the next fit, have it. Only CUDA's own context (a few hundred MB) stays.
+    Says how much it gave back."""
+    if "torch" not in sys.modules:  # (nothing has used the GPU)
+        return
     try:
         import torch
 
         if torch.cuda.is_available():
+            gc.collect()  # (tensors only cycles of objects still hold)
+            before = torch.cuda.memory_reserved()
             torch.cuda.empty_cache()
+            log.info("gave back %.1f GB of the GPU's memory (%.1f GB still in use)", (before - torch.cuda.memory_reserved()) / 2**30,
+                     torch.cuda.memory_allocated() / 2**30)
     except Exception:  # noqa: BLE001
         log.exception("could not free the GPU's memory")
 
@@ -468,7 +478,8 @@ def main() -> None:
 
 def fit_loop(db, state: dict, gpu_lock: threading.Lock, stop: Optional[threading.Event] = None) -> None:
     """Runs the fits asked for, one at a time, each holding `gpu_lock` (once a prediction on the
-    GPU, if one is, ends); until `stop` is set, if given. ``state["fit"]``: the one running."""
+    GPU, if one is, ends) and giving back the GPU's memory when done (`_free_gpu`); until `stop` is
+    set, if given. ``state["fit"]``: the one running."""
     while not (stop and stop.is_set()):
         fit = fits.claim(db)
         if fit is None:
@@ -478,7 +489,10 @@ def fit_loop(db, state: dict, gpu_lock: threading.Lock, stop: Optional[threading
         log.info("fit %s: started (asked for by %s)", fit["id"], fit["name"])
         try:
             with gpu_lock:
-                run(db, fit)
+                try:
+                    run(db, fit)
+                finally:
+                    _free_gpu()
         finally:
             state["fit"] = None
 

@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import logging
 import sys
 import types
 import zipfile
@@ -319,6 +320,19 @@ def test_references():
     for side in ("left", "right"):
         names = reference.load_reference(d, side).names.values()
         assert len(names) == 54 and {n for n in names if n.casefold() not in accepted} == {"VP1"}
+
+
+def test_free_gpu(caplog):
+    """What PyTorch keeps of the GPU once done with it (its cache) given back, where there is a GPU."""
+    torch = pytest.importorskip("torch")
+    if not torch.cuda.is_available():
+        pytest.skip("no GPU")
+    caplog.set_level(logging.INFO, logger="fit_worker")
+    x = torch.ones(64 << 20, device="cuda")  # (256 MB)
+    del x
+    assert torch.cuda.memory_reserved() >= 256 << 20
+    fit_worker._free_gpu()
+    assert torch.cuda.memory_reserved() == 0 and "gave back" in caplog.text
 
 
 def test_worker_with_alseg(main, tensor, monkeypatch):  # noqa: F811

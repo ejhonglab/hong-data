@@ -312,6 +312,12 @@ between the frontend and the server. Using the app is described in
   but it inherits the worker's Landlock rules, which let CUDA write only the worker's own
   /proc entries, so it would not find the GPU; the two threads' printing goes each to its
   own log instead (`_Streams`: sys.stdout and sys.stderr dispatched by thread).
+- **The worker gives the GPU's memory back after each fit** (and each prediction on it:
+  `_free_gpu`, PyTorch's `empty_cache`), which PyTorch otherwise keeps for reuse: idle after
+  fit 2 it held 19 GB of the 24 GB RTX 3090 (what training at batches of 4 peaked at), which
+  other programs on the server could not use. CUDA's context (a few hundred MB) stays, and so
+  does the RAM a fit used (about 7 GB after fit 2): a process per fit would give back both,
+  but needs the Landlock rule for CUDA's /proc entries widened (see above), so it was not done.
 - **A prediction is one per fit and fly**, the fly known by its motion-corrected data
   folder (its real path, however it was entered), so asking again replaces it (the tab
   asks first). Its folder keeps what al-diag-seg's `alseg-predict` would write, the fly's
