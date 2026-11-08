@@ -335,6 +335,18 @@ def test_free_gpu(caplog):
     assert torch.cuda.memory_reserved() == 0 and "gave back" in caplog.text
 
 
+def test_free_ram(caplog):
+    """The RAM freed but kept by glibc's allocator given back, and how much the worker holds said
+    (where /proc says: Linux)."""
+    if fit_worker._rss_gb() is None:
+        pytest.skip("no /proc/self/status")
+    caplog.set_level(logging.INFO, logger="fit_worker")
+    x = [bytearray(1000) for _ in range(200_000)]  # (small blocks, on the heap)
+    del x
+    fit_worker._free_ram()
+    assert "RAM in use" in caplog.text and "after giving back what was freed" in caplog.text
+
+
 def test_worker_with_alseg(main, tensor, monkeypatch):  # noqa: F811
     """The real al-diag-seg (where it is installed: the worker image), with its stand-in segmenter."""
     am = pytest.importorskip("alseg.model")

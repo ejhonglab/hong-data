@@ -315,9 +315,13 @@ between the frontend and the server. Using the app is described in
 - **The worker gives the GPU's memory back after each fit** (and each prediction on it:
   `_free_gpu`, PyTorch's `empty_cache`), which PyTorch otherwise keeps for reuse: idle after
   fit 2 it held 19 GB of the 24 GB RTX 3090 (what training at batches of 4 peaked at), which
-  other programs on the server could not use. CUDA's context (a few hundred MB) stays, and so
-  does the RAM a fit used (about 7 GB after fit 2): a process per fit would give back both,
-  but needs the Landlock rule for CUDA's /proc entries widened (see above), so it was not done.
+  other programs on the server could not use. CUDA's context (a few hundred MB) stays.
+  Idle after fit 2 it also held 6.8 GB of RAM, 5.5 GB of it its heap (loading the 86 flies
+  alone leaves nothing: 4.9 GB, back to 0.7 GB once let go), so it also asks glibc to give
+  back what was freed (`_free_ram`, `malloc_trim`), saying in its own log how much it held
+  before and after. If that does not bring it down, the memory is still referenced: a process
+  per fit would give back all of it, but needs the Landlock rule for CUDA's /proc entries
+  widened (see above), so it was not done yet.
 - **A prediction is one per fit and fly**, the fly known by its motion-corrected data
   folder (its real path, however it was entered), so asking again replaces it (the tab
   asks first). Its folder keeps what al-diag-seg's `alseg-predict` would write, the fly's

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import contextlib
 import csv
+import ctypes
 import datetime as dt
 import gc
 import glob
@@ -306,6 +307,32 @@ def _free_gpu() -> None:
         log.exception("could not free the GPU's memory")
 
 
+def _rss_gb() -> Optional[float]:
+    """The worker's resident memory (RAM), in GB; None where /proc does not say (not Linux)."""
+    try:
+        with open("/proc/self/status") as f:
+            return next(int(l.split()[1]) for l in f if l.startswith("VmRSS:")) / 2**20
+    except (OSError, StopIteration, ValueError):
+        return None
+
+
+def _free_ram() -> None:
+    """Gives back to the system the RAM a fit or prediction freed but glibc's allocator kept for
+    reuse (``malloc_trim``): idle after fit 2, the worker held 6.8 GB of RAM, 5.5 GB of it its heap,
+    though loading the flies alone left nothing behind. Says how much it held before and after,
+    so the next fit tells whether that was it, or memory still referenced (which only a process of
+    its own per fit would give back)."""
+    before = _rss_gb()
+    if before is None:
+        return
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)  # (glibc, as the worker's image has)
+    except (OSError, AttributeError):
+        log.exception("could not give back the RAM freed")
+        return
+    log.info("RAM in use: %.1f GB, %.1f GB after giving back what was freed", before, _rss_gb())
+
+
 def _file(p: Path) -> Optional[dict]:
     """A file read, for a prediction's provenance: its path, size and when it was modified."""
     try:
@@ -478,8 +505,8 @@ def main() -> None:
 
 def fit_loop(db, state: dict, gpu_lock: threading.Lock, stop: Optional[threading.Event] = None) -> None:
     """Runs the fits asked for, one at a time, each holding `gpu_lock` (once a prediction on the
-    GPU, if one is, ends) and giving back the GPU's memory when done (`_free_gpu`); until `stop` is
-    set, if given. ``state["fit"]``: the one running."""
+    GPU, if one is, ends) and giving back the GPU's memory and the RAM it freed when done
+    (`_free_gpu`, `_free_ram`); until `stop` is set, if given. ``state["fit"]``: the one running."""
     while not (stop and stop.is_set()):
         fit = fits.claim(db)
         if fit is None:
@@ -493,6 +520,7 @@ def fit_loop(db, state: dict, gpu_lock: threading.Lock, stop: Optional[threading
                     run(db, fit)
                 finally:
                     _free_gpu()
+                    _free_ram()
         finally:
             state["fit"] = None
 
@@ -521,6 +549,7 @@ def predict_loop(db, state: dict, gpu_lock: threading.Lock, has_gpu: bool, stop:
             if on_gpu:
                 _free_gpu()
                 gpu_lock.release()
+            _free_ram()
             state["prediction"] = None
 
 if __name__ == "__main__":
