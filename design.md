@@ -291,6 +291,16 @@ between the frontend and the server. Using the app is described in
   defaults too, so predictions with fit 6 (and fit 2) use them, though those fits' scores on
   the tab are as their fits made them; a prediction's provenance.json has the options its
   model ran with (`alseg_options`).
+- **The planes' masks are joined into 3D objects one to one, by overlap and odor tuning**
+  (al-diag-seg's `join_planes`, its default since 1a3b75a), not by Cellpose's stitching, which
+  joined each mask to its best IoU in the plane before, so also neighbouring glomeruli that
+  overlap between planes. Masks of adjacent planes are matched where they overlap by ≥ 0.3 of
+  the smaller one and their mean tunings correlate ≥ 0.5. On 12 of fit 6's flies, picked on 11
+  and scored on the 12th in turn: 42% of the manual glomeruli found as 3D objects and 50%
+  right, from 39% and 47% (on its held-out flies, 37% and 41%). Joined perfectly by the
+  manual ROIs, those masks would find 48% of the held-out flies' glomeruli: most of the rest
+  reach planes where nothing was drawn, which may be right. Like the thresholds, earlier fits'
+  models take this too.
 - **Scores are shown plane by plane and as 3D objects** (al-diag-seg's `*_2d` columns,
   `metrics.match_report_2d`): ROIs are drawn and used per plane, and planes 10 µm apart make
   Cellpose's per-plane masks, stitched into objects, reach other planes than the manual ones,
