@@ -13,7 +13,9 @@ may also write to the GPU's device files (and its own threads' /proc entries, as
 files it reads and writes in them are noted as
 the web server's are (`filelog`), for the Admin tab. It says it is there every `fits.HEARTBEAT_S`
 seconds (`fits.heartbeat`), with which GPU and al-diag-seg it has, for the tab to show; and
-as it starts, marks fits a worker before it left running interrupted.
+as it starts, marks fits a worker before it left running interrupted. If it can no longer use
+the GPU it started with (`gpu_lost`), it puts what it was about to run back in the queue and
+exits, for Docker to start it again, with the GPU.
 """
 from __future__ import annotations
 
@@ -28,6 +30,7 @@ import logging
 import os
 import shutil
 import socket
+import stat
 import sys
 import threading
 import time
@@ -47,6 +50,10 @@ SAVE_S = 2  # progress is saved (and a request to stop looked for) at most this 
 
 class Cancelled(Exception):
     pass
+
+
+class GpuLost(Exception):
+    """The worker can no longer use the GPU it started with (`gpu_lost` says why)."""
 
 
 class _Streams:
@@ -109,6 +116,21 @@ def gpu() -> dict:
     return {"gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None, "torch": torch.__version__}
 
 
+def gpu_lost(devices: Optional[list] = None) -> Optional[str]:
+    """Why the worker can no longer use its GPU (None if it can): one of the GPU's device files
+    (`devices`, by default /dev/nvidia*) can no longer be opened. The container's device rules,
+    which the NVIDIA Container Toolkit sets, are reset under it when systemd reloads (Docker's
+    systemd cgroup driver): fit 5 then trained on the CPU, as Cellpose falls back to it, and
+    failed an hour later. Only a new container (the worker restarted) has the GPU again."""
+    for p in sorted(glob.glob("/dev/nvidia*")) if devices is None else devices:
+        try:
+            if stat.S_ISCHR(os.stat(p).st_mode):
+                os.close(os.open(p, os.O_RDWR))
+        except OSError as e:
+            return f"{p}: {e.strerror}"
+    return None
+
+
 def versions() -> dict:
     """al-diag-seg's (``alseg``: version and commit) and hong2p's (``hong2p``: the commit
     pip installed it from), as a model's README says to install them."""
@@ -130,15 +152,18 @@ def versions() -> dict:
 class Progress:
     """al-diag-seg's progress callback for a fit, ``(stage, done, total)``: saves where it is
     (at each new stage, else at most every `SAVE_S` seconds), times each stage, and stops the
-    fit (`Cancelled`) when asked to."""
+    fit (`Cancelled`) when asked to; or, as training starts, if the worker has a GPU (`gpu`) it
+    can no longer use (`GpuLost`), rather than train on the CPU."""
 
-    def __init__(self, db, fit_id: int):
-        self.db, self.id = db, fit_id
+    def __init__(self, db, fit_id: int, gpu: bool = False):
+        self.db, self.id, self.gpu = db, fit_id, gpu
         self.stage, self.started, self.seconds, self.last = None, {}, {}, 0.0
 
     def __call__(self, stage: str, done: int, total: int) -> None:
         t = time.time()
         new = stage != self.stage
+        if new and stage == "train" and self.gpu and (why := gpu_lost()):
+            raise GpuLost(why)
         if new:
             self.finish(t)
             self.stage, self.started[stage] = stage, t
@@ -200,13 +225,15 @@ glomeruli.csv).
 """
 
 
-def run(db, fit: dict) -> None:
-    """Runs one fit (claimed: `fits.claim`) to the end: done, failed or cancelled."""
+def run(db, fit: dict, gpu: bool = False) -> None:
+    """Runs one fit (claimed: `fits.claim`) to the end: done, failed or cancelled. If the worker
+    has a GPU (`gpu`) it can no longer use, as training starts or once the fit failed, puts the
+    fit back in the queue and raises `GpuLost`."""
     d = fits.fit_dir(fit["id"])
     shutil.rmtree(d, ignore_errors=True)
     d.mkdir(parents=True)
-    o, prog = {**fits.DEFAULTS, **fit["options"]}, Progress(db, fit["id"])
-    status, error, result = "failed", None, None
+    o, prog = {**fits.DEFAULTS, **fit["options"]}, Progress(db, fit["id"], gpu)
+    status, error, result, lost = "failed", None, None, None
     with open(d / "log.txt", "a", buffering=1) as out, _output_to(out):
         try:
             print(f"fit {fit['id']}, asked for by {fit['name']} ({fit['ip']}) at {fit['created_at']}; options {json.dumps(o)}")
@@ -253,10 +280,22 @@ def run(db, fit: dict) -> None:
         except Cancelled:
             status = "cancelled"
             print("stopped, as asked")
+        except GpuLost as e:
+            lost = e
         except Exception as e:  # noqa: BLE001 (any failure is the fit's, said in its log and record)
-            error = f"{type(e).__name__}: {e}"
             traceback.print_exc()
+            why = gpu_lost() if gpu else None
+            if why:
+                lost = GpuLost(why)
+            else:
+                error = f"{type(e).__name__}: {e}"
+        if lost:
+            print(f"stopped: the worker can no longer use the GPU ({lost}); the fit is back in the queue, "
+                  "for the worker to run once it has started again")
     prog.finish()
+    if lost:
+        fits.update(db, fit["id"], status="queued", started_at=None, progress=None, flies=None)
+        raise lost
     done = fits.get(db, fit["id"]) or fit
     sz = fits.sizes(done)
     model_bytes = sum(p.stat().st_size for p in (d / "model").rglob("*") if p.is_file()) if (d / "model").is_dir() else None
@@ -499,25 +538,45 @@ def main() -> None:
             time.sleep(fits.HEARTBEAT_S)
 
     threading.Thread(target=beat, daemon=True).start()
-    threading.Thread(target=predict_loop, args=(db, state, gpu_lock, bool(info["gpu"])), daemon=True).start()
-    fit_loop(db, state, gpu_lock)
+    stop = threading.Event()  # (set once the GPU can no longer be used)
+    predictor = threading.Thread(target=predict_loop, args=(db, state, gpu_lock, bool(info["gpu"]), stop), daemon=True)
+    predictor.start()
+    fit_loop(db, state, gpu_lock, bool(info["gpu"]), stop)
+    predictor.join()  # (a prediction on the CPU ends first)
+    log.error("exiting, for Docker to start the worker again, with the GPU")
+    sys.exit(1)
 
 
-def fit_loop(db, state: dict, gpu_lock: threading.Lock, stop: Optional[threading.Event] = None) -> None:
+def _gpu_lost(why: str, stop: Optional[threading.Event]) -> None:
+    log.error("the GPU can no longer be used (%s): what was to run is back in the queue", why)
+    if stop:
+        stop.set()
+
+
+def fit_loop(db, state: dict, gpu_lock: threading.Lock, has_gpu: bool = False, stop: Optional[threading.Event] = None) -> None:
     """Runs the fits asked for, one at a time, each holding `gpu_lock` (once a prediction on the
     GPU, if one is, ends) and giving back the GPU's memory and the RAM it freed when done
-    (`_free_gpu`, `_free_ram`); until `stop` is set, if given. ``state["fit"]``: the one running."""
+    (`_free_gpu`, `_free_ram`); until `stop` is set, if given. ``state["fit"]``: the one running.
+    If there is a GPU (`has_gpu`) it can no longer use (`gpu_lost`), puts the fit back in the
+    queue (`run` does, once it started), sets `stop` and returns."""
     while not (stop and stop.is_set()):
         fit = fits.claim(db)
         if fit is None:
             time.sleep(POLL_S)
             continue
         state["fit"] = fit["id"]
-        log.info("fit %s: started (asked for by %s)", fit["id"], fit["name"])
         try:
             with gpu_lock:
+                if has_gpu and (why := gpu_lost()):
+                    fits.update(db, fit["id"], status="queued", started_at=None)
+                    _gpu_lost(why, stop)
+                    return
+                log.info("fit %s: started (asked for by %s)", fit["id"], fit["name"])
                 try:
-                    run(db, fit)
+                    run(db, fit, has_gpu)
+                except GpuLost as e:
+                    _gpu_lost(str(e), stop)
+                    return
                 finally:
                     _free_gpu()
                     _free_ram()
@@ -528,7 +587,8 @@ def fit_loop(db, state: dict, gpu_lock: threading.Lock, stop: Optional[threading
 def predict_loop(db, state: dict, gpu_lock: threading.Lock, has_gpu: bool, stop: Optional[threading.Event] = None) -> None:
     """Runs the predictions asked for, one at a time: on the GPU (holding `gpu_lock`) if there is
     one and no fit holds it, else on the CPU; until `stop` is set, if given. ``state["prediction"]``:
-    the one running."""
+    the one running. If there is a GPU it can no longer use (`gpu_lost`), puts the prediction back
+    in the queue, sets `stop` and returns."""
     while not (stop and stop.is_set()):
         try:
             p = predictions.claim(db)
@@ -538,8 +598,13 @@ def predict_loop(db, state: dict, gpu_lock: threading.Lock, has_gpu: bool, stop:
         if p is None:
             time.sleep(POLL_S)
             continue
-        state["prediction"] = p["id"]
         on_gpu = has_gpu and gpu_lock.acquire(blocking=False)
+        if on_gpu and (why := gpu_lost()):
+            predictions.update(db, p["id"], status="queued", started_at=None)
+            gpu_lock.release()
+            _gpu_lost(why, stop)
+            return
+        state["prediction"] = p["id"]
         log.info("prediction %s: started, on the %s (asked for by %s)", p["id"], "GPU" if on_gpu else "CPU", p["name"])
         try:
             run_prediction(db, p, on_gpu, None if on_gpu or not has_gpu else "a fit is using the GPU")

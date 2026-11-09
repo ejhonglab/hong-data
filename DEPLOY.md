@@ -41,7 +41,7 @@ server's NVIDIA GPU. That needs the NVIDIA driver (`nvidia-smi` lists the GPU) a
 NVIDIA Container Toolkit, set up for Docker; this prints the GPU if both are there:
 
 ```bash
-docker run --rm --gpus all ubuntu nvidia-smi
+docker run --rm --device nvidia.com/gpu=all ubuntu nvidia-smi -L
 ```
 
 Otherwise install the toolkit from NVIDIA's repository
@@ -53,6 +53,19 @@ sudo apt install nvidia-container-toolkit
 sudo nvidia-ctk runtime configure --runtime=docker
 sudo systemctl restart docker
 ```
+
+The worker is given the GPU through CDI (`nvidia.com/gpu=all`: the device files and
+libraries the toolkit lists in `/var/run/cdi/nvidia.yaml`, which it makes as the server
+starts and when the driver changes), not `--gpus`: systemd drops the device rules `--gpus`
+adds from a running container whenever it reloads (`systemctl daemon-reload`, as installing
+packages can), with Docker's systemd cgroup driver, and the container then cannot use the GPU
+until it is started again ("Failed to initialize NVML: Unknown Error" from
+`docker exec olfdb-worker nvidia-smi`). If the command above says the device is unknown,
+`docker info` lists no "CDI spec directories" (add `"features": {"cdi": true}` to
+`/etc/docker/daemon.json`, then restart Docker), or the spec is missing:
+`sudo nvidia-ctk cdi generate --output=/var/run/cdi/nvidia.yaml`. Should the worker still
+lose the GPU, it puts what it was about to run back in the queue and exits, and Docker
+starts it again, with the GPU.
 
 On a server without an NVIDIA GPU, delete the `worker` service from `docker-compose.yml`:
 everything else works, and fits asked for wait, the tab saying no worker is running.

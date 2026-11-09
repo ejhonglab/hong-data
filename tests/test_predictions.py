@@ -241,7 +241,7 @@ def test_loops(main, tensor, monkeypatch):  # noqa: F811
     monkeypatch.setattr(fit_worker, "POLL_S", 0.01)
     fitting, fit_go, ran, pred_go = threading.Event(), threading.Event(), [], threading.Event()
 
-    def run(db, fit):
+    def run(db, fit, gpu=False):
         fitting.set()
         fit_go.wait(10)
         fits.update(db, fit["id"], status="done")
@@ -258,7 +258,7 @@ def test_loops(main, tensor, monkeypatch):  # noqa: F811
     f = done_fit(main.db)
     fly = predictions.locate(FLY, RAW, config.TENSOR_ROOT, [])
     state, lock, stop = {"fit": None, "prediction": None}, threading.Lock(), threading.Event()
-    threads = [threading.Thread(target=fit_worker.fit_loop, args=(main.db, state, lock, stop)),
+    threads = [threading.Thread(target=fit_worker.fit_loop, args=(main.db, state, lock, True, stop)),
                threading.Thread(target=fit_worker.predict_loop, args=(main.db, state, lock, True, stop))]
     for t in threads:
         t.start()
@@ -286,3 +286,31 @@ def test_loops(main, tensor, monkeypatch):  # noqa: F811
         pred_go.set()
         for t in threads:
             t.join(10)
+
+
+def test_loops_gpu_lost(main, tensor, monkeypatch):  # noqa: F811
+    """A fit or a prediction to run on a GPU the worker can no longer use is put back in the queue,
+    unrun, and the worker told to stop (to be started again, with the GPU); a prediction on the
+    CPU, beside a fit, is not held up."""
+    monkeypatch.setattr(fit_worker, "POLL_S", 0.01)
+    ran = []
+    monkeypatch.setattr(fit_worker, "run", lambda db, fit, gpu=False: ran.append(fit["id"]))
+    monkeypatch.setattr(fit_worker, "run_prediction", lambda db, p, on_gpu, why_cpu=None: ran.append((p["id"], on_gpu)))
+    monkeypatch.setattr(fit_worker, "gpu_lost", lambda: "/dev/nvidia0: Operation not permitted")
+    state, lock, stop = {"fit": None, "prediction": None}, threading.Lock(), threading.Event()
+    g = fits.create(main.db, "Ann", None, fits.options({}))
+    fit_worker.fit_loop(main.db, state, lock, True, stop)
+    g = fits.get(main.db, g["id"])
+    assert stop.is_set() and ran == [] and (g["status"], g["started_at"]) == ("queued", None) and not lock.locked()
+    stop.clear()
+    p, _ = predictions.create(main.db, done_fit(main.db)["id"], predictions.locate(FLY, RAW, config.TENSOR_ROOT, []), "Bob", None)
+    fit_worker.predict_loop(main.db, state, lock, True, stop)
+    p = predictions.get(main.db, p["id"])
+    assert stop.is_set() and ran == [] and (p["status"], p["started_at"]) == ("queued", None) and not lock.locked()
+    stop.clear()
+    with lock:  # (a fit holds the GPU: the prediction runs on the CPU)
+        t = threading.Thread(target=fit_worker.predict_loop, args=(main.db, state, lock, True, stop))
+        t.start()
+        assert wait(lambda: ran == [(p["id"], False)])
+        stop.set()
+        t.join(10)

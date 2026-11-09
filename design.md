@@ -322,6 +322,17 @@ between the frontend and the server. Using the app is described in
   before and after. If that does not bring it down, the memory is still referenced: a process
   per fit would give back all of it, but needs the Landlock rule for CUDA's /proc entries
   widened (see above), so it was not done yet.
+- **The worker is given the GPU through CDI, and restarts if it loses it anyway.** With
+  `--gpus` (the toolkit's hook adding device rules Docker does not know of), systemd dropped
+  them from the running worker when it reloaded, under Docker's systemd cgroup driver: the
+  GPU's device files could no longer be opened, Cellpose fell back to the CPU, and fit 5
+  failed after an hour (its first step of training). CDI lists the device files in the
+  container's spec, so they stay (a container update, the same mechanism, kept them). As
+  well, before a fit or a prediction on the GPU, and as a fit's training starts, the worker
+  opens the GPU's device files (`gpu_lost`); if it cannot, it puts the fit or prediction back
+  in the queue and exits (code 1), for Docker to start it again: a container started anew has
+  the GPU (checked with `docker update` on a throwaway container). Not after any CUDA error:
+  one a fit causes itself would make it restart, and run the fit again, endlessly.
 - **A prediction is one per fit and fly**, the fly known by its motion-corrected data
   folder (its real path, however it was entered), so asking again replaces it (the tab
   asks first). Its folder keeps what al-diag-seg's `alseg-predict` would write, the fly's

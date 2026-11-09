@@ -5,9 +5,11 @@ stand-in segmenter in place of Cellpose."""
 from __future__ import annotations
 
 import asyncio
+import errno
 import io
 import json
 import logging
+import os
 import sys
 import types
 import zipfile
@@ -289,6 +291,45 @@ def test_worker(main, tensor, monkeypatch):  # noqa: F811
     assert "Traceback" in (fits.fit_dir(h["id"]) / "log.txt").read_text()
     # estimates from the fit that finished
     assert fits.listing(main.db)["rates"]["from"] == 1
+
+
+def test_worker_gpu_lost(main, tensor, monkeypatch):  # noqa: F811
+    """A fit whose worker can no longer use its GPU, as training starts or once the fit failed, is put
+    back in the queue (`GpuLost`), not trained on the CPU, nor failed; without a GPU, it is not checked."""
+    calls, lost = {"db": main.db}, []
+    fake_alseg(monkeypatch, calls)
+    monkeypatch.setattr(fit_worker, "gpu_lost", lambda: lost.pop(0) if lost else None)
+    f = fits.create(main.db, "Ann", None, fits.options({"held_out": 1}))
+    lost.append("/dev/nvidia0: Operation not permitted")
+    with pytest.raises(fit_worker.GpuLost, match="nvidia0: Operation not permitted"):
+        fit_worker.run(main.db, fits.claim(main.db), gpu=True)
+    f = fits.get(main.db, f["id"])
+    assert (f["status"], f["started_at"], f["progress"], f["flies"], f["error"]) == ("queued", None, None, None, None)
+    assert "can no longer use the GPU" in (fits.fit_dir(f["id"]) / "log.txt").read_text()
+    calls["fail"] = True  # (as CUDA failing during training)
+    lost[:] = [None, "/dev/nvidia0: Operation not permitted"]
+    with pytest.raises(fit_worker.GpuLost):
+        fit_worker.run(main.db, fits.claim(main.db), gpu=True)
+    assert fits.get(main.db, f["id"])["status"] == "queued" and "Traceback" in (fits.fit_dir(f["id"]) / "log.txt").read_text()
+    lost.append("/dev/nvidia0: Operation not permitted")
+    fit_worker.run(main.db, fits.claim(main.db))
+    f = fits.get(main.db, f["id"])
+    assert (f["status"], f["error"]) == ("failed", "RuntimeError: out of memory") and len(lost) == 1
+
+
+def test_gpu_lost(monkeypatch):
+    """The GPU can no longer be used once one of its device files can no longer be opened."""
+    assert fit_worker.gpu_lost(["/dev/null"]) is None and fit_worker.gpu_lost([]) is None
+    real = os.open
+
+    def denied(path, flags, *args):
+        if path == "/dev/null":
+            raise PermissionError(errno.EPERM, "Operation not permitted")
+        return real(path, flags, *args)
+
+    with monkeypatch.context() as m:
+        m.setattr(os, "open", denied)
+        assert fit_worker.gpu_lost(["/dev/null"]) == "/dev/null: Operation not permitted"
 
 
 def test_worker_refs(main, tensor, monkeypatch, tmp_path):  # noqa: F811

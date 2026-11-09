@@ -60,10 +60,10 @@ services:
       XDG_CACHE_HOME: "/data/tmp/cache"
       CUDA_CACHE_PATH: "/data/tmp/cache/cuda"
       MPLCONFIGDIR: "/data/tmp/cache/matplotlib"
-    deploy:
-      resources:
-        reservations:
-          devices: [{driver: nvidia, count: all, capabilities: [gpu]}]
+    # The GPU through CDI (the NVIDIA Container Toolkit's spec of its device files and libraries),
+    # not `--gpus`, whose device rules systemd drops from a running container when it reloads:
+    # the worker could then no longer open the GPU (fit 5, 2026-11-08). DEPLOY.md, "GPU".
+    devices: ["nvidia.com/gpu=all"]
     logging:
       driver: json-file
       options: { max-size: "20m", max-file: "5" }
