@@ -188,7 +188,9 @@ def summary(res: dict) -> dict:
     """What the tab shows of a fit's scores (al-diag-seg's ``Model.evaluate``): per held-out fly,
     its final ROIs' recall, precision and Dice, matched to its own as 3D objects and (``*_2d``,
     where al-diag-seg scores them so) plane by plane, their leak (and its manual ROIs'), and how
-    many were named as the manual ROI they overlap; their means; and per glomerulus."""
+    many were named as the manual ROI they overlap; their means; per glomerulus; and how they were
+    scored (``scoring``: "partly drawn", as glomeruli are often drawn on some of their planes only,
+    or "strict"; None before al-diag-seg said: strict)."""
     final = res["final"]
     rows = {r["fly"]: r for r in res["summary"] if r["rois"] == final}
     manual = {r["fly"]: r for r in res["summary"] if r["rois"] == "manual"}
@@ -201,7 +203,7 @@ def summary(res: dict) -> dict:
         vs = [f[k] for f in flies if f[k] is not None]
         mean[k] = sum(vs) / len(vs) if vs else None
     return {"final": final, "flies": flies, "mean": mean, "named": sum(f["named"] for f in flies),
-            "named_of": sum(f["named_of"] for f in flies), "glomeruli": res["glomeruli"]}
+            "named_of": sum(f["named_of"] for f in flies), "glomeruli": res["glomeruli"], "scoring": res.get("scoring")}
 
 
 README = """al-diag-seg model: fit #{id} in the odor response database's AL segmentation tab, asked for by
@@ -456,7 +458,7 @@ def run_prediction(db, p: dict, on_gpu: bool, why_cpu: Optional[str] = None) -> 
                 ident = next((r for r in res["identity"] if r["rois"] == final), {})
                 scores = {"manual": row("manual")["n"], "manual_2d": row("manual").get("n_2d"),
                           **{k: num(row(final).get(k)) for k in SCORES}, "manual_leak": num(row("manual")["leak"]),
-                          "named": ident.get("correct", 0), "named_of": ident.get("total", 0)}
+                          "named": ident.get("correct", 0), "named_of": ident.get("total", 0), "scoring": res.get("scoring")}
                 n = row(final)["n"]
                 with open(d / f"{name}_identities_{final}.csv", newline="") as fh:
                     named = sorted({r["assigned"] for r in csv.DictReader(fh) if r["assigned"]})

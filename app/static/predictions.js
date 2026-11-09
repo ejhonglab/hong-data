@@ -4,7 +4,7 @@
 // one in the movie player (player.js: the ROIs predicted and the fly's own, of the plane shown).
 // Also fills in the example, under Fit a model, of running a downloaded model yourself.
 
-import { both, fmtDuration } from './fits.js';
+import { both, fmtDuration, scoringNote } from './fits.js';
 
 const STATUS_NAMES = { queued: 'Queued', running: 'Running', done: 'Done', failed: 'Failed', interrupted: 'Interrupted' };
 const STAGE_NAMES = { load: 'loading the fly', predict: 'predicting its ROIs' };
@@ -137,7 +137,7 @@ export class PredictPanel {
     return `Predicted ${esc(fmtWhen(p.finished_at))}, asked for by <b>${esc(p.name)}</b>, on the ${esc(r.device)} in ${fmtDuration(r.seconds)}:
       ${r.n} ROIs, ${r.named.length} of them named${r.named.length ? ` <span class="muted">(${esc(r.named.join(', '))})</span>` : ''}.${s
       ? ` Against the fly's own ${s.manual} ROIs${s.recall_2d == null ? '' : ` (${s.manual_2d} outlines on their planes)`}: found ${both(s, 'recall')},
-        right ${both(s, 'precision')}, Dice ${both(s, 'dice', num2)}${s.recall_2d == null ? '' : ' <span class="muted">(per plane · as 3D objects)</span>'};
+        right ${both(s, 'precision')}, Dice ${both(s, 'dice', num2)} <span class="muted">(${s.recall_2d == null ? '' : 'per plane · as 3D objects; '}${scoringNote(s)})</span>;
         named ${s.named}/${s.named_of} as the one they overlap.` : ''}`;
   }
 

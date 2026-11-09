@@ -233,7 +233,8 @@ def fake_alseg(monkeypatch, calls):
                                          "dice": 0.8, "recall_2d": 0.6, "precision_2d": 0.9, "dice_2d": 0.85, "leak": leak}
             return {"final": "refined_tuning", "summary": [r for f in flies for r in (row(f, "manual", 0.03), row(f, "refined_tuning", 0.05))],
                     "identity": [{"fly": f["name"], "rois": "refined_tuning", "correct": 3, "total": 4} for f in flies],
-                    "glomeruli": [{"glomerulus": "DM2", "flies": len(flies), "detected": 1, "dice": 0.8, "named": 1}]}
+                    "glomeruli": [{"glomerulus": "DM2", "flies": len(flies), "detected": 1, "dice": 0.8, "named": 1}],
+                    "scoring": "partly drawn"}
 
     def fit(flies, val, options, out=None, progress=None, **kw):
         calls["held_out"] = val
@@ -270,6 +271,7 @@ def test_worker(main, tensor, monkeypatch):  # noqa: F811
     assert f["result"]["mean"] == {"recall": 0.5, "precision": 1.0, "dice": 0.8, "recall_2d": 0.6, "precision_2d": 0.9, "dice_2d": 0.85,
                                    "leak": 0.05, "manual_leak": 0.03}
     assert (f["result"]["named"], f["result"]["named_of"], f["model_bytes"]) == (3, 4, 1000 + 2 + len((fits.fit_dir(f["id"]) / "model/README.txt").read_bytes()))
+    assert f["result"]["scoring"] == "partly drawn"
     readme = (fits.fit_dir(f["id"]) / "model/README.txt").read_text()
     assert "fit #1" in readme and "al-diag-seg@abc" in readme and "alseg-predict model/" in readme
     assert "held out: ann_2024-01-01_2" in (fits.fit_dir(f["id"]) / "log.txt").read_text()
@@ -406,6 +408,7 @@ def test_worker_with_alseg(main, tensor, monkeypatch):  # noqa: F811
     names = {r.name for r in roifile.ImagejRoi.fromfile(d / f"results/{held}_refined_tuning_RoiSet.zip")}
     assert names and names <= set(GLOMS) | {n for n in names if n.isdigit()}, names
     assert (d / "model/model.json").is_file() and f["result"]["flies"][0]["fly"] == held
+    assert f["result"]["scoring"] == "partly drawn"  # (glomeruli drawn on some of their planes only)
     assert "values not finite (NaN or inf), taken as 0" in (d / "log.txt").read_text()
 
 

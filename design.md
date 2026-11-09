@@ -305,6 +305,13 @@ between the frontend and the server. Using the app is described in
   `metrics.match_report_2d`): ROIs are drawn and used per plane, and planes 10 µm apart make
   Cellpose's per-plane masks, stitched into objects, reach other planes than the manual ones,
   which the 3D match counts against them (46% found per plane, 30% as objects, for fit 2).
+- **Scores count against ROIs only what the manual ROIs can say is wrong** (al-diag-seg's
+  `partly_drawn` scoring): glomeruli are often drawn on their clearest planes only, so an ROI's
+  parts on planes where its glomerulus has no outline count against it only inside another
+  glomerulus' outline, and "right" is of the ROIs matched or lying mostly in drawn glomeruli
+  (plane by plane too). "Found" is as before. A fit's and a prediction's result say how they
+  were scored (`scoring`; earlier ones have none, and were scored strictly), and the tab marks
+  the strict ones, whose numbers are lower than they would be now.
 - **A fit's held-out flies are taken from each dataset in turn**, spread through its flies,
   so that each uploader's are scored; their names are al-diag-seg's (top folder on tensor,
   date, number). A fit records who asked for it (the first name set in Settings: the box

@@ -32,6 +32,12 @@ export function both(x, key, fmt = pct) {
   return x[`${key}_2d`] == null ? fmt(x[key]) : `${fmt(x[`${key}_2d`])} <span class="muted">· ${fmt(x[key])}</span>`;
 }
 
+// how a fit's or a prediction's ROIs were scored (al-diag-seg's): as glomeruli drawn on some of their
+// planes only (often their clearest), so not counted wrong where none is drawn; or strictly (before)
+export const partlyDrawn = (x) => x.scoring === 'partly drawn';
+export const scoringNote = (x) => (partlyDrawn(x) ? 'not counted wrong where no glomerulus is drawn'
+  : 'scored strictly: also counted wrong where no glomerulus is drawn');
+
 export class FitsPanel {
   // helpers: { $, esc, api, msgBox, askDialog, fmtWhen, fmtSize, getName (the name in Settings, '' if none) }
   constructor(h) {
@@ -122,7 +128,8 @@ export class FitsPanel {
     const { esc, fmtWhen, fmtSize } = this.h;
     const took = f.started_at && f.finished_at ? (new Date(f.finished_at) - new Date(f.started_at)) / 1000 : null;
     const r = f.result;
-    const scores = r ? `${both(r.mean, 'recall')}, ${both(r.mean, 'precision')}, ${both(r.mean, 'dice', num2)}, ${r.named}/${r.named_of}` : '—';
+    const scores = r ? `${both(r.mean, 'recall')}, ${both(r.mean, 'precision')}, ${both(r.mean, 'dice', num2)}, ${r.named}/${r.named_of}${partlyDrawn(r)
+      ? '' : ` <span class="muted" title="${scoringNote(r)}">(strict)</span>`}` : '—';
     const status = `${STATUS_NAMES[f.status] || esc(f.status)}${f.error ? ` <span class="muted" title="${esc(f.error)}">(${esc(f.error.slice(0, 80))}${f.error.length > 80 ? '…' : ''})</span>` : ''}`;
     const open = this.open.has(f.id);
     return `<tr data-id="${f.id}"><td>#${f.id}</td><td>${esc(f.name)}</td><td>${esc(f.ip || '?')}</td>
@@ -144,7 +151,12 @@ export class FitsPanel {
     return `<p class="small">${f.flies ? `Fit to ${f.flies.train.length} flies, ${o.held_out} held out, ${o.epochs} epochs${o.atlas
       ? `, with the atlas${refs.length ? ` (and ${refs.join(' and ')}'s in it)` : ''}` : ''}.` : ''}
       Scored are the final ROIs (${esc(FINAL_NAMES[r.final] || r.final)}), against each held-out fly's own${r.mean.recall_2d == null ? ', as 3D objects'
-      : ": plane by plane (each glomerulus's outline on a plane, as ROIs are drawn), then as 3D objects (its outlines on all its planes as one)"}.</p>
+      : ": plane by plane (each glomerulus's outline on a plane, as ROIs are drawn), then as 3D objects (its outlines on all its planes as one)"}.
+      ${partlyDrawn(r) ? `As glomeruli are often drawn on their clearest planes only, nothing counts against an ROI where nothing is drawn:
+        on planes its glomerulus has no outline on, only its part in another glomerulus's outline does, and ROIs lying mostly
+        outside every drawn glomerulus are left out of Right.` : `Scored strictly, as before that changed: an ROI's parts on planes its
+        glomerulus has no outline on count against it, as does every ROI where no glomerulus is drawn, so these are lower than a newer
+        fit's would be.`}</p>
       <table class="odor-table"><thead><tr><th>Held-out fly</th><th>ROIs</th>${['Found', 'Right', 'Dice'].map((h) => `<th>${h}${r.mean.recall_2d == null
         ? '' : ' <span class="muted">(per plane · 3D)</span>'}</th>`).join('')}
       <th title="Signal from neighbors in an ROI's border (its manual ROIs' in brackets)">Leak <span class="muted">(manual)</span></th><th>Named</th></tr></thead><tbody>${flies}</tbody></table>
