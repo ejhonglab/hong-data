@@ -164,6 +164,8 @@ def test_worker_prediction(main, tensor, monkeypatch):  # noqa: F811
     prov = json.loads((d / "provenance.json").read_text())
     assert prov["model"]["fit"] == f["id"] and prov["fly"]["recordings"][0]["used"] and prov["fly"]["roiset"].endswith("RoiSet.zip")
     assert prov["device"] == "CPU (a fit is using the GPU)" and prov["fly"]["recordings"][0]["responses"]["bytes"] > 0
+    o = prov["model"]["alseg_options"]  # (how Cellpose's masks are made too, the al-diag-seg's defaults)
+    assert o["segmenter"] == "stand-in" and o["cellprob_threshold"] == am.Options().cellprob_threshold
     assert tifffile.imread(d / "average.tif").shape == tuple(prov["fly"]["planes"])
     assert "summary.csv" in (d / "README.txt").read_text() and (d / "summary.csv").is_file()
 

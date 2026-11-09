@@ -22,6 +22,7 @@ from __future__ import annotations
 import contextlib
 import csv
 import ctypes
+import dataclasses
 import datetime as dt
 import gc
 import glob
@@ -487,6 +488,9 @@ def run_prediction(db, p: dict, on_gpu: bool, why_cpu: Optional[str] = None) -> 
                         "planes": list(f["average"].shape), **inputs},
                 "model": {"fit": p["fit_id"], "folder": str(mdir), "fit_by": fit["name"], "fit_asked_for": fit["created_at"],
                           "fit_finished": fit["finished_at"], "options": fit["options"], "flies": fit["flies"],
+                          # (al-diag-seg's, as the model ran: those it was saved without, e.g. how
+                          # Cellpose's masks are made, are this al-diag-seg's defaults)
+                          "alseg_options": dataclasses.asdict(model.options),
                           "odors": model.odors, "info": model.info},
                 "software": {"al-diag-seg": v["alseg"], "hong2p": v["hong2p"], "olfdb": version.VERSION, **gpu()},
                 "outputs": {"rois": f"{name}_RoiSet.zip", "final": final, "n_rois": int(n), "named": named, "scores": scores},

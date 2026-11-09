@@ -282,6 +282,15 @@ between the frontend and the server. Using the app is described in
   29% after), as voxel-wise tuning is too noisy to judge borders by. Cellpose trains on every
   outline of one glomerulus, named or not (numbered and `?` ROIs were half of those drawn,
   and were taught as background); naming, the atlas and scores use the named ones.
+- **Cellpose's masks are made with a cell probability threshold of −1, and grown back by the
+  1 px its training ROIs were eroded** (al-diag-seg's defaults since 53b4999): with Cellpose's
+  own thresholds, fit 6 made too few ROIs, too small. Picked on 3 of its held-out flies and
+  scored on the 4th, in turn, they found 50% of the manual ROIs plane by plane and made 59%
+  right (from 44% and 50%); as 3D objects 33% and 36% (from 27% and 26%). 8 of its training
+  flies picked the same. Models saved before these were al-diag-seg options take its
+  defaults too, so predictions with fit 6 (and fit 2) use them, though those fits' scores on
+  the tab are as their fits made them; a prediction's provenance.json has the options its
+  model ran with (`alseg_options`).
 - **Scores are shown plane by plane and as 3D objects** (al-diag-seg's `*_2d` columns,
   `metrics.match_report_2d`): ROIs are drawn and used per plane, and planes 10 µm apart make
   Cellpose's per-plane masks, stitched into objects, reach other planes than the manual ones,
