@@ -11,6 +11,11 @@ const REF_NAMES = { grabe2016: 'Grabe et al. 2016' }; // fits.REFERENCES
 
 // a fit's reference atlases, by name
 const refNames = (o) => (o.refs || []).map((r) => REF_NAMES[r] || r);
+// how a fit's ROIs are made (fits.ROI_DEFAULTS), if it was asked for since they were options
+const minus = (v) => String(v).replace('-', '−');
+const roiSettings = (o) => (o.cellprob_threshold == null ? '' : ` Its ROIs: cell probability threshold ${minus(o.cellprob_threshold)},
+  flow threshold ${o.flow_threshold}, grown by ${o.dilate} px; planes joined at overlap ${o.join_overlap} and tuning correlation
+  ${minus(o.join_corr)}.`);
 
 // a duration in seconds as '1 h 5 min', '12 min', '40 s'
 export function fmtDuration(s) {
@@ -149,7 +154,7 @@ export class FitsPanel {
     const missed = r.glomeruli.filter((g) => g.detected < g.flies);
     const refs = refNames(o).map(esc);
     return `<p class="small">${f.flies ? `Fit to ${f.flies.train.length} flies, ${o.held_out} held out, ${o.epochs} epochs${o.atlas
-      ? `, with the atlas${refs.length ? ` (and ${refs.join(' and ')}'s in it)` : ''}` : ''}.` : ''}
+      ? `, with the atlas${refs.length ? ` (and ${refs.join(' and ')}'s in it)` : ''}` : ''}.${roiSettings(o)}` : ''}
       Scored are the final ROIs (${esc(FINAL_NAMES[r.final] || r.final)}), against each held-out fly's own${r.mean.recall_2d == null ? ', as 3D objects'
       : ": plane by plane (each glomerulus's outline on a plane, as ROIs are drawn), then as 3D objects (its outlines on all its planes as one)"}.
       ${partlyDrawn(r) ? `As glomeruli are often drawn on their clearest planes only, nothing counts against an ROI where nothing is drawn:
@@ -198,7 +203,9 @@ export class FitsPanel {
     if (!name) { this.render(); return; }
     const atlas = $('#fit-atlas').checked;
     const options = { held_out: $('#fit-held-out').value, epochs: $('#fit-epochs').value, atlas,
-      tentative: $('#fit-tentative').checked, refs: atlas && $('#fit-grabe').checked ? ['grabe2016'] : [] };
+      tentative: $('#fit-tentative').checked, refs: atlas && $('#fit-grabe').checked ? ['grabe2016'] : [],
+      cellprob_threshold: $('#fit-cellprob').value, flow_threshold: $('#fit-flow').value, dilate: $('#fit-dilate').value,
+      join_overlap: $('#fit-join-overlap').value, join_corr: $('#fit-join-corr').value };
     $('#fit-start').disabled = true;
     try {
       const f = await api('/api/fits', { method: 'POST', json: { name, options } });

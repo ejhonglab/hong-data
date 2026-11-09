@@ -265,7 +265,9 @@ def run(db, fit: dict, gpu: bool = False) -> None:
             data = ao.load_export(d / "manifest.json", tentative=o["tentative"], progress=prog)
             (d / "work").mkdir()  # (Cellpose makes only its models/ in the folder it is given)
             model = am.fit(data["flies"], held, am.Options(epochs=o["epochs"], atlas=o["atlas"], tentative=o["tentative"],
-                                                           refs=[str(p) for p in refs]),
+                                                           refs=[str(p) for p in refs],
+                                                           # (a fit asked for before these were options: al-diag-seg's)
+                                                           **{k: o[k] for k in fits.ROI_DEFAULTS if k in o}),
                            out=d / "work", progress=prog, odors=data["odors"], aliases=data["aliases"],
                            glomeruli=data["glomeruli"])
             model.info["olfdb"] = {"fit": fit["id"], "by": fit["name"], "datasets": flies["datasets"]}

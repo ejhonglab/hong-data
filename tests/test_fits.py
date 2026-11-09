@@ -121,8 +121,12 @@ def test_options():
     # reference atlases: those it has, once each, only added to the atlas
     assert fits.options({"refs": ["grabe2016", "grabe2016"]})["refs"] == ["grabe2016"]
     assert fits.options({"refs": None, "atlas": False})["refs"] == []
+    # how its ROIs are made (as the form sends them, strings)
+    o = fits.options({"cellprob_threshold": "-1.5", "flow_threshold": "0", "dilate": "2", "join_overlap": "", "join_corr": -1})
+    assert o == {**fits.DEFAULTS, "cellprob_threshold": -1.5, "flow_threshold": 0.0, "dilate": 2, "join_corr": -1.0}
     for bad in ({"epochs": 0}, {"held_out": "x"}, {"held_out": 31}, {"refs": ["hemibrain"]}, {"refs": "grabe2016"},
-                {"refs": [{}]}, {"refs": ["grabe2016"], "atlas": False}):
+                {"refs": [{}]}, {"refs": ["grabe2016"], "atlas": False}, {"cellprob_threshold": "x"}, {"cellprob_threshold": 7},
+                {"flow_threshold": -0.1}, {"dilate": "0.5"}, {"dilate": 11}, {"join_overlap": 1.5}, {"join_corr": "nan"}):
         with pytest.raises(ValueError):
             fits.options(bad)
 
@@ -263,7 +267,7 @@ def test_worker(main, tensor, monkeypatch):  # noqa: F811
     fit_worker.run(main.db, fits.claim(main.db))
     f = fits.get(main.db, f["id"])
     assert f["status"] == "done" and f["error"] is None and calls["options"] == {"epochs": 10, "atlas": False, "tentative": True,
-                                                                                 "refs": []}
+                                                                                 "refs": [], **fits.ROI_DEFAULTS}
     assert f["flies"]["held_out"] == calls["held_out"] == ["ann_2024-01-01_2"] and len(f["flies"]["train"]) == 2
     # each stage timed, with its size, for estimates of later fits
     assert set(f["stages"]) == set(fits.STAGES) and f["stages"]["train"]["size"] == 20 and f["stages"]["load"]["seconds"] > 0
@@ -409,6 +413,10 @@ def test_worker_with_alseg(main, tensor, monkeypatch):  # noqa: F811
     assert names and names <= set(GLOMS) | {n for n in names if n.isdigit()}, names
     assert (d / "model/model.json").is_file() and f["result"]["flies"][0]["fly"] == held
     assert f["result"]["scoring"] == "partly drawn"  # (glomeruli drawn on some of their planes only)
+    # how its ROIs are made: the site's defaults are al-diag-seg's, and saved with the model
+    assert fits.ROI_DEFAULTS == {k: getattr(am.Options(), k) for k in fits.ROI_DEFAULTS}
+    saved = json.loads((d / "model/model.json").read_text())["options"]
+    assert {k: saved[k] for k in fits.ROI_DEFAULTS} == fits.ROI_DEFAULTS
     assert "values not finite (NaN or inf), taken as 0" in (d / "log.txt").read_text()
 
 

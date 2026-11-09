@@ -530,8 +530,9 @@ try {
       <div class="step-head"><h2>Past fits</h2></div>
       <p class="muted small">Anyone's, newest first. A fit's scores (click them for each held-out fly's, and the glomeruli not found)
         are of its final ROIs against the held-out flies' own: plane by plane (each glomerulus's outline on a plane, as ROIs are
-        drawn), then as 3D objects (its outlines on all its planes as one, which counts an object reaching other planes than the
-        fly's own against it). Earlier fits have the 3D scores only. Its download is its model, with how to run it on your flies, and its
+        drawn), then as 3D objects (its outlines on all its planes as one). As glomeruli are often drawn on their clearest planes
+        only, nothing counts against an ROI where no glomerulus is drawn; fits scored before that are marked <i>(strict)</i>. The
+        earliest fits have the 3D scores only. Its download is its model, with how to run it on your flies, and its
         held-out flies' predicted ROIs (as named RoiSets too).</p>
       <div id="fits-past"></div>
     </div>
@@ -554,6 +555,26 @@ try {
         the atlas by the glomeruli both have: for placing and naming the glomeruli few of the flies have)</span></span></label>
       <label class="check"><input type="checkbox" id="fit-tentative" checked><span>Tentative ROIs (<code>DA1_t0</code>) trained on as
         that glomerulus</span></label>
+      <details class="fit-roi">
+        <summary>How its ROIs are made</summary>
+        <div class="fit-roi-body">
+          <p class="small muted">Cellpose's masks on each plane, and how they are joined into 3D objects. Saved with the model, so
+            its predictions use them too. The defaults scored best on fit 6's flies, with nothing counted against an ROI where
+            no glomerulus is drawn.</p>
+          <div class="grid fit-options">
+            <label class="field"><span>Cell probability threshold <span class="muted">(lower: more, bigger ROIs; Cellpose's: 0)</span></span>
+              <input type="number" id="fit-cellprob" min="-6" max="6" step="0.5" value="-2"></label>
+            <label class="field"><span>Flow threshold <span class="muted">(higher keeps more; 0 keeps all; Cellpose's: 0.4)</span></span>
+              <input type="number" id="fit-flow" min="0" max="3" step="0.1" value="0.8"></label>
+            <label class="field"><span>ROIs grown by <span class="muted">(pixels)</span></span>
+              <input type="number" id="fit-dilate" min="0" max="10" step="1" value="0"></label>
+            <label class="field"><span>Planes joined at overlap <span class="muted">(of the smaller ROI, 0–1)</span></span>
+              <input type="number" id="fit-join-overlap" min="0" max="1" step="0.05" value="0.2"></label>
+            <label class="field"><span>… and tuning correlation <span class="muted">(of their odor responses, −1–1)</span></span>
+              <input type="number" id="fit-join-corr" min="-1" max="1" step="0.05" value="0.7"></label>
+          </div>
+        </div>
+      </details>
       <p class="small" id="fit-who"></p>
       <div class="actions"><button type="button" class="btn primary" id="fit-start">Start a fit</button></div>
       <div id="fit-status" aria-live="polite"></div>

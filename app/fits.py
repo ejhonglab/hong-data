@@ -28,8 +28,14 @@ from .glomeruli import load_glomeruli
 STATUSES = ("queued", "running", "done", "failed", "cancelled", "interrupted")
 ACTIVE = ("queued", "running")
 STAGES = ("load", "train", "atlas", "evaluate")
-DEFAULTS = {"held_out": 4, "epochs": 200, "atlas": True, "tentative": True, "refs": []}
-LIMITS = {"held_out": (1, 30), "epochs": (1, 5000)}
+# how a fit's model makes its ROIs and joins them into 3D objects (al-diag-seg's Options of these
+# names, saved with the model): al-diag-seg's defaults (tests/test_fits.py checks), picked on fit 6's
+# flies (design.md)
+ROI_DEFAULTS = {"cellprob_threshold": -2.0, "flow_threshold": 0.8, "dilate": 0, "join_overlap": 0.2, "join_corr": 0.7}
+DEFAULTS = {"held_out": 4, "epochs": 200, "atlas": True, "tentative": True, "refs": [], **ROI_DEFAULTS}
+LIMITS = {"held_out": (1, 30), "epochs": (1, 5000), "dilate": (0, 10)}  # (whole numbers)
+FLOAT_LIMITS = {"cellprob_threshold": (-6.0, 6.0), "flow_threshold": (0.0, 3.0), "join_overlap": (0.0, 1.0),
+                "join_corr": (-1.0, 1.0)}
 # the fixed reference atlases a fit may add to its flies' atlas (``refs``, al-diag-seg's): folders of config.AL_ATLAS_DIR.
 # (Not al_atlas' hemibrain export: some of its glomeruli are fragments of them.)
 REFERENCES = {"grabe2016": "Grabe et al. 2016"}
@@ -58,8 +64,9 @@ def options(body: dict) -> dict:
     """The options of a fit asked for, `DEFAULTS` for those not given.
 
     Raises:
-        ValueError: for one out of `LIMITS`, or not a whole number; for ``refs`` not a list
-            of `REFERENCES`, or given without the atlas (which they are added to).
+        ValueError: for one out of `LIMITS`, or not a whole number; out of `FLOAT_LIMITS`, or not
+            a number; for ``refs`` not a list of `REFERENCES`, or given without the atlas (which
+            they are added to).
     """
     out = dict(DEFAULTS)
     for k, (lo, hi) in LIMITS.items():
@@ -70,6 +77,15 @@ def options(body: dict) -> dict:
                 raise ValueError(f"{k.replace('_', ' ')}: not a whole number") from None
             if not lo <= v <= hi:
                 raise ValueError(f"{k.replace('_', ' ')}: must be from {lo} to {hi}")
+            out[k] = v
+    for k, (lo, hi) in FLOAT_LIMITS.items():
+        if body.get(k) not in (None, ""):
+            try:
+                v = float(body[k])
+            except (TypeError, ValueError):
+                raise ValueError(f"{k.replace('_', ' ')}: not a number") from None
+            if not lo <= v <= hi:  # (also NaN)
+                raise ValueError(f"{k.replace('_', ' ')}: must be from {lo:g} to {hi:g}")
             out[k] = v
     for k in ("atlas", "tentative"):
         if k in body:

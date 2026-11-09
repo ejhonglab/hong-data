@@ -357,6 +357,10 @@ dialog.confirm .actions { justify-content: flex-end; }
 .code-block { overflow: auto; font-size: 12px; line-height: 1.5; background: var(--surface-2); border: 1px solid var(--rule);
   border-radius: var(--radius); padding: 8px 10px; margin: 6px 0 0; }
 .step > .check.fit-sub { margin-left: 24px; }
+.fit-roi { margin: 10px 0 0; }
+.fit-roi summary { cursor: pointer; }
+.fit-roi-body { margin-top: 6px; }
+.fit-roi .fit-options { align-items: end; }
 .step > .check.fit-sub.disabled { opacity: 0.5; }
 .fit-active { border: 1px solid var(--rule); border-radius: var(--radius); padding: 10px 12px; margin-top: 10px; }
 .fit-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
