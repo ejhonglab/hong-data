@@ -100,9 +100,13 @@ between the frontend and the server. Using the app is described in
   while files unchanged since the one before are hard links to it (as `rsync
   --link-dest` does), so keeping many costs the space of what changed. The database is
   copied with SQLite's backup API, from one moment. Whether the last is current is told by
-  its `backup.json`: the size and time of each file, and a fingerprint of the database's
-  rows (but `file_log`, which changes as the server merely reads; the tables written only
-  with a dataset by their row counts, as its row in `datasets` tells of any change).
+  its `backup.json`: the size and time of each file, and a fingerprint of each of the
+  database's tables, of their rows (but `file_log`, which changes as the server merely
+  reads; the tables written only with a dataset by their row counts, as its row in
+  `datasets` tells of any change; and the fit worker's heartbeat, a setting it rewrites
+  every 10 s, which from 2026-11-05 kept every backup from being current), so the Admin tab
+  says which tables changed since. Of a backup from before they were kept there, they are
+  read from its copy of the database, once.
   AL segmentation fits are backed up (a trained model takes a GPU for over an hour), but
   not their `work/`, nor predictions (minutes each, from a fit's model).
 - **The Compare tab computes similarities in the browser**, as the viewer does the rest:

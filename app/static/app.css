@@ -306,6 +306,10 @@ input[data-src], select[data-src], textarea[data-src] { background: var(--src-so
 .backup-status p { margin: 6px 0; }
 .backup-folder select { width: auto; max-width: 420px; margin-left: 6px; }
 table.backups { margin-top: 12px; }
+.backup-changes { margin: 4px 0 10px; }
+.backup-changes summary { cursor: pointer; }
+.backup-changes p { margin: 6px 0 2px; }
+.backup-files { max-height: 14em; overflow: auto; margin: 0; padding-left: 1.4em; font-size: 0.85em; overflow-wrap: anywhere; }
 .file-tree { margin-top: 6px; font-size: 13px; }
 .file-tree ul { list-style: none; margin: 2px 0 4px 5px; padding-left: 14px; border-left: 1px solid var(--rule); }
 .file-tree li { margin: 1px 0; }

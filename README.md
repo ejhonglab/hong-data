@@ -778,7 +778,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     links to it, so each takes the space of what changed only. Listed with when each was
     made, its size and what is new in it; above them, when the last was made and whether
     it is current (else what changed since: the database, or files new, changed or
-    removed).
+    removed, and under *What changed*, which of the database's tables, with their rows
+    then and now, and which files). The fit worker's heartbeat, which it writes to the
+    database every 10 s, is not a change.
   - *Reference data*: add a CSV, TSV or parquet file on the server, or an xarray
     DataArray saved as netCDF (`.nc`), by its path from the top of tensor (completed as you
     type it, as other paths on tensor are, its folders and the files it can read listed) or

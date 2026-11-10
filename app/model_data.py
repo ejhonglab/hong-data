@@ -625,7 +625,7 @@ def import_baseline(db, baseline_id: int, root: Path) -> tuple[int, dict]:
         for n in names:
             (part / n).parent.mkdir(parents=True, exist_ok=True)
             st = (folder / n).stat()
-            shutil.copyfile(folder / n, part / n)
+            shutil.copy2(folder / n, part / n)  # (its time kept: imported again unchanged, backups are still current)
             files[n] = {"size": st.st_size, "mtime_ns": st.st_mtime_ns, "sha256": _sha256(part / n)}
         old = config.MODEL_BASELINES_DIR / f"{baseline_id}.old"
         shutil.rmtree(old, ignore_errors=True)

@@ -4594,6 +4594,9 @@ class AdminPage {
     });
     $('#admin-save').addEventListener('click', () => this.save());
     $('#admin-backup-btn').addEventListener('click', () => this.backup());
+    $('#admin-backup-status').addEventListener('toggle', (e) => { // (toggle does not bubble)
+      if (e.target.matches('.backup-changes')) this._backupChangesOpen = e.target.open;
+    }, true);
     $('#admin-files-hide-gone').addEventListener('change', (e) => $('#admin-files').classList.toggle('hide-gone', e.target.checked));
     this._backupTimer = 0;
     this._watchingBackup = false; // a backup started here is being made
@@ -4880,6 +4883,24 @@ class AdminPage {
     this._showBackups(s);
   }
 
+  // what changed since the last backup (`current` of /api/admin/backups), in a dropdown: the
+  // database's tables, and the files new, changed and removed
+  _backupChanges(c) {
+    const list = (paths, n) => `<ul class="backup-files">${paths.map((p) => `<li><code>${esc(p)}</code></li>`).join('')}${n > paths.length
+      ? `<li class="muted">and ${(n - paths.length).toLocaleString()} more</li>` : ''}</ul>`;
+    const rows = (t) => (t.before == null ? `new: ${t.now.toLocaleString()} rows` : t.now == null ? 'gone'
+      : t.before === t.now ? `${t.now.toLocaleString()} rows, some changed` : `${t.before.toLocaleString()} → ${t.now.toLocaleString()} rows`);
+    const parts = [];
+    if (c.database) {
+      parts.push(c.tables ? `<p>The database's tables: ${c.tables.map((t) => `<code>${esc(t.table)}</code> (${rows(t)})`).join(', ')}.</p>`
+        : '<p>The database (which of its tables is not known: the last backup does not say, and its copy of it could not be read).</p>');
+    }
+    for (const [k, what] of [['added', 'New files'], ['changed', 'Files changed'], ['removed', 'Files removed']]) {
+      if (c[k]) parts.push(`<p>${what} (${c[k].toLocaleString()}), in the data folder:</p>${list(c.files[k], c[k])}`);
+    }
+    return `<details class="backup-changes"${this._backupChangesOpen ? ' open' : ''}><summary>What changed</summary>${parts.join('')}</details>`;
+  }
+
   // the backups (as from /api/admin/backups): whether the last is current, the folders to
   // make one into, and every backup in them; checked again every second while one is made
   _showBackups(s) {
@@ -4905,6 +4926,7 @@ class AdminPage {
         files(c.removed, 'removed')].filter(Boolean).join(', ')}`;
     }
     const parts = [`<p><span class="indicator ${kind}">${label}</span>${detail ? ` <span class="muted">${detail}</span>` : ''}</p>`];
+    if (last && !job.running && !c.ok) parts.push(this._backupChanges(c));
     if (last) {
       parts.push(`<p>Last backup: <b>${esc(fmtWhen(last.created_at))}</b>, into <code>${esc(last.folder)}</code>
         (${last.database.datasets} dataset${last.database.datasets === 1 ? '' : 's'}, ${last.n_files.toLocaleString()} files, ${fmtBytes(last.bytes)}).</p>`);

@@ -1,6 +1,7 @@
 """Tests of backups made from the Admin tab. Run with: python -m pytest tests/"""
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import time
@@ -55,10 +56,13 @@ def test_backup(site):
     assert first["n_files"] == 11 and first["linked"] == 0 and first["linked_to"] is None
     s = backup.status(db)
     assert s["last"]["name"] == first["name"] and s["last"]["folder"] == str(into) and "files" not in s["last"]
-    assert s["current"] == {"ok": True, "database": False, "added": 0, "changed": 0, "removed": 0}
+    assert "tables" not in s["last"]["database"] and first["database"]["tables"]["users"]["rows"] == 1
+    assert s["current"] == {"ok": True, "database": False, "tables": [], "added": 0, "changed": 0, "removed": 0,
+                            "files": {"added": [], "changed": [], "removed": []}}
 
-    # not current once anything kept changes; the record of files read and written is not that
+    # not current once anything kept changes; the record of files read and written is not that, nor the fit worker's heartbeat
     db.record_files({"/x": 1}, when=None)
+    db.set_setting("fit_worker", '{"at": 1}', "2026-11-10T00:00:00")
     assert backup.status(db)["current"]["ok"]
     (data / "datasets/3").mkdir()
     (data / "datasets/3/data.csv").write_text("new")
@@ -66,7 +70,15 @@ def test_backup(site):
     os.utime(data / "datasets/1/README.md", ns=(0, 10**18))
     (data / "deleted/2/data.csv").unlink()
     db.save_user("Bob", {"raw_dirs": ["bob/raw"]}, when="2026-10-19T11:00:00")
-    assert backup.status(db)["current"] == {"ok": False, "database": True, "added": 1, "changed": 1, "removed": 1}
+    assert backup.status(db)["current"] == {"ok": False, "database": True, "tables": [{"table": "users", "before": 1, "now": 2}],
+                                            "added": 1, "changed": 1, "removed": 1,
+                                            "files": {"added": ["datasets/3/data.csv"], "changed": ["datasets/1/README.md"],
+                                                      "removed": ["deleted/2/data.csv"]}}
+    # (of a backup from before its tables were in its manifest: read from its database)
+    m = json.loads((b / backup.MANIFEST).read_text())
+    del m["database"]["tables"]
+    (b / backup.MANIFEST).write_text(json.dumps(m))
+    assert backup.status(db)["current"]["tables"] == [{"table": "users", "before": 1, "now": 2}]
 
     # the next backup links to the one before what did not change
     time.sleep(1.1)  # named by the second

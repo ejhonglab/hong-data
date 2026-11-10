@@ -16,8 +16,9 @@ size and time) is a hard link to its copy there, so each backup is whole on its 
 takes the space of what changed only.
 
 A backup is made in a ``.partial`` folder, renamed once it is done, with `MANIFEST`: what
-it holds, by size and time, and the fingerprint of its database (`db.content_fingerprint`),
-which tell whether it is current (`status`).
+it holds, by size and time, and the fingerprints of its database's tables
+(`db.table_fingerprints`), which tell whether it is current, and if not, what changed since
+(`status`).
 """
 from __future__ import annotations
 
@@ -34,7 +35,7 @@ from pathlib import Path
 from typing import Optional
 
 from . import config, sandbox
-from .db import content_fingerprint
+from .db import fingerprint_of, table_fingerprints
 
 log = logging.getLogger("uvicorn.error")
 
@@ -46,6 +47,8 @@ DB_NAME = "olfdb.sqlite3"
 # the backup being made, if any (one at a time)
 JOB: dict = {"running": False, "folder": None, "started_at": None, "done": 0, "total": 0, "error": None, "name": None}
 _lock = threading.Lock()
+LISTED = 500  # files new, changed or removed since the last backup listed by `status` at most, of each
+_tables: dict[str, tuple[tuple, Optional[dict]]] = {}  # a backup's database (from before they were in its MANIFEST) -> (its size and time, its tables)
 FITS = "fits"  # al-diag-seg fits, in the data folder (fits.fits_dir)
 NOT_KEPT = ("fits/*/work",)  # folders of those kept not copied (their paths in the data folder): a fit's Cellpose files, while it runs
 
@@ -91,7 +94,33 @@ def _manifest(path: Path) -> Optional[dict]:
 
 
 def _summary(m: dict) -> dict:
-    return {k: v for k, v in m.items() if k != "files"}
+    return {**{k: v for k, v in m.items() if k != "files"}, "database": {k: v for k, v in m.get("database", {}).items() if k != "tables"}}
+
+
+def _backup_tables(path: Path) -> Optional[dict]:
+    """The `table_fingerprints` of a backup's database, read from it (once, as it does not
+    change): for backups from before they were kept in its `MANIFEST`. None if it cannot be read."""
+    p = path / DB_NAME
+    try:
+        st = p.stat()
+    except OSError:
+        return None
+    sig = (st.st_size, st.st_mtime_ns)
+    with _lock:
+        hit = _tables.get(str(p))
+    if hit and hit[0] == sig:
+        return hit[1]
+    try:
+        con = sqlite3.connect(f"file:{p}?mode=ro&immutable=1", uri=True)
+        try:
+            tables = table_fingerprints(con)
+        finally:
+            con.close()
+    except sqlite3.Error:
+        tables = None
+    with _lock:
+        _tables[str(p)] = (sig, tables)
+    return tables
 
 
 def backups(folder: Path) -> list[dict]:
@@ -148,7 +177,7 @@ def make(db, folder: Path, progress=None) -> dict:
     src, dst = sqlite3.connect(db.path, timeout=60), sqlite3.connect(tmp / DB_NAME)
     try:
         src.backup(dst)
-        fingerprint = content_fingerprint(dst)
+        tables = table_fingerprints(dst)
         n_datasets = dst.execute("SELECT count(*) FROM datasets").fetchone()[0]
     finally:
         dst.close()
@@ -186,7 +215,7 @@ def make(db, folder: Path, progress=None) -> dict:
 
     manifest = {
         "created_at": created.isoformat(timespec="seconds"),
-        "database": {"fingerprint": fingerprint, "bytes": db_bytes, "datasets": n_datasets},
+        "database": {"fingerprint": fingerprint_of(tables), "tables": tables, "bytes": db_bytes, "datasets": n_datasets},
         "n_files": len(kept) + 1,
         "bytes": db_bytes + sum(s[0] for s in kept.values()),
         "copied_bytes": db_bytes + copied_bytes,  # the space it takes (not linked to the one before)
@@ -238,7 +267,10 @@ def status(db) -> dict:
         effect once the server restarts), ``job`` (the backup being made, or the last one
         made since the server started), ``last`` (the newest complete backup, with its
         ``folder``) and ``current`` (None without one; else ``ok``, and what changed since:
-        ``database``, and the numbers of files ``added``, ``changed`` and ``removed``).
+        ``database``, ``tables`` (those changed: ``table``, its ``rows`` ``before`` and ``now``
+        (None if it was not there, or is not); None if not known), the numbers of files
+        ``added``, ``changed`` and ``removed``, and ``files``: those, each a list of their paths
+        in the data folder, `LISTED` at most).
     """
     folders = []
     for d in write_dirs():
@@ -253,13 +285,16 @@ def status(db) -> dict:
     current = None
     if last:
         m = _manifest(Path(last["folder"]) / last["name"]) or {"files": {}, "database": {}}
-        now = data_files()
-        before = m["files"]
-        database = db.fingerprint() != m["database"].get("fingerprint")
-        added = len(now.keys() - before.keys())
-        removed = len(before.keys() - now.keys())
-        changed = sum(1 for k in now.keys() & before.keys() if now[k] != before[k])
-        current = {"ok": not (database or added or removed or changed), "database": database, "added": added,
-                   "changed": changed, "removed": removed}
+        now, before = data_files(), m["files"]
+        was, tables_now = m["database"].get("tables") or _backup_tables(Path(last["folder"]) / last["name"]), db.table_fingerprints()
+        tables = None
+        if was is not None:
+            tables = [{"table": t, "before": was.get(t, {}).get("rows"), "now": tables_now.get(t, {}).get("rows")}
+                      for t in sorted(was.keys() | tables_now.keys()) if was.get(t) != tables_now.get(t)]
+        database = bool(tables) if tables is not None else fingerprint_of(tables_now) != m["database"].get("fingerprint")
+        files = {"added": sorted(now.keys() - before.keys()), "changed": sorted(k for k in now.keys() & before.keys() if now[k] != before[k]),
+                 "removed": sorted(before.keys() - now.keys())}
+        current = {"ok": not (database or any(files.values())), "database": database, "tables": tables,
+                   **{k: len(v) for k, v in files.items()}, "files": {k: v[:LISTED] for k, v in files.items()}}
     return {"folders": folders, "pending": [d for d in saved if d not in write_dirs()], "job": dict(JOB), "last": last,
             "current": current}

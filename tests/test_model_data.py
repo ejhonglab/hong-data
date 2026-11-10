@@ -304,6 +304,7 @@ def test_baseline_import(main, outputs, odor_table, copies, tmp_path):  # noqa: 
     assert sorted(p.relative_to(copy).as_posix() for p in copy.rglob("*") if p.is_file()) == [
         "claw_sp0.05_k0_x_on_spike_counts.parquet", "params.csv", "provenance.json", "provenance_k0_x.json"]
     assert f"model_baselines/{bid}/provenance_k0_x.json" in backup.data_files()
+    assert (copy / "params.csv").stat().st_mtime_ns == (outputs / "E1_apl/params.csv").stat().st_mtime_ns  # (so backups stay current when imported again)
     run_id = f"olfdb:baselines/{bid}/claw_sp0.05_k0_x_on_spike_counts.parquet"
     status, run = call(main.models_run, params={"id": run_id})
     assert status == 200 and run["file"] == "tom/model_outputs/E1_apl/claw_sp0.05_k0_x_on_spike_counts.parquet"

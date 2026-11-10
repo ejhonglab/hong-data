@@ -306,6 +306,9 @@ REFERENCE_COLUMNS = ("id", "created_at", "path", "title", "description", "kind",
 
 # tables written only along with their dataset (whose row in `datasets` tells of any change)
 DATASET_TABLES = ("dataset_panels", "units", "trials", "responses", "matrices")
+# settings rewritten as a matter of course, not what the site holds: the fit worker's heartbeat
+# (fits.WORKER_SETTING), every 10 s, which kept every backup from being current
+VOLATILE_SETTINGS = ("fit_worker",)
 
 
 PANEL_RENAMES = "panel_renames"  # the setting of panels shown under other names: JSON {name in the data: name shown}
@@ -364,21 +367,41 @@ def rename_in_text(text: Optional[str], renames: dict[str, str]) -> Optional[str
     return re.sub(rf"(?<![\w-])(?:{pattern})(?![\w-])", lambda m: renames[m[0]], text)
 
 
-def content_fingerprint(con: sqlite3.Connection) -> str:
-    """A fingerprint of what a database holds (to tell whether a backup is current): every
-    row of its tables but the record of files read and written (`file_log`) and the
-    clusterings kept (`clusterings`, a cache), and the number of rows of `DATASET_TABLES`."""
-    h = hashlib.sha256()
+def table_fingerprints(con: sqlite3.Connection) -> dict[str, dict]:
+    """What each table of a database holds (to tell whether a backup is current, and what
+    changed since): but the record of files read and written (`file_log`) and the clusterings
+    kept (`clusterings`, a cache), each table's number of ``rows`` and a ``fingerprint`` of every
+    one of them; of `DATASET_TABLES`, of their number alone; of ``settings``, but
+    `VOLATILE_SETTINGS`."""
+    out = {}
     tables = [r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' "
                                         "AND name NOT IN ('file_log', 'clusterings') ORDER BY name")]
     for t in tables:
-        h.update(f"\0{t}\0".encode())
+        h, n = hashlib.sha256(), 0
         if t in DATASET_TABLES:
-            h.update(repr(tuple(con.execute(f"SELECT count(*) FROM {t}").fetchone())).encode())
-            continue
-        for row in con.execute(f"SELECT * FROM {t} ORDER BY rowid"):
-            h.update(repr(tuple(row)).encode())
+            n = con.execute(f"SELECT count(*) FROM {t}").fetchone()[0]
+            h.update(str(n).encode())
+        else:
+            volatile = VOLATILE_SETTINGS if t == "settings" else ()
+            where = f" WHERE key NOT IN ({', '.join('?' * len(volatile))})" if volatile else ""
+            for row in con.execute(f"SELECT * FROM {t}{where} ORDER BY rowid", volatile):
+                h.update(repr(tuple(row)).encode())
+                n += 1
+        out[t] = {"rows": n, "fingerprint": h.hexdigest()}
+    return out
+
+
+def fingerprint_of(tables: dict[str, dict]) -> str:
+    """One fingerprint of `table_fingerprints`' (`content_fingerprint`)."""
+    h = hashlib.sha256()
+    for t, f in tables.items():
+        h.update(f"\0{t}\0{f['fingerprint']}".encode())
     return h.hexdigest()
+
+
+def content_fingerprint(con: sqlite3.Connection) -> str:
+    """A fingerprint of what a database holds: of its `table_fingerprints`."""
+    return fingerprint_of(table_fingerprints(con))
 
 
 def _units_nullable(con: sqlite3.Connection) -> None:
@@ -1036,6 +1059,11 @@ class Database:
         """See `content_fingerprint`."""
         with self.connect() as con:
             return content_fingerprint(con)
+
+    def table_fingerprints(self) -> dict[str, dict]:
+        """See `table_fingerprints`."""
+        with self.connect() as con:
+            return table_fingerprints(con)
 
     # ---------------------------------------------------------------- file log
     def file_log(self) -> list[dict]:
