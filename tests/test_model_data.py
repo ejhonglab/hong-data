@@ -67,6 +67,17 @@ def outputs(root):  # noqa: F811
 
 
 @pytest.fixture
+def copies(tmp_path, monkeypatch):
+    """A data folder of the test's own, for baselines' imported files (and those deleted)."""
+    from app import config
+
+    data = tmp_path / "data"
+    for k, v in {"DATA_DIR": data, "MODEL_BASELINES_DIR": data / "model_baselines", "DELETED_DIR": data / "deleted"}.items():
+        monkeypatch.setattr(config, k, v)
+    return data
+
+
+@pytest.fixture
 def odor_table(main):  # noqa: F811
     rows, _, _ = odormeta.parse_sheet("name,abbrev,cid\n2-heptanone,2h,8051\nethyl butyrate,eb,7762\npentyl acetate,pa,12348\n")
     main.db.apply_odor_sync(added=odormeta.diff(rows, [])["added"], changed=[], deleted=[], source="test",
@@ -231,8 +242,9 @@ def test_api(main, outputs, odor_table):  # noqa: F811
     assert call(main.models_list)[1]["sources"] == [] and (outputs / "E1_apl/params.csv").is_file()
 
 
-def test_baselines(main, outputs):  # noqa: F811
-    """Models chosen as baselines: kept by their experiment's folder on tensor, name, base and row; listed alone, as /api/models lists them."""
+def test_baselines(main, outputs, copies):  # noqa: F811
+    """Models chosen as baselines: kept by their experiment's folder on tensor, name, base and row; listed alone, as /api/models lists them
+    (but their runs: of their imported copy)."""
     assert call(main.models_baselines) == (200, {"baselines": [], "experiments": {}, "models": [], "columns": []})
     sid = call(main.admin_models_add, body={"path": "tom/model_outputs"})[1]["id"]
     for body, want in [({}, 400), ({"experiment": f"{sid}/E1_apl", "row": True}, 400), ({"experiment": f"{sid + 1}/E1_apl", "row": 0}, 404),
@@ -241,32 +253,105 @@ def test_baselines(main, outputs):  # noqa: F811
     status, b = call(main.admin_models_baseline_add, body={"experiment": f"{sid}/E1_apl", "row": 1})  # (k0 of claw-dynamics)
     assert status == 200 and {k: b[k] for k in ("experiment", "name", "base", "row")} == {
         "experiment": "tom/model_outputs/E1_apl", "name": "k0", "base": "claw-dynamics", "row": 1}
+    assert b["imported_at"] and sorted(p.name for p in (copies / f"model_baselines/{b['id']}").iterdir()) == [
+        "claw-dynamics_sp0.05_k0_on_spike_counts.parquet", "params.csv", "provenance.json"]
     assert call(main.admin_models_baseline_add, body={"experiment": f"{sid}/E1_apl", "row": 1})[0] == 409
     assert call(main.admin_models_baseline_add, body={"experiment": f"{sid}/E2_gain", "row": 0})[0] == 200
     status, out = call(main.models_baselines)
     listed = call(main.models_list)[1]
     assert status == 200 and [x["ok"] for x in out["baselines"]] == [True, True] and [x["model"] for x in out["baselines"]] == [0, 1]
-    assert [m["experiment"] for m in out["models"]] == [f"{sid}/E1_apl", f"{sid}/E2_gain"]
-    assert {k: v for k, v in out["models"][0].items() if k != "baseline"} == listed["models"][1]  # (as /api/models has it)
-    assert out["experiments"][f"{sid}/E1_apl"] == listed["experiments"][f"{sid}/E1_apl"]
+    assert [m["experiment"] for m in out["models"]] == [f"{sid}/E1_apl", f"{sid}/E2_gain"] and [x["drift"] for x in out["baselines"]] == [[], []]
+    mine = lambda m: {k: v for k, v in m.items() if k not in ("baseline", "runs")}  # noqa: E731
+    assert mine(out["models"][0]) == mine(listed["models"][1])  # (as /api/models has it)
+    assert [{k: r[k] for k in ("id", "file", "label")} for r in out["models"][0]["runs"]] == [
+        {"id": f"olfdb:baselines/{b['id']}/claw-dynamics_sp0.05_k0_on_spike_counts.parquet",
+         "file": "E1_apl/claw-dynamics_sp0.05_k0_on_spike_counts.parquet", "label": "on"}]
+    exp = lambda e: {k: v for k, v in e.items() if k != "fit_provenance"}  # noqa: E731 (the copy's: its model's alone)
+    assert exp(out["experiments"][f"{sid}/E1_apl"]) == exp(listed["experiments"][f"{sid}/E1_apl"])
+    assert out["experiments"][f"{sid}/E1_apl"]["fit_provenance"] == []
     assert out["columns"][:2] == ["generated", "base"] and "wAPLKC" in out["columns"] and "n_kcs" not in out["columns"]
     # found again after rows are added before it (by its name and base), and after its folder is deleted and added again
     p = outputs / "E1_apl/params.csv"
     df = pd.read_csv(p, dtype=str, keep_default_na=False)
     pd.concat([df.iloc[[0]].assign(tag="new", variant="new"), df]).to_csv(p, index=False)
-    assert call(main.models_baselines)[1]["models"][0]["params"]["base"] == "claw-dynamics"
+    out = call(main.models_baselines)[1]
+    assert out["models"][0]["params"]["base"] == "claw-dynamics" and out["baselines"][0]["drift"] == []  # (its row the same)
+    # shown from its copy when its folder is deleted here (keyed by its own id then), and after it is added again
     call(main.admin_models_delete, path_params={"id": sid})
     gone = call(main.models_baselines)[1]
-    assert [x["ok"] for x in gone["baselines"]] == [False, False] and "not added" in gone["baselines"][0]["error"] and gone["models"] == []
+    assert [x["ok"] for x in gone["baselines"]] == [True, True] and [m["experiment"] for m in gone["models"]] == [f"baseline:{b['id']}", "baseline:2"]
+    assert gone["experiments"][f"baseline:{b['id']}"]["folder"] == "tom/model_outputs/E1_apl"
     sid = call(main.admin_models_add, body={"path": "tom/model_outputs"})[1]["id"]
     out = call(main.models_baselines)[1]
     assert [m["experiment"] for m in out["models"]] == [f"{sid}/E1_apl", f"{sid}/E2_gain"]
     p.write_text("tag,base\nother,claw\n")
     out = call(main.models_baselines)[1]
-    assert "no model k0 in its params.csv" in out["baselines"][0]["error"] and out["baselines"][1]["ok"]
+    assert out["baselines"][0]["ok"] and out["baselines"][0]["drift"] == ["no model k0 in its params.csv any more"]
+    assert call(main.admin_models_baseline_import, path_params={"id": b["id"]})[0] == 404  # (nothing to import any more)
     assert call(main.admin_models_baseline_delete, path_params={"id": b["id"]}) == (200, {"deleted": True})
     assert call(main.admin_models_baseline_delete, path_params={"id": b["id"]})[0] == 404
     assert len(call(main.models_baselines)[1]["baselines"]) == 1
+    assert not (copies / f"model_baselines/{b['id']}").exists() and len(list((copies / "deleted/model_baselines").iterdir())) == 1
+
+
+def test_baseline_import(main, outputs, odor_table, copies, tmp_path):  # noqa: F811
+    """A baseline's files imported: shown, opened and downloaded as imported, and backed up; how the files on tensor differ from them said."""
+    from app import backup, config, matrix_download
+
+    sid = call(main.admin_models_add, body={"path": "tom/model_outputs"})[1]["id"]
+    bid = call(main.admin_models_baseline_add, body={"experiment": f"{sid}/E1_apl", "row": 2})[1]["id"]  # (k0_x of claw: with its fit's provenance)
+    copy = copies / f"model_baselines/{bid}"
+    assert sorted(p.relative_to(copy).as_posix() for p in copy.rglob("*") if p.is_file()) == [
+        "claw_sp0.05_k0_x_on_spike_counts.parquet", "params.csv", "provenance.json", "provenance_k0_x.json"]
+    assert f"model_baselines/{bid}/provenance_k0_x.json" in backup.data_files()
+    run_id = f"olfdb:baselines/{bid}/claw_sp0.05_k0_x_on_spike_counts.parquet"
+    status, run = call(main.models_run, params={"id": run_id})
+    assert status == 200 and run["file"] == "tom/model_outputs/E1_apl/claw_sp0.05_k0_x_on_spike_counts.parquet"
+    assert run["imported"]["drift"] == [] and run["provenance"] == PROVENANCE and run["fit_provenance"]["provenance"] == FIT
+    for bad in (f"olfdb:baselines/{bid + 1}/claw_sp0.05_k0_x_on_spike_counts.parquet", f"olfdb:baselines/{bid}/../{bid}/claw_sp0.05_k0_x_on_spike_counts.parquet",
+                f"olfdb:baselines/{bid}/claw_sp0.05_k0_on_spike_counts.parquet", f"olfdb:baselines/{bid}/params.csv", "olfdb:baselines/x/y"):
+        assert call(main.models_run, params={"id": bad})[0] == 404, bad
+    index, dest = odormeta.OdorIndex(main.db.list_odors()), tmp_path / "files.zip"
+    matrix_download.model_download(main.db, run_id, index, "files", dest, config.TENSOR_ROOT)
+    with zipfile.ZipFile(dest) as zf:
+        stem = "olfdb_model_E1_apl_claw_sp0.05_k0_x_on_spike_counts"
+        assert sorted(zf.namelist()) == [f"{stem}/{n}" for n in ("README.md", "claw_sp0.05_k0_x_on_spike_counts.parquet", "params.csv",
+                                                                  "provenance.json", "provenance_k0_x.json")]
+        assert "imported" in zf.read(f"{stem}/README.md").decode()
+
+    # its files on tensor changed: said, and it still shown as imported
+    e1 = outputs / "E1_apl"
+    counts(4).to_parquet(e1 / "claw_sp0.05_k0_x_on_spike_counts.parquet")
+    (e1 / "provenance.json").write_text(json.dumps({**PROVENANCE, "claw_thr": 71.0}))
+    df = pd.read_csv(e1 / "params.csv", dtype=str, keep_default_na=False)
+    df.loc[2, "seed"] = "4"
+    df.to_csv(e1 / "params.csv", index=False)
+    counts(6).to_parquet(e1 / "claw_sp0.05_k0_x_late_on_spike_counts.parquet")
+    (e1 / "provenance_k0_x.json").unlink()
+    drift = ["its row of params.csv: seed", "provenance.json: claw_thr", "claw_sp0.05_k0_x_late_on_spike_counts.parquet: on tensor, not imported",
+             "provenance_k0_x.json: gone from tensor", "claw_sp0.05_k0_x_on_spike_counts.parquet: not as imported"]
+    out = call(main.models_baselines)[1]
+    assert out["baselines"][0]["drift"] == drift and len(out["models"][0]["runs"]) == 1 and out["models"][0]["params"]["seed"] == 3
+    status, run = call(main.models_run, params={"id": run_id})
+    assert status == 200 and run["imported"]["drift"] == drift and len(run["kcs"]["labels"]) == 6
+    # imported again: as on tensor now
+    status, again = call(main.admin_models_baseline_import, path_params={"id": bid})
+    assert status == 200 and again["imported_at"] and again["row"] == 2
+    out = call(main.models_baselines)[1]
+    assert out["baselines"][0]["drift"] == [] and [r["label"] for r in out["models"][0]["runs"]] == ["on", "late_on"]
+    assert len(call(main.models_run, params={"id": run_id})[1]["kcs"]["labels"]) == 4 and not (copy / "provenance_k0_x.json").exists()
+    assert sorted(p.name for p in copies.joinpath("model_baselines").iterdir()) == [str(bid)]  # (no partial nor old copy left)
+
+    # a baseline from before files were imported: read on tensor, until imported
+    with main.db.connect() as con:
+        con.execute("INSERT INTO model_baselines (experiment, name, base, row, created_at) VALUES (?, ?, ?, ?, ?)",
+                    ("tom/model_outputs/E2_gain", "f2", "bouton", 0, "2026-11-09T00:00:00"))
+    out = call(main.models_baselines)[1]
+    assert (out["baselines"][1]["imported_at"], out["baselines"][1]["drift"]) == (None, None)
+    assert out["models"][1]["runs"][0]["id"] == "tom/model_outputs/E2_gain/f2_on_spike_counts.parquet"
+    assert call(main.admin_models_baseline_import, path_params={"id": bid + 1})[0] == 200
+    assert call(main.models_baselines)[1]["models"][1]["runs"][0]["id"] == f"olfdb:baselines/{bid + 1}/f2_on_spike_counts.parquet"
+    assert call(main.admin_models_baseline_import, path_params={"id": bid + 2})[0] == 404
 
 
 def test_download(main, outputs, odor_table, tmp_path, monkeypatch):  # noqa: F811

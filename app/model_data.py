@@ -31,7 +31,9 @@ intermediate fits cached beside them): not listed as of no model, only counted (
 A file of a model is its run whatever the patterns.
 
 Models chosen in the Admin tab are baselines (`add_baseline`; the ``model_baselines`` table), shown
-first in their own table (`baseline_listing`, which scans only their experiments' folders).
+first in their own table (`baseline_listing`). Their files are imported when chosen (copied into the
+data folder, so backups have them: `import_baseline`), and shown as imported, with how the files on
+tensor they were imported from differ from them now (`drift`), each time they are listed or opened.
 """
 from __future__ import annotations
 
@@ -39,10 +41,12 @@ import base64
 import csv
 import datetime as dt
 import fnmatch
+import hashlib
 import json
 import math
 import os
 import re
+import shutil
 import threading
 from pathlib import Path
 from typing import Any, Optional
@@ -67,9 +71,12 @@ DEFAULTS = {"hidden": "n_kcs,n_glomeruli", "first": "base", "last": "tag,variant
 LISTS = tuple(DEFAULTS)
 MAX_ENTRIES = 100_000  # files and folders scanned in a folder at most (not one of a whole user's data)
 N_SPIKES = "n_spikes_for_response"  # how many spikes are a response, of a model's parameters
+BASELINE_RUN = "olfdb:baselines/"  # the start of the id of a run of a baseline's imported copy (`baseline_listing`): then <its id>/<its file>
+PARTIAL = ".partial"  # a baseline's files being imported (`import_baseline`), until all are
 
 _lock = threading.Lock()
 _scans: dict[str, tuple[tuple, dict]] = {}  # folder on the server -> (its files' sizes and times, its scan)
+_hashes: dict[str, tuple[int, int, str]] = {}  # file on the server -> (its size, time, SHA-256), as when last hashed (`_sha256`)
 
 
 def now() -> str:
@@ -464,8 +471,8 @@ def listing(db, root: Path) -> dict:
     return out
 
 
-def _listed_experiment(src: dict, folder: str, e: dict) -> dict:
-    return {"source": src["id"], "folder": folder, "params": e["params"], "flat": e["shared"], "fit_provenance": e["fit_provenance"],
+def _listed_experiment(src: Optional[dict], folder: str, e: dict) -> dict:
+    return {"source": src["id"] if src else None, "folder": folder, "params": e["params"], "flat": e["shared"], "fit_provenance": e["fit_provenance"],
             "error": e["error"]}
 
 
@@ -489,15 +496,29 @@ def model_name(params: dict) -> Optional[str]:
 
 
 def _baseline(row) -> dict:
-    return {k: row[k] for k in ("id", "experiment", "name", "base", "row", "created_at")}
+    return {k: row[k] for k in ("id", "experiment", "name", "base", "row", "created_at", "imported_at")}
+
+
+def _baseline_rows(db) -> list[dict]:
+    """The baselines with what their files were when imported (``files``: name -> {``size``,
+    ``mtime_ns``, ``sha256``}, empty if never)."""
+    with db.connect() as con:
+        rows = con.execute("SELECT * FROM model_baselines ORDER BY id").fetchall()
+    return [{**_baseline(r), "files": json.loads(r["imported_json"])["files"] if r["imported_json"] else {}} for r in rows]
 
 
 def baselines(db) -> list[dict]:
     """The models chosen as baselines, in the order chosen: ``id``, ``experiment`` (its folder on
     tensor, from its top), ``name`` (`model_name`), ``base``, ``row`` (in its params.csv, when
-    chosen) and ``created_at``."""
+    chosen or imported), ``created_at`` and ``imported_at`` (when its files were copied into
+    the data folder, `import_baseline`; None if never)."""
     with db.connect() as con:
         return [_baseline(r) for r in con.execute("SELECT * FROM model_baselines ORDER BY id")]
+
+
+def baseline_dir(baseline_id: int) -> Path:
+    """Where a baseline's files are imported (`import_baseline`), laid out as its experiment's folder."""
+    return config.MODEL_BASELINES_DIR / str(baseline_id)
 
 
 def _source_of(path: str, srcs: list[dict]) -> Optional[dict]:
@@ -518,12 +539,34 @@ def _find(models: list[dict], name: Optional[str], base: Optional[str], row: int
     return next((m for m in named if m["row"] == row), named[0] if name is not None and named else None)
 
 
+def _found(s: dict, b: dict) -> tuple[Optional[dict], Optional[dict]]:
+    """A baseline's experiment and model in a scan of its experiment's folder (None if not there)."""
+    e = next((e for e in s["experiments"] if e["key"] == ""), None)
+    return e, _find([m for m in s["models"] if m["experiment"] == ""], b["name"], b["base"], b["row"]) if e else None
+
+
+def _sha256(path: Path) -> str:
+    """A file's SHA-256, hashed again only when its size or time changes."""
+    st = path.stat()
+    with _lock:
+        hit = _hashes.get(str(path))
+    if hit and hit[:2] == (st.st_size, st.st_mtime_ns):
+        return hit[2]
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    with _lock:
+        _hashes[str(path)] = (st.st_size, st.st_mtime_ns, h.hexdigest())
+    return h.hexdigest()
+
+
 def add_baseline(db, body: dict, root: Path) -> tuple[int, dict]:
     """Choose a model as a baseline ({"experiment": its ``<source id>/<folder>`` as `listing`
-    keys it, "row": its row}). It is kept by its experiment's folder on tensor, its name, base
-    (models of two bases may share a name) and row (`baselines`), so it is found again if its
-    folder of model data is added again, or rows are added before it. Returns (HTTP status, the
-    baseline as in `baselines`; or {"error"})."""
+    keys it, "row": its row}), its files imported (`import_baseline`). It is kept by its
+    experiment's folder on tensor, its name, base (models of two bases may share a name) and row
+    (`baselines`), so it is found again if its folder of model data is added again, or rows are
+    added before it. Returns (HTTP status, the baseline as in `baselines`; or {"error"})."""
     key, row = str(body.get("experiment") or ""), body.get("row")
     sid, _, folder = key.partition("/")
     if not sid.isdigit() or not isinstance(row, int) or isinstance(row, bool):
@@ -546,56 +589,156 @@ def add_baseline(db, body: dict, root: Path) -> tuple[int, dict]:
     if any(_find(mates, b["name"], b["base"], b["row"]) is m for b in baselines(db) if b["experiment"] == path):
         return 409, {"error": f"{name or f'row {row + 1}'} of {path} is a baseline already"}
     with db.connect() as con:
-        cur = con.execute("INSERT INTO model_baselines (experiment, name, base, row, created_at) VALUES (?, ?, ?, ?, ?)",
-                          (path, name, base, row, now()))
-        return 200, _baseline(con.execute("SELECT * FROM model_baselines WHERE id = ?", (cur.lastrowid,)).fetchone())
+        bid = con.execute("INSERT INTO model_baselines (experiment, name, base, row, created_at) VALUES (?, ?, ?, ?, ?)",
+                          (path, name, base, row, now())).lastrowid
+    status, out = import_baseline(db, bid, root)
+    if status != 200:
+        with db.connect() as con:
+            con.execute("DELETE FROM model_baselines WHERE id = ?", (bid,))
+    return status, out
+
+
+def import_baseline(db, baseline_id: int, root: Path) -> tuple[int, dict]:
+    """Copy a baseline's files from tensor into the data folder (`baseline_dir`, so backups have
+    them), in place of any copy made before: its experiment's params.csv and provenance.json,
+    its own provenance_<tag>.json and its runs' spike count files, with what they were (size,
+    time and SHA-256) to tell drift by (`drift`). Returns (HTTP status, the baseline as in
+    `baselines`; or {"error"})."""
+    b = next((b for b in _baseline_rows(db) if b["id"] == baseline_id), None)
+    if b is None:
+        return 404, {"error": "no such baseline"}
+    c = tensor.check_dir(b["experiment"], root)
+    if not c["ok"]:
+        return 400, {"error": f"{b['experiment']} cannot be read: {c['error']}"}
+    folder = root / c["path"]
+    try:
+        e, m = _found(scan(folder), b)
+    except ScanError as err:
+        return 400, {"error": str(err)}
+    if m is None:
+        return 404, {"error": f"no model {b['name'] or 'in row {}'.format(b['row'] + 1)} in the {PARAMS} of {b['experiment']} any more"}
+    names = [n for n in (PARAMS, PROVENANCE, m["fit_provenance"]) if n and (folder / n).is_file()] + [r["file"] for r in m["runs"]]
+    dest, part = baseline_dir(baseline_id), config.MODEL_BASELINES_DIR / f"{baseline_id}{PARTIAL}"
+    files = {}
+    try:
+        shutil.rmtree(part, ignore_errors=True)
+        for n in names:
+            (part / n).parent.mkdir(parents=True, exist_ok=True)
+            st = (folder / n).stat()
+            shutil.copyfile(folder / n, part / n)
+            files[n] = {"size": st.st_size, "mtime_ns": st.st_mtime_ns, "sha256": _sha256(part / n)}
+        old = config.MODEL_BASELINES_DIR / f"{baseline_id}.old"
+        shutil.rmtree(old, ignore_errors=True)
+        if dest.exists():
+            dest.rename(old)
+        part.rename(dest)
+        shutil.rmtree(old, ignore_errors=True)
+    except OSError as err:
+        shutil.rmtree(part, ignore_errors=True)
+        return 500, {"error": f"its files could not be imported: {err}"}
+    with db.connect() as con:
+        con.execute("UPDATE model_baselines SET imported_at = ?, imported_json = ?, row = ? WHERE id = ?",
+                    (now(), json.dumps({"files": files}), m["row"], baseline_id))
+        return 200, _baseline(con.execute("SELECT * FROM model_baselines WHERE id = ?", (baseline_id,)).fetchone())
 
 
 def delete_baseline(db, baseline_id: int) -> bool:
-    """A model no longer a baseline (it is still listed with the others). False if it was not one."""
+    """A model no longer a baseline (it is still listed with the others), its imported files
+    moved to the folder of deleted things (``model_baselines/<id>`` there). False if it was not one."""
     with db.connect() as con:
-        return con.execute("DELETE FROM model_baselines WHERE id = ?", (baseline_id,)).rowcount > 0
+        if not con.execute("DELETE FROM model_baselines WHERE id = ?", (baseline_id,)).rowcount:
+            return False
+    if baseline_dir(baseline_id).exists():
+        dest = config.DELETED_DIR / "model_baselines" / f"{baseline_id}_{dt.datetime.now():%Y%m%d-%H%M%S}"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(baseline_dir(baseline_id), dest)
+    return True
+
+
+def drift(b: dict, e: dict, m: dict, root: Path) -> list[str]:
+    """How a baseline's files on tensor now differ from its imported copy (`import_baseline`;
+    `e` and `m` its experiment and model, as scanned there): its row of params.csv (its values,
+    not the other rows'), the keys of provenance.json, and its other files' contents (by
+    SHA-256), runs gone or added. Empty if none."""
+    c = tensor.check_dir(b["experiment"], root)
+    if not c["ok"]:
+        return [f"its folder on tensor cannot be read: {c['error']}"]
+    folder = root / c["path"]
+    try:
+        now_e, now_m = _found(scan(folder), b)
+    except ScanError as err:
+        return [str(err)]
+    out = []
+    if now_m is None:
+        out.append(f"no model {b['name'] or 'in row {}'.format(b['row'] + 1)} in its {PARAMS} any more" if now_e else f"no {PARAMS} any more")
+    else:
+        for what, old, new in ((f"its row of {PARAMS}", m["params"], now_m["params"]), (PROVENANCE, e["flat"], now_e["flat"])):
+            changed = [k for k in dict.fromkeys([*old, *new]) if old.get(k) != new.get(k)]
+            if changed:
+                out.append(f"{what}: {', '.join(changed[:6])}{f' and {len(changed) - 6} more' if len(changed) > 6 else ''}")
+        for n in [now_m["fit_provenance"], *(r["file"] for r in now_m["runs"])]:
+            if n and n not in b["files"]:
+                out.append(f"{n}: on tensor, not imported")
+    for n, was in b["files"].items():
+        if n in (PARAMS, PROVENANCE):
+            continue
+        p = folder / n
+        try:
+            if _sha256(p) != was["sha256"]:
+                out.append(f"{n}: not as imported")
+        except OSError:
+            out.append(f"{n}: gone from tensor")
+    return out
 
 
 def baseline_listing(db, root: Path) -> dict:
-    """The baselines' table, as `listing`'s of them alone, scanning only their experiments' folders
-    (so it is quick, to be shown before the rest).
+    """The baselines' table, as `listing`'s of them alone: each as imported (`import_baseline`;
+    its runs' ids `BASELINE_RUN`<its id>/<file>), with how its files on tensor differ from that
+    (`drift`), or if never imported, as on tensor (scanning only its experiment's folder, so it
+    is quick, to be shown before the rest).
 
     Returns:
-        dict with ``baselines`` (as `baselines`, with ``ok``, ``error`` (why it is not shown) and
-        ``model``, its index in ``models``), ``experiments``, ``models`` (each with ``baseline``,
-        its id) and ``columns``, as `listing`'s.
+        dict with ``baselines`` (as `baselines`, with ``ok``, ``error`` (why it is not shown),
+        ``drift`` (`drift`'s, None if not imported) and ``model``, its index in ``models``),
+        ``experiments``, ``models`` (each with ``baseline``, its id) and ``columns``, as `listing`'s
+        (an experiment of no folder added any more keyed ``baseline:<its id>``).
     """
     out = {"baselines": [], "experiments": {}, "models": []}
     srcs, keys, lists = sources(db), {}, {k: [] for k in LISTS}
-    for b in baselines(db):
-        entry = {**b, "ok": False, "error": None, "model": None}
+    for b in _baseline_rows(db):
+        entry = {**{k: v for k, v in b.items() if k != "files"}, "ok": False, "error": None, "drift": None, "model": None}
         out["baselines"].append(entry)
         src = _source_of(b["experiment"], srcs)
-        c = tensor.check_dir(b["experiment"], root)
-        if src is None or not c["ok"]:
-            entry["error"] = "its folder of model data is not added (any more)" if src is None else c["error"]
-            continue
+        if b["imported_at"] is None:
+            c = tensor.check_dir(b["experiment"], root)
+            if src is None or not c["ok"]:
+                entry["error"] = "its folder of model data is not added (any more)" if src is None else c["error"]
+                continue
+            folder = root / c["path"]
+            path = c["path"]
+        else:
+            folder, path = baseline_dir(b["id"]), f"{BASELINE_RUN}{b['id']}"
         try:
-            s = scan(root / c["path"])
-        except ScanError as e:
-            entry["error"] = str(e)
+            e, m = _found(scan(folder), b)
+        except ScanError as err:
+            entry["error"] = str(err)
             continue
-        e = next((e for e in s["experiments"] if e["key"] == ""), None)
-        m = _find([m for m in s["models"] if m["experiment"] == ""], b["name"], b["base"], b["row"]) if e else None
         if m is None:
             which = b["name"] or "in row {}".format(b["row"] + 1)
-            entry["error"] = f"no {PARAMS} in it any more" if e is None else f"no model {which} in its {PARAMS} any more"
+            entry["error"] = (f"no {PARAMS} in it any more" if e is None else f"no model {which} in its {PARAMS} any more") \
+                if b["imported_at"] is None else f"its imported copy has no model {which}"
             continue
-        folder = b["experiment"][len(src["path"]) + 1:]
-        key = f"{src['id']}/{folder}"
-        out["experiments"][key] = _listed_experiment(src, folder, e)
-        out["models"].append({**_listed_model(m, key, c["path"], folder), "baseline": b["id"]})
+        if b["imported_at"] is not None:
+            entry["drift"] = drift(b, e, m, root)
+        sub = b["experiment"][len(src["path"]) + 1:] if src else b["experiment"]
+        key = f"{src['id']}/{sub}" if src else f"baseline:{b['id']}"
+        out["experiments"][key] = _listed_experiment(src, sub, e)
+        out["models"].append({**_listed_model(m, key, path, sub), "baseline": b["id"]})
         entry.update(ok=True, model=len(out["models"]) - 1)
         for k in [*e["params"], *e["keys"]]:
             keys[k] = keys.get(k, 0) + 1
         for k in LISTS:
-            lists[k] += parse_list(src[k])
+            lists[k] += parse_list(src[k]) if src else []
     out["columns"] = _columns(keys, lists)
     return out
 
@@ -619,7 +762,11 @@ def run_file(db, run_id: str, root: Path) -> tuple[dict, Path, dict]:
 
 def run_info(db, run_id: str, root: Path) -> dict:
     """`run_file`'s, as ``source``, ``path`` and ``experiment``, with the ``folder`` added (on
-    the server), the run's ``file`` there and its ``model`` (as `scan`'s)."""
+    the server), the run's ``file`` there and its ``model`` (as `scan`'s). Of a run of a
+    baseline's imported copy (`BASELINE_RUN`), ``source`` is None, ``folder`` the copy's, ``file``
+    its path from its experiment's parent's, and ``baseline`` the baseline (`_baseline_rows`')."""
+    if run_id.startswith(BASELINE_RUN):
+        return _baseline_run_info(db, run_id)
     srcs = [s for s in sources(db) if run_id.startswith(s["path"] + "/")]
     src = max(srcs, key=lambda s: len(s["path"]), default=None)
     rel = run_id[len(src["path"]) + 1:] if src else ""
@@ -638,6 +785,22 @@ def run_info(db, run_id: str, root: Path) -> dict:
         raise LookupError(f"{rel} is not a model run of {src['path']} (any more)")
     return {"source": src, "folder": folder, "file": rel, "path": folder / rel, "model": model,
             "experiment": next(e for e in s["experiments"] if e["key"] == model["experiment"])}
+
+
+def _baseline_run_info(db, run_id: str) -> dict:
+    bid, _, rel = run_id[len(BASELINE_RUN):].partition("/")
+    b = next((b for b in _baseline_rows(db) if str(b["id"]) == bid and b["imported_at"]), None) if bid.isdigit() else None
+    if b is None or not rel.endswith(SUFFIX):
+        raise LookupError("no such model run (of a baseline)")
+    folder = baseline_dir(b["id"])
+    try:
+        e, m = _found(scan(folder), b)
+    except ScanError as err:
+        raise LookupError(f"its imported copy cannot be read: {err}") from None
+    if m is None or not any(r["file"] == rel for r in m["runs"]):
+        raise LookupError(f"{rel} is not a run of the imported copy of {b['name']}")
+    return {"source": None, "baseline": b, "folder": folder, "file": f"{Path(b['experiment']).name}/{rel}", "path": folder / rel,
+            "model": m, "experiment": e}
 
 
 def run_frame(path: Path) -> tuple[pd.DataFrame, bool]:
@@ -704,7 +867,13 @@ def fit_provenance(info: dict) -> Optional[dict]:
 def run(db, run_id: str, index: OdorIndex, root: Optional[Path] = None) -> dict:
     """A model run for the Models tab: `read_run`'s, with its ``id`` and ``file`` (its path on
     tensor, from its top), its experiment's ``provenance`` (as it is, or None) and its model's
-    own (``fit_provenance``, `fit_provenance`'s). Raises LookupError (see `run_file`)."""
-    info = run_info(db, run_id, root or config.TENSOR_ROOT)
-    return {"id": run_id, "file": run_id, "provenance": info["experiment"]["provenance"], "fit_provenance": fit_provenance(info),
-            **read_run(info["path"], index)}
+    own (``fit_provenance``, `fit_provenance`'s); of a baseline's imported copy, ``file`` its path on
+    tensor when imported, and ``imported`` (``at``, ``drift``: `drift`'s). Raises LookupError (see
+    `run_file`)."""
+    root = root or config.TENSOR_ROOT
+    info = run_info(db, run_id, root)
+    b, imported = info.get("baseline"), None
+    if b:
+        imported = {"at": b["imported_at"], "drift": drift(b, info["experiment"], info["model"], root)}
+    return {"id": run_id, "file": f"{b['experiment']}/{info['path'].relative_to(info['folder']).as_posix()}" if b else run_id, "imported": imported,
+            "provenance": info["experiment"]["provenance"], "fit_provenance": fit_provenance(info), **read_run(info["path"], index)}

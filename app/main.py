@@ -1663,17 +1663,24 @@ async def models_baselines(request: Request) -> Response:
     def get():
         out = model_data.baseline_listing(db, config.TENSOR_ROOT)
         for b in out["baselines"]:
-            b["created_at"] = _aware(b["created_at"])
+            b["created_at"], b["imported_at"] = _aware(b["created_at"]), _aware(b["imported_at"])
         return _json_gzipped(request, out)
     return await run_in_threadpool(get)
 
 
 async def models_run(request: Request) -> Response:
-    """A model run's spike counts (?id=<its file's path on tensor>), KCs × odors, its odors matched
-    to the odor table (`model_data.run`). 404 for one that is not a run of a folder added."""
+    """A model run's spike counts (?id=<its file's path on tensor>, or of a baseline's imported
+    copy), KCs × odors, its odors matched to the odor table (`model_data.run`). 404 for one that
+    is not a run of a folder added (nor of a baseline's copy)."""
     run_id = request.query_params.get("id", "")
+
+    def get():
+        out = model_data.run(db, run_id, _odor_index())
+        if out["imported"]:
+            out["imported"]["at"] = _aware(out["imported"]["at"])
+        return out
     try:
-        return JSONResponse(await run_in_threadpool(lambda: model_data.run(db, run_id, _odor_index())))
+        return JSONResponse(await run_in_threadpool(get))
     except LookupError as e:
         return json_error(404, str(e))
     except (OSError, ValueError) as e:  # (pyarrow's errors are ValueErrors and OSErrors)
@@ -3311,12 +3318,21 @@ async def admin_models_baseline_add(request: Request) -> Response:
     status, result = await run_in_threadpool(model_data.add_baseline, db, body, config.TENSOR_ROOT)
     if status == 200:
         log.info("model %s of %s made a baseline in the Admin tab", result["name"], result["experiment"])
-        result["created_at"] = _aware(result["created_at"])
+        result["created_at"], result["imported_at"] = _aware(result["created_at"]), _aware(result["imported_at"])
+    return JSONResponse(result, status_code=status)
+
+
+async def admin_models_baseline_import(request: Request) -> Response:
+    """A baseline's files imported again from tensor, in place of its copy (`model_data.import_baseline`)."""
+    status, result = await run_in_threadpool(model_data.import_baseline, db, request.path_params["id"], config.TENSOR_ROOT)
+    if status == 200:
+        log.info("baseline %s of %s imported again in the Admin tab", result["name"], result["experiment"])
+        result["created_at"], result["imported_at"] = _aware(result["created_at"]), _aware(result["imported_at"])
     return JSONResponse(result, status_code=status)
 
 
 async def admin_models_baseline_delete(request: Request) -> Response:
-    """A model no longer a baseline."""
+    """A model no longer a baseline (its imported files moved to the folder of deleted things)."""
     if not await run_in_threadpool(model_data.delete_baseline, db, request.path_params["id"]):
         return json_error(404, "no such baseline")
     return JSONResponse({"deleted": True})
@@ -3610,6 +3626,7 @@ routes = [
     Route("/api/admin/models", admin_models_add, methods=["POST"]),
     Route("/api/admin/models/baselines", admin_models_baseline_add, methods=["POST"]),
     Route("/api/admin/models/baselines/{id:int}", admin_models_baseline_delete, methods=["DELETE"]),
+    Route("/api/admin/models/baselines/{id:int}/import", admin_models_baseline_import, methods=["POST"]),
     Route("/api/admin/models/{id:int}", admin_models_update, methods=["PATCH"]),
     Route("/api/admin/models/{id:int}", admin_models_delete, methods=["DELETE"]),
     Route("/api/admin/metacyc", admin_metacyc),

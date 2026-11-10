@@ -245,15 +245,20 @@ def model_download(db, run_id: str, index: odormeta.OdorIndex, fmt: str, dest: P
         values = df.apply(pd.to_numeric, errors="coerce").to_numpy(dtype=np.float32)
         _write_csv(wide_frame(values, kcs, cols_levels, pick_rows=rows, pick_cols=cols, transpose=transpose), dest)
         return f"{stem}.csv", "text/csv"
-    exp, model = info["experiment"], info["model"]
+    exp, model, b = info["experiment"], info["model"], info.get("baseline")
     exp_dir = info["folder"] / exp["key"]
-    where = f"{info['source']['path']}/{exp['key']}".rstrip("/")
     params = "\n".join(f"- {k}: {'' if v is None else v}" for k, v in model["params"].items())
-    lines = [f"# Model run {info['file']}", "",
-             f"From `{info['source']['path']}/{info['file']}` on tensor (from its top), of the folder of model data "
-             f"`{info['source']['path']}` (added in the Admin tab). Downloaded {dt.datetime.now():%Y-%m-%d %H:%M}.", "",
+    if b:  # (a baseline's imported copy)
+        where = b["experiment"]
+        origin = (f"From olfdb's copy of a baseline model's files (chosen in the Admin tab), imported {b['imported_at'][:16]} "
+                  f"from `{where}` on tensor (from its top). Downloaded {dt.datetime.now():%Y-%m-%d %H:%M}.")
+    else:
+        where = f"{info['source']['path']}/{exp['key']}".rstrip("/")
+        origin = (f"From `{info['source']['path']}/{info['file']}` on tensor (from its top), of the folder of model data "
+                  f"`{info['source']['path']}` (added in the Admin tab). Downloaded {dt.datetime.now():%Y-%m-%d %H:%M}.")
+    lines = [f"# Model run {info['file']}", "", origin, "",
              f"Its model: row {model['row'] + 1} of `{where}/params.csv` (below, its parameters).", "", params or "(none)", "",
-             "## Files", "", f"- `{info['path'].name}`: its spike counts, as on tensor."]
+             "## Files", "", f"- `{info['path'].name}`: its spike counts, as {'imported' if b else 'on tensor'}."]
     with zipfile.ZipFile(dest, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
         _zip_file(zf, info["path"], f"{stem}/{info['path'].name}")
         for name, what in ((model_data.PARAMS, "the parameters of its experiment's models (its own: the row above)"),

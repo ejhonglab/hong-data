@@ -605,7 +605,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   `provenance.json` keys of those names, an experiment's for all its models); tick *Also
   provenance.json's other keys* for the rest (what made them, notes, each model's
   settings: hundreds). The baseline models (chosen in the Admin tab) come first, in a table
-  of their own with the `params.csv` parameters they have, loaded before the rest. Click a
+  of their own with the `params.csv` parameters they have, loaded before the rest: as
+  imported into the site when chosen, with a warning saying how their files on tensor
+  differ from that, if they do. Click a
   parameter to sort by it (again: the other way), type in *Find models* to list only those
   with it in a value shown (or a run's name), and tick *Hide parameters the same for every
   model that has them* to see what differs. Only the rows and columns in view are drawn, so
@@ -768,8 +770,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   - *Backups*: a button copying everything the site keeps into one of the folders it may
     write: the SQLite database (a consistent copy), and every dataset's files as uploaded,
     odor YAMLs, `Experiment.xml`, README and `metadata.json`, with reference data as read
-    in, and datasets deleted there (not raw or motion-corrected
-    data, nor uploads under way). Each backup is a folder `olfdb-backup-<date>_<time>`
+    in, the baseline models' files as imported, and datasets deleted there (not raw or
+    motion-corrected data, nor uploads under way, nor other model data, which is read on
+    tensor, nor AL segmentation fits and predictions). Each backup is a folder `olfdb-backup-<date>_<time>`
     laid out like `data/`; files unchanged since the backup before it there are hard
     links to it, so each takes the space of what changed only. Listed with when each was
     made, its size and what is new in it; above them, when the last was made and whether
@@ -856,8 +859,14 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     (nothing on tensor is touched). *Baseline models*: models of them to show first in the
     Models tab (*Find a model* narrows the list to choose from by its experiment, tag or
     base), each kept by its experiment's folder, tag (or variant) and base, so it is found
-    again after rows are added before it or its folder is added again; *Remove* takes it
-    off (it is still in the table of every model).
+    again after rows are added before it or its folder is added again. Its files (its spike
+    counts, its experiment's `params.csv` and `provenance.json`, its own
+    `provenance_<tag>.json`) are imported into the site when it is chosen, so backups have
+    them, and it is shown as imported. Each time it is shown or opened, its files on tensor
+    are compared with that (its row of `params.csv`, the keys of `provenance.json`, the
+    other files by SHA-256, runs gone or added), and any difference is said, there and in
+    the Models tab. *Import again…* takes them as they are on tensor now; *Remove* takes it
+    off (it is still in the table of every model), its copy moved to `data/deleted/`.
   - *Delete datasets*: every dataset, newest upload first (with a filter), each with a
     Delete button that asks first. A deleted dataset is gone from the site at once; its
     files (as uploaded, with `metadata.json` holding every detail entered) are moved to

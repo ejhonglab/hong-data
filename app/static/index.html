@@ -951,7 +951,10 @@ try {
         <h3 class="subhead">Baseline models</h3>
         <p class="muted small">Shown first in the Models tab, in a table of their own (with the parameters of their <code>params.csv</code>
           that they have), which loads before the rest. Each is kept by its experiment's folder on tensor, its tag (or variant) and base, so it
-          is found again if rows are added before it, or its folder is deleted here and added again.</p>
+          is found again if rows are added before it, or its folder is deleted here and added again. Its files (its spike counts, its
+          experiment's <code>params.csv</code> and <code>provenance.json</code>, and its own <code>provenance_&lt;tag&gt;.json</code>) are imported
+          into olfdb when it is chosen, so backups have them, and it is shown as imported; each time it is shown, its files on tensor are
+          compared with that, and any difference said. <i>Import again…</i> takes them as they are on tensor now.</p>
         <div id="admin-baselines-list"></div>
         <div class="baseline-pick">
           <label class="field"><span>Find a model <span class="muted">(its experiment, tag or base)</span></span>
@@ -1114,7 +1117,7 @@ try {
       <div class="step" id="models-base-step" hidden>
         <div class="step-head"><h2>Baseline models <span class="muted" id="models-base-count"></span></h2></div>
         <p class="muted small">Chosen in the <a href="#admin">Admin tab</a> (under <i>Model data</i>), with the parameters of their
-          <code>params.csv</code> that they have. They are in the table of every model too.</p>
+          <code>params.csv</code> that they have. Shown as imported into olfdb when chosen (so backups have them), and in the table of every model too, as on tensor.</p>
         <div id="models-base-status"></div>
         <div id="models-base-table" class="models-table-wrap models-base-wrap"></div>
       </div>

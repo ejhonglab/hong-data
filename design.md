@@ -425,6 +425,22 @@ between the frontend and the server. Using the app is described in
   bases share tags) and row (E35 has two rows of one tag), not by the folder's id or the
   row alone, so it survives the folder being deleted and added again, and rows added
   before it.
+- **A baseline's files are imported when it is chosen, and it is shown as imported**
+  (`model_data.import_baseline`, into `data/model_baselines/<id>/`, laid out as its
+  experiment's folder: its runs, `params.csv`, `provenance.json` and its fit's
+  `provenance_<tag>.json`), unlike other model data, which is only read on tensor: so
+  backups have the models others are measured against, and a baseline stays what it was
+  when chosen, also if its files on tensor are changed, rewritten or lost. Its runs'
+  ids are of the copy (`olfdb:baselines/<id>/<file>`), so opening, comparing and
+  downloading it read the copy; the table of every model still reads tensor. Each time
+  it is listed or a run of it opened, its files on tensor are compared with the copy
+  (`model_data.drift`): its own row of `params.csv` (not the file, whose other rows
+  change as rows are added), the keys of `provenance.json`, and its other files by
+  SHA-256 (hashed again only when their size or time changes, so this costs a stat per
+  file), and runs or a fit's provenance added on tensor since. A difference is said, not
+  taken: *Import again…* in the Admin tab takes tensor's files in place of the copy (the
+  backups made before keep the old one). Files rather than BLOBs in the database, as for
+  datasets: the code reading runs takes them as they are, by path.
 - **A spike count file is matched to a model by name**, as the archive names them
   (`[<base>_sp<rate>_]<tag>_<condition>_spike_counts.parquet`, with no separator between
   the parts but `_`, which tags have too): the model whose tag (or variant) is in it as
@@ -1284,7 +1300,7 @@ constants in oil what they were estimated with), `vcf_properties` (the same of V
 estimated Henry's law constants, by CID and property, apart from the odor table's), `settings` (site-wide settings from the Admin tab:
 the odor sheet's link, panels shown renamed), `reference_datasets` (reference datasets added there),
 `model_sources` (folders of model data added there, by their path on tensor, with their lists of parameters and of spike count files that are not models),
-`model_baselines` (models chosen there to show first, by their experiment's folder on tensor, name, base and row), `fits`
+`model_baselines` (models chosen there to show first, by their experiment's folder on tensor, name, base and row; when their files were imported, and their sizes, times and SHA-256), `fits`
 (fits of al-diag-seg models) and
 `file_log` (the files the server has read or written in its own folders). Files:
 `data/datasets/<id>/` holds the original data file (or files, if several were combined:
@@ -1405,9 +1421,12 @@ GET    /api/models                          every model of the folders of model 
                                             parameters), models (params.csv rows, their own provenance.json
                                             parameters, runs) and files of none; gzipped (~1.2 MB → ~100 kB)
 GET    /api/models/baselines                the models chosen as baselines, as /api/models has them (with
-                                            whether each is found, and why not), reading only their folders
+                                            whether each is found, and why not), as imported (with how
+                                            their files on tensor differ: "drift"), else read on tensor
 GET    /api/models/run?id=<path on tensor>  a run's spike counts: KCs (labels, types) × odors (matched to
-                                            the odor table), float32 base64, and its provenance.json
+                                            the odor table), float32 base64, and its provenance.json; of a
+                                            baseline's copy (id olfdb:baselines/<id>/<file>), with
+                                            "imported": {"at", "drift"}
 POST   /api/models/run/download             {"id", "format": "files" | "wide", "rows", "cols", "transpose"}
                                             → its files (zip) or its spike counts as shown (CSV), see
                                             matrix_download.py
@@ -1526,8 +1545,10 @@ PATCH  /api/admin/models/{id}               {"hidden", "first", "last", "skip"}:
 DELETE /api/admin/models/{id}               forgotten (nothing on tensor touched)
 POST   /api/admin/models/baselines          {"experiment" (as /api/models keys it: "<folder id>/<its
                                             folder>"), "row"} → that model chosen as a baseline (404 if
-                                            no such model; 409 if it is one already)
-DELETE /api/admin/models/baselines/{id}     a model no longer a baseline
+                                            no such model; 409 if it is one already), its files imported
+POST   /api/admin/models/baselines/{id}/import  its files imported again from tensor, in place of its
+                                            copy (404 if its model is not there any more)
+DELETE /api/admin/models/baselines/{id}     a model no longer a baseline (its copy moved to data/deleted/)
 GET    /api/admin/metacyc                   MetaCyc imported here: what an upload is to have (each
                                             role's files and what it is, and how they are found:
                                             "how"), the import under way or the last ({"running",

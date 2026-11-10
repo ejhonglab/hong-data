@@ -273,8 +273,10 @@ CREATE TABLE IF NOT EXISTS model_baselines (  -- models chosen in the Admin tab,
     experiment TEXT NOT NULL,          -- its experiment's folder on tensor, from its top
     name TEXT,                         -- its tag (else variant) in its params.csv
     base TEXT,                         -- its base there (models of two bases may share a name)
-    row INTEGER NOT NULL,              -- its row there when chosen (of models named alike, which)
-    created_at TEXT NOT NULL
+    row INTEGER NOT NULL,              -- its row there when chosen, or imported (of models named alike, which)
+    created_at TEXT NOT NULL,
+    imported_at TEXT,                  -- when its files were copied into the data folder (model_data.import_baseline), NULL if never
+    imported_json TEXT                 -- what they were: {"files": {name: {size, mtime_ns, sha256}}}, to tell drift by
 );
 """
 # columns added since the first release: (table, column, type)
@@ -290,6 +292,7 @@ PROPERTY_COLUMNS = {"vapor_pressure": "vapor_pressure_kpa", "est_vapor_pressure"
 ADDED_COLUMNS = [("datasets", "mocorr_data_path", "TEXT"), ("datasets", "data_files", "TEXT"), ("datasets", "manipulations", "TEXT"), ("datasets", "response_calc", "TEXT"),
                  ("reference_datasets", "fields", "TEXT"), ("units", "bad", "INTEGER"),
                  ("units", "extra_json", "TEXT"), ("model_sources", "skip", "TEXT NOT NULL DEFAULT ''"),
+                 ("model_baselines", "imported_at", "TEXT"), ("model_baselines", "imported_json", "TEXT"),
                  *(c for p, col in PROPERTY_COLUMNS.items()
                    for c in (("pubchem", col, "REAL"), ("pubchem", f"{p}_source", "TEXT"), ("pubchem", f"{p}_at", "TEXT"),
                              ("pubchem", f"{p}_chemutils", "TEXT"), ("pubchem", f"{p}_measured", "INTEGER"),

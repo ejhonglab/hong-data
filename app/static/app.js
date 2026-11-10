@@ -4676,6 +4676,8 @@ class AdminPage {
     $('#admin-baselines-list').addEventListener('click', (e) => {
       const b = e.target.closest('[data-unbase]');
       if (b) this.removeBaseline(+b.dataset.unbase);
+      const r = e.target.closest('[data-reimport]');
+      if (r) this.importBaseline(+r.dataset.reimport);
     });
     $('#admin-ds-filter').addEventListener('input', () => this._showDatasets());
     $('#admin-ds-list').addEventListener('click', (e) => {
@@ -5442,12 +5444,23 @@ class AdminPage {
       box.replaceChildren(msgBox('error', `Could not load the baselines: ${esc(e.message)}`));
       return;
     }
+    this.baselineList = b.baselines;
     if (!b.baselines.length) { box.innerHTML = '<p class="muted small">None chosen yet.</p>'; return; }
-    box.innerHTML = `<table class="odor-table"><thead><tr><th>Experiment</th><th>Model</th><th>Shown</th><th></th></tr></thead><tbody>
-      ${b.baselines.map((x) => `<tr><td><code>${esc(x.experiment)}</code></td>
+    const copy = (x) => {
+      if (!x.imported_at) return '<span class="warn">not imported</span> <span class="muted small">(read on tensor, not backed up)</span>';
+      const when = `<span class="muted small">imported ${esc(fmtWhen(x.imported_at))}</span>`;
+      if (!x.drift) return when;
+      return x.drift.length ? `<span class="warn">tensor's differs:</span> <span class="small">${esc(x.drift.join('; '))}</span><br>${when}`
+        : `as on tensor<br>${when}`;
+    };
+    box.innerHTML = `<table class="odor-table"><thead><tr><th>Experiment</th><th>Model</th><th>Shown</th><th>Its copy in olfdb</th><th></th></tr></thead><tbody>
+      ${b.baselines.map((x) => `<tr><td><code>${esc(x.experiment.split('/').pop())}</code><br><span class="muted small">in
+          <code>${esc(x.experiment.split('/').slice(0, -1).join('/'))}</code></span></td>
         <td><code>${esc(x.name ?? `row ${x.row + 1}`)}</code>${x.base != null ? ` <span class="muted small">base ${esc(x.base)}</span>` : ''}</td>
         <td>${x.ok ? `yes <span class="muted small">(chosen ${esc(fmtWhen(x.created_at))})</span>` : `<span class="bad">no: ${esc(x.error)}</span>`}</td>
-        <td><button type="button" class="btn small" data-unbase="${x.id}">Remove</button></td></tr>`).join('')}</tbody></table>`;
+        <td>${copy(x)}</td>
+        <td><button type="button" class="btn small" data-reimport="${x.id}">${x.imported_at ? 'Import again…' : 'Import'}</button>
+          <button type="button" class="btn small" data-unbase="${x.id}">Remove</button></td></tr>`).join('')}</tbody></table>`;
   }
 
   // the models to choose a baseline from, by experiment: those with what is typed in their experiment's folder, name or base
@@ -5473,10 +5486,31 @@ class AdminPage {
     const i = v.lastIndexOf('|');
     try {
       const b = await api('/api/admin/models/baselines', { method: 'POST', json: { experiment: v.slice(0, i), row: +v.slice(i + 1) } });
-      out.replaceChildren(msgBox('ok', `<code>${esc(b.name ?? `row ${b.row + 1}`)}</code> of <code>${esc(b.experiment)}</code> is a baseline: the
-        <a href="#models">Models tab</a> shows it first.`));
+      out.replaceChildren(msgBox('ok', `<code>${esc(b.name ?? `row ${b.row + 1}`)}</code> of <code>${esc(b.experiment)}</code> is a baseline, its
+        files imported into olfdb: the <a href="#models">Models tab</a> shows it first.`));
     } catch (e) {
       out.replaceChildren(msgBox('error', `Not made a baseline: ${esc(e.message)}`));
+    }
+    modelsPage.invalidate();
+    this.loadBaselines();
+  }
+
+  // a baseline's files (re)imported from tensor: when it has a copy, once asked, as that is replaced
+  async importBaseline(id) {
+    const x = this.baselineList?.find((b) => b.id === id), out = $('#admin-baseline-result');
+    if (!x) return;
+    const name = x.name ?? `row ${x.row + 1}`;
+    if (x.imported_at) {
+      $('#edit-confirm-q').textContent = `Import ${name} again from tensor?`;
+      $('#edit-confirm-detail').textContent = `Its copy in olfdb, imported ${fmtWhen(x.imported_at)}, is replaced by its files on tensor now`
+        + (x.drift?.length ? `, which differ from it: ${x.drift.join('; ')}.` : ' (the same, as last checked).') + ' Backups made before keep the copy they have.';
+      if (await askDialog($('#edit-confirm')) !== 'yes') return;
+    }
+    try {
+      const b = await api(`/api/admin/models/baselines/${id}/import`, { method: 'POST', json: {} });
+      out.replaceChildren(msgBox('ok', `Imported <code>${esc(name)}</code>'s files from tensor (${esc(fmtWhen(b.imported_at))}).`));
+    } catch (e) {
+      out.replaceChildren(msgBox('error', `Not imported: ${esc(e.message)}`));
     }
     modelsPage.invalidate();
     this.loadBaselines();

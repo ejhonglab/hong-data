@@ -227,8 +227,13 @@ export class ModelsPage {
     if (!b) return;
     prep(b);
     $('#models-base-step').hidden = !b.baselines.length;
-    $('#models-base-status').replaceChildren(...b.baselines.filter((x) => !x.ok).map((x) => msgBox('warn',
-      `<code>${esc(x.name ?? `row ${x.row + 1}`)}</code> of <code>${esc(x.experiment)}</code> is not shown: ${esc(x.error)}.`)));
+    const named = (x) => `<code>${esc(x.name ?? `row ${x.row + 1}`)}</code> of <code>${esc(x.experiment)}</code>`;
+    $('#models-base-status').replaceChildren(...b.baselines.filter((x) => !x.ok).map((x) => msgBox('warn', `${named(x)} is not shown: ${esc(x.error)}.`)),
+      ...b.baselines.filter((x) => x.ok && x.drift?.length).map((x) => msgBox('warn', `${named(x)} is shown as imported into olfdb
+        (${esc(this.h.fmtWhen(x.imported_at))}). Its files on tensor differ since: ${esc(x.drift.join('; '))}. To show them instead, import it
+        again in the <a href="#admin">Admin tab</a>.`)),
+      ...b.baselines.filter((x) => x.ok && !x.imported_at).map((x) => msgBox('info', `${named(x)} is read on tensor: its files are not imported
+        into olfdb, so not backed up (<a href="#admin">Admin tab</a>: Import).`)));
     $('#models-base-count').textContent = b.models.length > 1 ? `${b.models.length}` : '';
     if (!b.models.length) { $('#models-base-table').replaceChildren(); return; }
     const cols = [EXP, ...b.columns.filter((c) => (c === 'generated' || b.paramCols.has(c)) && b.models.some((m) => this._value(b, m, c) != null))];
@@ -416,6 +421,10 @@ export class ModelsPage {
     if (seq !== this._seq) return; // another opened since
     const run = this.runs.get(id);
     this.current = { id, model, run, title };
+    if (run.imported?.drift?.length) {
+      $('#model-msgs').replaceChildren(msgBox('warn', `Shown as imported into olfdb (${esc(this.h.fmtWhen(run.imported.at))}): its model's files on tensor
+        differ since: ${esc(run.imported.drift.join('; '))}.`));
+    }
     const prov = run.provenance;
     $('#model-prov-box').hidden = !prov;
     $('#model-prov').textContent = prov ? JSON.stringify(prov, null, 2) : '';
@@ -480,7 +489,8 @@ export class ModelsPage {
     $('#model-sub').innerHTML = `${shown.n.toLocaleString()} of its ${nK.toLocaleString()} KCs shown (${filter === 'all' ? 'all of them'
       : filter === 'spiking' ? 'those spiking to some odor' : `those with at least ${fmtValue(nSpikes)} spikes to some odor`}) × ${nO} odors
       (${matched === nO ? 'all' : `${matched} of them`} matched to the Odors tab)${run.kcs.groups ? ', grouped by KC type' : ''}.
-      From <code>${this.h.esc(run.file)}</code>${run.transposed ? ', its KCs as columns there' : ''}.`;
+      From <code>${this.h.esc(run.file)}</code>${run.imported ? `, as imported into olfdb ${this.h.esc(this.h.fmtWhen(run.imported.at))}` : ''}${run.transposed
+        ? ', its KCs as columns there' : ''}.`;
     if (!this.viewer) {
       const el = $('#model-viewer');
       this.viewer = new MatrixViewer(el, { kind: 'model' });
