@@ -265,7 +265,8 @@ CREATE TABLE IF NOT EXISTS model_sources (  -- folders of model outputs added in
     created_at TEXT NOT NULL,
     hidden TEXT NOT NULL,              -- parameters not shown in the table (comma-separated)
     first TEXT NOT NULL,               -- shown first (after when they were generated), in order
-    last TEXT NOT NULL                 -- shown last, in order
+    last TEXT NOT NULL,                -- shown last, in order
+    skip TEXT NOT NULL DEFAULT ''      -- spike count files of no model known not to be models: patterns of their paths in it (comma-separated)
 );
 CREATE TABLE IF NOT EXISTS model_baselines (  -- models chosen in the Admin tab, shown first in the Models tab (model_data.add_baseline)
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -288,7 +289,7 @@ PROPERTY_COLUMNS = {"vapor_pressure": "vapor_pressure_kpa", "est_vapor_pressure"
                     "k_henry_pfo": "k_henry_pfo_mol_m3_pa"}
 ADDED_COLUMNS = [("datasets", "mocorr_data_path", "TEXT"), ("datasets", "data_files", "TEXT"), ("datasets", "manipulations", "TEXT"), ("datasets", "response_calc", "TEXT"),
                  ("reference_datasets", "fields", "TEXT"), ("units", "bad", "INTEGER"),
-                 ("units", "extra_json", "TEXT"),
+                 ("units", "extra_json", "TEXT"), ("model_sources", "skip", "TEXT NOT NULL DEFAULT ''"),
                  *(c for p, col in PROPERTY_COLUMNS.items()
                    for c in (("pubchem", col, "REAL"), ("pubchem", f"{p}_source", "TEXT"), ("pubchem", f"{p}_at", "TEXT"),
                              ("pubchem", f"{p}_chemutils", "TEXT"), ("pubchem", f"{p}_measured", "INTEGER"),

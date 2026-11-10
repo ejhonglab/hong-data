@@ -375,7 +375,8 @@ between the frontend and the server. Using the app is described in
   for a fit's flies, through the odor table, so a fly's odors named otherwise than the
   training flies' still count.
 - **Model data is read where it is, never imported** (`model_data.py`): the Admin tab keeps
-  only a folder's path on tensor and its lists of parameters (`model_sources`), and the
+  only a folder's path on tensor, its lists of parameters and its patterns of spike count
+  files that are not models (`model_sources`), and the
   Models tab scans it each time it is opened (its `params.csv`, `provenance.json` and spike
   count files, by name, size and time: a few tenths of a second for 2,000 files; parsed
   again only when they changed), so experiments archived into it since are listed without
@@ -432,6 +433,15 @@ between the frontend and the server. Using the app is described in
   with a `provenance.json` of its own and no `params.csv` (E5's `hal_probe/`, models named
   otherwise) is of no model of its parent's, rather than matched to one by a shared tag.
   A link (inside tensor) is read as the file it leads to, under its own name.
+- **Spike count files known not to be models are named by patterns set per folder**, in
+  the Admin tab, not by rules about one archive's names in the code: the KC-remapping
+  archive keeps intermediate fits (`…_base_acute_off`, the untuned base's APL-off run, which
+  only weights APL by each KC's breadth) and copies (`partB/`, made by its trial-noise
+  pipeline) beside its models. Those of no model that a pattern matches are only counted,
+  so the Models tab's list of files of no model points at what is missing from a
+  `params.csv` (as E49_low_conc_kc's was, 2026-11-09). The patterns never take a run from a
+  model: `*_base_acute_off_spike_counts.parquet` also matches E13's `bouton_base` model's
+  `acute_off` run (and 64 others), which stays its run.
 - **A model run is compared as a dataset is, on odors only**: in the Compare tab its odors
   (matched to the odor table as a dataset's are: as `<abbreviation> @ <log10 conc>`) by its
   KCs (those the Models tab kept: spiking to any odor, by default), so its odor–odor
@@ -1273,7 +1283,7 @@ with where it is from, when it was looked up, the chemutils commit that did, whe
 constants in oil what they were estimated with), `vcf_properties` (the same of VCF's chemicals, and
 estimated Henry's law constants, by CID and property, apart from the odor table's), `settings` (site-wide settings from the Admin tab:
 the odor sheet's link, panels shown renamed), `reference_datasets` (reference datasets added there),
-`model_sources` (folders of model data added there, by their path on tensor, with their lists of parameters),
+`model_sources` (folders of model data added there, by their path on tensor, with their lists of parameters and of spike count files that are not models),
 `model_baselines` (models chosen there to show first, by their experiment's folder on tensor, name, base and row), `fits`
 (fits of al-diag-seg models) and
 `file_log` (the files the server has read or written in its own folders). Files:
@@ -1508,9 +1518,11 @@ DELETE /api/admin/references/{id}           its copy deleted (never its file) �
                                             MetaCyc or LOTUS imported for it was moved, if it was
                                             the last of it}
 POST   /api/admin/models                    {"path" (on tensor, from its top), "hidden", "first", "last"
-                                            (comma-separated parameters)} → the folder added, with what
-                                            it has (400 if it has no params.csv; 409 if added already)
-PATCH  /api/admin/models/{id}               {"hidden", "first", "last"}: its lists changed
+                                            (comma-separated parameters), "skip" (comma-separated
+                                            patterns of spike count files that are not models, by
+                                            their paths in it)} → the folder added, with what it has (400 if it
+                                            has no params.csv; 409 if added already)
+PATCH  /api/admin/models/{id}               {"hidden", "first", "last", "skip"}: its lists changed
 DELETE /api/admin/models/{id}               forgotten (nothing on tensor touched)
 POST   /api/admin/models/baselines          {"experiment" (as /api/models keys it: "<folder id>/<its
                                             folder>"), "row"} → that model chosen as a baseline (404 if

@@ -5422,7 +5422,8 @@ class AdminPage {
       if (!m.ok) return `<span class="bad">Cannot be read: ${esc(m.error)}</span>`;
       const c = m.scan;
       return `${c.models.toLocaleString()} models of ${c.experiments} experiment${c.experiments === 1 ? '' : 's'}, ${c.runs.toLocaleString()} runs`
-        + (c.unmatched ? `<br><span class="muted small">${c.unmatched.toLocaleString()} spike count file${c.unmatched === 1 ? '' : 's'} of no model</span>` : '');
+        + (c.unmatched ? `<br><span class="muted small">${c.unmatched.toLocaleString()} spike count file${c.unmatched === 1 ? '' : 's'} of no model</span>` : '')
+        + (m.skip ? `<br><span class="muted small">${c.skipped.toLocaleString()} not models: <code>${esc(m.skip.replaceAll(',', ', '))}</code></span>` : '');
     };
     const lists = (m) => [['not shown', m.hidden], ['first', m.first], ['last', m.last]]
       .map(([k, v]) => `<span class="muted">${k}:</span> ${v ? `<code>${esc(v.replaceAll(',', ', '))}</code>` : '—'}`).join('<br>');
@@ -5490,7 +5491,7 @@ class AdminPage {
     this.loadBaselines();
   }
 
-  _modelBody() { return { hidden: $('#model-hidden').value, first: $('#model-first').value, last: $('#model-last').value }; }
+  _modelBody() { return { hidden: $('#model-hidden').value, first: $('#model-first').value, last: $('#model-last').value, skip: $('#model-skip').value }; }
 
   // the form as for adding a folder again (its lists as they are by default)
   _resetModelForm() {
@@ -5500,7 +5501,7 @@ class AdminPage {
     $('#model-path').value = '';
     this._modelChecked = '';
     showPathCheck($('#model-path'), $('#model-path-msg'), null);
-    for (const [k, v] of Object.entries({ hidden: 'n_kcs,n_glomeruli', first: 'base', last: 'tag,variant,rate_on,rate_off,source_table' })) $(`#model-${k}`).value = v;
+    for (const [k, v] of Object.entries({ hidden: 'n_kcs,n_glomeruli', first: 'base', last: 'tag,variant,rate_on,rate_off,source_table', skip: '' })) $(`#model-${k}`).value = v;
     $('#model-add').textContent = 'Add';
     $('#model-cancel').hidden = true;
   }
@@ -5514,7 +5515,7 @@ class AdminPage {
     $('#model-path').value = m.path;
     $('#model-path').disabled = true;
     showPathCheck($('#model-path'), $('#model-path-msg'), null);
-    for (const k of ['hidden', 'first', 'last']) $(`#model-${k}`).value = m[k];
+    for (const k of ['hidden', 'first', 'last', 'skip']) $(`#model-${k}`).value = m[k];
     $('#model-add').textContent = 'Save';
     $('#model-cancel').hidden = false;
     $('#model-result').replaceChildren();
@@ -5530,10 +5531,11 @@ class AdminPage {
         ? await api(`/api/admin/models/${editing}`, { method: 'PATCH', json: this._modelBody() })
         : await api('/api/admin/models', { method: 'POST', json: { path, ...this._modelBody() } });
       const c = res.scan;
-      out.replaceChildren(msgBox('ok', editing ? `Saved: the <a href="#models">Models tab</a> shows <code>${esc(res.path)}</code>'s parameters so.`
+      out.replaceChildren(msgBox('ok', editing ? `Saved: the <a href="#models">Models tab</a> shows <code>${esc(res.path)}</code> as set now.`
         : `Added <code>${esc(res.path)}</code>: ${c.models.toLocaleString()} models of ${c.experiments} experiment${c.experiments === 1 ? '' : 's'},
           ${c.runs.toLocaleString()} runs of them, in the <a href="#models">Models tab</a>.${c.unmatched ? ` ${c.unmatched.toLocaleString()} spike count
-          file${c.unmatched === 1 ? ' is' : 's are'} of no model of a params.csv (not shown).` : ''}`));
+          file${c.unmatched === 1 ? ' is' : 's are'} of no model of a params.csv (not shown).` : ''}${c.skipped ? ` ${c.skipped.toLocaleString()}
+          more not models, as its patterns say.` : ''}`));
       this._resetModelForm();
       modelsPage.invalidate();
       this.loadModels();

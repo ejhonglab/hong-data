@@ -86,7 +86,7 @@ def test_values():
 
 def test_scan(outputs):
     s = model_data.scan(outputs)
-    assert model_data.summary(s) == {"experiments": 2, "models": 5, "runs": 6, "unmatched": 2}
+    assert model_data.summary(s) == {"experiments": 2, "models": 5, "runs": 6, "unmatched": 2, "skipped": 0}
     assert [e["key"] for e in s["experiments"]] == ["E1_apl", "E2_gain"]
     runs = {(m["experiment"], m["params"]["tag"], m["params"]["base"]): [(r["label"], r["prefix"]) for r in m["runs"]] for m in s["models"]}
     assert runs == {
@@ -119,6 +119,16 @@ def test_scan(outputs):
     counts(6).to_parquet(outputs / "E1_apl/gone_on_spike_counts.parquet")
     s2 = model_data.scan(outputs)
     assert s2 is not s and [r["label"] for r in s2["models"][3]["runs"]] == ["on"]
+
+
+def test_skip(outputs):
+    """Spike count files of no model that the patterns a folder is added with say are not models:
+    only counted; a model's files its runs whatever the patterns."""
+    s = model_data.scan(outputs)
+    assert model_data.summary(s, ["*/probe/*", "stray_*", "*_acute_off_spike_counts.parquet", "E2_gain/*"]) == {
+        "experiments": 2, "models": 5, "runs": 6, "unmatched": 0, "skipped": 2}
+    assert model_data.summary(s, ["probe/*", "*/stray_*"])["skipped"] == 0  # (by their paths in the folder, * across folders too)
+    assert model_data.summary(s, ["*probe*"])["skipped"] == 1
 
 
 def test_columns(outputs):
@@ -177,8 +187,8 @@ def test_api(main, outputs, odor_table):  # noqa: F811
         assert status == 400 and want in out["error"], (body, out)
     status, added = call(main.admin_models_add, body={"path": "tom//model_outputs/", "hidden": "n_kcs, seed", "first": "base"})
     assert status == 200 and added["path"] == "tom/model_outputs"
-    assert added["scan"] == {"experiments": 2, "models": 5, "runs": 6, "unmatched": 2}
-    assert (added["hidden"], added["first"], added["last"]) == ("n_kcs,seed", "base", model_data.DEFAULTS["last"])
+    assert added["scan"] == {"experiments": 2, "models": 5, "runs": 6, "unmatched": 2, "skipped": 0}
+    assert (added["hidden"], added["first"], added["last"], added["skip"]) == ("n_kcs,seed", "base", model_data.DEFAULTS["last"], "")
     assert call(main.admin_models_add, body={"path": "tom/model_outputs"})[0] == 409
     status, out = call(main.models_list)
     assert status == 200 and [s["ok"] for s in out["sources"]] == [True]
@@ -205,7 +215,14 @@ def test_api(main, outputs, odor_table):  # noqa: F811
         assert call(main.models_run, params={"id": bad})[0] == 404, bad
 
     status, changed = call(main.admin_models_update, body={"hidden": "", "last": "tag"}, path_params={"id": sid})
-    assert status == 200 and (changed["hidden"], changed["first"], changed["last"]) == ("", "base", "tag")
+    assert status == 200 and (changed["hidden"], changed["first"], changed["last"], changed["skip"]) == ("", "base", "tag", "")
+    # spike count files of no model known not to be models: not listed as of no model; a model's still its runs
+    status, changed = call(main.admin_models_update, body={"skip": " */probe/*, stray_*,*_k0_acute_off_*"}, path_params={"id": sid})
+    assert status == 200 and changed["skip"] == "*/probe/*,stray_*,*_k0_acute_off_*" and changed["last"] == "tag"
+    out = call(main.models_list)[1]
+    assert out["unmatched"] == [] and out["sources"][0]["scan"]["skipped"] == 2 and len(out["models"][0]["runs"]) == 3
+    assert call(main.models_run, params={"id": "tom/model_outputs/E1_apl/claw_sp0.05_k0_acute_off_spike_counts.parquet"})[0] == 200
+    call(main.admin_models_update, body={"skip": ""}, path_params={"id": sid})
     assert call(main.admin_models_update, body={}, path_params={"id": sid + 1})[0] == 404
     cols = call(main.models_list)[1]["columns"]
     assert "n_kcs" in cols and cols[-1] == "tag"

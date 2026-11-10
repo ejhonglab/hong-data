@@ -276,6 +276,8 @@ export class ModelsPage {
       notes.push(`${d.unmatched.length.toLocaleString()} spike count file${d.unmatched.length === 1 ? ' is' : 's are'} of no model of a params.csv
         <span class="muted" title="${esc(d.unmatched.join('\n'))}">(hover to see which)</span>.`);
     }
+    const skipped = ok.reduce((n, s) => n + (s.scan.skipped || 0), 0);
+    if (skipped) notes.push(`${skipped.toLocaleString()} other spike count file${skipped === 1 ? ' is' : 's are'} not models, as the patterns set for their folder in the Admin tab say.`);
     if (notes.length) status.push(Object.assign(document.createElement('p'), { className: 'muted small', innerHTML: notes.join(' ') }));
     $('#models-status').replaceChildren(...status);
     $('#models-table-step').hidden = !d.models.length;

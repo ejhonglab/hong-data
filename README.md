@@ -849,7 +849,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     listed as of no model). Three comma-separated lists of parameters: those not shown
     (`n_kcs,n_glomeruli` by default), those first, in order (`base`), and those last
     (`tag,variant,rate_on,rate_off,source_table`); the rest come between, those in more of
-    the files first. *Change…* changes these lists after; *Delete…* forgets a folder
+    the files first. And patterns of spike count files known not to be models, by their
+    path in the folder (`*` any text, across folders too), e.g. `*/partB/*` (copies), so
+    that those of no model are only counted, not listed as missing from a `params.csv`;
+    a file of a model is its run whatever the patterns. *Change…* changes these lists after; *Delete…* forgets a folder
     (nothing on tensor is touched). *Baseline models*: models of them to show first in the
     Models tab (*Find a model* narrows the list to choose from by its experiment, tag or
     base), each kept by its experiment's folder, tag (or variant) and base, so it is found

@@ -25,6 +25,11 @@ those a folder is added with to put first, then the others, those in more of the
 not at all. Folders are scanned again whenever their files change (`scan`, by their sizes and
 times), so models added to them are shown as soon as the tab is opened again.
 
+Spike count files of no model whose paths in the folder added match one of its ``skip``
+patterns (as `fnmatch`'s, ``*`` matching across folders too) are known not to be models (e.g.
+intermediate fits cached beside them): not listed as of no model, only counted (``skipped``).
+A file of a model is its run whatever the patterns.
+
 Models chosen in the Admin tab are baselines (`add_baseline`; the ``model_baselines`` table), shown
 first in their own table (`baseline_listing`, which scans only their experiments' folders).
 """
@@ -33,6 +38,7 @@ from __future__ import annotations
 import base64
 import csv
 import datetime as dt
+import fnmatch
 import json
 import math
 import os
@@ -55,8 +61,9 @@ FIT_PROVENANCE = re.compile(r"provenance_(.+)\.json")  # beside a params.csv: of
 GENERATED = "generated"  # provenance.json's key of when its models were made: the table's first column
 SEP = "->"  # between the keys of a nested parameter's path
 STAR = "*"  # in the path of a parameter of one model alone (`own_params`), for its name
-# the column lists a folder is added with, by default (comma-separated)
-DEFAULTS = {"hidden": "n_kcs,n_glomeruli", "first": "base", "last": "tag,variant,rate_on,rate_off,source_table"}
+# the lists a folder is added with, by default (comma-separated): of parameters (the table's
+# columns) to hide, put first and last, and patterns of spike count files known not to be models
+DEFAULTS = {"hidden": "n_kcs,n_glomeruli", "first": "base", "last": "tag,variant,rate_on,rate_off,source_table", "skip": ""}
 LISTS = tuple(DEFAULTS)
 MAX_ENTRIES = 100_000  # files and folders scanned in a folder at most (not one of a whole user's data)
 N_SPIKES = "n_spikes_for_response"  # how many spikes are a response, of a model's parameters
@@ -70,7 +77,7 @@ def now() -> str:
 
 
 def parse_list(text: Any) -> list[str]:
-    """A comma-separated list of parameter names as entered, without blanks or repeats."""
+    """A comma-separated list (of parameter names or patterns) as entered, without blanks or repeats."""
     return list(dict.fromkeys(p.strip() for p in str(text or "").split(",") if p.strip()))
 
 
@@ -92,12 +99,13 @@ def _lists(body: dict, old: Optional[dict] = None) -> dict:
 
 
 def add(db, body: dict, root: Path) -> tuple[int, dict]:
-    """Add a folder on tensor ({"path", "hidden", "first", "last"}): refused unless the server
-    can read it and finds a params.csv in it. Returns (HTTP status, the folder added as in
-    `sources`, with its ``scan`` summary; or {"error"})."""
+    """Add a folder on tensor ({"path", and any of `LISTS`}): refused unless the server can read
+    it and finds a params.csv in it. Returns (HTTP status, the folder added as in `sources`, with
+    its ``scan`` summary; or {"error"})."""
     c = tensor.check_dir(str(body.get("path") or ""), root)
     if not c["ok"]:
         return 400, {"error": c["error"] or "no folder given"}
+    lists = _lists(body)
     try:
         s = scan(root / c["path"])
     except ScanError as e:
@@ -107,22 +115,20 @@ def add(db, body: dict, root: Path) -> tuple[int, dict]:
     with db.connect() as con:
         if con.execute("SELECT 1 FROM model_sources WHERE path = ?", (c["path"],)).fetchone():
             return 409, {"error": f"{c['path']} was added already"}
-        lists = _lists(body)
-        cur = con.execute("INSERT INTO model_sources (path, created_at, hidden, first, last) VALUES (?, ?, ?, ?, ?)",
-                          (c["path"], now(), lists["hidden"], lists["first"], lists["last"]))
+        cur = con.execute(f"INSERT INTO model_sources (path, created_at, {', '.join(LISTS)}) VALUES (?, ?{', ?' * len(LISTS)})",
+                          (c["path"], now(), *(lists[k] for k in LISTS)))
         row = con.execute("SELECT * FROM model_sources WHERE id = ?", (cur.lastrowid,)).fetchone()
-    return 200, {**_source(row), "scan": summary(s)}
+    return 200, {**_source(row), "scan": summary(s, parse_list(lists["skip"]))}
 
 
 def update(db, source_id: int, body: dict) -> tuple[int, dict]:
-    """Change a folder's lists of parameters (any of `LISTS`)."""
+    """Change a folder's lists (any of `LISTS`)."""
     with db.connect() as con:
         row = con.execute("SELECT * FROM model_sources WHERE id = ?", (source_id,)).fetchone()
         if row is None:
             return 404, {"error": "no such folder of model data"}
         lists = _lists(body, _source(row))
-        con.execute("UPDATE model_sources SET hidden = ?, first = ?, last = ? WHERE id = ?",
-                    (lists["hidden"], lists["first"], lists["last"], source_id))
+        con.execute(f"UPDATE model_sources SET {', '.join(f'{k} = ?' for k in LISTS)} WHERE id = ?", (*(lists[k] for k in LISTS), source_id))
         row = con.execute("SELECT * FROM model_sources WHERE id = ?", (source_id,)).fetchone()
     return 200, _source(row)
 
@@ -395,10 +401,17 @@ def _match(f: str, exp: str, models: list[dict]) -> list[tuple[dict, dict]]:
     return hits
 
 
-def summary(s: dict) -> dict:
-    """How much a scan found: experiments, models, runs, spike count files of no model."""
+def skips(path: str, patterns) -> bool:
+    """Whether a spike count file of no model (its path in the folder added) is known not to be one."""
+    return any(fnmatch.fnmatchcase(path, p) for p in patterns)
+
+
+def summary(s: dict, skip=()) -> dict:
+    """How much a scan found: experiments, models, runs, spike count files of no model, and of
+    those, how many `skip`'s patterns say are not models."""
+    n = sum(skips(f, skip) for f in s["unmatched"])
     return {"experiments": len(s["experiments"]), "models": len(s["models"]),
-            "runs": sum(len(m["runs"]) for m in s["models"]), "unmatched": len(s["unmatched"])}
+            "runs": sum(len(m["runs"]) for m in s["models"]), "unmatched": len(s["unmatched"]) - n, "skipped": n}
 
 
 # ------------------------------------------------------------------ the table
@@ -420,7 +433,7 @@ def listing(db, root: Path) -> dict:
         ``<source id>/<folder>`` -> ``source``, ``folder``, ``params``, ``flat`` (`scan`'s
         ``shared``: the parameters of all its models), ``error``), ``models`` (as `scan`'s,
         ``experiment`` that key, each run's ``id`` its file's path on tensor, from its top), and
-        ``unmatched`` (paths on tensor too).
+        ``unmatched`` (paths on tensor too; but those its folder's patterns say are not models).
     """
     out = {"sources": [], "experiments": {}, "models": [], "unmatched": []}
     keys: dict[str, int] = {}
@@ -438,14 +451,15 @@ def listing(db, root: Path) -> dict:
         except ScanError as e:
             entry["error"] = str(e)
             continue
-        entry.update(ok=True, scan=summary(s))
+        skip = parse_list(src["skip"])
+        entry.update(ok=True, scan=summary(s, skip))
         for k in s["keys"]:
             keys[k["name"]] = keys.get(k["name"], 0) + k["files"]
         for e in s["experiments"]:
             out["experiments"][f"{src['id']}/{e['key']}"] = _listed_experiment(src, e["key"], e)
         for m in s["models"]:
             out["models"].append(_listed_model(m, f"{src['id']}/{m['experiment']}", c["path"]))
-        out["unmatched"] += [f"{c['path']}/{f}" for f in s["unmatched"]]
+        out["unmatched"] += [f"{c['path']}/{f}" for f in s["unmatched"] if not skips(f, skip)]
     out["columns"] = _columns(keys, lists)
     return out
 

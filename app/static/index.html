@@ -967,11 +967,15 @@ try {
           <label class="field"><span>Parameters not shown</span><input id="model-hidden" spellcheck="false" autocomplete="off" value="n_kcs,n_glomeruli"></label>
           <label class="field"><span>Parameters first, in order</span><input id="model-first" spellcheck="false" autocomplete="off" value="base"></label>
           <label class="field span2"><span>Parameters last, in order</span><input id="model-last" spellcheck="false" autocomplete="off" value="tag,variant,rate_on,rate_off,source_table"></label>
+          <label class="field span2"><span>Spike count files that are not models <span class="muted">(patterns of their paths in the folder)</span></span>
+            <input id="model-skip" spellcheck="false" autocomplete="off" value="" placeholder="e.g. *_base_acute_off_spike_counts.parquet, */partB/*"></label>
         </div>
         <p class="muted small">Each a comma-separated list of parameter names. The table's first column is when its models were generated (the
           <code>generated</code> of their <code>provenance.json</code>); then the parameters first; then the others, those in more of the files
           (<code>params.csv</code> and <code>provenance.json</code>) first, and of those in as many, in the order they first come there; then the
-          parameters last.</p>
+          parameters last. Spike count files of no model matching a pattern (<code>*</code> any text, across folders too; <code>?</code> one
+          character) are only counted, not listed as of no model in the Models tab: for those known not to be models, e.g. intermediate fits
+          cached beside them. A file of a model is still its run.</p>
         <div id="model-result" aria-live="polite"></div>
         <div class="actions"><button type="button" class="btn primary" id="model-add">Add</button>
           <button type="button" class="btn" id="model-cancel" hidden>Cancel</button></div>
