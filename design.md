@@ -103,6 +103,8 @@ between the frontend and the server. Using the app is described in
   its `backup.json`: the size and time of each file, and a fingerprint of the database's
   rows (but `file_log`, which changes as the server merely reads; the tables written only
   with a dataset by their row counts, as its row in `datasets` tells of any change).
+  AL segmentation fits are backed up (a trained model takes a GPU for over an hour), but
+  not their `work/`, nor predictions (minutes each, from a fit's model).
 - **The Compare tab computes similarities in the browser**, as the viewer does the rest:
   the server only averages each dataset (`app/compare.py`: trials, then flies per
   glomerulus) and gives the ECFP fingerprints of the odor table's chemicals, which need
@@ -261,7 +263,10 @@ between the frontend and the server. Using the app is described in
   stays 1.2 GB). A fit takes hours and the CPU too (ANTs), while the web server is one
   process whose restart (Admin tab) would end one. The two share only the database and the
   data folder: a fit is a row of `fits` (asked for, and stopped, by the site; claimed and
-  run, one at a time, by the worker) and a folder, `data/fits/<id>/`; the worker says it is
+  run, one at a time, by the worker) and a folder, `data/fits/<id>/` (~1.2 GB, nearly all
+  the trained Cellpose-SAM's ~300 million weights, as float32;
+  Cellpose's own copy, written into `work/` as it trains, is removed once the fit is over,
+  and by the worker as it starts, as nothing reads it then); the worker says it is
   there, and with which GPU, every 10 s (a setting the tab reads). It is held to the
   folders the server may use as the web server is (Landlock), but may also write to the
   GPU's device files, and to its own threads' entries in /proc, which CUDA does as it starts

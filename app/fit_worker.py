@@ -301,6 +301,7 @@ def run(db, fit: dict, gpu: bool = False) -> None:
     if lost:
         fits.update(db, fit["id"], status="queued", started_at=None, progress=None, flies=None)
         raise lost
+    shutil.rmtree(d / "work", ignore_errors=True)  # (Cellpose's: its weights are model/'s, see fits.py)
     done = fits.get(db, fit["id"]) or fit
     sz = fits.sizes(done)
     model_bytes = sum(p.stat().st_size for p in (d / "model").rglob("*") if p.is_file()) if (d / "model").is_dir() else None
@@ -525,6 +526,8 @@ def main() -> None:
     status = sandbox.start(files=[*sorted(glob.glob("/dev/nvidia*")), "/proc/self/task"])
     for i in fits.interrupt_running(db):
         log.warning("fit %s was left running by a worker before this one: marked interrupted", i)
+    if freed := fits.drop_work():
+        log.info("fits' work/ folders removed: %.1f GB freed", freed / 1e9)
     for i in predictions.interrupt_running(db):
         log.warning("prediction %s was left running by a worker before this one: marked interrupted", i)
     info = {"host": host_name(), "pid": os.getpid(), "started": fits.now(), **gpu(), **versions(),

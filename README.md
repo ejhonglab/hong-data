@@ -770,9 +770,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   - *Backups*: a button copying everything the site keeps into one of the folders it may
     write: the SQLite database (a consistent copy), and every dataset's files as uploaded,
     odor YAMLs, `Experiment.xml`, README and `metadata.json`, with reference data as read
-    in, the baseline models' files as imported, and datasets deleted there (not raw or
+    in, the baseline models' files as imported, AL segmentation fits (each ~1.2 GB: its
+    model, held-out flies' results and log), and datasets deleted there (not raw or
     motion-corrected data, nor uploads under way, nor other model data, which is read on
-    tensor, nor AL segmentation fits and predictions). Each backup is a folder `olfdb-backup-<date>_<time>`
+    tensor, nor AL segmentation predictions, which a fit's model makes again). Each backup is a folder `olfdb-backup-<date>_<time>`
     laid out like `data/`; files unchanged since the backup before it there are hard
     links to it, so each takes the space of what changed only. Listed with when each was
     made, its size and what is new in it; above them, when the last was made and whether

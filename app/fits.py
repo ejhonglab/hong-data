@@ -6,7 +6,8 @@ A fit is a row of the ``fits`` table and a folder, `fit_dir`: ``manifest.json`` 
 the tab's download describes them, but with each file where it is on the server, so they are
 read in place), ``log.txt``, ``model/`` (al-diag-seg's model: what is downloaded, to run on
 other flies), ``results/`` (its held-out flies' predicted ROIs, as label TIFFs and named
-RoiSets, and their scores) and ``work/`` (Cellpose's own files).
+RoiSets, and their scores) and, while it runs, ``work/`` (Cellpose's own files: removed once it
+is over, as its weights are those ``model/`` has, 1.2 GB, and nothing reads them then).
 
 How long one has left is estimated from how long each stage (`STAGES`) of earlier fits
 took for its size (`sizes`: flies loaded, epochs times training flies, flies registered
@@ -59,6 +60,17 @@ def fits_dir() -> Path:
 
 def fit_dir(fit_id: int) -> Path:
     return fits_dir() / str(int(fit_id))
+
+
+def drop_work() -> int:
+    """Removes every fit's ``work/`` (see the module's docstring), as the worker starts, no fit
+    running (those left so marked interrupted: run again from the start, if at all). Returns
+    the bytes freed."""
+    freed = 0
+    for w in sorted(fits_dir().glob("*/work")):
+        freed += sum(p.stat().st_size for p in w.rglob("*") if p.is_file())
+        shutil.rmtree(w, ignore_errors=True)
+    return freed
 
 
 def options(body: dict) -> dict:

@@ -285,6 +285,7 @@ def test_worker(main, tensor, monkeypatch):  # noqa: F811
     assert (f["result"]["named"], f["result"]["named_of"], f["model_bytes"]) == (3, 4, 1000 + 2 + len((fits.fit_dir(f["id"]) / "model/README.txt").read_bytes()))
     assert f["result"]["scoring"] == "partly drawn"
     readme = (fits.fit_dir(f["id"]) / "model/README.txt").read_text()
+    assert not (fits.fit_dir(f["id"]) / "work").exists()  # (Cellpose's, removed once the fit is over)
     assert "fit #1" in readme and "al-diag-seg@abc" in readme and "alseg-predict model/" in readme
     assert "held out: ann_2024-01-01_2" in (fits.fit_dir(f["id"]) / "log.txt").read_text()
     # its download: how to run it, the model and the results
@@ -305,6 +306,11 @@ def test_worker(main, tensor, monkeypatch):  # noqa: F811
     assert "Traceback" in (fits.fit_dir(h["id"]) / "log.txt").read_text()
     # estimates from the fit that finished
     assert fits.listing(main.db)["rates"]["from"] == 1
+    # fits' work/ left from before (as the worker starts): removed
+    (fits.fit_dir(h["id"]) / "work/models").mkdir(parents=True)
+    (fits.fit_dir(h["id"]) / "work/models/al_glomeruli").write_bytes(b"w" * 10)
+    assert fits.drop_work() == 10 and not (fits.fit_dir(h["id"]) / "work").exists() and (fits.fit_dir(h["id"]) / "log.txt").is_file()
+    assert fits.drop_work() == 0
 
 
 def test_worker_gpu_lost(main, tensor, monkeypatch):  # noqa: F811
@@ -431,7 +437,8 @@ def test_worker_with_alseg(main, tensor, monkeypatch):  # noqa: F811
 def test_worker_with_cellpose(main, tensor):  # noqa: F811
     """The real al-diag-seg, training Cellpose for one epoch, where there is a GPU (the worker
     image, given one): what the stand-in segmenter skips. Its weights are written in the fit's
-    work/ (which Cellpose does not make), saved with the model, and segment the held-out fly."""
+    work/ (which Cellpose does not make), saved with the model, and segment the held-out fly;
+    work/ is removed once the fit is over."""
     pytest.importorskip("alseg.model")
     torch = pytest.importorskip("torch")
     if not torch.cuda.is_available():
@@ -441,5 +448,5 @@ def test_worker_with_cellpose(main, tensor):  # noqa: F811
     f = fits.get(main.db, f["id"])
     d = fits.fit_dir(f["id"])
     assert f["status"] == "done", (d / "log.txt").read_text()[-3000:]
-    assert any((d / "work/models").iterdir()) and (d / "model/model.json").is_file()
+    assert not (d / "work").exists() and (d / "model/model.json").is_file() and (d / "model/segmenter").is_file()
     assert f["result"]["flies"][0]["fly"] == f["flies"]["held_out"][0]

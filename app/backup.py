@@ -6,8 +6,10 @@ consistent copy of the database (SQLite's backup API), and the files the site ke
 (`data_files`: data files as uploaded, odor YAMLs, Experiment.xml, READMEs and
 metadata.json of every dataset, reference data as imported, MetaCyc and LOTUS as imported
 in the Admin tab (their files uploaded and their bundles), the files of baseline models as
-imported (model_data.import_baseline), datasets deleted in the Admin tab, the folders set in
-the Admin tab). Not other model data, which is read on tensor (model_data.py). Not what only passes through the data folder
+imported (model_data.import_baseline), al-diag-seg fits (their models, held-out flies'
+results, manifest and log: not `NOT_KEPT`), datasets deleted in the Admin tab, the folders
+set in the Admin tab). Not other model data, which is read on tensor (model_data.py), nor
+predictions, which a fit's model makes again. Not what only passes through the data folder
 (uploads under way, downloads being sent, temporary files), nor raw and motion-corrected
 data, which stay on tensor. A file unchanged since the last backup in the same folder (by
 size and time) is a hard link to its copy there, so each backup is whole on its own but
@@ -21,6 +23,7 @@ from __future__ import annotations
 
 import datetime as dt
 import errno
+import fnmatch
 import json
 import logging
 import os
@@ -43,12 +46,15 @@ DB_NAME = "olfdb.sqlite3"
 # the backup being made, if any (one at a time)
 JOB: dict = {"running": False, "folder": None, "started_at": None, "done": 0, "total": 0, "error": None, "name": None}
 _lock = threading.Lock()
+FITS = "fits"  # al-diag-seg fits, in the data folder (fits.fits_dir)
+NOT_KEPT = ("fits/*/work",)  # folders of those kept not copied (their paths in the data folder): a fit's Cellpose files, while it runs
 
 
 def _kept() -> list[Path]:
     """The folders and files of the data folder a backup copies, besides the database."""
     return [config.DATA_DIR / p.name for p in (config.DATASETS_DIR, config.REFERENCE_CACHE_DIR, config.METACYC_DIR,
-                                               config.LOTUS_DIR, config.MODEL_BASELINES_DIR, config.DELETED_DIR, config.ADMIN_FILE)]
+                                               config.LOTUS_DIR, config.MODEL_BASELINES_DIR, config.DELETED_DIR, config.ADMIN_FILE)] \
+        + [config.DATA_DIR / FITS]
 
 
 def data_files() -> dict[str, list[int]]:
@@ -58,7 +64,9 @@ def data_files() -> dict[str, list[int]]:
     for p in _kept():
         if p.is_file():
             paths.append(p)
-        for d, _, names in os.walk(p):
+        for d, dirs, names in os.walk(p):
+            rel = Path(d).relative_to(config.DATA_DIR).as_posix()
+            dirs[:] = [x for x in dirs if not any(fnmatch.fnmatchcase(f"{rel}/{x}", pat) for pat in NOT_KEPT)]
             paths += [Path(d) / n for n in names]
     out = {}
     for p in paths:
