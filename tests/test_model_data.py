@@ -148,6 +148,26 @@ def test_read_run(outputs, odor_table):
     assert t["transposed"] and t["kcs"]["groups"] is None and len(t["kcs"]["labels"]) == 5 and len(t["odors"]) == 4
 
 
+def test_linked_runs(root, odor_table):  # noqa: F811
+    """Runs that are links (beside them) to files named otherwise, as E6_readout_window's
+    `<base>_<condition>_<window>_counts.parquet` are, and of odors named with no concentration:
+    matched to the Odors table, their concentration None (so Compare matches them to no dataset's)."""
+    e = root / "tom/windows/E6"
+    e.mkdir(parents=True)
+    pd.DataFrame([{"tag": f"claw_{w}", "base": "claw", "window": w} for w in ("early", "late")]).to_csv(e / "params.csv", index=False)
+    bare = counts(4)
+    bare.columns = pd.Index([o.split(" @ ")[0] for o in ODORS], name="odor")
+    for w in ("early", "late"):
+        for cond in ("on", "acute_off"):
+            bare.to_parquet(e / f"claw_{cond}_{w}_counts.parquet")
+            (e / f"claw_{w}_{cond}_spike_counts.parquet").symlink_to(f"claw_{cond}_{w}_counts.parquet")
+    s = model_data.scan(root / "tom/windows")
+    assert [[r["label"] for r in m["runs"]] for m in s["models"]] == [["on", "acute_off"]] * 2 and s["unmatched"] == []
+    r = model_data.read_run(e / "claw_early_on_spike_counts.parquet", odormeta.OdorIndex(odor_table.db.list_odors()))
+    assert [o["chem"]["abbrev"] if o["chem"] else None for o in r["odors"]] == ["2h", "eb", None, "pa"]
+    assert [o["log10_conc"] for o in r["odors"]] == [None] * 4
+
+
 def test_api(main, outputs, odor_table):  # noqa: F811
     status, out = call(main.models_list)
     assert status == 200 and out["sources"] == [] and out["models"] == []

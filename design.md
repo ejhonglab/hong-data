@@ -431,10 +431,13 @@ between the frontend and the server. Using the app is described in
   the one whose base begins the name. What follows is its condition. A file of a folder
   with a `provenance.json` of its own and no `params.csv` (E5's `hal_probe/`, models named
   otherwise) is of no model of its parent's, rather than matched to one by a shared tag.
+  A link (inside tensor) is read as the file it leads to, under its own name.
 - **A model run is compared as a dataset is, on odors only**: in the Compare tab its odors
   (matched to the odor table as a dataset's are: as `<abbreviation> @ <log10 conc>`) by its
   KCs (those the Models tab kept: spiking to any odor, by default), so its odor–odor
   similarities, their correlations with others' and side by side are those of datasets.
+  An odor a run names with no concentration (`2h`, not `2h @ -3`) is still matched to the
+  odor table, but to no dataset's odor (theirs have one).
   It is not compared on glomeruli (it has none) nor on a panel's odors (it has no panel).
   Its spike counts are shown on a log scale of 1 + each count (they are counts, most of
   them 0), here and in the Models tab, white to red: the red half of the responses'
