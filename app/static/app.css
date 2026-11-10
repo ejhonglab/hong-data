@@ -414,6 +414,9 @@ button.link { background: none; border: 0; padding: 0; color: var(--accent); tex
 .models-tools { flex-wrap: wrap; }
 .models-tools .models-find { width: 18em; flex: none; }
 .models-none { margin: 10px 12px; }
+.models-exp-wrap { max-height: 50vh; overflow: auto; border: 1px solid var(--rule); border-radius: var(--radius); }
+.models-exp-table th { white-space: nowrap; vertical-align: top; position: static; color: var(--ink); font-weight: 400; }
+.models-exp-table td { white-space: pre-wrap; word-break: break-word; }
 .baseline-pick { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin: 8px 0; }
 .baseline-pick .field { margin: 0; }
 .baseline-pick select { max-width: 40em; }

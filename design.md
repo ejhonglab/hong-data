@@ -394,10 +394,19 @@ between the frontend and the server. Using the app is described in
   alone** (`model_data.own_params`), named with `*` for the name (`runs->*->seconds`), and
   not shown for the others: E37's `runs`, keyed by tag, alone made 828 of the archive's
   1,679 columns, each set for one of its 15 models and blank for the other 907 (808 are
-  left). Only keys equal to a name of a model of the experiment count (`variants` in E11,
-  E14, E15, E17 and E38; `bases` in E1, E2, E3, E16 and E43; `runs` in E37, as the
-  archive's writers said), and not at the top level (E3's `bouton`, its base's settings):
-  elsewhere such a dict is of the whole experiment (E54's `runs`, one record of the run).
+  left). Only keys equal to a name of a model of the experiment count, in a dict most of
+  whose keys are such names (`model_data.keyed_by_model`: `variants` in E11, E14, E15, E17
+  and E38; `bases` in E1, E2, E3, E16 and E43; `runs` in E37; E6's `meta`, as the archive's
+  writers said), and not at the top level (E3's `bouton`, its base's settings): elsewhere
+  such a dict is of the whole experiment (E54's `runs`, one record of the run; E9's
+  `scales`, keyed kc, bouton and both, though bouton is the base of some of its models).
+  That is shown once, for an experiment clicked, rather than as columns on every model.
+- **A `provenance_<tag>.json` beside a `params.csv` is its model of that tag's own**
+  (`model_data.FIT_PROVENANCE`; exact tags): the joint fits' (bounds, loss weights and
+  targets, the fit they started from, commits), 116 in the archive, 105 of one model each.
+  It is shown when one of that model's runs is opened and put in its files' download, not
+  made columns; those of no tag (E51's `provenance_comparison.json`) are listed with their
+  experiment.
 - **The Models tab shows `params.csv`'s columns by default** (96 of the 808), and the
   `provenance.json` keys of those names (an experiment's value for all its models): the
   rest are what made the models (scripts, commits, hosts, notes, plans) and each model's

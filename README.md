@@ -598,8 +598,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   there is nothing to import again after changing those files), a row each: an
   experiment's `params.csv` row, with the keys of the `provenance.json` beside it as
   parameters too (nested ones by their path, as `base->n_spikes_for_response`; where both
-  have one, the row's; those under one of its models' tag, variant or base, of that model
-  alone, as `runs->*->seconds`), first its experiment and when they were generated (its
+  have one, the row's; those under one of its models' tag, variant or base, in a dict
+  keyed mostly by them, of that model alone, as `runs->*->seconds`), first its experiment
+  (click it for its `provenance.json`, once) and when they were generated (its
   `generated`). Shown are the parameters that are `params.csv` columns (and the
   `provenance.json` keys of those names, an experiment's for all its models); tick *Also
   provenance.json's other keys* for the rest (what made them, notes, each model's
@@ -616,7 +617,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   KCs (grouped by type) by its odors (labelled as in the Odors tab), on a log scale (of 1 +
   each count), KCs that spike to no odor left out unless unticked, and with *Only KCs with
   at least n spikes to some odor* those below the model's `n_spikes_for_response` too.
-  Above it, its experiment's `provenance.json` (click to open). *Compare* opens the Compare
+  Above it, its experiment's `provenance.json` (click to open), and the model's own
+  `provenance_<tag>.json` beside it, if it has one (a fit's). *Compare* opens the Compare
   tab with it at the top of the list on the left (its KCs as shown), to tick datasets to
   compare with: there it is shown as a dataset is (odors by KCs, or its odor–odor
   similarity), correlated with the others' similarities, and side by side, on odors only.

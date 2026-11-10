@@ -257,7 +257,8 @@ def model_download(db, run_id: str, index: odormeta.OdorIndex, fmt: str, dest: P
     with zipfile.ZipFile(dest, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
         _zip_file(zf, info["path"], f"{stem}/{info['path'].name}")
         for name, what in ((model_data.PARAMS, "the parameters of its experiment's models (its own: the row above)"),
-                           (model_data.PROVENANCE, "how its experiment's models were made, as it says")):
+                           (model_data.PROVENANCE, "how its experiment's models were made, as it says"),
+                           *([(model["fit_provenance"], "how its model was made (fitted), as it says")] if model.get("fit_provenance") else [])):
             if (exp_dir / name).is_file():
                 _zip_file(zf, exp_dir / name, f"{stem}/{name}")
                 lines.append(f"- `{name}`: {what}.")

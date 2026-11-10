@@ -1125,11 +1125,16 @@ try {
         </div>
         <div id="models-table" class="models-table-wrap"></div>
       </div>
+      <div class="step" id="models-exp" hidden>
+        <div class="step-head"><h2 id="models-exp-title"></h2></div>
+        <div id="models-exp-body"></div>
+      </div>
       <div class="step" id="model-view" hidden>
         <div class="step-head"><h2 id="model-title"></h2></div>
         <div id="model-msgs"></div>
         <div id="model-body">
           <details class="model-prov" id="model-prov-box"><summary>Its experiment's <code>provenance.json</code></summary><pre id="model-prov"></pre></details>
+          <details class="model-prov" id="model-fit-prov-box" hidden><summary>Its own <code id="model-fit-prov-name"></code> <span class="muted">(how it was fitted)</span></summary><pre id="model-fit-prov"></pre></details>
           <div class="actions model-opts">
             <label class="check"><input type="checkbox" id="model-spiking" checked> Only KCs that spike to some odor</label>
             <label class="check" title="Of its parameters, n_spikes_for_response: how many spikes are a response"><input type="checkbox" id="model-responding">

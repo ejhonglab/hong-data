@@ -86,6 +86,8 @@ export class ModelsPage {
         }
         const b = e.target.closest('[data-run]');
         if (b) location.hash = `#models/${encodeURIComponent(b.dataset.run)}`;
+        const x = e.target.closest('[data-exp]');
+        if (x) this.showExperiment(id === '#models-table' ? this.data : this.base, x.dataset.exp);
       });
     }
     let frame = 0;
@@ -188,6 +190,9 @@ export class ModelsPage {
 
   _cell(d, m, c) {
     const { esc } = this.h, v = this._value(d, m, c);
+    if (c === EXP) {
+      return `<td><button type="button" class="linkish" data-exp="${esc(m.experiment)}" title="Show ${esc(v)}'s provenance.json (what made its models)">${esc(v)}</button></td>`;
+    }
     if (v == null) return '<td></td>';
     const text = c === 'generated' && typeof v === 'string' ? this.h.fmtWhen(v) : fmtValue(v);
     return `<td${typeof v === 'number' ? ' class="num"' : ''} title="${esc(`${c === EXP ? 'experiment' : c}: ${typeof v === 'string' ? v : JSON.stringify(v)}`)}">${esc(text)}</td>`;
@@ -348,6 +353,30 @@ export class ModelsPage {
     this.renderBase();
   }
 
+  // an experiment's provenance.json, shown once (its keys, but those of one of its models alone,
+  // are of all its models: by default not shown as columns), and its fits' own provenance files
+  showExperiment(d, key) {
+    const { $, esc, fmtWhen } = this.h, e = d?.experiments[key];
+    if (!e) return;
+    const models = (this.data?.experiments[key] ? this.data : d).models.filter((m) => m.experiment === key);
+    const src = this._source(e.source), name = e.folder || '(top)';
+    const attached = new Set(models.map((m) => m.fit_provenance).filter(Boolean));
+    const others = (e.fit_provenance || []).filter((f) => !attached.has(f));
+    const keys = Object.entries(e.flat);
+    $('#models-exp-title').textContent = `Experiment ${name}`;
+    $('#models-exp-body').innerHTML = `<p class="muted small">${src ? `<code>${esc(src.path)}${e.folder ? `/${esc(e.folder)}` : ''}</code> on tensor: ` : ''}
+        ${models.length.toLocaleString()} model${models.length === 1 ? '' : 's'}. Below, the keys of its <code>provenance.json</code>, which are of all its models
+        (those under one model's tag, variant or base are of that model alone: with it, as <code>…-&gt;*-&gt;…</code>, when the table shows
+        <code>provenance.json</code>'s other keys, and when one of its runs is opened).${attached.size ? ` ${attached.size} of its models have
+        a <code>provenance_&lt;tag&gt;.json</code> of their own (their fit's), shown when one of their runs is opened.` : ''}${others.length
+        ? ` Of no tag of its: ${others.map((f) => `<code>${esc(f)}</code>`).join(', ')}.` : ''}</p>`
+      + (keys.length ? `<div class="models-exp-wrap"><table class="odor-table models-exp-table"><tbody>${keys.map(([k, v]) => `<tr><th scope="row"><code>${esc(k)}</code></th>
+          <td>${esc(k === 'generated' && typeof v === 'string' ? fmtWhen(v) : fmtValue(v))}</td></tr>`).join('')}</tbody></table></div>`
+        : `<p class="muted">${e.error ? esc(e.error) : 'It has no <code>provenance.json</code>.'}</p>`);
+    $('#models-exp').hidden = false;
+    $('#models-exp').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
   // the model of a run, and the listing it is in (of every model, else of the baselines)
   _find(id) {
     for (const d of [this.data, this.base]) {
@@ -388,6 +417,10 @@ export class ModelsPage {
     const prov = run.provenance;
     $('#model-prov-box').hidden = !prov;
     $('#model-prov').textContent = prov ? JSON.stringify(prov, null, 2) : '';
+    const fit = run.fit_provenance;
+    $('#model-fit-prov-box').hidden = !fit;
+    $('#model-fit-prov-name').textContent = fit?.file ?? '';
+    $('#model-fit-prov').textContent = fit ? (fit.provenance ? JSON.stringify(fit.provenance, null, 2) : fit.error) : '';
     const n = model.n_spikes;
     $('#model-n-spikes').textContent = n ? fmtValue(n.value) : 'n';
     $('#model-responding').disabled = !n;

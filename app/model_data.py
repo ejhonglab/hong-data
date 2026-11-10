@@ -8,8 +8,10 @@ parameters (``tag`` and ``variant`` naming it, ``base`` the model it varies), an
 settings its models share). Each key of that is a parameter of each of its models too,
 nested ones named by their path (``base->n_spikes_for_response``), a list as its JSON; a
 parameter in both is the row's (its own, even if empty, over its experiment's). A nested key
-under one of its models' names (its tag, variant or base: ``runs-><tag>->seconds``) is of
-that model alone, named with `STAR` for the name (``runs->*->seconds``: `own_params`). A model's
+under one of its models' names (its tag, variant or base: ``runs-><tag>->seconds``), in a dict
+most of whose keys are such names, is of that model alone, named with `STAR` for the name
+(``runs->*->seconds``: `own_params`). A ``provenance_<tag>.json`` beside them is the
+provenance of the one model of that tag (a fit's: `fit_provenance`), shown with it. A model's
 responses are its ``*_spike_counts.parquet`` files, KCs × odors, one per condition (``on``,
 ``acute_off``, ...), in its experiment's folder or a folder under it (not one with a
 params.csv or provenance.json of its own, which are of other models): found by the model's
@@ -49,6 +51,7 @@ from .odors import OdorFormatError, parse_odor
 PARAMS = "params.csv"
 PROVENANCE = "provenance.json"
 SUFFIX = "_spike_counts.parquet"
+FIT_PROVENANCE = re.compile(r"provenance_(.+)\.json")  # beside a params.csv: of its model of that tag (a fit's)
 GENERATED = "generated"  # provenance.json's key of when its models were made: the table's first column
 SEP = "->"  # between the keys of a nested parameter's path
 STAR = "*"  # in the path of a parameter of one model alone (`own_params`), for its name
@@ -172,25 +175,36 @@ def flatten(d: dict, prefix: str = "") -> dict:
     return out
 
 
-def own_params(flat: dict, names: set[str], model: dict) -> tuple[dict, set[str]]:
-    """Of an experiment's provenance.json parameters, those of one model alone: nested keys under
-    a name of the model (its tag, variant or base; of those in one place, the first of them), with
-    `STAR` in its place (``runs-><tag>->seconds`` as ``runs->*->seconds``). And the keys
-    under any of `names` (those of its experiment's models): not its experiment's to show for all."""
+def keyed_by_model(flat: dict, names: set[str]) -> dict[str, tuple[str, str]]:
+    """Of an experiment's provenance.json parameters (`flatten`'s), those of one of its models
+    alone: under a dict (not at the top) most of whose keys are of `names` (its models' tags,
+    variants and bases), a key of them. Each as (that name, the parameter with `STAR` for it:
+    ``runs-><tag>->seconds`` as ``runs->*->seconds``). (E9's ``scales``, keyed kc, bouton and
+    both, is the experiment's, though bouton is a base of its.)"""
+    children: dict[tuple, set] = {}
+    split = {key: key.split(SEP) for key in flat}
+    for parts in split.values():
+        for i in range(1, len(parts)):
+            children.setdefault(tuple(parts[:i]), set()).add(parts[i])
+    keyed = {p for p, ch in children.items() if 2 * sum(c in names for c in ch) > len(ch)}
+    out = {}
+    for key, parts in split.items():
+        i = next((i for i in range(1, len(parts)) if parts[i] in names and tuple(parts[:i]) in keyed), None)
+        if i is not None:
+            out[key] = (parts[i], SEP.join([*parts[:i], STAR, *parts[i + 1:]]))
+    return out
+
+
+def own_params(flat: dict, keyed: dict[str, tuple[str, str]], model: dict) -> dict:
+    """Of an experiment's provenance.json parameters, those of one model alone (of `keyed`, as
+    `keyed_by_model` gives them): under its tag, variant or base (of those in one dict, the
+    first of them), named with `STAR` for it."""
     mine = [str(model[k]) for k in ("tag", "variant", "base") if model.get(k) is not None]
-    out, named = {}, set()
-    for key, v in flat.items():
-        parts = key.split(SEP)
-        i = next((i for i in range(1, len(parts)) if parts[i] in names), None)
-        if i is None:
-            continue
-        named.add(key)
-        if parts[i] in mine:
-            star = SEP.join([*parts[:i], STAR, *parts[i + 1:]])
-            rank = mine.index(parts[i])
-            if star not in out or rank < out[star][0]:
-                out[star] = (rank, v)
-    return {k: v for k, (_, v) in out.items()}, named
+    out = {}
+    for key, (name, star) in keyed.items():
+        if name in mine and (star not in out or mine.index(name) < out[star][0]):
+            out[star] = (mine.index(name), flat[key])
+    return {k: v for k, (_, v) in out.items()}
 
 
 def natural(s: str) -> list:
@@ -199,8 +213,8 @@ def natural(s: str) -> list:
 
 
 def _files(folder: Path) -> list[tuple[str, int, int]]:
-    """The params.csv, provenance.json and spike count files under a folder: (path from it,
-    size, time), in order. Raises ScanError if it has over `MAX_ENTRIES`."""
+    """The params.csv, provenance.json (and `FIT_PROVENANCE`) and spike count files under a
+    folder: (path from it, size, time), in order. Raises ScanError if it has over `MAX_ENTRIES`."""
     out, n = [], 0
     for d, dirs, names in os.walk(folder, onerror=lambda e: None):
         dirs.sort()
@@ -208,7 +222,7 @@ def _files(folder: Path) -> list[tuple[str, int, int]]:
         if n > MAX_ENTRIES:
             raise ScanError(f"over {MAX_ENTRIES:,} files and folders in it: choose the folder of the model outputs alone")
         for name in sorted(names):
-            if name in (PARAMS, PROVENANCE) or name.endswith(SUFFIX):
+            if name in (PARAMS, PROVENANCE) or name.endswith(SUFFIX) or FIT_PROVENANCE.fullmatch(name):
                 p = Path(d) / name
                 try:
                     st = p.stat()
@@ -226,9 +240,11 @@ def scan(folder: Path) -> dict:
         dict with ``experiments`` (``key``: its folder, from the one scanned ('' for it); ``params``:
         params.csv's columns; ``provenance``: provenance.json as it is, or None; ``flat``: it as
         parameters; ``shared``: those of all its models (not `own_params`); ``keys``: those shown
-        (`own_params`' named so); ``error``: why one of them could not be read, or None), ``models``
-        (``experiment``, ``row`` (its index in params.csv), ``params`` (its row, a value per
-        column), ``own`` (provenance.json's parameters of it alone, see `own_params`), ``runs``
+        (`own_params`' named so); ``fit_provenance``: the `FIT_PROVENANCE` files beside it;
+        ``error``: why one of them could not be read, or None), ``models`` (``experiment``,
+        ``row`` (its index in params.csv), ``params`` (its row, a value per column), ``own``
+        (provenance.json's parameters of it alone, see `own_params`), ``fit_provenance`` (the
+        name of the `FIT_PROVENANCE` file of its tag, or None), ``runs``
         (``file`` (from the folder scanned), ``label`` (its condition, after the folder under its
         experiment's it is in, if any), ``prefix`` (what its name has before the model's)),
         ``n_spikes`` ({``value``, ``from``}, or None: `n_spikes_for_response`)), ``keys``
@@ -271,6 +287,10 @@ def _scan(folder: Path, files: list[str]) -> dict:
     exp_set = set(exp_dirs)
     own = exp_set | {"" if (d := str(Path(f).parent)) == "." else d for f in files if Path(f).name == PROVENANCE}
     runs_of: dict[str, list[str]] = {}
+    fits_of: dict[str, list[str]] = {}  # a folder's FIT_PROVENANCE files
+    for f in files:
+        if FIT_PROVENANCE.fullmatch(Path(f).name):
+            fits_of.setdefault("" if (d := str(Path(f).parent)) == "." else d, []).append(Path(f).name)
     for f in files:
         if f.endswith(SUFFIX):
             e = owner(f)
@@ -280,7 +300,8 @@ def _scan(folder: Path, files: list[str]) -> dict:
                 runs_of.setdefault(e, []).append(f)
     for key in exp_dirs:
         d = folder / key
-        exp = {"key": key, "params": [], "provenance": None, "flat": {}, "shared": {}, "keys": [], "error": None}
+        fits = fits_of.get(key, [])
+        exp = {"key": key, "params": [], "provenance": None, "flat": {}, "shared": {}, "keys": [], "fit_provenance": fits, "error": None}
         rows = []
         try:
             with open(d / PARAMS, newline="", encoding="utf-8-sig") as fh:
@@ -299,19 +320,18 @@ def _scan(folder: Path, files: list[str]) -> dict:
             except (OSError, UnicodeDecodeError, ValueError) as e:
                 exp["provenance"], exp["error"] = None, f"{PROVENANCE} could not be read: {e}"
         names = {str(r[k]) for r in rows for k in ("tag", "variant", "base") if r.get(k) is not None}
-        named, owns = set(), []
-        for r in rows:
-            mine, under = own_params(exp["flat"], names, r)
-            owns.append(mine)
-            named |= under
-        exp["shared"] = {k: v for k, v in exp["flat"].items() if k not in named}
+        keyed = keyed_by_model(exp["flat"], names)
+        owns = [own_params(exp["flat"], keyed, r) for r in rows]
+        exp["shared"] = {k: v for k, v in exp["flat"].items() if k not in keyed}
         exp["keys"] = [*exp["shared"], *dict.fromkeys(k for o in owns for k in o)]
         if exp["provenance"] is not None:
             seen(exp["keys"])
         experiments.append(exp)
         first = len(models)
         for i, r in enumerate(rows):
-            models.append({"experiment": key, "row": i, "params": r, "own": owns[i], "runs": [], "n_spikes": _n_spikes(r, exp)})
+            fit = f"provenance_{r['tag']}.json" if r.get("tag") is not None else None
+            models.append({"experiment": key, "row": i, "params": r, "own": owns[i], "fit_provenance": fit if fit in fits else None,
+                           "runs": [], "n_spikes": _n_spikes(r, exp)})
         for f in runs_of.get(key, []):
             hits = _match(f, key, models[first:])
             if not hits:
@@ -431,7 +451,8 @@ def listing(db, root: Path) -> dict:
 
 
 def _listed_experiment(src: dict, folder: str, e: dict) -> dict:
-    return {"source": src["id"], "folder": folder, "params": e["params"], "flat": e["shared"], "error": e["error"]}
+    return {"source": src["id"], "folder": folder, "params": e["params"], "flat": e["shared"], "fit_provenance": e["fit_provenance"],
+            "error": e["error"]}
 
 
 def _listed_model(m: dict, key: str, path: str, sub: str = "") -> dict:
@@ -652,9 +673,24 @@ def run_odors(columns: pd.Index, index: OdorIndex) -> list[dict]:
     return odors
 
 
+def fit_provenance(info: dict) -> Optional[dict]:
+    """A run's model's `FIT_PROVENANCE` file (`run_info`'s), as {``file`` (its name),
+    ``provenance`` (as it is, or None), ``error`` (why it could not be read, or None)}; None if
+    it has none."""
+    name = info["model"].get("fit_provenance")
+    if not name:
+        return None
+    try:
+        return {"file": name, "provenance": json.loads((info["folder"] / info["experiment"]["key"] / name).read_text(encoding="utf-8")),
+                "error": None}
+    except (OSError, UnicodeDecodeError, ValueError) as e:
+        return {"file": name, "provenance": None, "error": f"{name} could not be read: {e}"}
+
+
 def run(db, run_id: str, index: OdorIndex, root: Optional[Path] = None) -> dict:
     """A model run for the Models tab: `read_run`'s, with its ``id`` and ``file`` (its path on
-    tensor, from its top) and its experiment's ``provenance`` (as it is, or None). Raises
-    LookupError (see `run_file`)."""
-    _, path, exp = run_file(db, run_id, root or config.TENSOR_ROOT)
-    return {"id": run_id, "file": run_id, "provenance": exp["provenance"], **read_run(path, index)}
+    tensor, from its top), its experiment's ``provenance`` (as it is, or None) and its model's
+    own (``fit_provenance``, `fit_provenance`'s). Raises LookupError (see `run_file`)."""
+    info = run_info(db, run_id, root or config.TENSOR_ROOT)
+    return {"id": run_id, "file": run_id, "provenance": info["experiment"]["provenance"], "fit_provenance": fit_provenance(info),
+            **read_run(info["path"], index)}

@@ -17,7 +17,9 @@ from tests.test_tensor import call, main, post, root  # noqa: F401 (fixtures)
 ODORS = ["2h @ -3", "eb @ -3", "nope @ -2", "pa @ -3"]
 PROVENANCE = {"generated": "2026-11-05T03:11:26+00:00", "script": "E1.py", "claw_thr": 70.0, "inhadd": [1, 2], "empty": {},
               "base": {"n_spikes_for_response": 2, "prat_claws": True},
-              "runs": {"k0": {"seconds": 5}, "k0_x": {"seconds": 7, "host": "hal"}, "note": "x"}}  # (each model's, by its tag)
+              "runs": {"k0": {"seconds": 5}, "k0_x": {"seconds": 7, "host": "hal"}, "note": "x"},  # (each model's, by its tag)
+              "scales": {"kc": 1, "claw": 2, "both": 3}}  # (the experiment's: one key of three a model's name, its base)
+FIT = {"bounds": [0, 1], "seed_fit": "k0"}  # provenance_k0_x.json: of its model of that tag alone
 
 
 def counts(n_kcs: int, transposed: bool = False, types: bool = True) -> pd.DataFrame:
@@ -49,6 +51,8 @@ def outputs(root):  # noqa: F811
         {"source_table": "s.csv", "tag": "gone", "variant": "gone", "base": "claw", "n_kcs": "6", "claw_thr": "", "rate_on": "", "seed": "True"},
     ]).to_csv(e1 / "params.csv", index=False)
     (e1 / "provenance.json").write_text(json.dumps(PROVENANCE))
+    (e1 / "provenance_k0_x.json").write_text(json.dumps(FIT))
+    (e1 / "provenance_comparison.json").write_text("{}")  # (of no tag)
     for name in ("claw_sp0.05_k0_on", "claw_sp0.05_k0_acute_off", "claw-dynamics_sp0.05_k0_on", "claw_sp0.05_k0_x_on", "sub/claw_sp0.05_k0_on"):
         counts(6).to_parquet(e1 / f"{name}_spike_counts.parquet")
     (e1 / "probe/provenance.json").write_text("{}")  # a run of its own: its files are of none of E1's models
@@ -76,7 +80,7 @@ def test_values():
     assert model_data.flatten(PROVENANCE) == {
         "generated": PROVENANCE["generated"], "script": "E1.py", "claw_thr": 70.0, "inhadd": "[1, 2]", "empty": "{}",
         "base->n_spikes_for_response": 2, "base->prat_claws": True, "runs->k0->seconds": 5, "runs->k0_x->seconds": 7,
-        "runs->k0_x->host": "hal", "runs->note": "x"}
+        "runs->k0_x->host": "hal", "runs->note": "x", "scales->kc": 1, "scales->claw": 2, "scales->both": 3}
     assert model_data.parse_list(" a, b ,,a,c ") == ["a", "b", "c"]
 
 
@@ -103,6 +107,10 @@ def test_scan(outputs):
                                      {"bases->*->n_spikes_for_response": 3}]
     e1, e2 = s["experiments"]
     assert "runs->note" in e1["shared"] and not any(k.startswith("runs->k0") for k in e1["shared"]) and "runs->k0->seconds" in e1["flat"]
+    assert e1["shared"]["scales->claw"] == 2 and not any(k.startswith("scales") for x in m for k in x["own"])
+    # a provenance_<tag>.json: of the model of that tag
+    assert e1["fit_provenance"] == ["provenance_comparison.json", "provenance_k0_x.json"] and e2["fit_provenance"] == []
+    assert [x["fit_provenance"] for x in m] == [None, None, "provenance_k0_x.json", None, None]
     assert e1["keys"][-2:] == ["runs->*->seconds", "runs->*->host"] and e2["shared"] == {"generated": "2026-11-04T00:00:00+00:00", "script": "E2.py"}
     assert [x["n_spikes"] for x in m] == [{"value": 2, "from": "base->n_spikes_for_response in provenance.json"}] * 4 + [
         {"value": 3, "from": "bases->bouton->n_spikes_for_response in provenance.json"}]
@@ -167,7 +175,10 @@ def test_api(main, outputs, odor_table):  # noqa: F811
 
     status, run = call(main.models_run, params={"id": run_id})
     assert status == 200 and run["file"] == "tom/model_outputs/E1_apl/claw_sp0.05_k0_on_spike_counts.parquet"
-    assert run["provenance"] == PROVENANCE and run["odors"][0]["odor_id"] is not None
+    assert run["provenance"] == PROVENANCE and run["odors"][0]["odor_id"] is not None and run["fit_provenance"] is None
+    status, fitted = call(main.models_run, params={"id": "tom/model_outputs/E1_apl/claw_sp0.05_k0_x_on_spike_counts.parquet"})
+    assert status == 200 and fitted["fit_provenance"] == {"file": "provenance_k0_x.json", "provenance": FIT, "error": None}
+    assert out["experiments"][f"{sid}/E1_apl"]["fit_provenance"] == ["provenance_comparison.json", "provenance_k0_x.json"]
     for bad in ("", "tom/model_outputs/stray_on_spike_counts.parquet", "tom/model_outputs/E1_apl/probe/k0_on_spike_counts.parquet",
                 "tom/model_outputs/../../etc/passwd", "tom/model_outputs/E1_apl/../E1_apl/claw_sp0.05_k0_on_spike_counts.parquet",
                 "tom/other/E1_apl/claw_sp0.05_k0_on_spike_counts.parquet", "tom/model_outputs/E1_apl/claw_sp0.05_k0_on_responses.parquet"):
@@ -250,6 +261,12 @@ def test_download(main, outputs, odor_table, tmp_path, monkeypatch):  # noqa: F8
     with zipfile.ZipFile(dest) as zf:
         assert sorted(zf.namelist()) == [f"{stem}/{n}" for n in ("README.md", "claw_sp0.05_k0_on_spike_counts.parquet", "params.csv",
                                                                  "provenance.json")]
+    fitted = "tom/model_outputs/E1_apl/claw_sp0.05_k0_x_on_spike_counts.parquet"  # (with its fit's provenance)
+    assert matrix_download.model_download(main.db, fitted, index, "files", dest, config.TENSOR_ROOT)
+    with zipfile.ZipFile(dest) as zf:
+        assert "olfdb_model_E1_apl_claw_sp0.05_k0_x_on_spike_counts/provenance_k0_x.json" in zf.namelist()
+    matrix_download.model_download(main.db, run_id, index, "files", dest, config.TENSOR_ROOT)
+    with zipfile.ZipFile(dest) as zf:
         assert zf.read(f"{stem}/params.csv") == (outputs / "E1_apl/params.csv").read_bytes()
         readme = zf.read(f"{stem}/README.md").decode()
     assert "row 1 of `tom/model_outputs/E1_apl/params.csv`" in readme and "- tag: k0\n" in readme and "- claw_thr: \n" in readme
