@@ -723,9 +723,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   fine-tuned on their ROIs: every outline of one glomerulus, numbered and uncertain ones
   too, but not `+` ROIs or outlines of the whole AL; an atlas of where each glomerulus is,
   and each one's odor tuning), holding out a few flies (from each dataset in turn) to score
-  its predicted ROIs (Cellpose's own, named) against theirs; with how many to hold out, Cellpose's epochs, whether to build the atlas
+  its predicted ROIs (Cellpose's own, named) against theirs; with how many to hold out, Cellpose's epochs (15 by default), whether to build the atlas
   (and add the [Grabe et al. 2016](https://doi.org/10.1016/j.celrep.2016.08.063) atlas to
-  it), whether to train on tentative ROIs, and (under *How its ROIs are made*) Cellpose's mask thresholds, how much
+  it, as by default), whether to train on tentative ROIs, and (under *How its ROIs are made*) Cellpose's mask thresholds, how much
   to grow its ROIs, and how much each plane's must overlap and be tuned alike to be joined into 3D objects (the
   defaults scored best on fit 6's flies). Anyone may start one, once their first name is set in
   Settings (the box links to it). One runs at a time; those running and waiting say who

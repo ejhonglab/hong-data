@@ -66,6 +66,10 @@ def data(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DATA_DIR", tmp_path / "data")
     monkeypatch.setattr(config, "DATASETS_DIR", tmp_path / "datasets")
     monkeypatch.setattr(config, "ROI_TRAINING_DIR", tmp_path / "roi_training")
+    # the reference atlas fits add by default, as the worker's image has it (empty: the stand-in al-diag-seg doesn't read it)
+    (tmp_path / "al_atlas_stub/grabe2016").mkdir(parents=True)
+    (tmp_path / "al_atlas_stub/grabe2016/labels.tif").write_bytes(b"")
+    monkeypatch.setattr(config, "AL_ATLAS_DIR", tmp_path / "al_atlas_stub")
     return tmp_path / "data"
 
 
@@ -117,8 +121,10 @@ def tensor(main, root, data, tmp_path):  # noqa: F811
 
 def test_options():
     assert fits.options({}) == fits.DEFAULTS
-    assert fits.options({"held_out": "3", "epochs": 50, "atlas": False}) == {**fits.DEFAULTS, "held_out": 3, "epochs": 50, "atlas": False}
-    # reference atlases: those it has, once each, only added to the atlas
+    assert fits.options({"held_out": "3", "epochs": 50, "atlas": False}) == {**fits.DEFAULTS, "held_out": 3, "epochs": 50,
+                                                                             "atlas": False, "refs": []}
+    # reference atlases: those it has, once each, only added to the atlas; Grabe et al.'s unless asked for none
+    assert fits.DEFAULTS["refs"] == ["grabe2016"] and fits.options({"refs": []})["refs"] == []
     assert fits.options({"refs": ["grabe2016", "grabe2016"]})["refs"] == ["grabe2016"]
     assert fits.options({"refs": None, "atlas": False})["refs"] == []
     # how its ROIs are made (as the form sends them, strings)
@@ -174,6 +180,8 @@ def test_estimates():
     assert fits.sizes(fit) == {"load": 10, "train": 800, "atlas": 0, "evaluate": 2}
     # the atlas: a registration per training fly and anatomical stack, and per reference atlas
     assert fits.sizes({**fit, "options": {"refs": ["grabe2016"]}, "flies": {**fit["flies"], "stacks": 3}})["atlas"] == 12
+    # (a fit asked for before refs were an option had none)
+    assert fits.sizes({**fit, "options": {}, "flies": {**fit["flies"], "stacks": 3}})["atlas"] == 11
     # not started: every stage from the rates; halfway through training: what is left of it as it has gone, and the rest
     assert fits.remaining(fit, r, 1000.0) == pytest.approx(10 * 2 + 800 * 0.1 + 2 * 10)
     fit["progress"] = {"stage": "train", "done": 50, "total": 100, "stage_started": 900.0}

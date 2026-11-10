@@ -299,6 +299,13 @@ between the frontend and the server. Using the app is described in
   Models saved before they were options take al-diag-seg's defaults, so predictions with fits 2
   and 6 use them, though those fits' scores on the tab are as their fits made them; a
   prediction's provenance.json has the options its model ran with (`alseg_options`).
+- **A fit trains Cellpose for 15 epochs by default** (`fits.DEFAULTS`; an epoch is each
+  training plane and a flipped or turned copy of it once: 1584 for fit 6's 82 flies, ~5
+  minutes on the 3090). In fits 2 and 6 the held-out flies' loss had stopped improving by
+  epoch 10, where Cellpose's learning rate ends its warm-up (fit 6: 0.268 at epoch 5, 0.255 at 10, 0.258 at 20; fit 2: 0.229 at 10, 0.231 at
+  20, 0.227 at 30, then up to 0.31 by 200, while its training loss kept falling). A fit trains
+  on every fly with ROIs, so later ones take more steps per epoch, not fewer. That is the
+  loss, not the scores: no fit has been run at 15 epochs to compare with 30.
 - **Scores are shown plane by plane and as 3D objects** (al-diag-seg's `*_2d` columns,
   `metrics.match_report_2d`): ROIs are drawn and used per plane, and planes 10 µm apart make
   Cellpose's per-plane masks, stitched into objects, reach other planes than the manual ones,
@@ -315,9 +322,9 @@ between the frontend and the server. Using the app is described in
   date, number). A fit records who asked for it (the first name set in Settings: the box
   sends people there, its name field selected) and from which IP address; anyone may
   delete any fit, as anyone may start one.
-- **A fit may add the Grabe et al. 2016 atlas to its flies' atlas** (al-diag-seg's `refs`,
-  `fits.REFERENCES`), only with that atlas, which it is aligned to (by the glomeruli both
-  have). It is downloaded into the worker's image as al_atlas exported it, at a pinned
+- **A fit adds the Grabe et al. 2016 atlas to its flies' atlas by default** (al-diag-seg's
+  `refs`, `fits.REFERENCES`; fit 2, from before it was an option, had none), only with that
+  atlas, which it is aligned to (by the glomeruli both have). It is downloaded into the worker's image as al_atlas exported it, at a pinned
   commit and checked against checksums (the Dockerfile), rather than kept in this
   repository, a second copy, or read from a home folder the worker cannot see. Its
   glomeruli are saved in the model's atlas, so the model runs without it. al_atlas'

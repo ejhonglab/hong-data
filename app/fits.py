@@ -32,7 +32,8 @@ STAGES = ("load", "train", "atlas", "evaluate")
 # names, saved with the model): al-diag-seg's defaults (tests/test_fits.py checks), picked on fit 6's
 # flies (design.md)
 ROI_DEFAULTS = {"cellprob_threshold": -2.0, "flow_threshold": 0.8, "dilate": 0, "join_overlap": 0.2, "join_corr": 0.7}
-DEFAULTS = {"held_out": 4, "epochs": 200, "atlas": True, "tentative": True, "refs": [], **ROI_DEFAULTS}
+# 15 epochs: the held-out flies' loss had stopped improving by epoch 10 in fits 2 and 6 (design.md)
+DEFAULTS = {"held_out": 4, "epochs": 15, "atlas": True, "tentative": True, "refs": ["grabe2016"], **ROI_DEFAULTS}
 LIMITS = {"held_out": (1, 30), "epochs": (1, 5000), "dilate": (0, 10)}  # (whole numbers)
 FLOAT_LIMITS = {"cellprob_threshold": (-6.0, 6.0), "flow_threshold": (0.0, 3.0), "join_overlap": (0.0, 1.0),
                 "join_corr": (-1.0, 1.0)}
@@ -66,7 +67,7 @@ def options(body: dict) -> dict:
     Raises:
         ValueError: for one out of `LIMITS`, or not a whole number; out of `FLOAT_LIMITS`, or not
             a number; for ``refs`` not a list of `REFERENCES`, or given without the atlas (which
-            they are added to).
+            they are added to). (Not given, they are `DEFAULTS`' with the atlas, none without.)
     """
     out = dict(DEFAULTS)
     for k, (lo, hi) in LIMITS.items():
@@ -90,13 +91,21 @@ def options(body: dict) -> dict:
     for k in ("atlas", "tentative"):
         if k in body:
             out[k] = bool(body[k])
-    refs = body.get("refs") or []
+    refs = body.get("refs")
+    if refs is None:
+        refs = DEFAULTS["refs"] if out["atlas"] else []
     if not isinstance(refs, list) or not all(isinstance(r, str) and r in REFERENCES for r in refs):
         raise ValueError(f"reference atlases: a list of {', '.join(REFERENCES)}")
     out["refs"] = list(dict.fromkeys(refs))
     if out["refs"] and not out["atlas"]:
         raise ValueError("a reference atlas is added to the atlas of the flies: it needs the atlas")
     return out
+
+
+def fit_options(fit: dict) -> dict:
+    """A fit's options, `DEFAULTS` for those that were not options yet when it was asked for (but
+    no reference atlases: fits from before ``refs`` had none)."""
+    return {**DEFAULTS, "refs": [], **(fit.get("options") or {})}
 
 
 def reference_dir(name: str) -> Path:
@@ -268,7 +277,7 @@ def sizes(fit: dict, n_flies: Optional[int] = None) -> dict[str, float]:
     """How much work each stage of a fit is: flies loaded, epochs x training flies, flies (and
     anatomical stacks, and reference atlases) registered into the atlas, held-out flies. From
     its flies once the worker has listed them, else ``n_flies`` (a guess)."""
-    o = {**DEFAULTS, **(fit.get("options") or {})}
+    o = fit_options(fit)
     fl = fit.get("flies") or {}
     n = len(fl.get("train", [])) + len(fl.get("held_out", [])) if fl else (n_flies or DEFAULT_FLIES)
     val = len(fl.get("held_out", [])) if fl else min(o["held_out"], n - 1)

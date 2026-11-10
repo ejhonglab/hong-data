@@ -235,7 +235,7 @@ def run(db, fit: dict, gpu: bool = False) -> None:
     d = fits.fit_dir(fit["id"])
     shutil.rmtree(d, ignore_errors=True)
     d.mkdir(parents=True)
-    o, prog = {**fits.DEFAULTS, **fit["options"]}, Progress(db, fit["id"], gpu)
+    o, prog = fits.fit_options(fit), Progress(db, fit["id"], gpu)
     status, error, result, lost = "failed", None, None, None
     with open(d / "log.txt", "a", buffering=1) as out, _output_to(out):
         try:
