@@ -389,8 +389,32 @@ between the frontend and the server. Using the app is described in
   (the archive leaves a cell empty where its experiment's value does not apply, e.g.
   `claw_thr` of a model with no per-claw threshold). A parameter is "the same for every
   model" when the models that have it agree: with blanks counted as values, every one of
-  the 380 parameters of the KC-remapping archive would differ, as most are of one
-  experiment.
+  the KC-remapping archive's parameters would differ, as most are of one experiment.
+- **A nested `provenance.json` key under a model's tag, variant or base is of that model
+  alone** (`model_data.own_params`), named with `*` for the name (`runs->*->seconds`), and
+  not shown for the others: E37's `runs`, keyed by tag, alone made 828 of the archive's
+  1,679 columns, each set for one of its 15 models and blank for the other 907 (808 are
+  left). Only keys equal to a name of a model of the experiment count (`variants` in E11,
+  E14, E15, E17 and E38; `bases` in E1, E2, E3, E16 and E43; `runs` in E37, as the
+  archive's writers said), and not at the top level (E3's `bouton`, its base's settings):
+  elsewhere such a dict is of the whole experiment (E54's `runs`, one record of the run).
+- **The Models tab shows `params.csv`'s columns by default** (96 of the 808), and the
+  `provenance.json` keys of those names (an experiment's value for all its models): the
+  rest are what made the models (scripts, commits, hosts, notes, plans) and each model's
+  settings, which a box shows. Its table draws only the rows and columns in view (and some
+  either side, again once the view nears their edge), its columns' widths fixed from their
+  longest values (`table-layout: fixed`): drawn whole, 908 models by 1,679 parameters were
+  1.5 million cells, which took Chrome 40 s and crashed a browser; drawn so, ~3,000, in
+  about a second (mostly the server reading the folders). The browser's find sees only
+  those drawn, so the tab has its own, over every value shown.
+- **Baseline models are chosen in the Admin tab and shown first** (`model_baselines`,
+  `model_data.baseline_listing`), in a table of their own with the `params.csv` parameters
+  they have, from a request that reads only their experiments' folders (~20 ms, against
+  ~0.5–1.5 s for every model's), so they are shown while the rest load. A baseline is kept
+  by its experiment's folder on tensor, its tag (or variant), base (E14's models of two
+  bases share tags) and row (E35 has two rows of one tag), not by the folder's id or the
+  row alone, so it survives the folder being deleted and added again, and rows added
+  before it.
 - **A spike count file is matched to a model by name**, as the archive names them
   (`[<base>_sp<rate>_]<tag>_<condition>_spike_counts.parquet`, with no separator between
   the parts but `_`, which tags have too): the model whose tag (or variant) is in it as
@@ -1237,7 +1261,8 @@ with where it is from, when it was looked up, the chemutils commit that did, whe
 constants in oil what they were estimated with), `vcf_properties` (the same of VCF's chemicals, and
 estimated Henry's law constants, by CID and property, apart from the odor table's), `settings` (site-wide settings from the Admin tab:
 the odor sheet's link, panels shown renamed), `reference_datasets` (reference datasets added there),
-`model_sources` (folders of model data added there, by their path on tensor, with their lists of parameters), `fits`
+`model_sources` (folders of model data added there, by their path on tensor, with their lists of parameters),
+`model_baselines` (models chosen there to show first, by their experiment's folder on tensor, name, base and row), `fits`
 (fits of al-diag-seg models) and
 `file_log` (the files the server has read or written in its own folders). Files:
 `data/datasets/<id>/` holds the original data file (or files, if several were combined:
@@ -1355,7 +1380,10 @@ GET    /api/fits/{id}/download              its model and results, as a zip sent
 GET    /api/models                          every model of the folders of model data added (model_data.listing):
                                             the folders (whether they can be read), the table's columns,
                                             experiments (params.csv's columns, provenance.json as
-                                            parameters), models (params.csv rows, runs) and files of none
+                                            parameters), models (params.csv rows, their own provenance.json
+                                            parameters, runs) and files of none; gzipped (~1.2 MB → ~100 kB)
+GET    /api/models/baselines                the models chosen as baselines, as /api/models has them (with
+                                            whether each is found, and why not), reading only their folders
 GET    /api/models/run?id=<path on tensor>  a run's spike counts: KCs (labels, types) × odors (matched to
                                             the odor table), float32 base64, and its provenance.json
 POST   /api/models/run/download             {"id", "format": "files" | "wide", "rows", "cols", "transpose"}
@@ -1472,6 +1500,10 @@ POST   /api/admin/models                    {"path" (on tensor, from its top), "
                                             it has (400 if it has no params.csv; 409 if added already)
 PATCH  /api/admin/models/{id}               {"hidden", "first", "last"}: its lists changed
 DELETE /api/admin/models/{id}               forgotten (nothing on tensor touched)
+POST   /api/admin/models/baselines          {"experiment" (as /api/models keys it: "<folder id>/<its
+                                            folder>"), "row"} → that model chosen as a baseline (404 if
+                                            no such model; 409 if it is one already)
+DELETE /api/admin/models/baselines/{id}     a model no longer a baseline
 GET    /api/admin/metacyc                   MetaCyc imported here: what an upload is to have (each
                                             role's files and what it is, and how they are found:
                                             "how"), the import under way or the last ({"running",

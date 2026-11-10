@@ -1638,13 +1638,34 @@ async def predictions_download(request: Request) -> Response:
                              headers={"content-disposition": f'attachment; filename="{top}.zip"'})
 
 
+def _json_gzipped(request: Request, data) -> Response:
+    """`data` as JSON, gzipped if large and the browser takes it (in a thread: call it in one)."""
+    body = json.dumps(data, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode()
+    if len(body) > 200_000 and "gzip" in request.headers.get("accept-encoding", ""):
+        return Response(gzip.compress(body, 6), media_type="application/json", headers={"content-encoding": "gzip", "vary": "accept-encoding"})
+    return Response(body, media_type="application/json")
+
+
 async def models_list(request: Request) -> Response:
     """The Models tab's table: every model of the folders of model data added in the Admin tab
-    (`model_data.listing`)."""
-    out = await run_in_threadpool(model_data.listing, db, config.TENSOR_ROOT)
-    for s in out["sources"]:
-        s["created_at"] = _aware(s["created_at"])
-    return JSONResponse(out)
+    (`model_data.listing`), gzipped if the browser takes it (~10x smaller)."""
+    def get():
+        out = model_data.listing(db, config.TENSOR_ROOT)
+        for s in out["sources"]:
+            s["created_at"] = _aware(s["created_at"])
+        return _json_gzipped(request, out)
+    return await run_in_threadpool(get)
+
+
+async def models_baselines(request: Request) -> Response:
+    """The Models tab's first table: the models chosen as baselines in the Admin tab
+    (`model_data.baseline_listing`)."""
+    def get():
+        out = model_data.baseline_listing(db, config.TENSOR_ROOT)
+        for b in out["baselines"]:
+            b["created_at"] = _aware(b["created_at"])
+        return _json_gzipped(request, out)
+    return await run_in_threadpool(get)
 
 
 async def models_run(request: Request) -> Response:
@@ -3281,6 +3302,26 @@ async def admin_models_delete(request: Request) -> Response:
     return JSONResponse({"deleted": True})
 
 
+async def admin_models_baseline_add(request: Request) -> Response:
+    """Choose a model as a baseline ({"experiment": "<folder id>/<its folder>", "row": <its row>},
+    as /api/models lists it), see `model_data.add_baseline`."""
+    body = await request.json()
+    if not isinstance(body, dict):
+        return json_error(400, 'expected {"experiment": ..., "row": ...}')
+    status, result = await run_in_threadpool(model_data.add_baseline, db, body, config.TENSOR_ROOT)
+    if status == 200:
+        log.info("model %s of %s made a baseline in the Admin tab", result["name"], result["experiment"])
+        result["created_at"] = _aware(result["created_at"])
+    return JSONResponse(result, status_code=status)
+
+
+async def admin_models_baseline_delete(request: Request) -> Response:
+    """A model no longer a baseline."""
+    if not await run_in_threadpool(model_data.delete_baseline, db, request.path_params["id"]):
+        return json_error(404, "no such baseline")
+    return JSONResponse({"deleted": True})
+
+
 # bundles of reference data imported in the Admin tab, by kind (see bundle_import.py)
 IMPORTERS = {imp.key: imp for imp in (metacyc_import.importer, lotus_import.importer)}
 
@@ -3517,6 +3558,7 @@ routes = [
     Route("/api/predictions/{id:int}/view", predictions_view),
     Route("/api/predictions/{id:int}/download", predictions_download),
     Route("/api/models", models_list),
+    Route("/api/models/baselines", models_baselines),
     Route("/api/models/run", models_run),
     Route("/api/models/run/download", models_run_download, methods=["POST"]),
     Route("/api/merge", merge_units),
@@ -3566,6 +3608,8 @@ routes = [
     Route("/api/admin/references/{ref_id}", admin_reference_delete, methods=["DELETE"]),
     Route("/api/admin/references/{ref_id}", admin_reference_update, methods=["PATCH"]),
     Route("/api/admin/models", admin_models_add, methods=["POST"]),
+    Route("/api/admin/models/baselines", admin_models_baseline_add, methods=["POST"]),
+    Route("/api/admin/models/baselines/{id:int}", admin_models_baseline_delete, methods=["DELETE"]),
     Route("/api/admin/models/{id:int}", admin_models_update, methods=["PATCH"]),
     Route("/api/admin/models/{id:int}", admin_models_delete, methods=["DELETE"]),
     Route("/api/admin/metacyc", admin_metacyc),

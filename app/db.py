@@ -267,6 +267,14 @@ CREATE TABLE IF NOT EXISTS model_sources (  -- folders of model outputs added in
     first TEXT NOT NULL,               -- shown first (after when they were generated), in order
     last TEXT NOT NULL                 -- shown last, in order
 );
+CREATE TABLE IF NOT EXISTS model_baselines (  -- models chosen in the Admin tab, shown first in the Models tab (model_data.add_baseline)
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    experiment TEXT NOT NULL,          -- its experiment's folder on tensor, from its top
+    name TEXT,                         -- its tag (else variant) in its params.csv
+    base TEXT,                         -- its base there (models of two bases may share a name)
+    row INTEGER NOT NULL,              -- its row there when chosen (of models named alike, which)
+    created_at TEXT NOT NULL
+);
 """
 # columns added since the first release: (table, column, type)
 # what is looked up through chemutils for an odor CID (chemprops.PROPERTIES): property -> the

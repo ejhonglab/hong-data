@@ -943,10 +943,23 @@ try {
         <p class="muted">Outputs of models of KCs, shown in the Models tab: folders on tensor, read there (never copied, nor changed) each time
           that tab is opened, so models added to them are shown without adding them again. In a folder, each <code>params.csv</code> (at any depth)
           is an experiment: a row per model, its parameters, with the keys of the <code>provenance.json</code> beside it as parameters of each
-          (nested ones as <code>key-&gt;key</code>, e.g. <code>base-&gt;n_spikes_for_response</code>); a model's responses are the
+          (nested ones as <code>key-&gt;key</code>, e.g. <code>base-&gt;n_spikes_for_response</code>; those under a model's tag, variant or base,
+          of that model alone, as <code>runs-&gt;*-&gt;seconds</code>); a model's responses are the
           <code>*_spike_counts.parquet</code> files (KCs × odors, one per condition) there or in folders under it, found by its <code>tag</code> or
           <code>variant</code> in their names. Deleting one here forgets it, and touches nothing on tensor.</p>
         <div id="admin-models-list"></div>
+        <h3 class="subhead">Baseline models</h3>
+        <p class="muted small">Shown first in the Models tab, in a table of their own (with the parameters of their <code>params.csv</code>
+          that they have), which loads before the rest. Each is kept by its experiment's folder on tensor, its tag (or variant) and base, so it
+          is found again if rows are added before it, or its folder is deleted here and added again.</p>
+        <div id="admin-baselines-list"></div>
+        <div class="baseline-pick">
+          <label class="field"><span>Find a model <span class="muted">(its experiment, tag or base)</span></span>
+            <input type="search" id="admin-baseline-find" spellcheck="false" autocomplete="off" placeholder="e.g. bouton_base"></label>
+          <label class="field"><span>Model</span><select id="admin-baseline-pick"></select></label>
+          <button type="button" class="btn" id="admin-baseline-add">Make it a baseline</button>
+        </div>
+        <div id="admin-baseline-result" aria-live="polite"></div>
         <h3 class="subhead" id="model-form-head">Add a folder</h3>
         <label class="field imp-tensor"><span>Choose a folder on tensor <span class="muted">(its path from the top of tensor)</span></span>
           <input id="model-path" data-tensor-path spellcheck="false" autocomplete="off" placeholder="e.g. Tom/claude_kc_remapping/data/model_outputs"><span class="path-msg" id="model-path-msg" aria-live="polite"></span></label>
@@ -1087,15 +1100,26 @@ try {
     <div class="models-page">
       <div class="page-head">
         <h1>Models</h1>
-        <p class="lede">Models of KCs' responses to odors: each a row of the table below, by its parameters (its experiment's <code>params.csv</code>
+        <p class="lede">Models of KCs' responses to odors: each a row of the tables below, by its parameters (its experiment's <code>params.csv</code>
           row, and the keys of the <code>provenance.json</code> beside it), read from the folders of model data on tensor added in the
           <a href="#admin">Admin tab</a>. Click a parameter to sort by it. Open a run of a model (its condition: <i>on</i>, <i>acute_off</i>, …) to see its
           KCs' spike counts to each odor, and to compare them with datasets.</p>
+      </div>
+      <div class="models-loading" id="models-loading" hidden><progress class="progress" aria-label="Loading the models"></progress>
+        <span class="muted small" id="models-loading-what" aria-live="polite"></span></div>
+      <div class="step" id="models-base-step" hidden>
+        <div class="step-head"><h2>Baseline models <span class="muted" id="models-base-count"></span></h2></div>
+        <p class="muted small">Chosen in the <a href="#admin">Admin tab</a> (under <i>Model data</i>), with the parameters of their
+          <code>params.csv</code> that they have. They are in the table of every model too.</p>
+        <div id="models-base-status"></div>
+        <div id="models-base-table" class="models-table-wrap models-base-wrap"></div>
       </div>
       <div id="models-status" aria-live="polite"></div>
       <div class="step" id="models-table-step" hidden>
         <div class="step-head"><h2>Every model <span class="muted" id="models-count"></span></h2></div>
         <div class="actions models-tools">
+          <input type="search" id="models-find" class="models-find" placeholder="Find models: any value shown" aria-label="Find models: any value shown" spellcheck="false" autocomplete="off">
+          <label class="check" title="Parameters are the columns of the params.csv files (and the keys of their provenance.json of the same names, which an experiment sets for all its models); its other keys are what made the models (script, commits, notes, …) and the settings of each"><input type="checkbox" id="models-all-keys"> Also provenance.json's other keys <span class="muted" id="models-all-n"></span></label>
           <label class="check"><input type="checkbox" id="models-hide-same"> Hide parameters the same for every model that has them</label>
           <span class="muted small" id="models-shown"></span>
         </div>

@@ -16,7 +16,8 @@ from tests.test_tensor import call, main, post, root  # noqa: F401 (fixtures)
 
 ODORS = ["2h @ -3", "eb @ -3", "nope @ -2", "pa @ -3"]
 PROVENANCE = {"generated": "2026-11-05T03:11:26+00:00", "script": "E1.py", "claw_thr": 70.0, "inhadd": [1, 2], "empty": {},
-              "base": {"n_spikes_for_response": 2, "prat_claws": True}}
+              "base": {"n_spikes_for_response": 2, "prat_claws": True},
+              "runs": {"k0": {"seconds": 5}, "k0_x": {"seconds": 7, "host": "hal"}, "note": "x"}}  # (each model's, by its tag)
 
 
 def counts(n_kcs: int, transposed: bool = False, types: bool = True) -> pd.DataFrame:
@@ -74,7 +75,8 @@ def test_values():
         [None, True, False, 6, -2, 0.05, 1000.0, "nan", "inf", "k0"]
     assert model_data.flatten(PROVENANCE) == {
         "generated": PROVENANCE["generated"], "script": "E1.py", "claw_thr": 70.0, "inhadd": "[1, 2]", "empty": "{}",
-        "base->n_spikes_for_response": 2, "base->prat_claws": True}
+        "base->n_spikes_for_response": 2, "base->prat_claws": True, "runs->k0->seconds": 5, "runs->k0_x->seconds": 7,
+        "runs->k0_x->host": "hal", "runs->note": "x"}
     assert model_data.parse_list(" a, b ,,a,c ") == ["a", "b", "c"]
 
 
@@ -96,6 +98,12 @@ def test_scan(outputs):
     assert m[0]["params"] == {"source_table": "s.csv", "tag": "k0", "variant": "k0", "base": "claw", "n_kcs": 6, "claw_thr": None,
                               "rate_on": 0.05, "seed": 1}
     assert m[2]["params"]["rate_on"] == "nan" and m[3]["params"]["seed"] is True
+    # provenance.json's keys under a model's name: of it alone (named with * for it), not of all its experiment's models
+    assert [x["own"] for x in m] == [{"runs->*->seconds": 5}, {"runs->*->seconds": 5}, {"runs->*->seconds": 7, "runs->*->host": "hal"}, {},
+                                     {"bases->*->n_spikes_for_response": 3}]
+    e1, e2 = s["experiments"]
+    assert "runs->note" in e1["shared"] and not any(k.startswith("runs->k0") for k in e1["shared"]) and "runs->k0->seconds" in e1["flat"]
+    assert e1["keys"][-2:] == ["runs->*->seconds", "runs->*->host"] and e2["shared"] == {"generated": "2026-11-04T00:00:00+00:00", "script": "E2.py"}
     assert [x["n_spikes"] for x in m] == [{"value": 2, "from": "base->n_spikes_for_response in provenance.json"}] * 4 + [
         {"value": 3, "from": "bases->bouton->n_spikes_for_response in provenance.json"}]
     # made again only when its files change
@@ -116,6 +124,7 @@ def test_columns(outputs):
     # those in more files first, ties in the order they first come (params.csv's columns, then provenance.json's keys)
     assert middle[:2] == ["claw_thr", "script"]  # (in 2 files each; base and tag placed already)
     assert middle.index("source_table") < middle.index("seed") < middle.index("inhadd") < middle.index("base->n_spikes_for_response")
+    assert "runs->*->seconds" in middle and "bases->*->n_spikes_for_response" in middle and "runs->k0->seconds" not in middle
 
 
 def test_read_run(outputs, odor_table):
@@ -151,6 +160,7 @@ def test_api(main, outputs, odor_table):  # noqa: F811
     assert set(out["experiments"]) == {f"{sid}/E1_apl", f"{sid}/E2_gain"}
     e1 = out["experiments"][f"{sid}/E1_apl"]
     assert e1["flat"]["claw_thr"] == 70.0 and "claw_thr" in e1["params"]  # (a row's own value over its experiment's: in the browser)
+    assert "runs->k0->seconds" not in e1["flat"] and out["models"][2]["own"] == {"runs->*->seconds": 7, "runs->*->host": "hal"}
     run_id = out["models"][0]["runs"][0]["id"]
     assert run_id == "tom/model_outputs/E1_apl/claw_sp0.05_k0_on_spike_counts.parquet"
     assert out["unmatched"] == ["tom/model_outputs/E1_apl/probe/k0_on_spike_counts.parquet", "tom/model_outputs/stray_on_spike_counts.parquet"]
@@ -171,6 +181,44 @@ def test_api(main, outputs, odor_table):  # noqa: F811
     assert call(main.admin_models_delete, path_params={"id": sid})[1] == {"deleted": True}
     assert call(main.admin_models_delete, path_params={"id": sid})[0] == 404
     assert call(main.models_list)[1]["sources"] == [] and (outputs / "E1_apl/params.csv").is_file()
+
+
+def test_baselines(main, outputs):  # noqa: F811
+    """Models chosen as baselines: kept by their experiment's folder on tensor, name, base and row; listed alone, as /api/models lists them."""
+    assert call(main.models_baselines) == (200, {"baselines": [], "experiments": {}, "models": [], "columns": []})
+    sid = call(main.admin_models_add, body={"path": "tom/model_outputs"})[1]["id"]
+    for body, want in [({}, 400), ({"experiment": f"{sid}/E1_apl", "row": True}, 400), ({"experiment": f"{sid + 1}/E1_apl", "row": 0}, 404),
+                       ({"experiment": f"{sid}/E1_apl", "row": 9}, 404), ({"experiment": f"{sid}/nope", "row": 0}, 404)]:
+        assert call(main.admin_models_baseline_add, body=body)[0] == want, body
+    status, b = call(main.admin_models_baseline_add, body={"experiment": f"{sid}/E1_apl", "row": 1})  # (k0 of claw-dynamics)
+    assert status == 200 and {k: b[k] for k in ("experiment", "name", "base", "row")} == {
+        "experiment": "tom/model_outputs/E1_apl", "name": "k0", "base": "claw-dynamics", "row": 1}
+    assert call(main.admin_models_baseline_add, body={"experiment": f"{sid}/E1_apl", "row": 1})[0] == 409
+    assert call(main.admin_models_baseline_add, body={"experiment": f"{sid}/E2_gain", "row": 0})[0] == 200
+    status, out = call(main.models_baselines)
+    listed = call(main.models_list)[1]
+    assert status == 200 and [x["ok"] for x in out["baselines"]] == [True, True] and [x["model"] for x in out["baselines"]] == [0, 1]
+    assert [m["experiment"] for m in out["models"]] == [f"{sid}/E1_apl", f"{sid}/E2_gain"]
+    assert {k: v for k, v in out["models"][0].items() if k != "baseline"} == listed["models"][1]  # (as /api/models has it)
+    assert out["experiments"][f"{sid}/E1_apl"] == listed["experiments"][f"{sid}/E1_apl"]
+    assert out["columns"][:2] == ["generated", "base"] and "wAPLKC" in out["columns"] and "n_kcs" not in out["columns"]
+    # found again after rows are added before it (by its name and base), and after its folder is deleted and added again
+    p = outputs / "E1_apl/params.csv"
+    df = pd.read_csv(p, dtype=str, keep_default_na=False)
+    pd.concat([df.iloc[[0]].assign(tag="new", variant="new"), df]).to_csv(p, index=False)
+    assert call(main.models_baselines)[1]["models"][0]["params"]["base"] == "claw-dynamics"
+    call(main.admin_models_delete, path_params={"id": sid})
+    gone = call(main.models_baselines)[1]
+    assert [x["ok"] for x in gone["baselines"]] == [False, False] and "not added" in gone["baselines"][0]["error"] and gone["models"] == []
+    sid = call(main.admin_models_add, body={"path": "tom/model_outputs"})[1]["id"]
+    out = call(main.models_baselines)[1]
+    assert [m["experiment"] for m in out["models"]] == [f"{sid}/E1_apl", f"{sid}/E2_gain"]
+    p.write_text("tag,base\nother,claw\n")
+    out = call(main.models_baselines)[1]
+    assert "no model k0 in its params.csv" in out["baselines"][0]["error"] and out["baselines"][1]["ok"]
+    assert call(main.admin_models_baseline_delete, path_params={"id": b["id"]}) == (200, {"deleted": True})
+    assert call(main.admin_models_baseline_delete, path_params={"id": b["id"]})[0] == 404
+    assert len(call(main.models_baselines)[1]["baselines"]) == 1
 
 
 def test_download(main, outputs, odor_table, tmp_path, monkeypatch):  # noqa: F811

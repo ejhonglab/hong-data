@@ -403,6 +403,20 @@ button.link { background: none; border: 0; padding: 0; color: var(--accent); tex
 .models-table td { white-space: nowrap; max-width: 16em; overflow: hidden; text-overflow: ellipsis; }
 .models-table th:first-child, .models-table td.model-runs { position: sticky; left: 0; background: var(--panel); z-index: 1; padding: 4px 8px; }
 .models-table th:first-child { z-index: 3; }
+.models-table .th-plain { display: block; padding: 6px 8px; }
+.models-table th .th-sort, .models-table .th-plain { overflow: hidden; text-overflow: ellipsis; }
+.models-virtual { table-layout: fixed; min-width: 0; }
+.models-virtual td, .models-virtual td.model-runs { max-width: none; min-width: 0; }
+.models-virtual tr.pad td { padding: 0; border: 0; }
+.models-base-wrap { max-height: 40vh; }
+.models-loading { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; }
+.models-loading[hidden] { display: none; }
+.models-tools { flex-wrap: wrap; }
+.models-tools .models-find { width: 18em; flex: none; }
+.models-none { margin: 10px 12px; }
+.baseline-pick { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin: 8px 0; }
+.baseline-pick .field { margin: 0; }
+.baseline-pick select { max-width: 40em; }
 .models-table td.model-runs { white-space: normal; min-width: 12em; max-width: 16em; box-shadow: 1px 0 0 var(--rule); }
 .models-table td.model-runs .btn { margin: 1px 4px 1px 0; }
 .models-table tr.hl td.model-runs { background: var(--accent-soft); }

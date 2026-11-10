@@ -7,7 +7,9 @@ parameters (``tag`` and ``variant`` naming it, ``base`` the model it varies), an
 ``provenance.json`` (what made them: ``generated``, when; the script, its commits, and the
 settings its models share). Each key of that is a parameter of each of its models too,
 nested ones named by their path (``base->n_spikes_for_response``), a list as its JSON; a
-parameter in both is the row's (its own, even if empty, over its experiment's). A model's
+parameter in both is the row's (its own, even if empty, over its experiment's). A nested key
+under one of its models' names (its tag, variant or base: ``runs-><tag>->seconds``) is of
+that model alone, named with `STAR` for the name (``runs->*->seconds``: `own_params`). A model's
 responses are its ``*_spike_counts.parquet`` files, KCs × odors, one per condition (``on``,
 ``acute_off``, ...), in its experiment's folder or a folder under it (not one with a
 params.csv or provenance.json of its own, which are of other models): found by the model's
@@ -20,6 +22,9 @@ those a folder is added with to put first, then the others, those in more of the
 (ties in the order they first come), then those to put last; those it is added with to hide,
 not at all. Folders are scanned again whenever their files change (`scan`, by their sizes and
 times), so models added to them are shown as soon as the tab is opened again.
+
+Models chosen in the Admin tab are baselines (`add_baseline`; the ``model_baselines`` table), shown
+first in their own table (`baseline_listing`, which scans only their experiments' folders).
 """
 from __future__ import annotations
 
@@ -46,6 +51,7 @@ PROVENANCE = "provenance.json"
 SUFFIX = "_spike_counts.parquet"
 GENERATED = "generated"  # provenance.json's key of when its models were made: the table's first column
 SEP = "->"  # between the keys of a nested parameter's path
+STAR = "*"  # in the path of a parameter of one model alone (`own_params`), for its name
 # the column lists a folder is added with, by default (comma-separated)
 DEFAULTS = {"hidden": "n_kcs,n_glomeruli", "first": "base", "last": "tag,variant,rate_on,rate_off,source_table"}
 LISTS = tuple(DEFAULTS)
@@ -166,6 +172,27 @@ def flatten(d: dict, prefix: str = "") -> dict:
     return out
 
 
+def own_params(flat: dict, names: set[str], model: dict) -> tuple[dict, set[str]]:
+    """Of an experiment's provenance.json parameters, those of one model alone: nested keys under
+    a name of the model (its tag, variant or base; of those in one place, the first of them), with
+    `STAR` in its place (``runs-><tag>->seconds`` as ``runs->*->seconds``). And the keys
+    under any of `names` (those of its experiment's models): not its experiment's to show for all."""
+    mine = [str(model[k]) for k in ("tag", "variant", "base") if model.get(k) is not None]
+    out, named = {}, set()
+    for key, v in flat.items():
+        parts = key.split(SEP)
+        i = next((i for i in range(1, len(parts)) if parts[i] in names), None)
+        if i is None:
+            continue
+        named.add(key)
+        if parts[i] in mine:
+            star = SEP.join([*parts[:i], STAR, *parts[i + 1:]])
+            rank = mine.index(parts[i])
+            if star not in out or rank < out[star][0]:
+                out[star] = (rank, v)
+    return {k: v for k, (_, v) in out.items()}, named
+
+
 def natural(s: str) -> list:
     """A sort key of text with its numbers in their order (E2 before E10)."""
     return [int(t) if t.isdigit() else t.casefold() for t in re.split(r"(\d+)", s)]
@@ -198,8 +225,10 @@ def scan(folder: Path) -> dict:
     Returns:
         dict with ``experiments`` (``key``: its folder, from the one scanned ('' for it); ``params``:
         params.csv's columns; ``provenance``: provenance.json as it is, or None; ``flat``: it as
-        parameters; ``error``: why one of them could not be read, or None), ``models`` (``experiment``,
-        ``row`` (its index in params.csv), ``params`` (its row, a value per column), ``runs``
+        parameters; ``shared``: those of all its models (not `own_params`); ``keys``: those shown
+        (`own_params`' named so); ``error``: why one of them could not be read, or None), ``models``
+        (``experiment``, ``row`` (its index in params.csv), ``params`` (its row, a value per
+        column), ``own`` (provenance.json's parameters of it alone, see `own_params`), ``runs``
         (``file`` (from the folder scanned), ``label`` (its condition, after the folder under its
         experiment's it is in, if any), ``prefix`` (what its name has before the model's)),
         ``n_spikes`` ({``value``, ``from``}, or None: `n_spikes_for_response`)), ``keys``
@@ -251,7 +280,7 @@ def _scan(folder: Path, files: list[str]) -> dict:
                 runs_of.setdefault(e, []).append(f)
     for key in exp_dirs:
         d = folder / key
-        exp = {"key": key, "params": [], "provenance": None, "flat": {}, "error": None}
+        exp = {"key": key, "params": [], "provenance": None, "flat": {}, "shared": {}, "keys": [], "error": None}
         rows = []
         try:
             with open(d / PARAMS, newline="", encoding="utf-8-sig") as fh:
@@ -269,11 +298,20 @@ def _scan(folder: Path, files: list[str]) -> dict:
                 exp["flat"] = flatten(exp["provenance"])
             except (OSError, UnicodeDecodeError, ValueError) as e:
                 exp["provenance"], exp["error"] = None, f"{PROVENANCE} could not be read: {e}"
-            seen(exp["flat"])
+        names = {str(r[k]) for r in rows for k in ("tag", "variant", "base") if r.get(k) is not None}
+        named, owns = set(), []
+        for r in rows:
+            mine, under = own_params(exp["flat"], names, r)
+            owns.append(mine)
+            named |= under
+        exp["shared"] = {k: v for k, v in exp["flat"].items() if k not in named}
+        exp["keys"] = [*exp["shared"], *dict.fromkeys(k for o in owns for k in o)]
+        if exp["provenance"] is not None:
+            seen(exp["keys"])
         experiments.append(exp)
         first = len(models)
         for i, r in enumerate(rows):
-            models.append({"experiment": key, "row": i, "params": r, "runs": [], "n_spikes": _n_spikes(r, exp)})
+            models.append({"experiment": key, "row": i, "params": r, "own": owns[i], "runs": [], "n_spikes": _n_spikes(r, exp)})
         for f in runs_of.get(key, []):
             hits = _match(f, key, models[first:])
             if not hits:
@@ -284,7 +322,7 @@ def _scan(folder: Path, files: list[str]) -> dict:
         m["runs"].sort(key=lambda r: (r["label"].count("/"), r["label"] not in ("on", ""), r["label"]))
     order = {}
     for e in experiments:
-        for k in [*e["params"], *e["flat"]]:
+        for k in [*e["params"], *e["keys"]]:
             order.setdefault(k, len(order))
     keys = [{"name": k, "files": counts[k]} for k in sorted(order, key=order.get)]
     return {"experiments": experiments, "models": models, "keys": keys, "unmatched": sorted(unmatched)}
@@ -359,9 +397,10 @@ def listing(db, root: Path) -> dict:
     Returns:
         dict with ``sources`` (as `sources`, with ``ok``, ``error`` and the ``scan`` summary),
         ``columns`` (`columns`, of every folder's keys: their lists joined), ``experiments`` (key
-        ``<source id>/<folder>`` -> ``source``, ``folder``, ``params``, ``flat``, ``error``),
-        ``models`` (as `scan`'s, ``experiment`` that key, each run's ``id`` its file's path on
-        tensor, from its top), and ``unmatched`` (paths on tensor too).
+        ``<source id>/<folder>`` -> ``source``, ``folder``, ``params``, ``flat`` (`scan`'s
+        ``shared``: the parameters of all its models), ``error``), ``models`` (as `scan`'s,
+        ``experiment`` that key, each run's ``id`` its file's path on tensor, from its top), and
+        ``unmatched`` (paths on tensor too).
     """
     out = {"sources": [], "experiments": {}, "models": [], "unmatched": []}
     keys: dict[str, int] = {}
@@ -383,14 +422,146 @@ def listing(db, root: Path) -> dict:
         for k in s["keys"]:
             keys[k["name"]] = keys.get(k["name"], 0) + k["files"]
         for e in s["experiments"]:
-            out["experiments"][f"{src['id']}/{e['key']}"] = {"source": src["id"], "folder": e["key"], "params": e["params"],
-                                                            "flat": e["flat"], "error": e["error"]}
+            out["experiments"][f"{src['id']}/{e['key']}"] = _listed_experiment(src, e["key"], e)
         for m in s["models"]:
-            out["models"].append({**m, "experiment": f"{src['id']}/{m['experiment']}",
-                                  "runs": [{**r, "id": f"{c['path']}/{r['file']}"} for r in m["runs"]]})
+            out["models"].append(_listed_model(m, f"{src['id']}/{m['experiment']}", c["path"]))
         out["unmatched"] += [f"{c['path']}/{f}" for f in s["unmatched"]]
-    out["columns"] = columns([{"name": k, "files": n} for k, n in keys.items()],
-                             set(lists["hidden"]), list(dict.fromkeys(lists["first"])), list(dict.fromkeys(lists["last"])))
+    out["columns"] = _columns(keys, lists)
+    return out
+
+
+def _listed_experiment(src: dict, folder: str, e: dict) -> dict:
+    return {"source": src["id"], "folder": folder, "params": e["params"], "flat": e["shared"], "error": e["error"]}
+
+
+def _listed_model(m: dict, key: str, path: str, sub: str = "") -> dict:
+    """A model of `scan`'s as listed: of the experiment `key`, its runs' ids their files' paths
+    on tensor (`path` that of the folder scanned, `sub` of it in the folder added)."""
+    return {**m, "experiment": key, "runs": [{**r, "id": f"{path}/{r['file']}", "file": f"{sub}/{r['file']}" if sub else r["file"]}
+                                             for r in m["runs"]]}
+
+
+def _columns(keys: dict[str, int], lists: dict[str, list[str]]) -> list[str]:
+    return columns([{"name": k, "files": n} for k, n in keys.items()],
+                   set(lists["hidden"]), list(dict.fromkeys(lists["first"])), list(dict.fromkeys(lists["last"])))
+
+
+# ------------------------------------------------------------------ baselines
+def model_name(params: dict) -> Optional[str]:
+    """What a model is called in its params.csv: its tag, else its variant (else None)."""
+    v = next((params[k] for k in ("tag", "variant") if params.get(k) is not None), None)
+    return None if v is None else str(v)
+
+
+def _baseline(row) -> dict:
+    return {k: row[k] for k in ("id", "experiment", "name", "base", "row", "created_at")}
+
+
+def baselines(db) -> list[dict]:
+    """The models chosen as baselines, in the order chosen: ``id``, ``experiment`` (its folder on
+    tensor, from its top), ``name`` (`model_name`), ``base``, ``row`` (in its params.csv, when
+    chosen) and ``created_at``."""
+    with db.connect() as con:
+        return [_baseline(r) for r in con.execute("SELECT * FROM model_baselines ORDER BY id")]
+
+
+def _source_of(path: str, srcs: list[dict]) -> Optional[dict]:
+    """The folder added that a path on tensor is in (or is), the nearest it."""
+    return max((s for s in srcs if path == s["path"] or path.startswith(s["path"] + "/")), key=lambda s: len(s["path"]), default=None)
+
+
+def _base(params: dict) -> Optional[str]:
+    return None if params.get("base") is None else str(params["base"])
+
+
+def _find(models: list[dict], name: Optional[str], base: Optional[str], row: int) -> Optional[dict]:
+    """Of an experiment's models, the one named `name`, of `base` if one is (as models of two
+    bases may share a tag), and of those, the one in `row`, else the first; of no name, the one
+    in `row`, if it has none."""
+    named = [m for m in models if model_name(m["params"]) == name]
+    named = [m for m in named if _base(m["params"]) == base] or named
+    return next((m for m in named if m["row"] == row), named[0] if name is not None and named else None)
+
+
+def add_baseline(db, body: dict, root: Path) -> tuple[int, dict]:
+    """Choose a model as a baseline ({"experiment": its ``<source id>/<folder>`` as `listing`
+    keys it, "row": its row}). It is kept by its experiment's folder on tensor, its name, base
+    (models of two bases may share a name) and row (`baselines`), so it is found again if its
+    folder of model data is added again, or rows are added before it. Returns (HTTP status, the
+    baseline as in `baselines`; or {"error"})."""
+    key, row = str(body.get("experiment") or ""), body.get("row")
+    sid, _, folder = key.partition("/")
+    if not sid.isdigit() or not isinstance(row, int) or isinstance(row, bool):
+        return 400, {"error": 'expected {"experiment": "<folder id>/<its folder>", "row": <its row>}'}
+    src = next((s for s in sources(db) if s["id"] == int(sid)), None)
+    if src is None:
+        return 404, {"error": "no such folder of model data"}
+    c = tensor.check_dir(src["path"], root)
+    if not c["ok"]:
+        return 400, {"error": f"{src['path']} cannot be read: {c['error']}"}
+    try:
+        s = scan(root / c["path"])
+    except ScanError as e:
+        return 400, {"error": str(e)}
+    m = next((m for m in s["models"] if m["experiment"] == folder and m["row"] == row), None)
+    if m is None:
+        return 404, {"error": f"no model in row {row + 1} of the {PARAMS} of {folder or src['path']}"}
+    path, name, base = f"{c['path']}/{folder}" if folder else c["path"], model_name(m["params"]), _base(m["params"])
+    mates = [x for x in s["models"] if x["experiment"] == folder]
+    if any(_find(mates, b["name"], b["base"], b["row"]) is m for b in baselines(db) if b["experiment"] == path):
+        return 409, {"error": f"{name or f'row {row + 1}'} of {path} is a baseline already"}
+    with db.connect() as con:
+        cur = con.execute("INSERT INTO model_baselines (experiment, name, base, row, created_at) VALUES (?, ?, ?, ?, ?)",
+                          (path, name, base, row, now()))
+        return 200, _baseline(con.execute("SELECT * FROM model_baselines WHERE id = ?", (cur.lastrowid,)).fetchone())
+
+
+def delete_baseline(db, baseline_id: int) -> bool:
+    """A model no longer a baseline (it is still listed with the others). False if it was not one."""
+    with db.connect() as con:
+        return con.execute("DELETE FROM model_baselines WHERE id = ?", (baseline_id,)).rowcount > 0
+
+
+def baseline_listing(db, root: Path) -> dict:
+    """The baselines' table, as `listing`'s of them alone, scanning only their experiments' folders
+    (so it is quick, to be shown before the rest).
+
+    Returns:
+        dict with ``baselines`` (as `baselines`, with ``ok``, ``error`` (why it is not shown) and
+        ``model``, its index in ``models``), ``experiments``, ``models`` (each with ``baseline``,
+        its id) and ``columns``, as `listing`'s.
+    """
+    out = {"baselines": [], "experiments": {}, "models": []}
+    srcs, keys, lists = sources(db), {}, {k: [] for k in LISTS}
+    for b in baselines(db):
+        entry = {**b, "ok": False, "error": None, "model": None}
+        out["baselines"].append(entry)
+        src = _source_of(b["experiment"], srcs)
+        c = tensor.check_dir(b["experiment"], root)
+        if src is None or not c["ok"]:
+            entry["error"] = "its folder of model data is not added (any more)" if src is None else c["error"]
+            continue
+        try:
+            s = scan(root / c["path"])
+        except ScanError as e:
+            entry["error"] = str(e)
+            continue
+        e = next((e for e in s["experiments"] if e["key"] == ""), None)
+        m = _find([m for m in s["models"] if m["experiment"] == ""], b["name"], b["base"], b["row"]) if e else None
+        if m is None:
+            which = b["name"] or "in row {}".format(b["row"] + 1)
+            entry["error"] = f"no {PARAMS} in it any more" if e is None else f"no model {which} in its {PARAMS} any more"
+            continue
+        folder = b["experiment"][len(src["path"]) + 1:]
+        key = f"{src['id']}/{folder}"
+        out["experiments"][key] = _listed_experiment(src, folder, e)
+        out["models"].append({**_listed_model(m, key, c["path"], folder), "baseline": b["id"]})
+        entry.update(ok=True, model=len(out["models"]) - 1)
+        for k in [*e["params"], *e["keys"]]:
+            keys[k] = keys.get(k, 0) + 1
+        for k in LISTS:
+            lists[k] += parse_list(src[k])
+    out["columns"] = _columns(keys, lists)
     return out
 
 

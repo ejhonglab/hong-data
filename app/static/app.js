@@ -4671,6 +4671,12 @@ class AdminPage {
       const d = e.target.closest('[data-delete-model]');
       if (d) this.deleteModels(+d.dataset.deleteModel);
     });
+    $('#admin-baseline-find').addEventListener('input', () => this._pickBaselines());
+    $('#admin-baseline-add').addEventListener('click', () => this.addBaseline());
+    $('#admin-baselines-list').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-unbase]');
+      if (b) this.removeBaseline(+b.dataset.unbase);
+    });
     $('#admin-ds-filter').addEventListener('input', () => this._showDatasets());
     $('#admin-ds-list').addEventListener('click', (e) => {
       const b = e.target.closest('[data-delete]');
@@ -5401,13 +5407,16 @@ class AdminPage {
     by?.load();
   }
 
-  // the folders of model data added, each with what it has (as the Models tab reads it)
+  // the folders of model data added, each with what it has (as the Models tab reads it); the baselines, and the models to choose them from
   async loadModels() {
     const box = $('#admin-models-list');
-    try { this.modelSources = (await api('/api/models')).sources; } catch (e) {
+    this.loadBaselines();
+    try { this.modelListing = await api('/api/models'); } catch (e) {
       box.replaceChildren(msgBox('error', `Could not load the model data: ${esc(e.message)}`));
       return;
     }
+    this.modelSources = this.modelListing.sources;
+    this._pickBaselines();
     if (!this.modelSources.length) { box.innerHTML = '<p class="muted">None added yet.</p>'; return; }
     const what = (m) => {
       if (!m.ok) return `<span class="bad">Cannot be read: ${esc(m.error)}</span>`;
@@ -5422,6 +5431,63 @@ class AdminPage {
         <td>${what(m)}</td><td class="small">${lists(m)}</td>
         <td><button type="button" class="btn small" data-edit-model="${m.id}">Change…</button>
           <button type="button" class="btn small" data-delete-model="${m.id}">Delete…</button></td></tr>`).join('')}</tbody></table>`;
+  }
+
+  // the models chosen as baselines (shown first in the Models tab), each with whether it is found
+  async loadBaselines() {
+    const box = $('#admin-baselines-list');
+    let b;
+    try { b = await api('/api/models/baselines'); } catch (e) {
+      box.replaceChildren(msgBox('error', `Could not load the baselines: ${esc(e.message)}`));
+      return;
+    }
+    if (!b.baselines.length) { box.innerHTML = '<p class="muted small">None chosen yet.</p>'; return; }
+    box.innerHTML = `<table class="odor-table"><thead><tr><th>Experiment</th><th>Model</th><th>Shown</th><th></th></tr></thead><tbody>
+      ${b.baselines.map((x) => `<tr><td><code>${esc(x.experiment)}</code></td>
+        <td><code>${esc(x.name ?? `row ${x.row + 1}`)}</code>${x.base != null ? ` <span class="muted small">base ${esc(x.base)}</span>` : ''}</td>
+        <td>${x.ok ? `yes <span class="muted small">(chosen ${esc(fmtWhen(x.created_at))})</span>` : `<span class="bad">no: ${esc(x.error)}</span>`}</td>
+        <td><button type="button" class="btn small" data-unbase="${x.id}">Remove</button></td></tr>`).join('')}</tbody></table>`;
+  }
+
+  // the models to choose a baseline from, by experiment: those with what is typed in their experiment's folder, name or base
+  _pickBaselines() {
+    const d = this.modelListing, sel = $('#admin-baseline-pick');
+    if (!d) return;
+    const q = $('#admin-baseline-find').value.trim().toLowerCase(), groups = new Map();
+    d.models.forEach((m) => {
+      const e = d.experiments[m.experiment], name = m.params.tag ?? m.params.variant;
+      const label = `${name ?? `row ${m.row + 1}`}${m.params.base != null ? ` (base ${m.params.base})` : ''}${m.runs.length ? '' : ', no runs'}`;
+      if (q && !`${e.folder} ${label}`.toLowerCase().includes(q)) return;
+      if (!groups.has(m.experiment)) groups.set(m.experiment, []);
+      groups.get(m.experiment).push(`<option value="${esc(`${m.experiment}|${m.row}`)}">${esc(label)} · row ${m.row + 1}</option>`);
+    });
+    sel.innerHTML = groups.size ? [...groups].map(([k, opts]) => `<optgroup label="${esc(d.experiments[k].folder || '(top)')}">${opts.join('')}</optgroup>`).join('')
+      : `<option value="">${d.models.length ? 'No model has that' : 'No models yet'}</option>`;
+    $('#admin-baseline-add').disabled = !groups.size;
+  }
+
+  async addBaseline() {
+    const v = $('#admin-baseline-pick').value, out = $('#admin-baseline-result');
+    if (!v) return;
+    const i = v.lastIndexOf('|');
+    try {
+      const b = await api('/api/admin/models/baselines', { method: 'POST', json: { experiment: v.slice(0, i), row: +v.slice(i + 1) } });
+      out.replaceChildren(msgBox('ok', `<code>${esc(b.name ?? `row ${b.row + 1}`)}</code> of <code>${esc(b.experiment)}</code> is a baseline: the
+        <a href="#models">Models tab</a> shows it first.`));
+    } catch (e) {
+      out.replaceChildren(msgBox('error', `Not made a baseline: ${esc(e.message)}`));
+    }
+    modelsPage.invalidate();
+    this.loadBaselines();
+  }
+
+  async removeBaseline(id) {
+    const out = $('#admin-baseline-result');
+    try { await api(`/api/admin/models/baselines/${id}`, { method: 'DELETE' }); } catch (e) {
+      out.replaceChildren(msgBox('error', `Not removed: ${esc(e.message)}`));
+    }
+    modelsPage.invalidate();
+    this.loadBaselines();
   }
 
   _modelBody() { return { hidden: $('#model-hidden').value, first: $('#model-first').value, last: $('#model-last').value }; }

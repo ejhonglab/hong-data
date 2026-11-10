@@ -39,8 +39,9 @@ expected, and nothing secret is entered. If a download or the page is blocked, s
 6. **Compare**: tick datasets to see them side by side, averaged, with how alike their
    odors are, and how that compares with chemical structure or reference data.
 7. **Models**: models of KCs (their outputs on tensor, added in the Admin tab), each by its
-   parameters, in a table sorted by any of them; open one to see its KCs' spike counts to
-   each odor, or compare them with datasets in the Compare tab.
+   parameters, in a table sorted by any of them (the baseline models first, in a table of
+   their own); open one to see its KCs' spike counts to each odor, or compare them with
+   datasets in the Compare tab.
 8. **Headspace calculator**: search for odors of the odor table to put in a mixture (or
    start from a panel's odors), give each a concentration (log10 v/v, as in your data),
    and calculate how much of each is in the air above it (in ppm, µg/L and other units).
@@ -593,12 +594,22 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   LOTUS's counts of organisms or papers always are; counts with some 0, such as LOTUS's,
   are on a log scale of 1 + each, so 0 is the lowest color and 1 apart from it.
 - **Models**: every model of the folders of model data added in the Admin tab (read where
-  they are on tensor each time the tab is opened, so models added to them since are listed),
-  a row each: an experiment's `params.csv` row, with the keys of the `provenance.json`
-  beside it as parameters too (nested ones by their path, as `base->n_spikes_for_response`;
-  where both have one, the row's), first when they were generated (its `generated`). Click
-  a parameter to sort by it (again: the other way), and tick *Hide parameters the same for
-  every model that has them* to see what differs. Each row's buttons open its runs, one per
+  they are on tensor each time the tab is opened, so models added to them since are listed:
+  there is nothing to import again after changing those files), a row each: an
+  experiment's `params.csv` row, with the keys of the `provenance.json` beside it as
+  parameters too (nested ones by their path, as `base->n_spikes_for_response`; where both
+  have one, the row's; those under one of its models' tag, variant or base, of that model
+  alone, as `runs->*->seconds`), first its experiment and when they were generated (its
+  `generated`). Shown are the parameters that are `params.csv` columns (and the
+  `provenance.json` keys of those names, an experiment's for all its models); tick *Also
+  provenance.json's other keys* for the rest (what made them, notes, each model's
+  settings: hundreds). The baseline models (chosen in the Admin tab) come first, in a table
+  of their own with the `params.csv` parameters they have, loaded before the rest. Click a
+  parameter to sort by it (again: the other way), type in *Find models* to list only those
+  with it in a value shown (or a run's name), and tick *Hide parameters the same for every
+  model that has them* to see what differs. Only the rows and columns in view are drawn, so
+  that hundreds of models by hundreds of parameters scroll as quickly as a few (and the
+  browser's own find sees only those). Each row's buttons open its runs, one per
   condition (`on`, `acute_off`, …): its `*_spike_counts.parquet` files, there or in a folder
   under it, found by its `tag` or `variant` in their names (models of two bases with one
   tag told apart by the base their names begin with). A run is shown below the table, its
@@ -837,7 +848,11 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     (`n_kcs,n_glomeruli` by default), those first, in order (`base`), and those last
     (`tag,variant,rate_on,rate_off,source_table`); the rest come between, those in more of
     the files first. *Change…* changes these lists after; *Delete…* forgets a folder
-    (nothing on tensor is touched).
+    (nothing on tensor is touched). *Baseline models*: models of them to show first in the
+    Models tab (*Find a model* narrows the list to choose from by its experiment, tag or
+    base), each kept by its experiment's folder, tag (or variant) and base, so it is found
+    again after rows are added before it or its folder is added again; *Remove* takes it
+    off (it is still in the table of every model).
   - *Delete datasets*: every dataset, newest upload first (with a filter), each with a
     Delete button that asks first. A deleted dataset is gone from the site at once; its
     files (as uploaded, with `metadata.json` holding every detail entered) are moved to
