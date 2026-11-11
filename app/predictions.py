@@ -25,6 +25,8 @@ import json
 import os
 import re
 import shutil
+import statistics
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -34,6 +36,7 @@ STATUSES = ("queued", "running", "done", "failed", "interrupted")
 ACTIVE = ("queued", "running")
 PROVENANCE = "provenance.json"
 AVERAGE = "average.tif"
+RECENT = 10  # the predictions done that one running is estimated from (the last ones, on its device)
 
 
 class Exists(Exception):
@@ -156,6 +159,21 @@ def interrupt_running(db) -> list[int]:
         con.execute("UPDATE predictions SET status = 'interrupted', finished_at = ?, error = ? WHERE status = 'running'",
                     (now(), "the fit worker stopped (restarted, or the server did) while it ran"))
     return ids
+
+
+def ends_at(db, p: dict, t: Optional[float] = None) -> Optional[str]:
+    """When prediction `p`, running, should end: its start, plus the median time the last
+    `RECENT` done on the same device (GPU or CPU) took. None without one, or once that is past."""
+    device = (p.get("progress") or {}).get("device")
+    took = [dt.datetime.fromisoformat(q["finished_at"]).timestamp() - dt.datetime.fromisoformat(q["started_at"]).timestamp()
+            for q in all_predictions(db)
+            if q["status"] == "done" and q["started_at"] and q["finished_at"] and (q["progress"] or {}).get("device") == device]
+    if not took or not p.get("started_at"):
+        return None
+    end = dt.datetime.fromisoformat(p["started_at"]).timestamp() + statistics.median(took[:RECENT])
+    if end < (time.time() if t is None else t):
+        return None
+    return dt.datetime.fromtimestamp(end).astimezone().isoformat(timespec="seconds")
 
 
 # --------------------------------------------------------------------- flies

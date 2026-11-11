@@ -83,6 +83,20 @@ between the frontend and the server. Using the app is described in
   could widen its own limits while running would not be limited. So that it writes
   nothing outside its data folder, temporary files go to `data/tmp/`, and SQLite keeps
   its temporary tables in memory.
+- **A full restart is asked of systemd on the server through a file, not done by the
+  site.** Rebuilding the images and making the containers again (`restart-olfdb`) needs
+  root, or Docker's socket, which is as much; given to the container, either would undo
+  every limit above. Instead the web server puts `data/restart-requested` in its data
+  folder, and a systemd path unit on the server (`deploy/olfdb-restart.path`) runs
+  `restart-olfdb` as root when it appears: the site can ask for that one thing, which
+  takes nothing from the request, and no other. The script installs the units itself
+  where they changed, so the site's own restart keeps them current too. It builds before
+  it stops anything, so a build that fails leaves the site up, to say so from
+  `data/restart.log`; the server takes back a request not taken within 5 s, so one
+  never lies there to restart the site later. A restart stops the jobs under way (the
+  worker's fits and predictions, and the web server's backups, imports and re-lookups),
+  so it is refused, listing them with when they should end, until asked again to stop
+  them.
 - **The files the server reads and writes in its own folder are recorded as it runs**
   (`app/filelog.py`), for the Admin tab's tree of them, rather than listed from what is
   there: a listing would miss the files deleted since (uploads being received, expired
@@ -1559,8 +1573,15 @@ GET    /api/admin/chemutils                 the chemutils installed, what was lo
                                             the last re-lookup
 POST   /api/admin/chemutils/relookup        {"props": [...]}: look up again (in the background,
                                             not from chemutils' cache) every value of these
-POST   /api/admin/restart                   the server stops, for Docker or systemd to start it
-                                            again (409 if neither would)
+POST   /api/admin/restart                   {} : the server stops, for Docker or systemd to start it
+                                            again (409 if neither would); {"full": true}: everything
+                                            rebuilt and restarted by restart-olfdb, asked of systemd
+                                            (409 if nothing takes the request); either 409 with
+                                            "jobs" (each "what", "started_at", "ends_at", "then") and
+                                            "queued" while jobs it would stop are under way, unless
+                                            "stop_jobs": true
+GET    /api/admin/restart                   the last full restart's output (data/restart.log): its
+                                            last "lines" (30), and "failed": not restarted
 DELETE /api/admin/datasets/{id}             the dataset deleted, its folder moved to
                                             data/deleted/<id>/ → {"files": where it went, "orphaned":
                                             its permalink, if any}

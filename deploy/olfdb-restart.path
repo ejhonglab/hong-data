@@ -1,0 +1,13 @@
+# Watches for the Admin tab asking for a full restart (as restart-olfdb does): the web server,
+# which may write only its data folder, puts this file there, for systemd to run
+# olfdb-restart.service. Installed, kept up to date and enabled by restart-olfdb itself
+# (DEPLOY.md, section 4).
+[Unit]
+Description=Watch for the odor response database's Admin tab asking for a full restart
+
+[Path]
+PathExists=/opt/olfdb/data/restart-requested
+Unit=olfdb-restart.service
+
+[Install]
+WantedBy=multi-user.target

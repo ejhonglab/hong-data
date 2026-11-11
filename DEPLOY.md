@@ -199,8 +199,10 @@ the commented-out line in `docker-compose.yml` (on tensor, the folder has to exi
 already), `docker compose up -d`, then add it in the Admin tab and restart from there. A
 folder only added in the Admin tab gets a warning there: not inside the container, or
 not writable (mounted read-only), with the line to add to `docker-compose.yml` (with
-the systemd unit: to the unit). Restarting from the Admin tab does not mount anything:
-`docker compose up -d` makes the container again with the new line.
+the systemd unit: to the unit). *Restart the server* in the Admin tab does not mount
+anything: `docker compose up -d` makes the container again with the new line (with the
+systemd unit of section 4: `restart-olfdb`, or the Admin tab's *Update and restart
+everything*).
 
 To add folders from the Admin tab alone later, mount a folder holding them once, e.g.
 `- /local/tensor-archive:/local/tensor-archive` (writable): any folder in it can then
@@ -220,9 +222,27 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now olfdb
 systemctl status olfdb     # "active (running)", and still a minute later
 journalctl -u olfdb -f
-# `restart-olfdb` for every user (any sudoer can run it): sudo systemctl restart olfdb
+# `restart-olfdb` for every user (any sudoer can run it), then run once (below)
 sudo ln -s /opt/olfdb/restart-olfdb /usr/local/bin/restart-olfdb
+restart-olfdb
 ```
+
+`restart-olfdb` restarts the site from the code in `/opt/olfdb`: it installs the units in
+`deploy/` (`olfdb.service`, `olfdb-restart.service` and `olfdb-restart.path`) where they
+differ from those in `/etc/systemd/system` (showing how, then `daemon-reload`), builds
+both images (the site stays up meanwhile, and is left as it was if that fails), then
+`sudo systemctl restart olfdb`, which makes both containers again from them. Run as
+root, it needs no `sudo`.
+
+`olfdb-restart.path` (enabled by `restart-olfdb` the first time) lets the Admin tab's
+*Update and restart everything* do the same: the web server, which may write only its
+data folder, puts `data/restart-requested` there, and systemd runs `restart-olfdb` as
+root, its output going to `data/restart.log`, which the Admin tab shows as it goes. The
+request says nothing but that, so the site can ask for this one thing and no other. The
+Admin tab first lists the jobs it would stop (fits and predictions running in the fit
+worker, a backup or an import under way), with when each started and should end, and
+asks before stopping them. If nothing takes the request within 5 s, the Admin tab takes
+it back and says so (`systemctl status olfdb-restart.path` says why).
 
 If it fails again and again, the unit gives up after 5 starts in 10 minutes, and
 `systemctl status olfdb` shows it as failed. `journalctl -u olfdb -n 100` says why
@@ -235,13 +255,13 @@ deploy a new version:
 
 ```bash
 cd /opt/olfdb && git pull        # or rsync the new files over
-restart-olfdb                    # rebuilds the images and recreates the containers
+restart-olfdb                    # or the Admin tab's Update and restart everything
 ```
 
 If you installed the unit, do not also run `docker compose up -d` by hand; use
-`systemctl start/stop/restart olfdb`. A restart from the Admin tab restarts the
-container as it is, without picking up new code. For a new version with a newer
-chemutils, see "Updating chemutils" in section 7.
+`restart-olfdb` or `systemctl start/stop olfdb`. The Admin tab's *Restart the server*
+restarts the web server's container as it is, without picking up new code. For a new
+version with a newer chemutils, see "Updating chemutils" in section 7.
 
 ## 5. Backups
 
@@ -324,7 +344,7 @@ compose logs worker` for the fit worker's; each fit's own log is in the tab, and
 
 The fit worker's al-diag-seg is installed from GitHub at the commit pinned in
 `requirements-alseg.txt`. Push the al-diag-seg commit, pin it there (in full), and
-restart (`sudo systemctl restart olfdb`): the worker's image is rebuilt with it, in
+restart (`restart-olfdb`, section 4): the worker's image is rebuilt with it, in
 seconds, as only that last layer changes. Its dependencies (PyTorch, Cellpose, ANTsPy)
 are in `requirements-worker.txt`, pinned, a layer of their own (several GB, a slow
 rebuild when changed): if a new al-diag-seg needs another, add it there, or the build
@@ -359,8 +379,8 @@ already looked up until it is looked up again. Each time:
    the same): `venv/bin/pip install --force-reinstall --no-deps "$(grep '^chemutils'
    requirements.txt)"`, then `venv/bin/pip install -r requirements.txt` for any new
    dependencies of it. Run the tests, and commit.
-4. **On the server**, as for any new version: `cd /opt/olfdb && git pull && sudo systemctl
-   restart olfdb`. The image is rebuilt from `requirements.txt` on, installing the new
+4. **On the server**, as for any new version: `cd /opt/olfdb && git pull && restart-olfdb`
+   (section 4). The image is rebuilt from `requirements.txt` on, installing the new
    chemutils (from github.com, as on the first build). Without Docker (section 8):
    `git pull`, the pip commands of step 3, then `sudo systemctl restart olfdb`.
 5. **In the Admin tab**, *Odor properties from chemutils* shows the commit installed.

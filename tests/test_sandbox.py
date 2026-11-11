@@ -1,16 +1,19 @@
 """Tests of the folders the server may read and write (Admin tab). Run with: python -m pytest tests/"""
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 import socket
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
 
-from app import config, odormeta, sandbox, tensor
+from app import backup, config, fits, odormeta, predictions, sandbox, tensor
 from tests.test_tensor import call, main, root  # noqa: F401 (fixtures)
 
 
@@ -137,6 +140,89 @@ def test_admin_api(main, root, tmp_path):  # noqa: F811
 
     status, r = call(main.admin_restart, body={})
     assert status == 409 and "by hand" in r["error"]
+
+
+def test_admin_restart_full(main, monkeypatch):  # noqa: F811
+    config.DATA_DIR.mkdir(parents=True)
+    monkeypatch.setattr(main, "RESTART_TAKEN_S", 0.3)
+    req, out = config.DATA_DIR / main.RESTART_REQUEST, config.DATA_DIR / main.RESTART_LOG
+    # nothing on the server takes the request (olfdb-restart.path not installed): taken back
+    status, r = call(main.admin_restart, body={"full": True})
+    assert status == 409 and "olfdb-restart.path" in r["error"] and not req.exists()
+
+    # taken, as olfdb-restart.service does; the last restart's log gone
+    out.write_text("restart-olfdb: not restarted: the build failed (above), so the site was left as it was\n")
+
+    def take():
+        while not req.exists():
+            time.sleep(0.01)
+        req.unlink()
+
+    taker = threading.Thread(target=take)
+    taker.start()
+    status, r = call(main.admin_restart, body={"full": True})
+    taker.join()
+    assert status == 200 and r["full"] and not req.exists()
+    assert call(main.admin_restart_log)[1] == {"lines": [], "failed": False}
+
+    out.write_text("Building the images (the site stays up meanwhile)...\n" + "".join(f"#{i} done\n" for i in range(40))
+                   + "restart-olfdb: not restarted: the build failed (above), so the site was left as it was\n")
+    r = call(main.admin_restart_log)[1]
+    assert r["failed"] and len(r["lines"]) == 30 and r["lines"][0] == "#11 done"
+    out.write_text("restart-olfdb: restarting: the site is back once its containers have started\n")
+    assert not call(main.admin_restart_log)[1]["failed"]
+
+
+def test_admin_restart_jobs(main, monkeypatch):  # noqa: F811
+    config.DATA_DIR.mkdir(parents=True)
+    monkeypatch.setattr(main, "_supervisor", lambda: "Docker")
+    monkeypatch.setattr(main, "_restart", lambda: None)
+    monkeypatch.setattr(main, "RESTART_TAKEN_S", 0.1)
+    assert call(main.admin_restart, body={})[0] == 200
+
+    f = fits.create(main.db, "Ann", None, fits.options({}))
+    fits.claim(main.db)
+    fits.create(main.db, "Bob", None, fits.options({}))
+    fly = {"dir": "/t/ann/analysis/2024-01-01/1", "raw_dir": None, "name": "2024-01-01_1"}
+    p, _ = predictions.create(main.db, f["id"], fly, "Cy", None)
+    predictions.claim(main.db)
+    predictions.update(main.db, p["id"], progress={"stage": "predict", "device": "CPU"})
+    # the web server alone: the worker's jobs go on
+    assert call(main.admin_restart, body={})[0] == 200
+
+    # everything: refused until told to stop them, saying what they are and when they should end
+    status, r = call(main.admin_restart, body={"full": True})
+    assert status == 409 and r["queued"] == 1
+    fit, pred = r["jobs"]
+    assert fit["what"] == f"Fit #{f['id']}, asked for by Ann" and fit["started_at"] and fit["ends_at"]
+    assert "interrupted" in fit["then"]
+    assert pred["what"] == f"Fit #{f['id']}'s model predicting 2024-01-01_1's ROIs, asked for by Cy"
+    assert pred["ends_at"] is None  # none done on the CPU to tell from
+    status, r = call(main.admin_restart, body={"full": True, "stop_jobs": True})
+    assert status == 409 and "olfdb-restart.path" in r["error"]  # (stopped by nothing here)
+
+    # a backup under way stops either
+    monkeypatch.setattr(backup, "JOB", {**backup.JOB, "running": True, "folder": "/b", "done": 1, "total": 4,
+                                        "started_at": (dt.datetime.now() - dt.timedelta(minutes=1)).isoformat(timespec="seconds")})
+    status, r = call(main.admin_restart, body={})
+    assert status == 409 and [j["what"] for j in r["jobs"]] == ["A backup to /b"] and r["queued"] == 0
+    ends = dt.datetime.fromisoformat(r["jobs"][0]["ends_at"])
+    assert dt.timedelta(minutes=2, seconds=50) < ends - dt.datetime.now().astimezone() < dt.timedelta(minutes=3, seconds=10)
+    assert call(main.admin_restart, body={"stop_jobs": True})[0] == 200
+
+
+def test_prediction_ends_at(main):  # noqa: F811
+    t = dt.datetime(2026, 1, 2, 12, 0).astimezone()
+    at = lambda minutes: (t + dt.timedelta(minutes=minutes)).isoformat()  # noqa: E731
+    for i, (device, start, end) in enumerate([("GPU", 0, 4), ("GPU", 10, 16), ("GPU", 20, 25), ("CPU", 0, 30)]):
+        p, _ = predictions.create(main.db, 1, {"dir": f"/f{i}", "raw_dir": None, "name": f"f{i}"}, "Ann", None)
+        predictions.update(main.db, p["id"], status="done", started_at=at(start), finished_at=at(end),
+                           progress={"stage": "done", "device": device})
+    running = {"started_at": at(60), "progress": {"stage": "predict", "device": "GPU"}}
+    assert predictions.ends_at(main.db, running, t=(t + dt.timedelta(minutes=61)).timestamp()) == at(65)
+    assert predictions.ends_at(main.db, {**running, "progress": {"device": "CPU"}}, t=t.timestamp()) == at(90)
+    assert predictions.ends_at(main.db, running, t=(t + dt.timedelta(minutes=70)).timestamp()) is None  # past
+    assert predictions.ends_at(main.db, {**running, "progress": None}, t=t.timestamp()) is None
 
 
 SHEET = "https://docs.google.com/spreadsheets/d/abc123/edit#gid=7"

@@ -2909,6 +2909,13 @@ async def reference_download(request: Request) -> Response:
 # ----------------------------------------------------------------------- admin
 
 RESTART_DEADLINE_S = 30
+# A full restart (restart-olfdb, on the server) is asked of systemd there by putting this file in
+# the data folder, which deploy/olfdb-restart.path watches for; what restart-olfdb prints then goes
+# to RESTART_LOG, its last line starting with RESTART_FAILED if it did not restart.
+RESTART_REQUEST = "restart-requested"
+RESTART_LOG = "restart.log"
+RESTART_FAILED = "restart-olfdb: not restarted"
+RESTART_TAKEN_S = 5  # how long systemd is given to take a request, before it is taken back
 
 
 def _supervisor() -> Optional[str]:
@@ -3524,15 +3531,122 @@ def _restart() -> None:
     os.kill(os.getpid(), signal.SIGTERM)
 
 
+def _ends_at(started_at: Optional[str], done, total) -> Optional[str]:
+    """When a job started at `started_at` should end, having done `done` of `total`, at the
+    rate it has gone so far; None if not known."""
+    if not (started_at and done and total):
+        return None
+    t0 = dt.datetime.fromisoformat(_aware(started_at)).timestamp()
+    end = t0 + (time.time() - t0) * total / done
+    return dt.datetime.fromtimestamp(end).astimezone().isoformat(timespec="seconds")
+
+
+def _running_jobs(full: bool) -> dict:
+    """What a restart would stop: the web server's jobs under way (a backup, an import of
+    reference data, a re-lookup of odor properties) and, if `full` (the fit worker made again
+    too), the fits and predictions running.
+
+    Returns:
+        dict with ``jobs`` (each its ``what``, ``started_at``, ``ends_at``: when it should end,
+        None if not known, and ``then``: what becomes of it) and ``queued``: how many fits and
+        predictions are waiting (a restart leaves them to start once it is over).
+    """
+    jobs = []
+    b = dict(backup.JOB)
+    if b["running"]:
+        jobs.append({"what": f"A backup to {b['folder']}", "started_at": _aware(b["started_at"]),
+                     "ends_at": _ends_at(b["started_at"], b["done"], b["total"]),
+                     "then": "It would be left incomplete, to be made again."})
+    for imp in IMPORTERS.values():
+        j = imp.job()
+        if j["running"]:
+            jobs.append({"what": f"An import of {imp.name}", "started_at": _aware(j["started_at"]), "ends_at": None,
+                         "then": "It would be left unfinished, to be imported again."})
+    r = dict(_relookup_job)
+    if r.get("running"):
+        jobs.append({"what": f"Looking up {', '.join(r['props'])} again", "started_at": r["started_at"],
+                     "ends_at": _ends_at(r["started_at"], r["done"], r["total"]),
+                     "then": "It would stop part way (what it has looked up is kept), to be run again."})
+    queued = 0
+    if full:
+        all_fits = fits.listing(db)["fits"]
+        for f in all_fits:
+            if f["status"] == "running":
+                jobs.append({"what": f"Fit #{f['id']}, asked for by {f['name']}", "started_at": f["started_at"],
+                             "ends_at": f["eta"]["ends_at"],
+                             "then": "It would be stopped and marked interrupted, to be asked for again (from the start)."})
+        preds = predictions.all_predictions(db)
+        for p in preds:
+            if p["status"] == "running":
+                jobs.append({"what": f"Fit #{p['fit_id']}'s model predicting {p['fly']}'s ROIs, asked for by {p['name']}",
+                             "started_at": p["started_at"], "ends_at": predictions.ends_at(db, p),
+                             "then": "It would be stopped and marked interrupted, to be asked for again."})
+        queued = sum(f["status"] == "queued" for f in all_fits) + sum(p["status"] == "queued" for p in preds)
+    return {"jobs": jobs, "queued": queued}
+
+
+async def _ask_full_restart() -> Optional[str]:
+    """Asks systemd on the server for a full restart (restart-olfdb, run by
+    deploy/olfdb-restart.service), by putting `RESTART_REQUEST` in the data folder, the one
+    folder there the server may write; one not taken within `RESTART_TAKEN_S` is taken back.
+    Returns why it was not taken, or None."""
+    req = config.DATA_DIR / RESTART_REQUEST
+    with contextlib.suppress(OSError):
+        (config.DATA_DIR / RESTART_LOG).unlink()  # the last one's
+    req.write_text(f"asked from the Admin tab at {dt.datetime.now().astimezone().isoformat(timespec='seconds')}\n")
+    for _ in range(max(1, round(RESTART_TAKEN_S * 10))):
+        await asyncio.sleep(0.1)
+        if not req.exists():
+            return None
+    try:
+        req.unlink()
+    except FileNotFoundError:  # taken just now
+        return None
+    return ("nothing on the server took the request: olfdb-restart.path, which watches for it, is not installed or not "
+            "running. Running restart-olfdb on the server installs it (DEPLOY.md, section 4).")
+
+
 async def admin_restart(request: Request) -> Response:
-    """Restart the server, if Docker or systemd starts it again after it exits."""
+    """Restart the server: the web server alone (``{}``), if Docker or systemd starts it
+    again after it exits; or everything, as restart-olfdb does on the server (``{"full":
+    true}``, asked of systemd there: `_ask_full_restart`). While jobs it would stop are under
+    way (`_running_jobs`), refused (409, with their ``jobs`` and ``queued``) unless
+    ``"stop_jobs": true``."""
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    full = bool(body.get("full"))
     supervisor = _supervisor()
-    if supervisor is None:
+    if supervisor is None and not full:
         return json_error(409, "the server cannot restart itself here: it is not run by Docker or systemd, which would "
                                "start it again (DEPLOY.md). Restart it by hand.")
+    if not body.get("stop_jobs"):
+        running = await run_in_threadpool(_running_jobs, full)
+        if running["jobs"]:
+            return JSONResponse({"error": "a restart would stop jobs under way", **running}, status_code=409)
+    started_at = _aware(sandbox.STATUS["started_at"])
+    if full:
+        error = await _ask_full_restart()
+        if error:
+            return json_error(409, error)
+        log.info("full restart (restart-olfdb) requested from the Admin tab")
+        return JSONResponse({"ok": True, "full": True, "by": "restart-olfdb", "started_at": started_at})
     log.info("restart requested from the Admin tab")
-    return JSONResponse({"ok": True, "by": supervisor, "started_at": _aware(sandbox.STATUS["started_at"])},
-                        background=BackgroundTask(_restart))
+    return JSONResponse({"ok": True, "by": supervisor, "started_at": started_at}, background=BackgroundTask(_restart))
+
+
+async def admin_restart_log(request: Request) -> Response:
+    """What restart-olfdb has printed of the full restart asked for last (`RESTART_LOG`): its
+    last ``lines`` (30 at most), and ``failed``: whether it ended without restarting, the site
+    left as it was."""
+    try:
+        text = (config.DATA_DIR / RESTART_LOG).read_text(errors="replace")
+    except FileNotFoundError:
+        text = ""
+    lines = text.rstrip().splitlines()[-30:]
+    return JSONResponse({"lines": lines, "failed": bool(lines) and lines[-1].startswith(RESTART_FAILED)})
 
 
 async def http_exception(request: Request, exc: HTTPException) -> Response:
@@ -3638,6 +3752,7 @@ routes = [
     Route("/api/admin/panels", admin_panels_save, methods=["POST"]),
     Route("/api/admin/chemutils/relookup", admin_chemutils_relookup, methods=["POST"]),
     Route("/api/admin/restart", admin_restart, methods=["POST"]),
+    Route("/api/admin/restart", admin_restart_log),
     Route("/api/admin/datasets/{ds_id:int}", admin_dataset_delete, methods=["DELETE"]),
     Route("/api/admin/permalinks", admin_permalinks),
     Route("/api/admin/permalinks/{slug}", admin_permalink_delete, methods=["DELETE"]),

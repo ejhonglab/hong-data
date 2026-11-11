@@ -771,7 +771,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   - *Folders on the server* the app may read (by default tensor) and also write (none
     by default: for backups), besides its own data folder. Saved changes take
     effect when the server restarts, which a button in the message saving them, or the
-    *Restart* section near the bottom, does when it runs under Docker or systemd. How
+    *Restart* section near the bottom, does when it runs under Docker or systemd (there
+    too, *Update and restart everything*: the site rebuilt from the code on the server and
+    restarted, fit worker and all, as `restart-olfdb` does there, showing its output as it
+    goes; either first lists the jobs it would stop, with when they should end, and asks). How
     they are enforced:
     [DEPLOY.md](DEPLOY.md#folders-it-may-read-and-write). Below them, a tree of each
     file the server has read or written in the folder it runs from (e.g. `/opt/olfdb`,

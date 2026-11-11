@@ -1,0 +1,13 @@
+# Run by olfdb-restart.path when the Admin tab asks for a full restart: restart-olfdb, as root,
+# for a request still there (the Admin tab takes back one not taken within a few seconds), with
+# what it prints in data/restart.log, for the Admin tab to show. Installed and kept up to date
+# by restart-olfdb itself (DEPLOY.md, section 4).
+[Unit]
+Description=Restart the odor response database as its Admin tab asked (restart-olfdb)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/olfdb
+ExecStart=/bin/sh -c 'rm /opt/olfdb/data/restart-requested && exec /opt/olfdb/restart-olfdb'
+StandardOutput=truncate:/opt/olfdb/data/restart.log
+StandardError=inherit

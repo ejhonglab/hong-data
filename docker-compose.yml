@@ -4,6 +4,7 @@ services:
     image: olfdb:latest
     container_name: olfdb
     restart: unless-stopped    # also what starts it again after a restart from the Admin tab
+    stop_grace_period: 30s     # for uploads and downloads under way to finish, as a restart from the Admin tab gives them
     ports:
       - "8080:8000"            # host:container — change 8080 if it clashes
     # Of the server's files, the container sees only these: the most it can ever read or

@@ -1,3 +1,49 @@
 #!/bin/sh
-# Rebuilds both images and recreates both containers (DEPLOY.md, section 4)
-exec sudo systemctl restart olfdb
+# Restarts the site (sudo systemctl restart olfdb), both containers made again from images
+# rebuilt from the code here. First it installs deploy/'s systemd units where they differ from
+# those in /etc/systemd/system, and builds the images, leaving the site as it was if that fails.
+# The Admin tab's "Update and restart everything" has systemd run it, as root
+# (deploy/olfdb-restart.service), and takes a last line starting "restart-olfdb: not restarted"
+# to mean it did not. DEPLOY.md, section 4.
+set -e
+here=$(dirname "$(readlink -f "$0")")
+units=/etc/systemd/system
+sudo=sudo
+if [ "$(id -u)" = 0 ]; then sudo=; fi
+
+fail() {
+    echo "restart-olfdb: not restarted: $1"
+    exit 1
+}
+
+reload=
+install_unit() {
+    if cmp -s "$here/deploy/$1" "$units/$1"; then return; fi
+    echo "Installing $1, which differs from $units/$1:"
+    diff -uN "$units/$1" "$here/deploy/$1" || true
+    $sudo install -m 644 "$here/deploy/$1" "$units/$1" || fail "could not install $1"
+    reload=1
+}
+
+[ -e "$units/olfdb.service" ] || fail "olfdb.service is not installed (DEPLOY.md, section 4)"
+# (not deploy/olfdb-venv.service, installed as olfdb.service: that one is edited where it is)
+docker=
+if grep -q 'docker compose' "$units/olfdb.service"; then docker=1; fi
+new_watch=
+[ -e "$units/olfdb-restart.path" ] || new_watch=1
+
+if [ -n "$docker" ]; then install_unit olfdb.service; fi
+install_unit olfdb-restart.service
+install_unit olfdb-restart.path
+if [ -n "$reload" ]; then $sudo systemctl daemon-reload || fail "systemctl daemon-reload failed"; fi
+if [ -n "$new_watch" ]; then
+    $sudo systemctl enable --now olfdb-restart.path || fail "could not enable olfdb-restart.path"
+fi
+
+if [ -n "$docker" ]; then
+    echo "Building the images (the site stays up meanwhile)..."
+    cd "$here"
+    $sudo docker compose build || fail "the build failed (above), so the site was left as it was"
+fi
+$sudo systemctl restart olfdb || fail "systemctl restart olfdb failed (journalctl -u olfdb)"
+echo "restart-olfdb: restarting: the site is back once its containers have started, in a few seconds (journalctl -u olfdb -f)"

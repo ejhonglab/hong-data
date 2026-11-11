@@ -9,7 +9,7 @@ import { SIMILARITIES, similarityMatrix, tanimoto, correlateSimilarities, shared
 import { MetacycPanel } from './metacyc.js';
 import { LotusPanel, decisionsHtml } from './lotus.js';
 import { BundleImport } from './imports.js';
-import { FitsPanel } from './fits.js';
+import { FitsPanel, fmtDuration } from './fits.js';
 import { PredictPanel } from './predictions.js';
 import { ModelsPage } from './models.js';
 
@@ -4629,6 +4629,7 @@ class AdminPage {
     $('#admin-lowercase').addEventListener('change', (e) => this.saveCase(e.target.checked));
     $('#admin-sheet-url').addEventListener('keydown', (e) => { if (e.key === 'Enter') this.saveSheet(); });
     $('#admin-restart').addEventListener('click', () => this.restart());
+    $('#admin-restart-full').addEventListener('click', (e) => this.restart(e.currentTarget, $('#admin-restart-full-status'), { full: true }));
     $('#admin-chemutils-btn').addEventListener('click', () => this.relookup());
     $('#admin-panel-add').addEventListener('click', () => { this._renameRow('', ''); $('#admin-panel-renames .rename-row:last-child .from').focus(); });
     $('#admin-panel-save').addEventListener('click', () => this.savePanels());
@@ -5748,36 +5749,62 @@ class AdminPage {
     btn.classList.toggle('primary', s.pending);
   }
 
-  // Asks the server to restart, then waits until it answers again, started anew.
-  // `btn`, `status`: the button clicked and where to say how it goes (that of Restart, or
-  // one by the folders just saved: `here`)
-  async restart(btn = $('#admin-restart'), status = $('#admin-restart-status'), { here = false } = {}) {
-    const buttons = [...new Set([$('#admin-restart'), btn])];
-    const enable = () => buttons.forEach((b) => { b.disabled = false; });
+  // Asks the server to restart (`full`: everything, rebuilt from the code on the server, as
+  // restart-olfdb does there), first asking whether to stop the jobs under way that it would,
+  // then waits until it answers again, started anew. `btn`, `status`: the button clicked and
+  // where to say how it goes (that of a Restart button, or one by the folders just saved: `here`)
+  async restart(btn = $('#admin-restart'), status = $('#admin-restart-status'), { here = false, full = false } = {}) {
+    const buttons = [...new Set([$('#admin-restart'), $('#admin-restart-full'), btn])];
+    const enable = () => buttons.forEach((b) => { b.disabled = b.id === 'admin-restart' && !this.state?.restart.possible; });
     buttons.forEach((b) => { b.disabled = true; });
-    setStatus(status, 'Asking the server to restart…');
+    setStatus(status, full ? 'Asking the server to update and restart…' : 'Asking the server to restart…');
+    const ask = (stop) => api('/api/admin/restart', { method: 'POST', json: { full, stop_jobs: stop } });
     let res;
     try {
-      res = await api('/api/admin/restart', { method: 'POST', json: {} });
+      res = await ask(false).catch(async (e) => {
+        if (!e.body?.jobs) throw e;
+        if (!(await this._stopJobs(e.body, full))) return null;
+        setStatus(status, 'Asking the server to restart…');
+        return ask(true);
+      });
     } catch (e) {
       setStatus(status, `Could not restart: ${e.message}`, 'error');
       enable();
       return;
     }
+    if (!res) { setStatus(status, ''); enable(); return; }
+    const log = $('#admin-restart-log');
+    log.hidden = !full;
+    log.textContent = '';
     const t0 = Date.now();
+    let health;
     for (;;) {
-      await new Promise((r) => { setTimeout(r, 1000); });
-      const health = await api('/api/health').catch(() => null);
+      await new Promise((r) => { setTimeout(r, full ? 2000 : 1000); });
+      health = await api('/api/health').catch(() => null);
       if (health && health.started !== res.started_at) break;
       const secs = Math.round((Date.now() - t0) / 1000);
-      if (secs > 90) {
-        setStatus(status, `The server has not come back after ${secs} s: see its logs (DEPLOY.md, section 7).`, 'error');
+      if (full && health) { // the server as it was, up while the site is built
+        const out = await api('/api/admin/restart').catch(() => null);
+        if (out?.lines.length) { log.textContent = out.lines.join('\n'); log.scrollTop = log.scrollHeight; }
+        if (out?.failed) {
+          setStatus(status, 'Not restarted: the site is as it was (why, below).', 'error');
+          enable();
+          return;
+        }
+      }
+      if (secs > (full ? 30 * 60 : 90)) {
+        setStatus(status, full
+          ? `The site has not restarted after ${fmtDuration(secs)}: on the server, data/restart.log and journalctl -u olfdb-restart -u olfdb say why, and restart-olfdb tries again.`
+          : `The server has not come back after ${secs} s: see its logs (DEPLOY.md, section 7).`, 'error');
         enable();
         return;
       }
-      setStatus(status, `Restarting… ${secs} s`);
+      setStatus(status, `${full && health ? 'Building' : 'Restarting'}… ${fmtDuration(secs)}`);
     }
-    setStatus(status, 'Restarted.');
+    const newer = full && health.version && pageVersion && !sameVersion(health.version, pageVersion);
+    setStatus(status, newer ? 'Updated and restarted: reload the page to use the new version.' : full ? 'Rebuilt and restarted.' : 'Restarted.');
+    if (full) showVersion(health.version);
+    enable();
     $('#topbar-status').textContent = '';
     await this.load();
     if (here && this.state) {
@@ -5785,6 +5812,19 @@ class AdminPage {
         ? msgBox('warn', 'Restarted, but the folders saved are still not those in effect: see Restart, below.')
         : msgBox('ok', 'Restarted: the folders saved are in effect now.'));
     }
+  }
+
+  // Asks whether to restart (`full`: everything) though it would stop the jobs under way the
+  // server lists (`running`: its `jobs`, and `queued`, the fits and predictions waiting): true if so
+  async _stopJobs(running, full) {
+    const when = (iso) => `${esc(fmtWhen(iso))} (${fmtDuration(Math.abs(Date.parse(iso) - Date.now()) / 1000)} ${Date.parse(iso) < Date.now() ? 'ago' : 'from now'})`;
+    const n = running.jobs.length;
+    $('#restart-confirm-q').textContent = `${full ? 'Updating and restarting everything' : 'Restarting the server'} stops ${n === 1 ? 'this job' : `these ${n} jobs`}, under way:`;
+    $('#restart-confirm-jobs').innerHTML = running.jobs.map((j) => `<li><b>${esc(j.what)}</b>: started ${j.started_at ? when(j.started_at) : 'at a time not known'};
+      should end ${j.ends_at ? `about ${when(j.ends_at)}` : 'at a time not known'}. ${esc(j.then)}</li>`).join('');
+    $('#restart-confirm-detail').textContent = running.queued
+      ? `${running.queued === 1 ? 'One more (a fit or prediction) is' : `${running.queued} more (fits and predictions) are`} queued: ${running.queued === 1 ? 'it starts' : 'they start'} once the restart is over.` : '';
+    return (await askDialog($('#restart-confirm'))) === 'restart';
   }
 }
 

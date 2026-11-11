@@ -1060,7 +1060,13 @@ try {
           <button type="button" class="btn" id="admin-restart">Restart the server</button>
           <span class="dl-status" id="admin-restart-status" aria-live="polite"></span>
         </div>
-        <p class="muted small">It takes a few seconds; uploads and downloads under way are given up to 30 s to finish.</p>
+        <p class="muted small">The web server alone, as it is, e.g. for the folders above. It takes a few seconds; uploads and downloads under way are given up to 30 s to finish.</p>
+        <div class="actions">
+          <button type="button" class="btn" id="admin-restart-full">Update and restart everything</button>
+          <span class="dl-status" id="admin-restart-full-status" aria-live="polite"></span>
+        </div>
+        <p class="muted small">As <code>restart-olfdb</code> does on the server: the site rebuilt from the code there (for a new version, or a change to <code>docker-compose.yml</code>), and the fit worker restarted too. The site stays up while it is built (seconds, or minutes when its Python packages changed), and is left as it was if that fails; then it is down for a few seconds.</p>
+        <pre class="code-block restart-log" id="admin-restart-log" hidden></pre>
       </div>
 
       <div class="step" id="admin-host">
@@ -1182,6 +1188,18 @@ try {
     <div class="actions">
       <button type="submit" value="yes" class="btn danger">Yes</button>
       <button type="submit" value="no" class="btn" autofocus>No</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="restart-confirm" class="confirm" aria-labelledby="restart-confirm-q">
+  <form method="dialog">
+    <p id="restart-confirm-q">Restarting stops these, under way:</p>
+    <ul class="restart-jobs" id="restart-confirm-jobs"></ul>
+    <p class="muted small" id="restart-confirm-detail"></p>
+    <div class="actions">
+      <button type="submit" value="restart" class="btn danger">Restart anyway</button>
+      <button type="submit" value="cancel" class="btn" autofocus>Cancel</button>
     </div>
   </form>
 </dialog>
