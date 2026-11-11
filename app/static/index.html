@@ -242,27 +242,27 @@ try {
       <div class="empty" id="browse-empty">Choose a dataset on the left.</div>
       <div id="dataset-view" hidden>
         <div class="ds-head">
-          <div>
-            <h2 id="ds-title"></h2>
-            <p class="muted" id="ds-sub"></p>
-            <div class="ds-permalink" id="ds-permalink"></div>
+          <div class="ds-head-main">
+            <div class="ds-title-block">
+              <h2 id="ds-title"></h2>
+              <p class="muted" id="ds-sub"></p>
+              <div class="ds-permalink" id="ds-permalink"></div>
+            </div>
+            <!-- how its responses were calculated, right of its title (under it, where they do not fit): with other calculations of its recordings, a menu of them, and a button to make the one shown their default (app.js, Browse._showCalc) -->
+            <div class="ds-calc" id="ds-calc"></div>
           </div>
           <div class="ds-actions">
             <div class="ds-data-links">
-              <!-- how its responses were calculated: with other calculations of its recordings, a menu of them, and a button to make the one shown their default (app.js, Browse._showCalc) -->
-              <div class="ds-calc" id="ds-calc"></div>
-              <div class="ds-data-menus">
-                <button type="button" class="btn warn" id="ds-mismatches" hidden>Show data mismatches</button>
-                <span class="indicator ok data-all" id="ds-all-data" hidden>All data in both</span>
-                <details class="menu menu-right data-link" id="ds-raw" data-kind="raw">
-                  <summary class="btn">Raw data</summary>
-                  <div class="menu-list data-menu"></div>
-                </details>
-                <details class="menu menu-right data-link" id="ds-mocorr" data-kind="mocorr">
-                  <summary class="btn">Motion corrected / traces</summary>
-                  <div class="menu-list data-menu"></div>
-                </details>
-              </div>
+              <button type="button" class="btn warn" id="ds-mismatches" hidden>Show data mismatches</button>
+              <span class="indicator ok data-all" id="ds-all-data" hidden>All data in both</span>
+              <details class="menu menu-right data-link" id="ds-raw" data-kind="raw">
+                <summary class="btn">Raw data</summary>
+                <div class="menu-list data-menu"></div>
+              </details>
+              <details class="menu menu-right data-link" id="ds-mocorr" data-kind="mocorr">
+                <summary class="btn">Motion corrected / traces</summary>
+                <div class="menu-list data-menu"></div>
+              </details>
             </div>
             <div class="ds-buttons">
               <span class="dl-status" id="ds-download-status"></span>
@@ -1338,6 +1338,20 @@ try {
       <button type="submit" value="overwrite" class="btn danger">Overwrite README</button>
       <button type="submit" value="discard" class="btn">Discard my edits</button>
       <button type="submit" value="keep" class="btn" autofocus>Keep editing</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Browse's Set Default Response Calc., where other recordings are calculated the same ways (app.js, Browse._askCalcDefaults) -->
+<dialog id="calc-default-confirm" class="confirm" aria-labelledby="calc-default-confirm-q">
+  <form method="dialog">
+    <p id="calc-default-confirm-q"></p>
+    <ul class="calc-cases" id="calc-default-confirm-cases"></ul>
+    <p class="muted small" id="calc-default-confirm-detail"></p>
+    <div class="actions">
+      <button type="submit" value="all" class="btn primary">Yes, all of them</button>
+      <button type="submit" value="one" class="btn" autofocus>No, only this one</button>
+      <button type="submit" value="cancel" class="btn">Cancel</button>
     </div>
   </form>
 </dialog>

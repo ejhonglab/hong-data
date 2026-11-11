@@ -214,13 +214,19 @@ between the frontend and the server. Using the app is described in
   calculation is in their titles (`metadata.dataset_title`, as written, math too:
   `APL16: MB247dbLexA > GCaMP6s (KCs) [TNT], baseline-noise units`), the names of their
   downloads and permalinks (`export.dataset_stem`, in ASCII: `$\Delta F/F$` as `Delta-FF`)
-  and a permalink's identity; Browse shows a dataset's calculation left of its data
-  menus, as a menu of the others when there are (`calculations`, with `GET
+  and a permalink's identity; Browse shows a dataset's calculation right of its title,
+  as a menu of the others when there are (`calculations`, with `GET
   /api/datasets/{id}`), and a merged download takes one calculation of each
   (`merge.one_calculation`). Each set has a default (`Database.default_calculations`):
-  the one last chosen with Browse's *Set Default Response Calculation* (the setting
+  the one last chosen with Browse's *Set Default Response Calc.* (the setting
   `default_calcs`, the ids chosen, so that a set is matched anew each time, as datasets
-  are edited or deleted), else the first uploaded. The lists of Browse and Compare list
+  are edited or deleted), else the first uploaded. Sets calculated the same ways (their
+  calculations alike, as `metadata.same_response_calc` matches them: `sameCalcSets` in
+  app.js) are usually one experimenter's recordings each analysed alike, so choosing one
+  set's default offers to choose the same calculation as the others', in one request
+  (`Database.set_default_calculations`, all or none), listing the others by what each
+  defaults to now. They are matched by name only when asked, not tied together: each
+  set's default stays its own. The lists of Browse and Compare list
   only it (`listedDatasets` in app.js), the others named at the end of its item, so that
   one recording is one item; listed by upload, it is as of the first uploaded, whichever
   is the default, as that is when the recordings came. Compare needs nothing more:
@@ -1425,8 +1431,11 @@ GET    /api/datasets/{id}                   metadata + README (markdown and HTML
                                             calculations (the other datasets of its recordings
                                             calculated otherwise: [{id, title, response_calc}]) and
                                             default_calc (the id of their default, null if none)
-PUT    /api/datasets/{id}/default_calc      → it made the default calculation of its recordings:
-                                            {ok, ids, default} (422 if it has no other calculation)
+PUT    /api/datasets/{id}/default_calc      optional {"others": [id]} → it made the default calculation
+                                            of its recordings, and each of "others" of its own:
+                                            {ok, ids, default, others: [{ids, default}]} (422, setting
+                                            none, if one has no other calculation, or two are of the
+                                            same recordings)
 PUT    /api/datasets/{id}/readme            {"readme", "base"} → the README overwritten (409 if it is
                                             no longer "base", the one the edit started from)
 PUT    /api/datasets/{id}/metadata          {"metadata", "base"} → the values entered at upload replaced,

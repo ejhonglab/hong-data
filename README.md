@@ -328,12 +328,15 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   with the same flies and manipulations, and the same response calculation or none), saved once you answer *Yes* to whether you are
   sure (*No* is the default). Its title and panels follow, and its README too unless it
   was edited by hand; `metadata.json` keeps each edit (when, and each field before and
-  after). Left of "Raw data" is how its responses were calculated (*Response
-  calculation*). For the same recordings calculated more than one way (datasets of the
-  same flies, experimenter, coding unit and manipulations, each with its own response
-  calculation), it is a menu of their calculations, to show another, with *Set Default
-  Response Calculation* to its left: the default (at first, the first uploaded) is the one
-  listed here and in Compare, and merged unless another is chosen in Merge.
+  after). Right of its title (under it, in a narrow window) is how its responses were
+  calculated (*Response calculation*). For the same recordings calculated more than one
+  way (datasets of the same flies, experimenter, coding unit and manipulations, each with
+  its own response calculation), it is a menu of their calculations, to show another, with
+  *Set Default Response Calc.* to its right: the default (at first, the first uploaded) is
+  the one listed here and in Compare, and merged unless another is chosen in Merge. Where
+  other recordings are calculated the same ways (e.g. each of Yang's in whole-recording z,
+  baseline-noise units and unnormalized dFc), it asks whether to make that calculation
+  their default too, saying what each defaults to now.
 - **Permalinks**: under a dataset's title, *Make a permalink…* names a link to it that
   stays whatever its number, `http://hal:8080/d/<name>` (lowercase letters, digits
   and `-`; by default as its downloads are named, e.g. `megamat-tom-glomeruli-2023-06-22`),

@@ -983,23 +983,41 @@ def _calculations_of(ds_id: int) -> tuple[list[dict], Optional[int]]:
 
 
 async def dataset_default_calc_save(request: Request) -> Response:
-    """Choose a dataset as the default calculation of its recordings (`Database.set_default_calculation`):
-    the one listed in Browse and Compare, and merged. Gives its set ({ok, ids, default})."""
+    """Choose a dataset as the default calculation of its recordings (`Database.set_default_calculations`):
+    the one listed in Browse and Compare, and merged. With an optional body ``{"others": [id]}``,
+    each of those the default of its own recordings too (Browse: of others calculated the same
+    ways). Gives its set and theirs ({ok, ids, default, others: [{ids, default}]}), or sets none."""
     ds_id = int(request.path_params["ds_id"])
     if await run_in_threadpool(db.get_dataset, ds_id) is None:
         return json_error(404, "dataset not found")
-    s = await run_in_threadpool(_set_default_calc, ds_id)
-    if s is None:
-        return JSONResponse({"ok": False, "errors": [f"dataset #{ds_id} has no other calculation of its recordings"]}, status_code=422)
-    return JSONResponse({"ok": True, **s})
+    raw = await request.body()
+    try:
+        body = json.loads(raw) if raw.strip() else {}
+    except ValueError:
+        return json_error(400, "the body is not JSON")
+    others = body.get("others", []) if isinstance(body, dict) else None
+    if not isinstance(others, list) or not all(type(i) is int for i in others):
+        return json_error(400, '"others" must be a list of dataset ids')
+    ids = [ds_id, *(i for i in dict.fromkeys(others) if i != ds_id)]
+    found = await run_in_threadpool(_set_default_calcs, ids)
+    errors, first = [], {}
+    for i, s in zip(ids, found):
+        if s is None:
+            errors.append(f"dataset #{i} has no other calculation of its recordings")
+        elif first.setdefault(s[0], i) != i:
+            errors.append(f"datasets #{first[s[0]]} and #{i} are calculations of the same recordings")
+    if errors:
+        return JSONResponse({"ok": False, "errors": errors}, status_code=422)
+    return JSONResponse({"ok": True, "ids": found[0], "default": ds_id,
+                         "others": [{"ids": s, "default": i} for i, s in zip(ids[1:], found[1:])]})
 
 
 _default_calc_lock = threading.Lock()
 
 
-def _set_default_calc(ds_id: int) -> Optional[dict]:
+def _set_default_calcs(ds_ids: list[int]) -> list[Optional[list[int]]]:
     with _default_calc_lock:  # (one at a time: each rewrites the setting)
-        return db.set_default_calculation(ds_id, dt.datetime.now().isoformat(timespec="seconds"))
+        return db.set_default_calculations(ds_ids, dt.datetime.now().isoformat(timespec="seconds"))
 
 
 def _default_permalink(d: dict) -> str:

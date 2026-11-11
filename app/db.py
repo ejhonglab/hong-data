@@ -633,26 +633,28 @@ class Database:
     def default_calculations(self, datasets: Optional[list[dict]] = None) -> list[dict]:
         """Each set of the same recordings calculated otherwise (`calculations`, of `datasets`
         if given), with its default calculation: ``{"ids", "default"}``, the default the one
-        last chosen as it (`set_default_calculation`), else the first uploaded. The default
+        last chosen as it (`set_default_calculations`), else the first uploaded. The default
         is the one listed in Browse and Compare, and merged (`merge.one_calculation`)."""
         s = self.get_setting(DEFAULT_CALCS)
         chosen = json.loads(s["value"]) if s else []
         return [{"ids": ids, "default": next((i for i in reversed(chosen) if i in ids), ids[0])}
                 for ids in self.calculations(datasets)]
 
-    def set_default_calculation(self, ds_id: int, when: str) -> Optional[dict]:
-        """Choose a dataset as the default calculation of its recordings
-        (`default_calculations`). Returns its set (``{"ids", "default"}``), or None if it
-        is no other calculation's recordings."""
+    def set_default_calculations(self, ds_ids: list[int], when: str) -> list[Optional[list[int]]]:
+        """Choose datasets as the default calculations of their recordings
+        (`default_calculations`), each of other recordings. Returns each one's set (its ids),
+        in the order given, None for one that is no other calculation's recordings; then, or
+        if two are of the same recordings, it chooses none of them."""
         datasets = self.list_datasets()
-        ids = next((s for s in self.calculations(datasets) if ds_id in s), None)
-        if ids is None:
-            return None
+        sets = self.calculations(datasets)
+        found = [next((s for s in sets if i in s), None) for i in ds_ids]
+        if None in found or len({s[0] for s in found}) < len(found):
+            return found
         s = self.get_setting(DEFAULT_CALCS)
-        stored = {d["id"] for d in datasets}
-        chosen = [i for i in (json.loads(s["value"]) if s else []) if i in stored and i not in ids]
-        self.set_setting(DEFAULT_CALCS, json.dumps([*chosen, ds_id]), when)
-        return {"ids": ids, "default": ds_id}
+        stored, theirs = {d["id"] for d in datasets}, {i for ids in found for i in ids}
+        chosen = [i for i in (json.loads(s["value"]) if s else []) if i in stored and i not in theirs]
+        self.set_setting(DEFAULT_CALCS, json.dumps([*chosen, *ds_ids]), when)
+        return found
 
     def roi_names(self, ds_id: int) -> set[str]:
         """The names of a dataset's ROIs, as in its data (those of every fly)."""

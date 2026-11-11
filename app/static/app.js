@@ -2029,9 +2029,10 @@ const calcText = (d) => (d.response_calc || '').trim().replace(/\s+/g, ' ');
 // A dataset as named in the lists of Browse and Compare (HTML): driver > indicator (coding
 // unit), then any manipulations in brackets and its response calculation (as its title has
 // them, metadata.dataset_title), but for an entry of the same recordings calculated
-// otherwise (`listedDatasets`), whose calculations end its last line instead (`calcsText`).
-function datasetName(d) {
-  const calc = d.calcs ? '' : calcText(d);
+// otherwise (`listedDatasets`), whose calculations end its last line instead (`calcsText`),
+// or with `withCalc` false.
+function datasetName(d, withCalc = !d.calcs) {
+  const calc = withCalc ? calcText(d) : '';
   return `${esc(d.driver)} &gt; ${esc(d.indicator)} <span class="muted">(${esc(d.coding_unit)})</span>`
     + (d.manipulations?.length ? ` [${esc(manipText(d.manipulations))}]` : '') + (calc ? `, ${esc(calc)}` : '');
 }
@@ -2884,6 +2885,18 @@ const listedAs = (d, has) => {
 const calcsText = (d) => (!d.calcs ? '' : `, ${esc(calcText(d) || 'response calculation not given')}; other response calcs.: `
   + d.calcs.filter((c) => c.id !== d.id).map((c) => esc(calcText(c) || 'not given')).join(', '));
 
+// The other sets of the same recordings calculated otherwise (`sets`: GET /api/datasets'
+// calculations) calculated the same ways as dataset `id`'s set (as metadata.same_response_calc
+// matches them): of each, [{id: its dataset calculated as `id` is, default}]
+function sameCalcSets(id, datasets, sets) {
+  const byId = new Map(datasets.map((d) => [d.id, d]));
+  const mine = sets.find((s) => s.ids.includes(id));
+  if (!mine || !byId.has(id)) return [];
+  const key = (s) => JSON.stringify(s.ids.map((i) => calcText(byId.get(i))).sort()), k = key(mine), calc = calcText(byId.get(id));
+  return sets.filter((s) => s !== mine && s.ids.every((i) => byId.has(i)) && key(s) === k)
+    .map((s) => ({ id: s.ids.find((i) => calcText(byId.get(i)) === calc), default: s.default }));
+}
+
 // when a dataset was uploaded, said in lists grouped by who uploaded them or when
 const uploadedText = (d, group) => (['uploader', 'uploaded'].includes(group) && d.created_at ? `, uploaded ${esc(d.created_at.slice(0, 10))}` : '');
 // the panels of datasets that are of diagnostic odors (e.g. glomeruli_diagnostics), as the
@@ -3158,34 +3171,72 @@ class Browse {
     this.showDataPaths(id);
   }
 
-  // How a dataset's responses were calculated, left of its data's menus. Of the same
-  // recordings calculated otherwise (`calculations`, each a dataset of its own), a menu of
-  // them, to show another, and a button to make this one their default (`default_calc`: the
-  // one listed here and in Compare, and merged)
+  // How a dataset's responses were calculated, right of its title (its label over it). Of the
+  // same recordings calculated otherwise (`calculations`, each a dataset of its own), a menu
+  // of them, to show another, and right of it a button to make this one their default
+  // (`default_calc`: the one listed here and in Compare, and merged)
   _showCalc(d) {
     const el = $('#ds-calc'), text = (c) => esc(calcText(c) || 'not given');
     const label = '<span class="muted">Response calculation:</span>';
-    if (!d.calculations?.length) { el.innerHTML = `<span class="ds-calc-text">${label} ${text(d)}</span>`; return; }
+    if (!d.calculations?.length) { el.innerHTML = `<span class="ds-calc-text">${label}<span>${text(d)}</span></span>`; return; }
     const isDefault = d.default_calc === d.id;
-    el.innerHTML = `<span class="dl-status" data-role="status"></span>
-      <button type="button" class="btn" data-act="default"${isDefault ? ' disabled title="It is the default of its recordings\' calculations already"'
-        : ' title="List this calculation of its recordings, here and in Compare, instead of the others, and merge it by default"'}>Set Default Response Calculation</button>
-      <label class="ds-calc-text">${label} <select title="The same recordings calculated otherwise, each a dataset of its own">
+    el.innerHTML = `<label class="ds-calc-text">${label}<select title="The same recordings calculated otherwise, each a dataset of its own">
         ${[d, ...d.calculations].sort((a, b) => a.id - b.id).map((c) => `<option value="${c.id}"${c.id === d.id ? ' selected' : ''}>${text(c)}${
-          c.id === d.default_calc ? ' (default)' : ''}</option>`).join('')}</select></label>`;
+          c.id === d.default_calc ? ' (default)' : ''}</option>`).join('')}</select></label>
+      <button type="button" class="btn" data-act="default"${isDefault ? ' disabled title="It is the default of its recordings\' calculations already"'
+        : ' title="List this calculation of its recordings, here and in Compare, instead of the others, and merge it by default"'}><span>Set Default<br>Response Calc.</span></button>
+      <span class="dl-status" data-role="status"></span>`;
   }
 
-  // The dataset shown made the default calculation of its recordings
+  // The dataset shown made the default calculation of its recordings; and, if asked to
+  // (`_askCalcDefaults`), the same calculation of other recordings calculated the same ways
+  // (`sameCalcSets`) the default of each
   async _setDefaultCalc() {
-    const id = this.selected, status = $('#ds-calc [data-role=status]');
-    setStatus(status, 'Saving…');
+    const id = this.selected, button = $('#ds-calc [data-act=default]');
+    button.disabled = true; // (until set, or not: one at a time)
+    try { await this._saveDefaultCalc(id); } finally { if (button.isConnected) button.disabled = false; }
+  }
+
+  async _saveDefaultCalc(id) {
+    let all = { datasets: this.datasets, calculations: this.calcSets };
+    try { all = await api('/api/datasets'); } catch { /* (as last loaded) */ }
+    const byId = new Map(all.datasets.map((d) => [d.id, d]));
+    const sets = all.calculations || [], mine = sets.find((s) => s.ids.includes(id))?.ids || [id];
+    const others = sameCalcSets(id, all.datasets, sets), change = others.filter((s) => s.id !== s.default);
+    let also = [];
+    if (change.length) {
+      const answer = await this._askCalcDefaults(id, mine, change, others.filter((s) => s.id === s.default), byId);
+      if (answer === 'all') also = change.map((s) => s.id);
+      else if (answer !== 'one') return;
+    }
     let res;
-    try { res = await api(`/api/datasets/${id}/default_calc`, { method: 'PUT' }); } catch (e) { res = { errors: [e.message] }; }
-    if (!res.ok) { if (this.selected === id) setStatus(status, `Not set: ${res.errors.join('; ')}`, 'error'); return; }
-    this.calcSets = [...this.calcSets.filter((s) => !s.ids.includes(id)), { ids: res.ids, default: res.default }];
-    for (const i of res.ids) { const c = this.cache.get(i); if (c) c.d.default_calc = res.default; }
+    try { res = await api(`/api/datasets/${id}/default_calc`, { method: 'PUT', json: { others: also } }); } catch (e) { res = { errors: [e.message] }; }
+    if (!res.ok) { if (this.selected === id) setStatus($('#ds-calc [data-role=status]'), `Not set: ${res.errors.join('; ')}`, 'error'); return; }
+    const saved = [{ ids: res.ids, default: res.default }, ...res.others];
+    this.calcSets = [...this.calcSets.filter((s) => !saved.some((x) => s.ids.some((i) => x.ids.includes(i)))), ...saved];
+    for (const s of saved) for (const i of s.ids) { const c = this.cache.get(i); if (c) c.d.default_calc = s.default; }
     this.renderList();
     if (this.selected === id) this._showCalc(this.cache.get(id).d);
+  }
+
+  // Asks whether to make dataset `id`'s calculation the default of other recordings calculated
+  // the same ways (as its own, `mine`: their ids) too: `change`, [{id, default}] of those of
+  // another default (if their defaults differ, a line for each), `already` those of it.
+  // Resolves to 'all', 'one' (only its own recordings), or else (none).
+  _askCalcDefaults(id, mine, change, already, byId) {
+    const calc = (i) => `“${esc(calcText(byId.get(i)) || 'not given')}”`;
+    const names = (ids) => ids.map((i) => `#${i} ${datasetName(byId.get(i), false)}, ${esc(byId.get(i).uploader_name)}`).join('; ');
+    const byDefault = new Map();
+    for (const s of change) { const k = calcText(byId.get(s.default)); byDefault.set(k, [...(byDefault.get(k) || []), s.default]); }
+    const cases = [...byDefault.values()], n = change.length, they = n === 1 ? 'It now defaults' : 'They now default';
+    $('#calc-default-confirm-q').innerHTML = `Also make ${calc(id)} the default response calculation of the ${n === 1 ? 'other set' : `${n} other sets`}
+      of recordings calculated the same ways? ${cases.length === 1 ? `${they} to ${calc(cases[0][0])}: ${names(cases[0])}.` : `${they} to:`}`;
+    $('#calc-default-confirm-cases').innerHTML = cases.length === 1 ? ''
+      : cases.map((c) => `<li>${calc(c[0])} (${c.length}): ${names(c)}</li>`).join('');
+    const calcs = mine.map(calc);
+    $('#calc-default-confirm-detail').innerHTML = `Each set is calculated as ${calcs.slice(0, -1).join(', ')} and ${calcs.at(-1)}.`
+      + (already.length ? ` Already defaulting to ${calc(id)}: ${names(already.map((s) => s.id))}.` : '');
+    return askDialog($('#calc-default-confirm'));
   }
 
   // A dataset's permalink (permalinks.py): its link, with Copy and Rename…; or a button to make one

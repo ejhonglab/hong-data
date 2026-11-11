@@ -152,7 +152,7 @@ def test_default(main, stored):  # noqa: F811
     assert call(main.dataset_get, path_params={"ds_id": b})[1]["default_calc"] == a
     assert call(main.dataset_get, path_params={"ds_id": lone})[1]["default_calc"] is None
     # chosen: kept, the last chosen of a set its default
-    assert call(main.dataset_default_calc_save, path_params={"ds_id": c}) == (200, {"ok": True, "ids": [a, b, c], "default": c})
+    assert call(main.dataset_default_calc_save, path_params={"ds_id": c}) == (200, {"ok": True, "ids": [a, b, c], "default": c, "others": []})
     assert main.db.default_calculations() == [{"ids": [a, b, c], "default": c}]
     assert call(main.dataset_get, path_params={"ds_id": a})[1]["default_calc"] == c
     assert call(main.dataset_default_calc_save, path_params={"ds_id": b})[1]["default"] == b
@@ -161,6 +161,23 @@ def test_default(main, stored):  # noqa: F811
     status, r = call(main.dataset_default_calc_save, path_params={"ds_id": lone})
     assert status == 422 and r["errors"] == [f"dataset #{lone} has no other calculation of its recordings"]
     assert call(main.dataset_default_calc_save, path_params={"ds_id": lone + 1})[0] == 404
+    # with others (Browse: other recordings calculated the same ways), each its own recordings' default too
+    tnt_z, tnt_raw = (stored(response_calc=calc, manipulations=[{"key": "TNT"}]) for calc in ("z-score", "raw"))
+    sets = [{"ids": [a, b, c], "default": b}, {"ids": [lone, tnt_z, tnt_raw], "default": lone}]
+    assert main.db.default_calculations() == sets
+    status, r = call(main.dataset_default_calc_save, body={"others": [tnt_raw, c]}, path_params={"ds_id": c})
+    assert status == 200 and r == {"ok": True, "ids": [a, b, c], "default": c, "others": [{"ids": [lone, tnt_z, tnt_raw], "default": tnt_raw}]}
+    assert main.db.default_calculations() == [{"ids": [a, b, c], "default": c}, {"ids": [lone, tnt_z, tnt_raw], "default": tnt_raw}]
+    assert json.loads(main.db.get_setting(DEFAULT_CALCS)["value"]) == [c, tnt_raw]
+    # refused, setting none: two of the same recordings, or one of no others, or not ids
+    for others, error in (([b, tnt_z, lone], f"datasets #{tnt_z} and #{lone} are calculations of the same recordings"),
+                          ([tnt_z, lone + 9], f"dataset #{lone + 9} has no other calculation of its recordings")):
+        status, r = call(main.dataset_default_calc_save, body={"others": others}, path_params={"ds_id": a})
+        assert status == 422 and error in r["errors"]
+    assert call(main.dataset_default_calc_save, body={"others": f"{tnt_z}"}, path_params={"ds_id": a})[0] == 400
+    assert main.db.default_calculations() == [{"ids": [a, b, c], "default": c}, {"ids": [lone, tnt_z, tnt_raw], "default": tnt_raw}]
+    assert call(main.dataset_default_calc_save, path_params={"ds_id": b})[1] == {"ok": True, "ids": [a, b, c], "default": b, "others": []}
+    assert main.db.default_calculations()[1]["default"] == tnt_raw
     # the one chosen taken out of the set (by another manipulation): the first of the others, again
     assert save(main, b, {**main.db.get_dataset(b)["metadata"], "manipulations": [{"key": "drug", "value": "CNO"}]})[0] == 200
-    assert main.db.default_calculations() == [{"ids": [a, c], "default": a}]
+    assert main.db.default_calculations() == [{"ids": [a, c], "default": a}, {"ids": [lone, tnt_z, tnt_raw], "default": tnt_raw}]
