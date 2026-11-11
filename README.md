@@ -104,6 +104,11 @@ section 6), would remove all of the above except the macOS item.
 systemd), setting up the odor sheet and the tensor mount, which folders the server may
 read and write (set in the Admin tab), configuration, backups and maintenance.
 
+To restart or update the site, any sudoer can run `restart-olfdb` on hal, or use Admin →
+*Update and restart everything* on the site. To deploy new code, run `cd /opt/olfdb && git
+pull` first. Either way, it lists any jobs it would stop (e.g. a fit running) and asks
+first ([DEPLOY.md](DEPLOY.md#7-day-to-day-maintenance)).
+
 ## Data file format
 
 The wide layout written by pandas for a frame with MultiIndex rows and columns (an

@@ -330,6 +330,11 @@ and restrict the port with the firewall, e.g. `sudo ufw allow from 10.0.0.0/8 to
 
 ## 7. Day-to-day maintenance
 
+To restart or update the site, any sudoer can run `restart-olfdb` on the server, or use
+Admin → *Update and restart everything* on the site. To deploy new code, run `cd
+/opt/olfdb && git pull` first. Either way, it lists any jobs it would stop (e.g. a fit
+running) and asks first. What it does, and how it is set up: section 4.
+
 ```bash
 docker compose exec olfdb python manage.py list            # datasets in the DB
 docker compose exec olfdb python manage.py show 3
