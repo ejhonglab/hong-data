@@ -176,6 +176,28 @@ def ends_at(db, p: dict, t: Optional[float] = None) -> Optional[str]:
     return dt.datetime.fromtimestamp(end).astimezone().isoformat(timespec="seconds")
 
 
+def worker_jobs(db) -> dict:
+    """What restarting the fit worker would stop: the fits and predictions running, as the
+    web server's `_running_jobs` gives its own (``jobs``, each its ``what``, ``started_at``,
+    ``ends_at`` and ``then``), and ``queued``: how many are waiting (left to start after).
+    Also run in the worker's container by restart-olfdb when the web server does not answer."""
+    jobs = []
+    all_fits = fits.listing(db)["fits"]
+    for f in all_fits:
+        if f["status"] == "running":
+            jobs.append({"what": f"Fit #{f['id']}, asked for by {f['name']}", "started_at": f["started_at"],
+                         "ends_at": f["eta"]["ends_at"],
+                         "then": "It would be stopped and marked interrupted, to be asked for again (from the start)."})
+    preds = all_predictions(db)
+    for p in preds:
+        if p["status"] == "running":
+            jobs.append({"what": f"Fit #{p['fit_id']}'s model predicting {p['fly']}'s ROIs, asked for by {p['name']}",
+                         "started_at": p["started_at"], "ends_at": ends_at(db, p),
+                         "then": "It would be stopped and marked interrupted, to be asked for again."})
+    queued = sum(f["status"] == "queued" for f in all_fits) + sum(p["status"] == "queued" for p in preds)
+    return {"jobs": jobs, "queued": queued}
+
+
 # --------------------------------------------------------------------- flies
 
 def fly_name(tensor_path: str, path: Path) -> str:

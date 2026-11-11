@@ -2,14 +2,24 @@
 # Restarts the site (sudo systemctl restart olfdb), both containers made again from images
 # rebuilt from the code here. First it installs deploy/'s systemd units where they differ from
 # those in /etc/systemd/system, and builds the images, leaving the site as it was if that fails.
-# The Admin tab's "Update and restart everything" has systemd run it, as root
-# (deploy/olfdb-restart.service), and takes a last line starting "restart-olfdb: not restarted"
-# to mean it did not. DEPLOY.md, section 4.
+# Then it lists the jobs a restart would stop (fits and predictions running, a backup, import or
+# re-lookup), with when each started and should end, and asks whether to stop them; with no
+# terminal to ask at, it does not restart, unless given --stop-jobs.
+# The Admin tab's "Update and restart everything" has systemd run it, as root, with --stop-jobs
+# (deploy/olfdb-restart.service: the Admin tab has asked), and takes a last line starting
+# "restart-olfdb: not restarted" to mean it did not. DEPLOY.md, section 4.
 set -e
 here=$(dirname "$(readlink -f "$0")")
 units=/etc/systemd/system
 sudo=sudo
 if [ "$(id -u)" = 0 ]; then sudo=; fi
+
+stop_jobs=
+case "$1" in
+    "") ;;
+    --stop-jobs) stop_jobs=1 ;;
+    *) echo "usage: restart-olfdb [--stop-jobs]   (DEPLOY.md, section 4)"; exit 2 ;;
+esac
 
 fail() {
     echo "restart-olfdb: not restarted: $1"
@@ -23,6 +33,72 @@ install_unit() {
     diff -uN "$units/$1" "$here/deploy/$1" || true
     $sudo install -m 644 "$here/deploy/$1" "$units/$1" || fail "could not install $1"
     reload=1
+}
+
+# The jobs a restart would stop, as JSON (/api/admin/jobs), asked of the web server, else of the
+# fit worker (its own alone, with "only": "worker"); nothing if neither answers.
+jobs_json() {
+    if [ -z "$docker" ]; then
+        python3 -c 'import urllib.request as u; print(u.urlopen("http://127.0.0.1:8080/api/admin/jobs", timeout=10).read().decode())' \
+            2>/dev/null || true
+        return
+    fi
+    $sudo docker exec olfdb python -c 'import urllib.request as u; print(u.urlopen("http://127.0.0.1:8000/api/admin/jobs", timeout=10).read().decode())' \
+        2>/dev/null && return
+    $sudo docker exec olfdb-worker python -c 'import json; from app import config, predictions; from app.db import Database
+print(json.dumps({**predictions.worker_jobs(Database(config.DB_PATH)), "only": "worker"}))' 2>/dev/null || true
+}
+
+# Lists the jobs of $1 (as jobs_json gives them), at this server's time; fails if there are any.
+say_jobs() {
+    JOBS="$1" python3 -I - <<'EOF'
+import datetime as dt, json, os, sys
+
+r = json.loads(os.environ["JOBS"])
+if not r["jobs"]:
+    sys.exit(0)
+now = dt.datetime.now().astimezone()
+
+
+def took(s):
+    s = round(abs(s))
+    if s < 60:
+        return f"{s} s"
+    m = round(s / 60)
+    return f"{m} min" if m < 60 else f"{m // 60} h" + (f" {m % 60} min" if m % 60 else "")
+
+
+def when(iso):
+    t = dt.datetime.fromisoformat(iso).astimezone()
+    d = (t - now).total_seconds()
+    return f"{t:%Y-%m-%d %H:%M} ({took(d)} {'from now' if d > 0 else 'ago'})"
+
+
+n = len(r["jobs"])
+print(f"Restarting stops {'this job' if n == 1 else f'these {n} jobs'}, under way:")
+for j in r["jobs"]:
+    started = when(j["started_at"]) if j["started_at"] else "at a time not known"
+    end = f"about {when(j['ends_at'])}" if j["ends_at"] else "at a time not known"
+    print(f"- {j['what']}: started {started}; should end {end}. {j['then']}")
+if r.get("only") == "worker":
+    print("(The web server did not answer, so only the fit worker's jobs are listed.)")
+if r["queued"] == 1:
+    print("One more (a fit or prediction) is queued: it starts once the restart is over.")
+elif r["queued"]:
+    print(f"{r['queued']} more (fits and predictions) are queued: they start once the restart is over.")
+sys.exit(1)
+EOF
+}
+
+# Asks whether to restart anyway; if not, or with no terminal to ask at, fails, saying why ($1).
+ask() {
+    [ -t 0 ] || fail "$1; restart-olfdb --stop-jobs restarts anyway"
+    printf 'Restart anyway? [y/N] '
+    read -r answer
+    case "$answer" in
+        [yY]*) ;;
+        *) fail "as asked (the images are built, for the next restart)" ;;
+    esac
 }
 
 [ -e "$units/olfdb.service" ] || fail "olfdb.service is not installed (DEPLOY.md, section 4)"
@@ -44,6 +120,16 @@ if [ -n "$docker" ]; then
     echo "Building the images (the site stays up meanwhile)..."
     cd "$here"
     $sudo docker compose build || fail "the build failed (above), so the site was left as it was"
+fi
+
+if [ -z "$stop_jobs" ]; then
+    json=$(jobs_json)
+    if [ -n "$json" ]; then
+        say_jobs "$json" || ask "jobs are under way (above)"
+    elif [ -n "$docker" ] && $sudo docker inspect -f '{{.State.Running}}' olfdb olfdb-worker 2>/dev/null | grep -q true; then
+        echo "Neither the web server nor the fit worker said which jobs are under way."
+        ask "it could not tell which jobs are under way"
+    fi
 fi
 $sudo systemctl restart olfdb || fail "systemctl restart olfdb failed (journalctl -u olfdb)"
 echo "restart-olfdb: restarting: the site is back once its containers have started, in a few seconds (journalctl -u olfdb -f)"

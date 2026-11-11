@@ -96,7 +96,9 @@ between the frontend and the server. Using the app is described in
   never lies there to restart the site later. A restart stops the jobs under way (the
   worker's fits and predictions, and the web server's backups, imports and re-lookups),
   so it is refused, listing them with when they should end, until asked again to stop
-  them.
+  them; `restart-olfdb` asks too, getting them from the web server (`/api/admin/jobs`), or
+  from the worker's container (`predictions.worker_jobs`) when the web server is down, as
+  the worker may still be running a fit.
 - **The files the server reads and writes in its own folder are recorded as it runs**
   (`app/filelog.py`), for the Admin tab's tree of them, rather than listed from what is
   there: a listing would miss the files deleted since (uploads being received, expired
@@ -1582,6 +1584,8 @@ POST   /api/admin/restart                   {} : the server stops, for Docker or
                                             "stop_jobs": true
 GET    /api/admin/restart                   the last full restart's output (data/restart.log): its
                                             last "lines" (30), and "failed": not restarted
+GET    /api/admin/jobs                      what a full restart would stop ("jobs", "queued", as
+                                            POST /api/admin/restart gives them), for restart-olfdb
 DELETE /api/admin/datasets/{id}             the dataset deleted, its folder moved to
                                             data/deleted/<id>/ → {"files": where it went, "orphaned":
                                             its permalink, if any}

@@ -232,16 +232,20 @@ restart-olfdb
 differ from those in `/etc/systemd/system` (showing how, then `daemon-reload`), builds
 both images (the site stays up meanwhile, and is left as it was if that fails), then
 `sudo systemctl restart olfdb`, which makes both containers again from them. Run as
-root, it needs no `sudo`.
+root, it needs no `sudo`. Before restarting, it lists the jobs that would stop (fits and
+predictions running in the fit worker, a backup, import or re-lookup in the web server),
+with when each started and should end, and asks whether to restart anyway; with no
+terminal to ask at (e.g. from cron), it does not restart unless given `--stop-jobs`. It
+asks the web server (`/api/admin/jobs`), or the fit worker when the web server does not
+answer; if neither says, but one is running, it asks too.
 
 `olfdb-restart.path` (enabled by `restart-olfdb` the first time) lets the Admin tab's
 *Update and restart everything* do the same: the web server, which may write only its
 data folder, puts `data/restart-requested` there, and systemd runs `restart-olfdb` as
-root, its output going to `data/restart.log`, which the Admin tab shows as it goes. The
-request says nothing but that, so the site can ask for this one thing and no other. The
-Admin tab first lists the jobs it would stop (fits and predictions running in the fit
-worker, a backup or an import under way), with when each started and should end, and
-asks before stopping them. If nothing takes the request within 5 s, the Admin tab takes
+root (with `--stop-jobs`), its output going to `data/restart.log`, which the Admin tab
+shows as it goes. The request says nothing but that, so the site can ask for this one
+thing and no other. The Admin tab first lists the jobs it would stop, as `restart-olfdb`
+does, and asks before stopping them. If nothing takes the request within 5 s, the Admin tab takes
 it back and says so (`systemctl status olfdb-restart.path` says why).
 
 If it fails again and again, the unit gives up after 5 starts in 10 minutes, and

@@ -3567,22 +3567,10 @@ def _running_jobs(full: bool) -> dict:
         jobs.append({"what": f"Looking up {', '.join(r['props'])} again", "started_at": r["started_at"],
                      "ends_at": _ends_at(r["started_at"], r["done"], r["total"]),
                      "then": "It would stop part way (what it has looked up is kept), to be run again."})
-    queued = 0
-    if full:
-        all_fits = fits.listing(db)["fits"]
-        for f in all_fits:
-            if f["status"] == "running":
-                jobs.append({"what": f"Fit #{f['id']}, asked for by {f['name']}", "started_at": f["started_at"],
-                             "ends_at": f["eta"]["ends_at"],
-                             "then": "It would be stopped and marked interrupted, to be asked for again (from the start)."})
-        preds = predictions.all_predictions(db)
-        for p in preds:
-            if p["status"] == "running":
-                jobs.append({"what": f"Fit #{p['fit_id']}'s model predicting {p['fly']}'s ROIs, asked for by {p['name']}",
-                             "started_at": p["started_at"], "ends_at": predictions.ends_at(db, p),
-                             "then": "It would be stopped and marked interrupted, to be asked for again."})
-        queued = sum(f["status"] == "queued" for f in all_fits) + sum(p["status"] == "queued" for p in preds)
-    return {"jobs": jobs, "queued": queued}
+    if not full:
+        return {"jobs": jobs, "queued": 0}
+    worker = predictions.worker_jobs(db)
+    return {"jobs": jobs + worker["jobs"], "queued": worker["queued"]}
 
 
 async def _ask_full_restart() -> Optional[str]:
@@ -3647,6 +3635,11 @@ async def admin_restart_log(request: Request) -> Response:
         text = ""
     lines = text.rstrip().splitlines()[-30:]
     return JSONResponse({"lines": lines, "failed": bool(lines) and lines[-1].startswith(RESTART_FAILED)})
+
+
+async def admin_jobs(request: Request) -> Response:
+    """What a full restart would stop (`_running_jobs`), for restart-olfdb to ask about."""
+    return JSONResponse(await run_in_threadpool(_running_jobs, True))
 
 
 async def http_exception(request: Request, exc: HTTPException) -> Response:
@@ -3753,6 +3746,7 @@ routes = [
     Route("/api/admin/chemutils/relookup", admin_chemutils_relookup, methods=["POST"]),
     Route("/api/admin/restart", admin_restart, methods=["POST"]),
     Route("/api/admin/restart", admin_restart_log),
+    Route("/api/admin/jobs", admin_jobs),
     Route("/api/admin/datasets/{ds_id:int}", admin_dataset_delete, methods=["DELETE"]),
     Route("/api/admin/permalinks", admin_permalinks),
     Route("/api/admin/permalinks/{slug}", admin_permalink_delete, methods=["DELETE"]),

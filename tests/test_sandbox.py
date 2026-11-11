@@ -198,6 +198,9 @@ def test_admin_restart_jobs(main, monkeypatch):  # noqa: F811
     assert "interrupted" in fit["then"]
     assert pred["what"] == f"Fit #{f['id']}'s model predicting 2024-01-01_1's ROIs, asked for by Cy"
     assert pred["ends_at"] is None  # none done on the CPU to tell from
+    # as restart-olfdb asks: from the web server, or from the worker's container
+    for got in (call(main.admin_jobs)[1], predictions.worker_jobs(main.db)):
+        assert [j["what"] for j in got["jobs"]] == [fit["what"], pred["what"]] and got["queued"] == 1
     status, r = call(main.admin_restart, body={"full": True, "stop_jobs": True})
     assert status == 409 and "olfdb-restart.path" in r["error"]  # (stopped by nothing here)
 
