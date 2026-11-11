@@ -34,8 +34,9 @@ expected, and nothing secret is entered. If a download or the page is blocked, s
    raw and motion-corrected data are on tensor.
 4. **Download**: from a dataset's page, or tick several in the list: the original files
    (a zip), or the response matrices as CSV.
-5. **Merge**: every dataset of a coding unit (e.g. glomeruli) in one download, optionally
-   with groups of datasets (by experimenter, rig or power) scaled to each other first.
+5. **Merge**: every dataset of a coding unit (e.g. glomeruli) in one download (one
+   calculation of the same recordings), optionally with groups of datasets (by
+   experimenter, rig, response calculation or power) scaled to each other first.
 6. **Compare**: tick datasets to see them side by side, averaged, with how alike their
    odors are, and how that compares with chemical structure or reference data.
 7. **Models**: models of KCs (their outputs on tensor, added in the Admin tab), each by its
@@ -196,8 +197,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   another (the same flies, ROIs, trials and values). Once your first name and the coding unit are entered (when the README is made, and
   again when saving), it is refused too if its flies (each `date` and `fly_num`) are
   exactly those of a dataset of yours of that coding unit and the same manipulations,
-  however their responses were calculated (for now: two calculations of the same flies
-  cannot be kept apart, and the error says so when only that differs);
+  unless it is the same recordings calculated otherwise, each saying how (its *Response
+  calculation*, below: e.g. z-scored, and in units of each cell's baseline noise, as two
+  datasets; as many as there are), the error saying which needs one if either has none;
   one sharing only some flies with one is accepted with a warning saying which of the two
   may need to be deleted if they are the same recordings. Each names that dataset and who
   uploaded it: to replace one, delete it first (Admin tab). Other uploaders' datasets,
@@ -215,7 +217,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   `$\frac{\Delta F}{F_0}$ (z-scored)`; `\$` for a dollar sign), or all math if it has a
   TeX command and no `$` (`\Delta F/F`). It is drawn under the field as you type, with
   anything MathJax cannot read, which must be fixed to save. Ones used before are
-  suggested.
+  suggested. It is also written after the dataset's name, as entered (`APL16: MB247dbLexA >
+  GCaMP6s (KCs) [TNT], baseline-noise units`: in Browse and Compare, its title and README),
+  and in the names of its downloads and permalink (in ASCII, `$\Delta F/F$` as `Delta-FF`),
+  so that the same recordings calculated otherwise are told apart.
   An optional odor YAML must have every odor in the matrix, with the same
   abbreviation and concentration. Each YAML added is also checked on its own, as a
   warning only: its odors against the odor table (missing, or named, abbreviated or with
@@ -312,21 +317,24 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   you look at other datasets. *Edit* (next to *README*) changes any detail entered at
   upload but its files, in the upload form's own fields: checked as the upload form checks them (data paths only if
   changed, an upload's refusals too, e.g. another of your datasets of that coding unit
-  with the same flies and manipulations), saved once you answer *Yes* to whether you are
+  with the same flies and manipulations, and the same response calculation or none), saved once you answer *Yes* to whether you are
   sure (*No* is the default). Its title and panels follow, and its README too unless it
   was edited by hand; `metadata.json` keeps each edit (when, and each field before and
-  after).
+  after). Under its title, a dataset of recordings also calculated otherwise says so, with
+  a link to each of those datasets and its response calculation.
 - **Permalinks**: under a dataset's title, *Make a permalink…* names a link to it that
   stays whatever its number, `http://hal:8080/d/<name>` (lowercase letters, digits
   and `-`; by default as its downloads are named, e.g. `megamat-tom-glomeruli-2023-06-22`),
   with *Copy* and *Rename…*. An edit of its details that would change that default name
-  (its uploader, coding unit, manipulations, or panel names if its file has none) asks
+  (its uploader, coding unit, manipulations, response calculation, or panel names if its
+  file has none) asks
   first, saying what the permalink would be renamed to, unless it was renamed by hand.
   A permalink keeps what its dataset is: its uploader, indicator, driver, coding unit,
-  manipulations and panels (but diagnostic ones), and its flies and trials. While it
-  points to a dataset, an upload of the same uploader, indicator, driver, coding unit,
-  manipulations and panels is refused, whatever its flies, odors and trials: one dataset
-  is kept of each (to replace one, delete it first in the Admin tab). Deleting a dataset
+  manipulations, response calculation and panels (but diagnostic ones), and its flies and
+  trials. While it points to a dataset, an upload of the same uploader, indicator, driver,
+  coding unit, manipulations, response calculation and panels is refused, whatever its
+  flies, odors and trials: one dataset is kept of each (to replace one, delete it first in
+  the Admin tab). Deleting a dataset
   orphans its permalink (the Admin tab warns first): it then leads to what it was of,
   until an upload like that dataset takes it over, at once if it is the same, else once
   *Proceed* is pressed under a summary of what differs (its flies, odors or trials).
@@ -373,8 +381,12 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   (the long one ends in `_long.csv`).
 - **Merge**: the matrices of every dataset of the chosen coding unit (matched in any
   case), concatenated as above, in a zip that also has `scaling.csv` (each dataset's group
-  and scale factor). Datasets can be left at their own scale, or grouped by any of
-  experimenter, recording system and power at the fly, each group then multiplied by one
+  and scale factor). Of the same recordings calculated more than one way (datasets of the
+  same flies, experimenter and manipulations, each with its own response calculation),
+  one is merged: that of the calculation chosen (*Of the same recordings calculated more
+  than one way, merge*, shown when there are some), else the first uploaded; the others
+  are listed as left out, in the tab and the zip's README. Datasets can be left at their own scale, or grouped by any of
+  experimenter, recording system, response calculation and power at the fly, each group then multiplied by one
   factor to match a chosen group, or the average of the groups. By power, only datasets
   with power measured are grouped (the rest are left as they are): every two in a group
   have power ranges (power ± its tolerance, ± 0.5 mW where none was entered) that overlap,

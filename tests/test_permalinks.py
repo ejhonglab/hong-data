@@ -40,6 +40,12 @@ def test_compare():
     # KCs however written are one coding unit; manipulations in any order and case
     kc = {**old, "coding_unit": "KCs", "manipulations": [{"key": "drug", "value": "CNO"}, {"key": "starved", "value": None}]}
     assert compare(kc, {**kc, "coding_unit": "kenyon cells", "manipulations": [{"key": "Starved"}, {"key": "DRUG", "value": "cno"}]})["exact"]
+    # the response calculation is of its identity (whatever its spacing, not its case); keys kept before it was, none
+    z = {**old, "response_calc": "whole-recording z"}
+    assert compare(old, {**old, "response_calc": None})["exact"] and compare(z, {**z, "response_calc": " whole-recording   z"})["exact"]
+    c = compare(z, {**z, "response_calc": "baseline-noise units"})
+    assert c["differs"] == ["response_calc"] and not c["same"] and not c["related"]  # (another calculation takes no orphan over)
+    assert not compare(old, z)["same"] and not compare(z, {**z, "response_calc": "Whole-recording Z"})["same"]
 
 
 @pytest.fixture
@@ -142,8 +148,9 @@ def test_orphaned_and_taken_over(main, env):  # noqa: F811
     r = env.readme(env.stage(others))
     assert not r["ok"] and r["errors"] == [
         f"the permalink '{SLUG}' is of dataset #{ds} (p1: GH146 > GCaMP6f (glomeruli)), of the same uploader, indicator, driver, "
-        "coding unit, manipulations and panels (p1) as this, and one dataset is kept of each, whatever their flies, odors and "
-        f"trials. If this replaces it, delete #{ds} first (Admin tab): its permalink then points to this, once saved"]
+        "coding unit, manipulations, response calculation and panels (p1) as this, and one dataset is kept of each, whatever "
+        f"their flies, odors and trials. If this replaces it, delete #{ds} first (Admin tab): its permalink then points to this, "
+        "once saved"]
     assert env.readme(env.stage(others), driver="pebbled")["ok"]  # (another identity)
     # deleted: orphaned, keeping what it was
     r = env.delete(ds)
@@ -178,6 +185,28 @@ def test_orphaned_and_taken_over(main, env):  # noqa: F811
     r = env.commit(fewer, proceed=SLUG)
     assert r["ok"] and r["permalink"] == SLUG and main.db.get_permalink(SLUG)["dataset_id"] == r["dataset_id"]
     assert len(main.db.get_permalink(SLUG)["keys"]["flies"]) == 2
+
+
+def test_calculations(main, env):  # noqa: F811
+    # the same recordings calculated otherwise: another identity, so not refused for the first's permalink
+    ds = env.commit(env.stage(), response_calc="z")["dataset_id"]
+    env.name(ds, SLUG + "-z")
+    assert env.dataset(ds)["default_permalink"] == "p1-ann-glomeruli-z-2024-01-02"
+    r = env.readme(env.stage(), response_calc=" z ")
+    assert not r["ok"] and any(f"the permalink '{SLUG}-z' is of dataset #{ds}" in e for e in r["errors"])
+    other = env.commit(env.stage(), response_calc="dF/F")
+    assert other["ok"] and other["permalink"] is None and other["title"] == "p1: GH146 > GCaMP6f (glomeruli), dF/F"
+    assert env.dataset(other["dataset_id"])["default_permalink"] == "p1-ann-glomeruli-dff-2024-01-02"
+    # its calculation edited: a permalink named as by default follows, once Proceed is pressed; it keeps the calculation
+    env.name(other["dataset_id"], "p1-ann-glomeruli-dff-2024-01-02")
+    status, r = env.edit(other["dataset_id"], response_calc="dF/F0")
+    assert status == 409 and r["permalink_change"] == {"from": "p1-ann-glomeruli-dff-2024-01-02", "to": "p1-ann-glomeruli-dff0-2024-01-02"}
+    status, r = env.edit(other["dataset_id"], response_calc="dF/F0", proceed="p1-ann-glomeruli-dff0-2024-01-02")
+    assert status == 200 and main.db.get_permalink("p1-ann-glomeruli-dff0-2024-01-02")["keys"]["response_calc"] == "dF/F0"
+    # deleted, its permalink is not taken over by another calculation of its recordings, but is by its own
+    env.delete(ds)
+    assert env.readme(env.stage(), response_calc="baseline-noise units")["permalink"] is None
+    assert env.readme(env.stage(), response_calc="z")["permalink"]["slug"] == SLUG + "-z"
 
 
 def test_delete_orphaned(main, env):  # noqa: F811

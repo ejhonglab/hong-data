@@ -3,8 +3,8 @@
 A permalink is lowercase letters, digits and '-' (`slug_problem`), by default named after its
 dataset as a download of its matrix is (`default_slug`: `export.dataset_stem`). It keeps what
 its dataset is (`dataset_keys`): its identity (`IDENTITY`: uploader, indicator, driver,
-coding unit, manipulations and the panels that name it), its flies (date, fly_num) and its
-trials (panel, odor, repeat). Its dataset deleted, it is orphaned, keeping them, until an
+coding unit, manipulations, response calculation and the panels that name it), its flies
+(date, fly_num) and its trials (panel, odor, repeat). Its dataset deleted, it is orphaned, keeping them, until an
 upload like it takes it over (`compare`) or it is deleted in the Admin tab; while it points
 to a dataset, an upload of the same identity is refused (one dataset is kept of each).
 """
@@ -16,14 +16,15 @@ from typing import Optional
 
 from .db import rename_panel
 from .export import dataset_stem, main_panels
-from .metadata import is_kc, manipulations_text, same_manipulations
+from .metadata import is_kc, manipulations_text, same_manipulations, same_response_calc
 
 SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 MAX_LEN = 80
-# what makes a dataset the one it is, but for its flies and trials (and details not required)
-IDENTITY = ("uploader_name", "indicator", "driver", "coding_unit", "manipulations", "panels")
+# what makes a dataset the one it is, but for its flies and trials (and details not required);
+# keys kept before the response calculation was one have none, as a dataset without one
+IDENTITY = ("uploader_name", "indicator", "driver", "coding_unit", "manipulations", "response_calc", "panels")
 LABELS = {"uploader_name": "uploader", "indicator": "indicator", "driver": "driver", "coding_unit": "coding unit",
-          "manipulations": "manipulations", "panels": "panels"}
+          "manipulations": "manipulations", "response_calc": "response calculation", "panels": "panels"}
 EXAMPLES = 4
 
 
@@ -53,7 +54,7 @@ def slug_problem(slug: str) -> Optional[str]:
 def default_slug(d: dict, trials: list[dict]) -> str:
     """The name a dataset's permalink has by default (`d` as `Database.get_dataset` gives it,
     `trials` as `get_matrix_arrays`): its matrix's download's (`export.dataset_stem`), so
-    ``<panels>-<uploader>-<coding unit>[-<manipulations>]-<date of the last fly>``."""
+    ``<panels>-<uploader>-<coding unit>[-<manipulations>][-<response calculation>]-<date of the last fly>``."""
     s = slugify(dataset_stem(d, trials))
     return s if slug_problem(s) is None else f"dataset-{d['id']}"
 
@@ -105,6 +106,8 @@ def _norm(s: Optional[str]) -> str:
 def _same(key: str, a, b) -> bool:
     if key == "manipulations":
         return same_manipulations(a, b)
+    if key == "response_calc":
+        return same_response_calc(a, b)
     if key == "panels":
         return {_norm(p) for p in a or []} == {_norm(p) for p in b or []}
     if key == "coding_unit" and is_kc(a) and is_kc(b):

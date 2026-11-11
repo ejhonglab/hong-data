@@ -140,12 +140,15 @@ def main_panels(panels: list[str]) -> list[str]:
 
 def dataset_stem(d: dict, trials: list[dict]) -> str:
     """Standard file name (without extension) for one dataset's matrix:
-    ``<panels>_<uploader>_<coding unit>[_<manipulations>]_<date of the last fly>``.
+    ``<panels>_<uploader>_<coding unit>[_<manipulations>][_<response calculation>]_<date of
+    the last fly>``.
 
     Panels are those in the data (or, without a panel level, those entered at upload),
     sorted, leaving out diagnostic panels (`is_diagnostic_panel`) unless there are only those. The uploader's
     name is lowercased, without periods. Manipulations are each ``<key>-<value>`` (or the
-    key alone). Each part is ASCII only, with spaces as '-'.
+    key alone). The response calculation, if given, tells apart the same recordings
+    calculated otherwise (its math as its letters: ``$\\Delta F/F$``, ``Delta-FF``). Each
+    part is ASCII only, with spaces as '-'.
 
     Args:
         d: as returned by `Database.get_dataset`.
@@ -154,7 +157,7 @@ def dataset_stem(d: dict, trials: list[dict]) -> str:
     panels = main_panels(list(dict.fromkeys(t["panel"] for t in trials if t["panel"])) or d["metadata"].get("panel_names") or [])
     manipulations = [m["key"] if m.get("value") is None else f"{m['key']}-{m['value']}" for m in d.get("manipulations") or []]
     parts = [*sorted(panels, key=str.casefold), d["uploader_name"].lower().replace(".", ""), d["coding_unit"],
-             *manipulations, d["last_fly_date"] or ""]
+             *manipulations, d.get("response_calc") or "", d["last_fly_date"] or ""]
     return "_".join(filter(None, map(_ascii, parts))) or f"olfdb_dataset-{d['id']}"
 
 

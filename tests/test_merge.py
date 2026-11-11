@@ -176,12 +176,56 @@ def test_download(four, tmp_path):
     assert write_download(db, [5], "wide", tmp_path / "pn.zip", tmp_path / "datasets", merged=p)[0] == "olfdb_pns_1-dataset_wide.zip"
 
 
+def test_calculations(main, tmp_path, monkeypatch):  # noqa: F811
+    # the same recordings calculated otherwise: one of each merged, that of the calculation chosen if they have it
+    monkeypatch.setattr(config, "EXPORTS_DIR", tmp_path / "exports")
+    config.EXPORTS_DIR.mkdir()
+    db = main.db
+    z = add(db, tmp_path, "z", 1, coding_unit="KCs", response_calc="whole-recording z")
+    noise = add(db, tmp_path, "noise", 3, coding_unit="KCs", response_calc="baseline-noise units")
+    raw = add(db, tmp_path, "raw", 50, coding_unit="KCs", response_calc="unnormalized dFc")
+    tnt = add(db, tmp_path, "tnt", 2, coding_unit="KCs", response_calc="whole-recording z", manipulations=[{"key": "TNT"}])
+    tnt_noise = add(db, tmp_path, "tnt_noise", 6, coding_unit="KCs", response_calc="baseline-noise  units", manipulations=[{"key": "TNT"}])
+    remy = add(db, tmp_path, "remy", 1, coding_unit="KCs", uploader_name="Remy")  # (the same flies, another's: not the same recordings)
+    assert db.calculations() == [[z, noise, raw], [tnt, tnt_noise]]
+    p = merge.plan(db, "KCs")
+    assert [d["id"] for d in p["datasets"]] == [z, tnt, remy] and set(p["scales"]) == {z, tnt, remy}
+    assert p["calcs"] == ["whole-recording z", "baseline-noise units", "unnormalized dFc"] and p["calc"] is None
+    assert [(x["id"], x["of"]) for x in p["left_out"]] == [(noise, z), (raw, z), (tnt_noise, tnt)]
+    assert p["left_out"][0]["reason"] == (f"the recordings of #{z} (whole-recording z), calculated otherwise: one calculation of "
+                                          "each is merged")
+    p = merge.plan(db, "KCs", calc=" baseline-noise   units ")
+    assert [d["id"] for d in p["datasets"]] == [noise, tnt_noise, remy] and p["calc"] == "baseline-noise units"
+    assert [(x["id"], x["of"]) for x in p["left_out"]] == [(z, noise), (raw, noise), (tnt, tnt_noise)]
+    p = merge.plan(db, "KCs", calc="unnormalized dFc")  # (TNT's recordings have no such calculation: their first)
+    assert [d["id"] for d in p["datasets"]] == [raw, tnt, remy]
+    assert p["left_out"][-1]["id"] == tnt_noise and p["left_out"][-1]["reason"].endswith("(none of them is unnormalized dFc: the first uploaded is)")
+    # grouped by response calculation too: no group of two calculations of a recording, nor of two units
+    p = merge.plan(db, "KCs", "groups", ["uploader", "calc"], calc="baseline-noise units")
+    assert {g["key"]: g["ids"] for g in p["groups"]} == {"Ann · baseline-noise units": [noise, tnt_noise],
+                                                        "Remy · response calculation not given": [remy]}
+    assert merge.plan(db, "KCs", "groups", ["uploader"])["groups"][0]["ids"] == [z, tnt]
+    # the API: the unit's count, the calculation chosen, and a download of the datasets merged, the others said to be left out
+    assert call(main.merge_units)[1] == {"coding_units": [{"coding_unit": "KCs", "ids": [z, noise, raw, tnt, tnt_noise, remy],
+                                                           "n_other_calcs": 3}]}
+    status, p = call(main.merge_preview, body={"coding_unit": "KCs", "calc": "baseline-noise units"})
+    assert status == 200 and [d["id"] for d in p["datasets"]] == [noise, tnt_noise, remy]
+    res = get(main.merge_download, {"coding_unit": "KCs", "format": "long", "calc": "baseline-noise units"})
+    assert res.status_code == 200 and res.headers["content-disposition"].endswith('olfdb_kcs_3-datasets_long.zip"')
+    with zipfile.ZipFile(res.path) as zf:
+        long = pd.read_csv(io.BytesIO(zf.read("olfdb_kcs_3-datasets_long/responses_long.csv")))
+        readme = zf.read("olfdb_kcs_3-datasets_long/README.md").decode()
+    assert sorted(long.dataset_id.unique()) == [noise, tnt_noise, remy]
+    assert "## Recordings calculated more than one way" in readme and f"- #{z} z: the recordings of #{noise}" in readme
+    assert "(that of baseline-noise units where there is one, else the first uploaded)" in readme
+
+
 def test_api(main, tmp_path, monkeypatch):  # noqa: F811
     monkeypatch.setattr(config, "EXPORTS_DIR", tmp_path / "exports")
     config.EXPORTS_DIR.mkdir()
     a = add(main.db, tmp_path, "a", 1, power_mw=10)
     b = add(main.db, tmp_path, "b", 3, uploader_name="Bob", power_mw=10)
-    assert call(main.merge_units)[1] == {"coding_units": [{"coding_unit": "glomeruli", "ids": [a, b]}]}
+    assert call(main.merge_units)[1] == {"coding_units": [{"coding_unit": "glomeruli", "ids": [a, b], "n_other_calcs": 0}]}
     status, p = call(main.merge_preview, body={"coding_unit": "glomeruli", "mode": "groups", "by": ["uploader"], "target": "Bob"})
     assert status == 200 and {g["key"]: g["scale"] for g in p["groups"]} == {"Ann": pytest.approx(3), "Bob": 1}
     assert call(main.merge_preview, body={"coding_unit": "glomeruli", "tolerance": "x"})[0] == 422

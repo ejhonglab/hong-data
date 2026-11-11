@@ -150,8 +150,9 @@ between the frontend and the server. Using the app is described in
 - **A permalink names a dataset by what it is, not its number** (`app/permalinks.py`,
   table `permalinks`). Datasets are replaced by deleting and uploading again, which gives
   them new numbers, so a permalink keeps what its dataset is (`dataset_keys`): its
-  identity (`IDENTITY`: uploader, indicator, driver, coding unit, manipulations and
-  the panels that name it, `export.main_panels`, as in its downloads' names), its flies
+  identity (`IDENTITY`: uploader, indicator, driver, coding unit, manipulations, response
+  calculation and the panels that name it, `export.main_panels`, as in its downloads'
+  names; keys kept before the response calculation was one have none), its flies
   (date, fly_num) and its trials (panel, odor, repeat). Panels are part of the identity
   because one person's datasets of a coding unit are told apart by them (Tom's megamat,
   validation2 and kiwi glomeruli datasets). While a permalink points to a dataset, an
@@ -159,13 +160,17 @@ between the frontend and the server. Using the app is described in
   each); once its dataset is deleted (the permalink then kept as it was, `orphaned_at`),
   an upload of that identity with some panels or flies in common (`compare`: related)
   takes it over: at once if all is the same, else once Proceed is pressed under what
-  differs (`differences`), which saving checks again (`permalink_proceed`). Its name
+  differs (`differences`), which saving checks again (`permalink_proceed`). Another
+  calculation of the same recordings is another identity: it is not refused while the
+  first's permalink points to it, nor takes that over once orphaned (an upload must press
+  Proceed for any related orphan, which would hand one calculation's name to another). Its name
   follows its dataset's default (`default_slug`: its download's stem, ASCII, lowercase,
   '-' for the rest) until renamed by hand (`custom`); an edit changing the default asks
   before renaming it (409 `permalink_change` until `permalink_proceed` names the new one).
   `/d/<name>` leads to `#browse/<name>`, which Browse looks up (an orphaned one says what
   it was of); a name needs a letter, so `#browse/<number>` stays a dataset's number.
-- **Duplicates are the same data, or the same flies of one person, coding unit and manipulations.** A
+- **Duplicates are the same data, or the same flies of one person, coding unit, manipulations and
+  response calculation.** A
   file is refused if it is any of a stored dataset's files byte for byte (`data_files`), or its data
   is (the same flies, ROIs, trials and values: `main._same_data`), whoever uploaded it,
   as soon as it is read. Its flies, (date, fly_num), are only compared with datasets of
@@ -176,14 +181,30 @@ between the frontend and the server. Using the app is described in
   person's fly numbers of a day are their own, one fly may be recorded in two places
   (coding units), and a dataset of the same flies otherwise treated (the upload form's
   manipulations, `datasets.manipulations`: e.g. after a drug, matched in any case and
-  order) is another; the same data is refused whatever its manipulations. A
+  order) is another; so is one of the same recordings calculated otherwise
+  (`datasets.response_calc`, matched but for spacing: e.g. Yang's APL16 KCs as her
+  whole-recording z, in units of each KC's baseline noise, and unnormalized), as many ways
+  as there are, so long as each says how (`metadata.other_calculation`): one without a
+  response calculation beside another of its flies is refused, the error saying which of
+  the two needs one (`main._same_flies_error`), as edits are (`main._same_flies_problems`).
+  The same data is refused whatever its manipulations or calculation. A
   manipulation is of a whole dataset, not of its flies: a fly is still its (date,
   fly_num) in it. A fly here is its ROIs' other column levels too
   (`ingest.fly_key`): each side of a fly's brain uploaded apart is not the other's
-  duplicate. How the responses were calculated (`datasets.response_calc`) does not set
-  a dataset of the same flies apart, for now: the error says when only that differs
-  (`main._same_flies_error`), as the same recordings calculated two ways are not yet
-  anything the app keeps apart (in Merge, Compare or downloads).
+  duplicate.
+- **The same recordings calculated otherwise are datasets of their own, told apart
+  wherever datasets are named or pooled** (`Database.calculations`: the same flies,
+  uploader, coding unit and manipulations, each with its own response calculation). The
+  calculation is in their titles (`metadata.dataset_title`, as written, math too:
+  `APL16: MB247dbLexA > GCaMP6s (KCs) [TNT], baseline-noise units`), the names of their
+  downloads and permalinks (`export.dataset_stem`, in ASCII: `$\Delta F/F$` as `Delta-FF`)
+  and a permalink's identity; Browse says under a dataset's title how else its recordings
+  were calculated (`calculations`, with `GET /api/datasets/{id}`), and a merged download
+  takes one calculation of each (`merge.one_calculation`). Compare needs nothing more:
+  each dataset is a space of its own there, labelled by its title. Being given every time
+  it is entered, rather than only once another calculation is uploaded, a calculation
+  names a dataset the same way whatever else is stored, so no title, file or permalink
+  name changes when another calculation of its recordings comes or goes.
 - **Panels are renamed when read, not stored so.** The Admin tab's renames (the setting
   `panel_renames`) are applied wherever a stored dataset's panels are read (`Database`:
   its trials, panels, title, metadata and summary), so every display and download has
@@ -668,6 +689,15 @@ between the frontend and the server. Using the app is described in
   each response more than one of them has. By power, groups are made greedily in order
   of power, a dataset joining the first group it is close enough to every member of, so
   that no two in a group are further apart than allowed.
+- **A merged download takes one calculation of the same recordings** (`merge.one_calculation`):
+  of datasets that are the same recordings calculated otherwise (`Database.calculations`),
+  the one of the calculation chosen (`plan`'s `calc`, the tab's menu of those of the
+  coding unit), else the first uploaded, so that by default a merge is what it was before
+  another calculation was uploaded. The others are left out, and said to be (in the tab
+  and the download's README), as no recording should be in a merge twice, nor a group's
+  factor be fitted to the same responses in two units. Groups can be made by response
+  calculation too (`GROUP_BY`'s `calc`, matched as `same_response_calc`), so that
+  datasets of other recordings in other units are not scaled by one factor either.
 - **Reference datasets** are built in (`reference_data/`, read when asked for; those
   marked as examples only while there is no other, built in or added) or added in
   the Admin tab: a file anywhere on the server that the app only reads, into a copy in
@@ -1266,7 +1296,8 @@ app/lotus_build.py LOTUS's frozen records and metadata checked and read into a b
 app/lotus_import.py LOTUS's files of an upload, found by the paths lotus_build.py finds them by, checked as it
                    checks them
 app/export.py      downloads: zips of dataset files, concatenated wide/long matrices
-app/merge.py       merged downloads of a coding unit: grouping datasets, scaling groups to each other
+app/merge.py       merged downloads of a coding unit: one calculation of the same recordings, grouping datasets,
+                   scaling groups to each other
 app/compare.py     datasets averaged for the Compare tab (odors × glomeruli or ROIs); ECFP fingerprints (RDKit)
 app/odormeta.py    odor table: sheet parsing / validation, sync diff, links, dataset matching
 app/chemprops.py   odors' vapor pressures, molar masses, densities and Henry's law constants, looked up through
@@ -1365,7 +1396,9 @@ POST   /api/stage/{id}/commit               {"metadata", "readme", "readme_edite
                                             (422 unless each odor is one in the odor table)
 GET    /api/datasets                        list
 GET    /api/datasets/{id}                   metadata + README (markdown and HTML, and its path), its
-                                            permalink and default_permalink (the name one would have)
+                                            permalink and default_permalink (the name one would have),
+                                            and calculations (the other datasets of its recordings
+                                            calculated otherwise: [{id, title, response_calc}])
 PUT    /api/datasets/{id}/readme            {"readme", "base"} → the README overwritten (409 if it is
                                             no longer "base", the one the edit started from)
 PUT    /api/datasets/{id}/metadata          {"metadata", "base"} → the values entered at upload replaced,
@@ -1404,13 +1437,15 @@ GET    /api/movie/trials?path=              the trials of an al_analysis trial_f
 GET    /api/download?ids=1,2&format=files|wide|long
                                             a zip, or a CSV for the matrix of a single dataset;
                                             &lower=1 for odor names in lowercase (but in files)
-GET    /api/merge                           the coding units recorded from, with their datasets
+GET    /api/merge                           the coding units recorded from, with their datasets (and how
+                                            many are other calculations of another's recordings)
 POST   /api/merge/preview                   {"coding_unit", "mode": "none"|"groups", "by": [...],
-                                            "target", "tolerance", "power_tolerance"} → the groups,
-                                            their factors and each dataset's
-GET    /api/merge/download?coding_unit=&format=wide|long&mode=&by=a,b&target=&tolerance=&power_tolerance=
-                                            every dataset of the coding unit, scaled, as a zip
-                                            (&lower=1 too)
+                                            "target", "tolerance", "power_tolerance", "calc"} → the
+                                            datasets merged and those left out (other calculations of
+                                            their recordings), the groups, their factors and each dataset's
+GET    /api/merge/download?coding_unit=&format=wide|long&mode=&by=a,b&target=&tolerance=&power_tolerance=&calc=
+                                            every dataset of the coding unit (one calculation of the same
+                                            recordings), scaled, as a zip (&lower=1 too)
 GET    /api/merge/scales?(the same, without format)
                                             each dataset's group and scale factor (scaling.csv)
 GET    /api/roi_training[?datasets=1,2]     the flies of glomeruli datasets with a diagnostic panel to

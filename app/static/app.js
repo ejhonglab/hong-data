@@ -2024,10 +2024,12 @@ const UPLOAD_KEY = 'olfdb.upload';
 const manipText = (ms) => (ms || []).map((m) => (m.value == null ? m.key : `${m.key}=${m.value}`)).join('; ');
 
 // A dataset as named in the lists of Browse and Compare (HTML): driver > indicator (coding
-// unit), then any manipulations in brackets.
+// unit), then any manipulations in brackets and its response calculation (as its title has
+// them, metadata.dataset_title: the same recordings calculated otherwise are told apart by it).
 function datasetName(d) {
+  const calc = (d.response_calc || '').trim().replace(/\s+/g, ' ');
   return `${esc(d.driver)} &gt; ${esc(d.indicator)} <span class="muted">(${esc(d.coding_unit)})</span>`
-    + (d.manipulations?.length ? ` [${esc(manipText(d.manipulations))}]` : '');
+    + (d.manipulations?.length ? ` [${esc(manipText(d.manipulations))}]` : '') + (calc ? `, ${esc(calc)}` : '');
 }
 
 // Data files as said of an upload: the name of one, else how many ('10 CSVs').
@@ -3083,6 +3085,7 @@ class Browse {
     $$('#dataset-view details.menu').forEach((menu) => { menu.open = false; }); // they were about another dataset
     $('#ds-title').textContent = 'Loading…';
     $('#ds-sub').textContent = '';
+    $('#ds-calcs').hidden = true;
     $('#ds-permalink').replaceChildren();
     let d, m;
     try {
@@ -3101,6 +3104,11 @@ class Browse {
     if (md.power_mw) bits.push(`${md.power_mw} mW${md.power_tolerance_mw != null ? ' ±' + md.power_tolerance_mw : ''}`);
     if (md.recording_system) bits.push(md.recording_system);
     $('#ds-sub').textContent = bits.join('; ');
+    // the same recordings calculated otherwise (Database.calculations), each a dataset of its own
+    const calcs = d.calculations || [];
+    $('#ds-calcs').innerHTML = calcs.length ? `Its recordings also calculated as: ${calcs.map((c) => `<a href="#browse/${c.id}">#${c.id}</a>
+      ${esc(c.response_calc || 'response calculation not given')}`).join(', ')}` : '';
+    $('#ds-calcs').hidden = !calcs.length;
     this._showPermalink(d);
     setStatus($('#ds-readme-status'), '');
     this._showReadme(id);
@@ -4367,7 +4375,7 @@ class MergePage {
   constructor() {
     this._seq = 0;
     $('#tab-merge').addEventListener('change', (e) => {
-      if (e.target.matches('#merge-unit, [name=merge-mode], [name=merge-by], #merge-target, #merge-tol, #merge-power-tol')) this.preview();
+      if (e.target.matches('#merge-unit, #merge-calc, [name=merge-mode], [name=merge-by], #merge-target, #merge-tol, #merge-power-tol')) this.preview();
     });
     $('#merge-plan').addEventListener('click', (e) => {
       if (e.target.closest('[data-scales]')) download(`/api/merge/scales?${this._query()}`, $('#merge-status'));
@@ -4382,7 +4390,9 @@ class MergePage {
     let res;
     try { res = await api('/api/merge'); } catch (e) { $('#merge-plan').replaceChildren(msgBox('error', esc(e.message))); return; }
     const sel = $('#merge-unit'), keep = sel.value || LS.get('olfdb.merge_unit', '');
-    sel.innerHTML = res.coding_units.map((u) => `<option value="${esc(u.coding_unit)}">${esc(u.coding_unit)} (${u.ids.length} dataset${u.ids.length === 1 ? '' : 's'})</option>`).join('');
+    // (with how many are other calculations of another's recordings: one of each is merged)
+    const others = (u) => (u.n_other_calcs ? `, ${u.n_other_calcs} of them other calculations` : '');
+    sel.innerHTML = res.coding_units.map((u) => `<option value="${esc(u.coding_unit)}">${esc(u.coding_unit)} (${u.ids.length} dataset${u.ids.length === 1 ? '' : 's'}${others(u)})</option>`).join('');
     $$('#merge-download button').forEach((b) => { b.disabled = !res.coding_units.length; });
     if (!res.coding_units.length) { $('#merge-plan').replaceChildren(msgBox('info', 'Nothing has been uploaded yet.')); return; }
     if (res.coding_units.some((u) => u.coding_unit === keep)) sel.value = keep;
@@ -4394,6 +4404,7 @@ class MergePage {
       coding_unit: $('#merge-unit').value, mode: $('[name=merge-mode]:checked').value,
       by: $$('[name=merge-by]:checked').map((c) => c.value), target: $('#merge-target').value || 'average',
       tolerance: Number($('#merge-tol').value), power_tolerance: Number($('#merge-power-tol').value),
+      calc: $('#merge-calc').value,
     };
   }
 
@@ -4416,6 +4427,13 @@ class MergePage {
       return;
     }
     if (seq !== this._seq) return;
+    // the response calculations of this unit's recordings calculated more than one way, to merge one of
+    const calcSel = $('#merge-calc');
+    if (o.calc && !p.calcs.includes(o.calc)) { calcSel.value = ''; this.preview(); return; } // (one of another unit)
+    calcSel.innerHTML = [['', 'the first uploaded'], ...p.calcs.map((c) => [c, `those of ${c}, where there are`])]
+      .map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join('');
+    calcSel.value = o.calc;
+    $('#merge-calc-field').hidden = $('#merge-calc-note').hidden = !p.calcs.length;
     const sel = $('#merge-target');
     sel.innerHTML = [['average', 'the average of the groups'], ...p.groups.map((g) => [g.key, `the group ${g.key}`])]
       .map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join('');
@@ -4457,6 +4475,13 @@ class MergePage {
           ${scaled ? `<td>${g ? esc(g.key) : `<span class="muted">${esc(why.get(d.id) || '')}</span>`}</td>
           <td class="scale">${factor(p.scales[d.id])}</td>` : ''}</tr>`;
       }).join('')}</tbody></table>`);
+    // the other calculations of recordings merged once (merge.one_calculation)
+    if (p.left_out?.length) {
+      parts.push(`<div class="merge-scales-head"><h3>Left out: other calculations of the same recordings (${p.left_out.length})</h3></div>
+        <table class="odor-table"><thead><tr><th>Dataset</th><th>Why</th></tr></thead><tbody>
+        ${p.left_out.map((x) => `<tr><td>${link(x.id)} ${esc(x.title)}</td><td class="muted">${esc(x.reason)}</td></tr>`).join('')}
+        </tbody></table>`);
+    }
     return parts.join('');
   }
 }

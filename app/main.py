@@ -56,8 +56,10 @@ from .metadata import (
     dataset_title,
     first_name_problem,
     generate_readme,
+    other_calculation,
     same_manipulations,
-    same_response_calc,
+    same_name,
+    same_unit,
 )
 from .odors import odor_names
 
@@ -300,30 +302,29 @@ def _same_data(parsed: ParsedData, m: dict, renames: Optional[dict[str, str]] = 
     return bool(np.allclose(a, b, rtol=1e-5, atol=1e-7, equal_nan=True))
 
 
-def _same_name(a: Optional[str], b: Optional[str]) -> bool:
-    """Whether two names (of uploaders) are one, whatever their case and spacing."""
-    return " ".join((a or "").split()).casefold() == " ".join((b or "").split()).casefold()
-
-
-def _same_unit(a: Optional[str], b: Optional[str]) -> bool:
-    """Whether two coding units are one: KCs however written, else whatever their case and spacing."""
-    return (is_kc(a) and is_kc(b)) or _same_name(a, b)
+_same_name, _same_unit = same_name, same_unit
 
 
 def _same_flies_error(flies: set[tuple], d: dict, response_calc: Optional[str]) -> str:
     """Why an upload or edit of a dataset with the same flies (`flies`) as `d` (of the same
-    uploader, coding unit and manipulations) is refused: also when only their response
-    calculations (`metadata.Metadata.response_calc`) differ, which, for now, does not make
-    two datasets of the same flies."""
+    uploader, coding unit and manipulations) and the response calculation `response_calc`
+    is refused: one person's datasets of a coding unit cannot have the same flies, but for
+    other manipulations, or as the same recordings calculated otherwise, each saying how
+    (`metadata.other_calculation`). Says which of the two needs a calculation, if one does."""
     which = f"dataset #{d['id']} ({d['title']}), uploaded by {d['uploader_name']} on {d['created_at'][:10]}"
     same = f"its flies ({_flies_text(flies)}) are exactly those of {which}, also of {d['coding_unit']}"
-    if same_response_calc(d.get("response_calc"), response_calc):
-        return (f"{same}: one person's datasets of a coding unit cannot have the same flies, but for other manipulations "
-                "(e.g. after a drug: enter them under Manipulations)")
-    said = lambda c: f"'{c}'" if c else "none given"
-    return (f"{same}, and only their response calculations differ ({said(response_calc)} here, {said(d.get('response_calc'))} "
-            "there): datasets of the same flies calculated otherwise cannot be kept apart yet"
-            + (f" (to give #{d['id']} one, edit its details in Browse)" if not d.get("response_calc") else ""))
+    here, there = (response_calc or "").strip(), (d.get("response_calc") or "").strip()
+    edit = f"to give #{d['id']} one, edit its details in Browse"
+    if here and not there:
+        return (f"{same}: the same recordings calculated otherwise are kept only when each says how, and #{d['id']} does not "
+                f"({edit})")
+    if there and not here:
+        return (f"{same}: the same recordings calculated otherwise are kept only when each says how: enter how these "
+                f"responses were calculated (Response calculation), other than #{d['id']}'s '{there}'")
+    how = f"this one's response calculation is '{here}', as #{d['id']}'s" if here else f"under Response calculation; {edit}"
+    return (f"{same}: one person's datasets of a coding unit cannot have the same flies, but for other manipulations "
+            f"(e.g. after a drug: enter them under Manipulations), or as the same recordings calculated otherwise, each "
+            f"saying how ({how})")
 
 
 def _duplicates(parsed: ParsedData, files: list[dict], uploader: Optional[str] = None, coding_unit: Optional[str] = None,
@@ -333,17 +334,22 @@ def _duplicates(parsed: ParsedData, files: list[dict], uploader: Optional[str] =
     is (the same flies, ROIs, trials and values), whoever uploaded it. With its uploader,
     coding unit and manipulations (once entered), errors too if its flies (date, fly_num,
     and their ROIs' other levels: `ingest.fly_key`) are all and only those of a dataset of
-    theirs of that coding unit and those manipulations, whatever its response calculation
-    (saying so if only that differs: `_same_flies_error`), and warnings if it shares only
-    some with one, saying which dataset may need to be deleted. Datasets of other
-    uploaders, coding units or manipulations may have the same flies: one person's fly 1
-    of a day is not another's, a fly may be recorded in two places (as may each side of
-    its brain, apart), and a dataset of the same flies otherwise treated (e.g. after a
-    drug: `metadata.Metadata.manipulations`) is another."""
+    theirs of that coding unit and those manipulations, unless they are the same recordings
+    calculated otherwise, each saying how (`metadata.other_calculation`; else
+    `_same_flies_error` says what is missing), and warnings if it shares only some with one
+    (once for the same recordings calculated several ways: `Database.calculations`), saying
+    which dataset may need to be deleted. Datasets of other uploaders, coding units or
+    manipulations may have the same flies: one person's fly 1 of a day is not another's, a
+    fly may be recorded in two places (as may each side of its brain, apart), and a dataset
+    of the same flies otherwise treated (e.g. after a drug: `metadata.Metadata.manipulations`)
+    is another."""
     flies = {fly_key(u["date"], u["fly_num"], u.get("extra")) for u in parsed.units if u["date"] is not None}
     stored = db.dataset_flies()
+    datasets = sorted(db.list_datasets(), key=lambda d: d["id"])
+    others = {i: s[1:] for s in db.calculations(datasets) for i in s[:1]}  # first of a set -> its other calculations
+    later = {i for s in others.values() for i in s}
     errors, warnings = [], []
-    for d in sorted(db.list_datasets(), key=lambda d: d["id"]):
+    for d in datasets:
         which = f"dataset #{d['id']} ({d['title']}), uploaded by {d['uploader_name']} on {d['created_at'][:10]}"
         delete = f"If this replaces it, delete #{d['id']} first (Admin tab)."
         theirs = stored.get(d["id"], set())
@@ -358,8 +364,11 @@ def _duplicates(parsed: ParsedData, files: list[dict], uploader: Optional[str] =
         elif same_flies and (m := db.get_matrix_arrays(d["id"])) is not None and _same_data(parsed, m, db.panel_renames()):
             errors.append(f"this is the data of {which}, already (the same ROIs, trials and values, in another file). {delete}")
         elif mine and same_flies:
-            errors.append(f"{_same_flies_error(flies, d, response_calc)}. {delete}")
-        elif mine and flies & theirs:
+            if not other_calculation(response_calc, d.get("response_calc")):
+                errors.append(f"{_same_flies_error(flies, d, response_calc)}. {delete}")
+        elif mine and flies & theirs and d["id"] not in later:
+            if others.get(d["id"]):
+                which += f" (and its other calculations, {', '.join(f'#{i}' for i in others[d['id']])})"
             shared = flies & theirs
             if theirs < flies:
                 tail = (f"all of whose flies are here, with {len(flies - theirs)} more: if this replaces it, #{d['id']} "
@@ -391,7 +400,8 @@ def _permalink_check(parsed: ParsedData, m: Metadata) -> tuple[list[str], Option
             if c["same"]:
                 errors.append(
                     f"the permalink '{p['slug']}' is of dataset #{p['dataset_id']} ({k.get('title')}), of the same uploader, "
-                    f"indicator, driver, coding unit, manipulations and panels ({', '.join(k.get('panels') or []) or 'none'}) as this, "
+                    f"indicator, driver, coding unit, manipulations, response calculation and panels "
+                    f"({', '.join(k.get('panels') or []) or 'none'}) as this, "
                     "and one dataset is kept of each, whatever their flies, odors and trials. If this replaces it, delete "
                     f"#{p['dataset_id']} first (Admin tab): its permalink then points to this, once saved")
         elif c["related"] and (rank is None or (c["exact"], c["shared"]) > rank):
@@ -955,7 +965,17 @@ async def dataset_get(request: Request) -> Response:
     d["files"] = files
     d["permalink"] = _public_permalink(d["permalink"])
     d["default_permalink"] = await run_in_threadpool(_default_permalink, d)
+    d["calculations"] = await run_in_threadpool(_calculations_of, ds_id)
     return JSONResponse(d)
+
+
+def _calculations_of(ds_id: int) -> list[dict]:
+    """The other datasets of a dataset's recordings calculated otherwise (`Database.calculations`):
+    [{id, title, response_calc}], in order of upload."""
+    datasets = db.list_datasets()
+    ids = next((s for s in db.calculations(datasets) if ds_id in s), [])
+    by_id = {d["id"]: d for d in datasets}
+    return [{"id": i, "title": by_id[i]["title"], "response_calc": by_id[i]["response_calc"]} for i in ids if i != ds_id]
 
 
 def _default_permalink(d: dict) -> str:
@@ -1108,13 +1128,15 @@ _metadata_lock = threading.Lock()
 def _same_flies_problems(ds_id: int, m: Metadata) -> list[str]:
     """Why a dataset's metadata as edited is refused, as an upload with it would be
     (`_duplicates`): its flies all and only those of another dataset of its uploader, coding
-    unit and manipulations (whatever its response calculation)."""
+    unit and manipulations, unless they are the same recordings calculated otherwise, each
+    saying how (`metadata.other_calculation`)."""
     stored = db.dataset_flies()
     flies = stored.get(ds_id, set())
     out = []
     for d in sorted(db.list_datasets(), key=lambda d: d["id"]):
         if (d["id"] != ds_id and flies and stored.get(d["id"], set()) == flies and _same_name(d["uploader_name"], m.uploader_name)
-                and _same_unit(d["coding_unit"], m.coding_unit) and same_manipulations(d["manipulations"], m.manipulations)):
+                and _same_unit(d["coding_unit"], m.coding_unit) and same_manipulations(d["manipulations"], m.manipulations)
+                and not other_calculation(m.response_calc, d.get("response_calc"))):
             out.append(_same_flies_error(flies, d, m.response_calc))
     return out
 
@@ -1164,7 +1186,7 @@ def _save_metadata(ds_id: int, values: Any, base: dict, proceed: Optional[str] =
         if link and not link["custom"]:
             trials, renames = db.get_trials(ds_id), db.panel_renames()
             edited = {**shown, "uploader_name": m.uploader_name, "coding_unit": m.coding_unit, "manipulations": m.manipulations or [],
-                      "metadata": {**shown["metadata"], "panel_names": [rename_panel(p, renames) for p in m.panel_names or []]}}
+                      "response_calc": m.response_calc, "metadata": {**shown["metadata"], "panel_names": [rename_panel(p, renames) for p in m.panel_names or []]}}
             if permalinks.default_slug(edited, trials) != permalinks.default_slug(shown, trials):
                 to = permalinks.unique(permalinks.default_slug(edited, trials),
                                        {p["slug"] for p in db.list_permalinks()} - {link["slug"]})
@@ -1432,7 +1454,7 @@ def _merge_options(q: Any) -> dict:
         raise merge.MergeError("by must be a list")
     return {"coding_unit": str(q.get("coding_unit") or ""), "mode": str(q.get("mode") or "none"),
             "by": [str(b) for b in by], "target": str(q.get("target") or merge.AVERAGE), "tolerance": tolerance,
-            "power_tolerance": power_tolerance}
+            "power_tolerance": power_tolerance, "calc": str(q.get("calc") or "") or None}
 
 
 async def merge_units(request: Request) -> Response:

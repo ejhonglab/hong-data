@@ -122,7 +122,8 @@ try {
           <div class="manip-rows" data-role="manip-rows"></div>
           <div class="row"><button type="button" class="btn" data-role="manip-add">Add another</button></div>
           <p class="muted small">Anything done to these flies that sets this dataset apart, e.g. drug = CNO, or starved. A dataset of yours of the
-            same flies and coding unit is refused unless their manipulations differ (e.g. before and after a drug).</p>
+            same flies and coding unit is refused unless their manipulations differ (e.g. before and after a drug), or it is the
+            same recordings calculated otherwise, each with its own response calculation.</p>
         </div>
         <div class="field" data-field="age" data-in="edit defaults"><span>Fly age range (days after eclosion, from 0)</span>
           <div class="row"><input name="age_min_days" type="number" min="0" step="any" placeholder="min" class="narrow"><span class="dash">–</span><input name="age_max_days" type="number" min="0" step="any" placeholder="max" class="narrow"></div>
@@ -244,6 +245,7 @@ try {
           <div>
             <h2 id="ds-title"></h2>
             <p class="muted" id="ds-sub"></p>
+            <p class="muted" id="ds-calcs" hidden></p>
             <div class="ds-permalink" id="ds-permalink"></div>
           </div>
           <div class="ds-actions">
@@ -313,14 +315,17 @@ try {
   <section id="tab-merge" class="tab" hidden>
     <div class="page-head">
       <h1>Merge</h1>
-      <p class="lede">Every dataset recorded from one coding unit, in one download, concatenated as from Browse, with the option of scaling groups of datasets (by experimenter, rig or power) to each other first.</p>
+      <p class="lede">Every dataset recorded from one coding unit, in one download, concatenated as from Browse (one calculation of the same recordings), with the option of scaling groups of datasets (by experimenter, rig, response calculation or power) to each other first.</p>
     </div>
 
     <div class="step">
       <div class="step-head"><span class="step-num">1</span><h2>Coding unit</h2></div>
       <div class="grid">
         <label class="field"><span>Coding unit recorded from</span><select id="merge-unit"></select></label>
+        <label class="field" id="merge-calc-field" hidden><span>Of the same recordings calculated more than one way, merge</span>
+          <select id="merge-calc"><option value="">the first uploaded</option></select></label>
       </div>
+      <p class="muted small" id="merge-calc-note" hidden>Datasets of the same flies, experimenter and manipulations, each with its own response calculation, are the same recordings: one calculation of each is merged, the others left out (listed below).</p>
     </div>
 
     <div class="step" id="merge-scaling">
@@ -334,6 +339,7 @@ try {
           <div class="merge-by">
             <label class="check"><input type="checkbox" name="merge-by" value="uploader" checked> experimenter</label>
             <label class="check"><input type="checkbox" name="merge-by" value="system"> recording system</label>
+            <label class="check"><input type="checkbox" name="merge-by" value="calc"> response calculation</label>
             <label class="check"><input type="checkbox" name="merge-by" value="power"> power at the fly <span class="muted">(only datasets with power measured, with ranges close enough, below; the others are left as they are)</span></label>
           </div>
         </div>

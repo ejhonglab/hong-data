@@ -59,6 +59,23 @@ def same_response_calc(a: Optional[str], b: Optional[str]) -> bool:
     return " ".join((a or "").split()) == " ".join((b or "").split())
 
 
+def same_name(a: Optional[str], b: Optional[str]) -> bool:
+    """Whether two names (of uploaders) are one, whatever their case and spacing."""
+    return " ".join((a or "").split()).casefold() == " ".join((b or "").split()).casefold()
+
+
+def same_unit(a: Optional[str], b: Optional[str]) -> bool:
+    """Whether two coding units are one: KCs however written, else whatever their case and spacing."""
+    return (is_kc(a) and is_kc(b)) or same_name(a, b)
+
+
+def other_calculation(a: Optional[str], b: Optional[str]) -> bool:
+    """Whether datasets of the same flies (of one uploader, coding unit and manipulations)
+    with these response calculations are the same recordings calculated otherwise, and so
+    may both be kept: each says how, and not alike (`same_response_calc`)."""
+    return bool((a or "").strip() and (b or "").strip()) and not same_response_calc(a, b)
+
+
 class Metadata(BaseModel):
     uploader_name: str = Field(min_length=1)
     indicator: str = Field(min_length=1)
@@ -169,10 +186,14 @@ def _power_str(m: Metadata) -> Optional[str]:
 
 
 def dataset_title(m: Metadata, summary: dict) -> str:
+    """``<panels>: <driver> > <indicator> (<coding unit>)[ [<manipulations>]][, <response
+    calculation>]``: the calculation as written (math too), so that the same recordings
+    calculated otherwise are told apart by name."""
     panels = m.panel_names or summary.get("panel_names") or []
     panel_part = ", ".join(panels) if panels else "odor panel"
     manipulations = f" [{manipulations_text(m.manipulations)}]" if m.manipulations else ""
-    return f"{panel_part}: {m.driver} > {m.indicator} ({m.coding_unit}){manipulations}"
+    calc = f", {' '.join(m.response_calc.split())}" if m.response_calc else ""
+    return f"{panel_part}: {m.driver} > {m.indicator} ({m.coding_unit}){manipulations}{calc}"
 
 
 def generate_readme(m: Metadata, summary: dict, files: dict[str, Any], *, created_at: Optional[dt.datetime] = None) -> str:

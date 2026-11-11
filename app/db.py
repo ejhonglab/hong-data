@@ -35,6 +35,7 @@ from typing import Any, Callable, Iterable, Iterator, Optional
 import numpy as np
 
 from .ingest import drop_uninformative, fly_key, is_diagnostic_panel
+from .metadata import other_calculation, same_manipulations, same_name, same_unit
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS datasets (
@@ -601,6 +602,30 @@ class Database:
         for r in rows:
             out.setdefault(r["dataset_id"], set()).add(fly_key(r["date"], r["fly_num"], json.loads(r["extra_json"] or "{}")))
         return out
+
+    def calculations(self, datasets: Optional[list[dict]] = None) -> list[list[int]]:
+        """Sets of datasets that are the same recordings calculated otherwise: all and only
+        the same flies (`dataset_flies`), of the same uploader, coding unit and manipulations
+        (as `main._duplicates` matches them), each with a response calculation of its own
+        (`metadata.other_calculation`, as uploads and edits are refused otherwise), each set's
+        ids in order of upload (by number), the sets in order of their first. Of `datasets`
+        (as `list_datasets` gives them), if given, else of all."""
+        flies = self.dataset_flies()
+        ds = sorted(datasets if datasets is not None else self.list_datasets(), key=lambda d: d["id"])
+        sets: list[list[dict]] = []
+        for d in ds:
+            if not flies.get(d["id"]) or not (d.get("response_calc") or "").strip():
+                continue
+            for s in sets:
+                e = s[0]
+                if (flies[e["id"]] == flies[d["id"]] and same_name(e["uploader_name"], d["uploader_name"])
+                        and same_unit(e["coding_unit"], d["coding_unit"]) and same_manipulations(e["manipulations"], d["manipulations"])
+                        and all(other_calculation(x.get("response_calc"), d.get("response_calc")) for x in s)):
+                    s.append(d)
+                    break
+            else:
+                sets.append([d])
+        return [[d["id"] for d in s] for s in sets if len(s) > 1]
 
     def roi_names(self, ds_id: int) -> set[str]:
         """The names of a dataset's ROIs, as in its data (those of every fly)."""

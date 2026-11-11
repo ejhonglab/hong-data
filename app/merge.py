@@ -1,7 +1,14 @@
 """Merged downloads: every dataset of a coding unit, concatenated, groups of them optionally
 scaled to match each other first.
 
-Datasets are grouped by any of experimenter, recording system and power at the fly (with
+Of the same recordings calculated more than one way (`Database.calculations`: datasets of
+the same flies, uploader, coding unit and manipulations, each with its own response
+calculation), one is taken (`one_calculation`): that of the calculation chosen, if they
+have it, else the first uploaded; the others are left out, and said to be, so that no
+recording is in a merge twice, nor a group's factor fitted to the same responses in two units.
+
+Datasets are grouped by any of experimenter, recording system, response calculation and
+power at the fly (with
 power: measured, and every two in a group with their ranges, power ± its tolerance or
 `DEFAULT_POWER_PM`, at most `power_tolerance` apart; datasets without it are left as they
 are). Each group gets one scale factor: the one that best matches
@@ -23,10 +30,11 @@ import numpy as np
 import pandas as pd
 
 from .db import Database
+from .metadata import same_response_calc
 from .odors import OdorFormatError, parse_odor
 
 MODES = ("none", "groups")
-GROUP_BY = ("uploader", "system", "power")
+GROUP_BY = ("uploader", "system", "calc", "power")
 AVERAGE = "average"
 DEFAULT_TOLERANCE = 1.0
 DEFAULT_POWER_PM = 0.5  # mW: the ± of a power measured without one
@@ -53,11 +61,17 @@ def _norm(s: Optional[str]) -> str:
 
 
 def coding_units(db: Database) -> list[dict]:
-    """Each coding unit (spelled as first uploaded, matched in any case) and its datasets' ids."""
+    """Each coding unit (spelled as first uploaded, matched in any case), its datasets' ids,
+    and how many of them are other calculations of another's recordings (``n_other_calcs``:
+    `Database.calculations`, all but one of each set)."""
     out: dict[str, dict] = {}
-    for d in sorted(db.list_datasets(), key=lambda d: d["id"]):
+    datasets = sorted(db.list_datasets(), key=lambda d: d["id"])
+    later = {i for s in db.calculations(datasets) for i in s[1:]}
+    for d in datasets:
         u = _norm(d["coding_unit"])
-        out.setdefault(u.casefold(), {"coding_unit": u, "ids": []})["ids"].append(d["id"])
+        unit = out.setdefault(u.casefold(), {"coding_unit": u, "ids": [], "n_other_calcs": 0})
+        unit["ids"].append(d["id"])
+        unit["n_other_calcs"] += d["id"] in later
     return sorted(out.values(), key=lambda u: (-len(u["ids"]), u["coding_unit"].casefold()))
 
 
@@ -65,6 +79,33 @@ def datasets_of(db: Database, coding_unit: str) -> list[dict]:
     want = _norm(coding_unit).casefold()
     ids = [d["id"] for d in db.list_datasets() if _norm(d["coding_unit"]).casefold() == want]
     return [db.get_dataset(i) for i in sorted(ids)]
+
+
+def one_calculation(db: Database, datasets: list[dict], calc: Optional[str] = None) -> tuple[list[dict], list[dict], list[str]]:
+    """Of `datasets` (as `Database.get_dataset` gives them), one of each set of the same
+    recordings calculated otherwise (`Database.calculations`): the one of the response
+    calculation `calc`, if the set has it (`same_response_calc`), else the first uploaded.
+
+    Returns:
+        (the datasets kept, in their order; those left out, each ``id``, ``title``,
+        ``response_calc``, ``of`` (the id of the one kept of its set) and ``reason``; the
+        response calculations of the sets' datasets, each once, in order of upload)
+    """
+    by_id = {d["id"]: d for d in datasets}
+    sets = db.calculations(datasets)
+    calcs = list(dict.fromkeys(_norm(by_id[i].get("response_calc")) for s in sets for i in s if _norm(by_id[i].get("response_calc"))))
+    left = []
+    for s in sets:
+        chosen = next((i for i in s if calc and same_response_calc(by_id[i].get("response_calc"), calc)), None)
+        keep = by_id[chosen if chosen is not None else s[0]]
+        why = (f"the recordings of #{keep['id']} ({keep.get('response_calc') or 'response calculation not given'}), "
+               "calculated otherwise: one calculation of each is merged")
+        if calc and chosen is None:
+            why += f" (none of them is {_norm(calc)}: the first uploaded is)"
+        left += [{"id": i, "title": by_id[i]["title"], "response_calc": by_id[i].get("response_calc"), "of": keep["id"],
+                  "reason": why} for i in s if i != keep["id"]]
+    out = {x["id"] for x in left}
+    return [d for d in datasets if d["id"] not in out], left, calcs
 
 
 # ----------------------------------------------------------------------- groups
@@ -94,12 +135,17 @@ def make_groups(datasets: list[dict], by: set[str], power_tolerance: float = 0.0
         if "power" in by and md.get("power_mw") is None:
             unscaled.append({"id": d["id"], "reason": "no power measured: left as it is"})
             continue
-        parts = []
+        parts, key = [], []
         if "uploader" in by:
             parts.append(_norm(md.get("uploader_name")))
+            key.append(parts[-1].casefold())
         if "system" in by:
             parts.append(_norm(md.get("recording_system")) or "recording system not given")
-        key = tuple(p.casefold() for p in parts)
+            key.append(parts[-1].casefold())
+        if "calc" in by:  # (matched as `same_response_calc`: not in any case, as TeX's \Delta is not \delta)
+            parts.append(_norm(md.get("response_calc")) or "response calculation not given")
+            key.append(_norm(md.get("response_calc")))
+        key = tuple(key)
         buckets.setdefault(key, []).append(d)
         labels.setdefault(key, parts)
     groups = []
@@ -222,7 +268,7 @@ def _fit(group: Group, target: dict[tuple, float]) -> None:
 
 
 def plan(db: Database, coding_unit: str, mode: str = "none", by: Optional[list[str]] = None, target: str = AVERAGE,
-         tolerance: float = DEFAULT_TOLERANCE, power_tolerance: float = 0.0) -> dict:
+         tolerance: float = DEFAULT_TOLERANCE, power_tolerance: float = 0.0, calc: Optional[str] = None) -> dict:
     """How the datasets of `coding_unit` are scaled in a merged download.
 
     Args:
@@ -233,9 +279,13 @@ def plan(db: Database, coding_unit: str, mode: str = "none", by: Optional[list[s
         tolerance: how far apart (log10) concentrations of an odor must be less than to stand for each other.
         power_tolerance: how far apart (mW) the power ranges (power ± its tolerance) of two
             datasets may be for them to be in a group, when grouped by power.
+        calc: of the same recordings calculated more than one way, the response calculation
+            to take where they have it (else the first uploaded: `one_calculation`).
 
     Returns:
-        dict with ``datasets`` (each one's details), ``groups`` (``key``, ``ids``, ``scale``,
+        dict with ``datasets`` (each one's details, of those merged), ``left_out`` (the other
+        calculations of their recordings, see `one_calculation`), ``calcs`` (the response
+        calculations to choose from), ``calc``, ``groups`` (``key``, ``ids``, ``scale``,
         ``n_points`` and ``n_stimuli`` compared, Pearson's ``r`` over them, ``note``),
         ``unscaled`` (datasets left out of the groups), ``target`` (the key of the group
         scaled to, or `AVERAGE`), ``by_roi`` (whether responses were compared per ROI) and
@@ -254,9 +304,12 @@ def plan(db: Database, coding_unit: str, mode: str = "none", by: Optional[list[s
     datasets = datasets_of(db, coding_unit)
     if not datasets:
         raise MergeError(f"no datasets of coding unit {coding_unit!r}")
+    calc = _norm(calc) or None
+    unit = _norm(datasets[0]["coding_unit"])
+    datasets, left_out, calcs = one_calculation(db, datasets, calc)
     out = {
-        "coding_unit": _norm(datasets[0]["coding_unit"]), "mode": mode, "by": by, "tolerance": tolerance,
-        "power_tolerance": power_tolerance,
+        "coding_unit": unit, "mode": mode, "by": by, "tolerance": tolerance,
+        "power_tolerance": power_tolerance, "calc": calc, "calcs": calcs, "left_out": left_out,
         "datasets": [{
             "id": d["id"], "title": d["title"], "uploader": d["metadata"].get("uploader_name"),
             "system": d["metadata"].get("recording_system"), "power_mw": d["metadata"].get("power_mw"),
@@ -321,11 +374,18 @@ def scaling_frame(p: dict) -> pd.DataFrame:
 
 
 def readme_lines(p: dict) -> list[str]:
-    """The section of a merged download's README on how it was scaled."""
-    lines = ["", "## Scaling", ""]
+    """The sections of a merged download's README on the recordings calculated more than one
+    way left out of it, if any, and on how it was scaled."""
+    lines = []
+    if p.get("left_out"):
+        took = f"that of {p['calc']} where there is one, else" if p.get("calc") else "of each,"
+        lines += ["", "## Recordings calculated more than one way", "",
+                  f"One calculation of the same recordings is merged ({took} the first uploaded); left out:", ""]
+        lines += [f"- #{x['id']} {x['title']}: {x['reason']}" for x in p["left_out"]]
+    lines += ["", "## Scaling", ""]
     if p["mode"] == "none":
         return lines + ["Every dataset is at its own scale (not scaled)."]
-    names = {"uploader": "experimenter", "system": "recording system", "power": "power at the fly"}
+    names = {"uploader": "experimenter", "system": "recording system", "calc": "response calculation", "power": "power at the fly"}
     by = ", ".join(names[b] for b in p["by"]) or "nothing (one group)"
     target = "the average of the groups" if p["target"] == AVERAGE else f"the group {p['target']}"
     power = [] if "power" not in p["by"] else [
