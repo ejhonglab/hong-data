@@ -220,6 +220,8 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now olfdb
 systemctl status olfdb     # "active (running)", and still a minute later
 journalctl -u olfdb -f
+# `restart-olfdb` for every user (any sudoer can run it): sudo systemctl restart olfdb
+sudo ln -s /opt/olfdb/restart-olfdb /usr/local/bin/restart-olfdb
 ```
 
 If it fails again and again, the unit gives up after 5 starts in 10 minutes, and
@@ -233,7 +235,7 @@ deploy a new version:
 
 ```bash
 cd /opt/olfdb && git pull        # or rsync the new files over
-sudo systemctl restart olfdb     # rebuilds the image and recreates the container
+restart-olfdb                    # rebuilds the images and recreates the containers
 ```
 
 If you installed the unit, do not also run `docker compose up -d` by hand; use

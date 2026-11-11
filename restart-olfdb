@@ -1,0 +1,3 @@
+#!/bin/sh
+# Rebuilds both images and recreates both containers (DEPLOY.md, section 4)
+exec sudo systemctl restart olfdb
