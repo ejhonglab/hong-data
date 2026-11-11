@@ -199,7 +199,7 @@ def test_calculations(main, tmp_path, monkeypatch):  # noqa: F811
     assert [(x["id"], x["of"]) for x in p["left_out"]] == [(z, noise), (raw, noise), (tnt, tnt_noise)]
     p = merge.plan(db, "KCs", calc="unnormalized dFc")  # (TNT's recordings have no such calculation: their first)
     assert [d["id"] for d in p["datasets"]] == [raw, tnt, remy]
-    assert p["left_out"][-1]["id"] == tnt_noise and p["left_out"][-1]["reason"].endswith("(none of them is unnormalized dFc: the first uploaded is)")
+    assert p["left_out"][-1]["id"] == tnt_noise and p["left_out"][-1]["reason"].endswith("(none of them is unnormalized dFc: their default is)")
     # grouped by response calculation too: no group of two calculations of a recording, nor of two units
     p = merge.plan(db, "KCs", "groups", ["uploader", "calc"], calc="baseline-noise units")
     assert {g["key"]: g["ids"] for g in p["groups"]} == {"Ann · baseline-noise units": [noise, tnt_noise],
@@ -217,7 +217,12 @@ def test_calculations(main, tmp_path, monkeypatch):  # noqa: F811
         readme = zf.read("olfdb_kcs_3-datasets_long/README.md").decode()
     assert sorted(long.dataset_id.unique()) == [noise, tnt_noise, remy]
     assert "## Recordings calculated more than one way" in readme and f"- #{z} z: the recordings of #{noise}" in readme
-    assert "(that of baseline-noise units where there is one, else the first uploaded)" in readme
+    assert "(that of baseline-noise units where there is one, else their default)" in readme
+    # by default, each set's default: the first uploaded, unless another was chosen in Browse
+    assert call(main.dataset_default_calc_save, path_params={"ds_id": raw})[1]["default"] == raw
+    p = merge.plan(db, "KCs")
+    assert [d["id"] for d in p["datasets"]] == [raw, tnt, remy] and [(x["id"], x["of"]) for x in p["left_out"]] == [(z, raw), (noise, raw), (tnt_noise, tnt)]
+    assert p["left_out"][0]["reason"].startswith(f"the recordings of #{raw} (unnormalized dFc), calculated otherwise")
 
 
 def test_api(main, tmp_path, monkeypatch):  # noqa: F811

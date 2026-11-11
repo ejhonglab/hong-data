@@ -214,9 +214,16 @@ between the frontend and the server. Using the app is described in
   calculation is in their titles (`metadata.dataset_title`, as written, math too:
   `APL16: MB247dbLexA > GCaMP6s (KCs) [TNT], baseline-noise units`), the names of their
   downloads and permalinks (`export.dataset_stem`, in ASCII: `$\Delta F/F$` as `Delta-FF`)
-  and a permalink's identity; Browse says under a dataset's title how else its recordings
-  were calculated (`calculations`, with `GET /api/datasets/{id}`), and a merged download
-  takes one calculation of each (`merge.one_calculation`). Compare needs nothing more:
+  and a permalink's identity; Browse shows a dataset's calculation left of its data
+  menus, as a menu of the others when there are (`calculations`, with `GET
+  /api/datasets/{id}`), and a merged download takes one calculation of each
+  (`merge.one_calculation`). Each set has a default (`Database.default_calculations`):
+  the one last chosen with Browse's *Set Default Response Calculation* (the setting
+  `default_calcs`, the ids chosen, so that a set is matched anew each time, as datasets
+  are edited or deleted), else the first uploaded. The lists of Browse and Compare list
+  only it (`listedDatasets` in app.js), the others named at the end of its item, so that
+  one recording is one item; listed by upload, it is as of the first uploaded, whichever
+  is the default, as that is when the recordings came. Compare needs nothing more:
   each dataset is a space of its own there, labelled by its title. Being given every time
   it is entered, rather than only once another calculation is uploaded, a calculation
   names a dataset the same way whatever else is stored, so no title, file or permalink
@@ -708,8 +715,9 @@ between the frontend and the server. Using the app is described in
 - **A merged download takes one calculation of the same recordings** (`merge.one_calculation`):
   of datasets that are the same recordings calculated otherwise (`Database.calculations`),
   the one of the calculation chosen (`plan`'s `calc`, the tab's menu of those of the
-  coding unit), else the first uploaded, so that by default a merge is what it was before
-  another calculation was uploaded. The others are left out, and said to be (in the tab
+  coding unit), else their default (`Database.default_calculations`, as Browse lists
+  them: the first uploaded unless another was chosen there, so that by default a merge
+  is what it was before another calculation was uploaded). The others are left out, and said to be (in the tab
   and the download's README), as no recording should be in a merge twice, nor a group's
   factor be fitted to the same responses in two units. Groups can be made by response
   calculation too (`GROUP_BY`'s `calc`, matched as `same_response_calc`), so that
@@ -1410,11 +1418,15 @@ POST   /api/stage/{id}/readme               {"metadata": {...}} → README.md te
 POST   /api/stage/{id}/commit               {"metadata", "readme", "readme_edited", "permalink_proceed"}
                                             → {"dataset_id", "permalink": the one it took over}
                                             (422 unless each odor is one in the odor table)
-GET    /api/datasets                        list
+GET    /api/datasets                        list, and calculations (the sets of the same recordings
+                                            calculated otherwise, each [{ids, default}])
 GET    /api/datasets/{id}                   metadata + README (markdown and HTML, and its path), its
                                             permalink and default_permalink (the name one would have),
-                                            and calculations (the other datasets of its recordings
-                                            calculated otherwise: [{id, title, response_calc}])
+                                            calculations (the other datasets of its recordings
+                                            calculated otherwise: [{id, title, response_calc}]) and
+                                            default_calc (the id of their default, null if none)
+PUT    /api/datasets/{id}/default_calc      → it made the default calculation of its recordings:
+                                            {ok, ids, default} (422 if it has no other calculation)
 PUT    /api/datasets/{id}/readme            {"readme", "base"} → the README overwritten (409 if it is
                                             no longer "base", the one the edit started from)
 PUT    /api/datasets/{id}/metadata          {"metadata", "base"} → the values entered at upload replaced,

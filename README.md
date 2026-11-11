@@ -288,7 +288,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   the month of their last fly, by uploader (each one's newest upload first) or by the
   month they were uploaded (the last two saying when each was). Outside the grouping by
   panel, each dataset's item lists all its panels, in the same order (e.g.
-  `megamat,validation2,glomeruli_diagnostics`). Each dataset has a thesis-style odor table (with each odor's CID, InChI, vapor pressure and molar mass),
+  `megamat,validation2,glomeruli_diagnostics`). The same recordings calculated more than
+  one way (below) are one item: their default calculation, its last line ending with that
+  calculation and then the others (`other response calcs.: …`), listed by upload as of
+  the first of them uploaded. Each dataset has a thesis-style odor table (with each odor's CID, InChI, vapor pressure and molar mass),
   its odors matched to the Odors tab through its odor YAML when it has one, otherwise by
   abbreviation. Those not in the odor table, or that more than one odor there could be,
   are listed above it and highlighted in it; a button copies rows for the odor sheet for
@@ -325,8 +328,12 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   with the same flies and manipulations, and the same response calculation or none), saved once you answer *Yes* to whether you are
   sure (*No* is the default). Its title and panels follow, and its README too unless it
   was edited by hand; `metadata.json` keeps each edit (when, and each field before and
-  after). Under its title, a dataset of recordings also calculated otherwise says so, with
-  a link to each of those datasets and its response calculation.
+  after). Left of "Raw data" is how its responses were calculated (*Response
+  calculation*). For the same recordings calculated more than one way (datasets of the
+  same flies, experimenter, coding unit and manipulations, each with its own response
+  calculation), it is a menu of their calculations, to show another, with *Set Default
+  Response Calculation* to its left: the default (at first, the first uploaded) is the one
+  listed here and in Compare, and merged unless another is chosen in Merge.
 - **Permalinks**: under a dataset's title, *Make a permalink…* names a link to it that
   stays whatever its number, `http://hal:8080/d/<name>` (lowercase letters, digits
   and `-`; by default as its downloads are named, e.g. `megamat-tom-glomeruli-2023-06-22`),
@@ -389,7 +396,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   and scale factor). Of the same recordings calculated more than one way (datasets of the
   same flies, experimenter and manipulations, each with its own response calculation),
   one is merged: that of the calculation chosen (*Of the same recordings calculated more
-  than one way, merge*, shown when there are some), else the first uploaded; the others
+  than one way, merge*, shown when there are some), else their default (as set in Browse,
+  else the first uploaded); the others
   are listed as left out, in the tab and the zip's README. Datasets can be left at their own scale, or grouped by any of
   experimenter, recording system, response calculation and power at the fly, each group then multiplied by one
   factor to match a chosen group, or the average of the groups. By power, only datasets

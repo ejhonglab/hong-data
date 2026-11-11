@@ -4,7 +4,8 @@ scaled to match each other first.
 Of the same recordings calculated more than one way (`Database.calculations`: datasets of
 the same flies, uploader, coding unit and manipulations, each with its own response
 calculation), one is taken (`one_calculation`): that of the calculation chosen, if they
-have it, else the first uploaded; the others are left out, and said to be, so that no
+have it, else their default (`Database.default_calculations`: as chosen in Browse, else the
+first uploaded); the others are left out, and said to be, so that no
 recording is in a merge twice, nor a group's factor fitted to the same responses in two units.
 
 Datasets are grouped by any of experimenter, recording system, response calculation and
@@ -84,7 +85,8 @@ def datasets_of(db: Database, coding_unit: str) -> list[dict]:
 def one_calculation(db: Database, datasets: list[dict], calc: Optional[str] = None) -> tuple[list[dict], list[dict], list[str]]:
     """Of `datasets` (as `Database.get_dataset` gives them), one of each set of the same
     recordings calculated otherwise (`Database.calculations`): the one of the response
-    calculation `calc`, if the set has it (`same_response_calc`), else the first uploaded.
+    calculation `calc`, if the set has it (`same_response_calc`), else the set's default
+    (`Database.default_calculations`: as chosen in Browse, else the first uploaded).
 
     Returns:
         (the datasets kept, in their order; those left out, each ``id``, ``title``,
@@ -92,16 +94,17 @@ def one_calculation(db: Database, datasets: list[dict], calc: Optional[str] = No
         response calculations of the sets' datasets, each once, in order of upload)
     """
     by_id = {d["id"]: d for d in datasets}
-    sets = db.calculations(datasets)
-    calcs = list(dict.fromkeys(_norm(by_id[i].get("response_calc")) for s in sets for i in s if _norm(by_id[i].get("response_calc"))))
+    sets = db.default_calculations(datasets)
+    calcs = list(dict.fromkeys(_norm(by_id[i].get("response_calc")) for s in sets for i in s["ids"] if _norm(by_id[i].get("response_calc"))))
     left = []
-    for s in sets:
+    for st in sets:
+        s = st["ids"]
         chosen = next((i for i in s if calc and same_response_calc(by_id[i].get("response_calc"), calc)), None)
-        keep = by_id[chosen if chosen is not None else s[0]]
+        keep = by_id[chosen if chosen is not None else st["default"]]
         why = (f"the recordings of #{keep['id']} ({keep.get('response_calc') or 'response calculation not given'}), "
                "calculated otherwise: one calculation of each is merged")
         if calc and chosen is None:
-            why += f" (none of them is {_norm(calc)}: the first uploaded is)"
+            why += f" (none of them is {_norm(calc)}: their default is)"
         left += [{"id": i, "title": by_id[i]["title"], "response_calc": by_id[i].get("response_calc"), "of": keep["id"],
                   "reason": why} for i in s if i != keep["id"]]
     out = {x["id"] for x in left}
@@ -280,7 +283,7 @@ def plan(db: Database, coding_unit: str, mode: str = "none", by: Optional[list[s
         power_tolerance: how far apart (mW) the power ranges (power ± its tolerance) of two
             datasets may be for them to be in a group, when grouped by power.
         calc: of the same recordings calculated more than one way, the response calculation
-            to take where they have it (else the first uploaded: `one_calculation`).
+            to take where they have it (else their default: `one_calculation`).
 
     Returns:
         dict with ``datasets`` (each one's details, of those merged), ``left_out`` (the other
@@ -380,7 +383,7 @@ def readme_lines(p: dict) -> list[str]:
     if p.get("left_out"):
         took = f"that of {p['calc']} where there is one, else" if p.get("calc") else "of each,"
         lines += ["", "## Recordings calculated more than one way", "",
-                  f"One calculation of the same recordings is merged ({took} the first uploaded); left out:", ""]
+                  f"One calculation of the same recordings is merged ({took} their default); left out:", ""]
         lines += [f"- #{x['id']} {x['title']}: {x['reason']}" for x in p["left_out"]]
     lines += ["", "## Scaling", ""]
     if p["mode"] == "none":

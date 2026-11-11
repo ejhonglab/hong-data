@@ -245,21 +245,24 @@ try {
           <div>
             <h2 id="ds-title"></h2>
             <p class="muted" id="ds-sub"></p>
-            <p class="muted" id="ds-calcs" hidden></p>
             <div class="ds-permalink" id="ds-permalink"></div>
           </div>
           <div class="ds-actions">
             <div class="ds-data-links">
-              <button type="button" class="btn warn" id="ds-mismatches" hidden>Show data mismatches</button>
-              <span class="indicator ok data-all" id="ds-all-data" hidden>All data in both</span>
-              <details class="menu menu-right data-link" id="ds-raw" data-kind="raw">
-                <summary class="btn">Raw data</summary>
-                <div class="menu-list data-menu"></div>
-              </details>
-              <details class="menu menu-right data-link" id="ds-mocorr" data-kind="mocorr">
-                <summary class="btn">Motion corrected / traces</summary>
-                <div class="menu-list data-menu"></div>
-              </details>
+              <!-- how its responses were calculated: with other calculations of its recordings, a menu of them, and a button to make the one shown their default (app.js, Browse._showCalc) -->
+              <div class="ds-calc" id="ds-calc"></div>
+              <div class="ds-data-menus">
+                <button type="button" class="btn warn" id="ds-mismatches" hidden>Show data mismatches</button>
+                <span class="indicator ok data-all" id="ds-all-data" hidden>All data in both</span>
+                <details class="menu menu-right data-link" id="ds-raw" data-kind="raw">
+                  <summary class="btn">Raw data</summary>
+                  <div class="menu-list data-menu"></div>
+                </details>
+                <details class="menu menu-right data-link" id="ds-mocorr" data-kind="mocorr">
+                  <summary class="btn">Motion corrected / traces</summary>
+                  <div class="menu-list data-menu"></div>
+                </details>
+              </div>
             </div>
             <div class="ds-buttons">
               <span class="dl-status" id="ds-download-status"></span>
@@ -323,9 +326,9 @@ try {
       <div class="grid">
         <label class="field"><span>Coding unit recorded from</span><select id="merge-unit"></select></label>
         <label class="field" id="merge-calc-field" hidden><span>Of the same recordings calculated more than one way, merge</span>
-          <select id="merge-calc"><option value="">the first uploaded</option></select></label>
+          <select id="merge-calc"><option value="">the default of each</option></select></label>
       </div>
-      <p class="muted small" id="merge-calc-note" hidden>Datasets of the same flies, experimenter and manipulations, each with its own response calculation, are the same recordings: one calculation of each is merged, the others left out (listed below).</p>
+      <p class="muted small" id="merge-calc-note" hidden>Datasets of the same flies, experimenter and manipulations, each with its own response calculation, are the same recordings: one calculation of each is merged (by default, the one Browse lists: as chosen there, else the first uploaded), the others left out (listed below).</p>
     </div>
 
     <div class="step" id="merge-scaling">

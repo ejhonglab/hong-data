@@ -942,8 +942,11 @@ def _readme_html(md: str) -> str:
 
 
 async def datasets_list(request: Request) -> Response:
+    """Every dataset, and ``calculations``: the sets of the same recordings calculated
+    otherwise, each with its default (`Database.default_calculations`), the one listed."""
     rows = await run_in_threadpool(db.list_datasets)
-    return JSONResponse({"datasets": [{**d, "created_at": _aware(d["created_at"])} for d in rows]})
+    sets = await run_in_threadpool(db.default_calculations, rows)
+    return JSONResponse({"datasets": [{**d, "created_at": _aware(d["created_at"])} for d in rows], "calculations": sets})
 
 
 def _readme_path(ds_id: int) -> Path:
@@ -965,17 +968,38 @@ async def dataset_get(request: Request) -> Response:
     d["files"] = files
     d["permalink"] = _public_permalink(d["permalink"])
     d["default_permalink"] = await run_in_threadpool(_default_permalink, d)
-    d["calculations"] = await run_in_threadpool(_calculations_of, ds_id)
+    d["calculations"], d["default_calc"] = await run_in_threadpool(_calculations_of, ds_id)
     return JSONResponse(d)
 
 
-def _calculations_of(ds_id: int) -> list[dict]:
+def _calculations_of(ds_id: int) -> tuple[list[dict], Optional[int]]:
     """The other datasets of a dataset's recordings calculated otherwise (`Database.calculations`):
-    [{id, title, response_calc}], in order of upload."""
+    [{id, title, response_calc}], in order of upload; and the id of their default calculation, of
+    them all (`Database.default_calculations`), None if there are no others."""
     datasets = db.list_datasets()
-    ids = next((s for s in db.calculations(datasets) if ds_id in s), [])
+    s = next((s for s in db.default_calculations(datasets) if ds_id in s["ids"]), {"ids": [], "default": None})
     by_id = {d["id"]: d for d in datasets}
-    return [{"id": i, "title": by_id[i]["title"], "response_calc": by_id[i]["response_calc"]} for i in ids if i != ds_id]
+    return [{"id": i, "title": by_id[i]["title"], "response_calc": by_id[i]["response_calc"]} for i in s["ids"] if i != ds_id], s["default"]
+
+
+async def dataset_default_calc_save(request: Request) -> Response:
+    """Choose a dataset as the default calculation of its recordings (`Database.set_default_calculation`):
+    the one listed in Browse and Compare, and merged. Gives its set ({ok, ids, default})."""
+    ds_id = int(request.path_params["ds_id"])
+    if await run_in_threadpool(db.get_dataset, ds_id) is None:
+        return json_error(404, "dataset not found")
+    s = await run_in_threadpool(_set_default_calc, ds_id)
+    if s is None:
+        return JSONResponse({"ok": False, "errors": [f"dataset #{ds_id} has no other calculation of its recordings"]}, status_code=422)
+    return JSONResponse({"ok": True, **s})
+
+
+_default_calc_lock = threading.Lock()
+
+
+def _set_default_calc(ds_id: int) -> Optional[dict]:
+    with _default_calc_lock:  # (one at a time: each rewrites the setting)
+        return db.set_default_calculation(ds_id, dt.datetime.now().isoformat(timespec="seconds"))
 
 
 def _default_permalink(d: dict) -> str:
@@ -3669,6 +3693,7 @@ routes = [
     Route("/api/datasets/{ds_id:int}/readme", dataset_readme_save, methods=["PUT"]),
     Route("/api/datasets/{ds_id:int}/metadata", dataset_metadata_save, methods=["PUT"]),
     Route("/api/datasets/{ds_id:int}/permalink", dataset_permalink_save, methods=["PUT"]),
+    Route("/api/datasets/{ds_id:int}/default_calc", dataset_default_calc_save, methods=["PUT"]),
     Route("/api/permalinks/{slug}", permalink_get),
     Route("/d/{slug}", permalink_follow),
     Route("/api/datasets/{ds_id:int}/files/{path:path}", dataset_file),

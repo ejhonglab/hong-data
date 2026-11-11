@@ -2023,11 +2023,15 @@ const UPLOAD_KEY = 'olfdb.upload';
 // A dataset's manipulations (as entered at upload: [{key, value}]) as written after its name: 'drug=CNO; starved'.
 const manipText = (ms) => (ms || []).map((m) => (m.value == null ? m.key : `${m.key}=${m.value}`)).join('; ');
 
+// a dataset's response calculation as written, spaces collapsed ('' if not given)
+const calcText = (d) => (d.response_calc || '').trim().replace(/\s+/g, ' ');
+
 // A dataset as named in the lists of Browse and Compare (HTML): driver > indicator (coding
 // unit), then any manipulations in brackets and its response calculation (as its title has
-// them, metadata.dataset_title: the same recordings calculated otherwise are told apart by it).
+// them, metadata.dataset_title), but for an entry of the same recordings calculated
+// otherwise (`listedDatasets`), whose calculations end its last line instead (`calcsText`).
 function datasetName(d) {
-  const calc = (d.response_calc || '').trim().replace(/\s+/g, ' ');
+  const calc = d.calcs ? '' : calcText(d);
   return `${esc(d.driver)} &gt; ${esc(d.indicator)} <span class="muted">(${esc(d.coding_unit)})</span>`
     + (d.manipulations?.length ? ` [${esc(manipText(d.manipulations))}]` : '') + (calc ? `, ${esc(calc)}` : '');
 }
@@ -2852,6 +2856,34 @@ function filterByUnit(datasets, sel, unit) {
   return chosen ? datasets.filter((d) => unitKey(d.coding_unit) === chosen) : datasets;
 }
 
+// The datasets as listed in Browse and Compare: of the same recordings calculated otherwise
+// (`sets`: GET /api/datasets' calculations, Database.default_calculations), one entry, their
+// default, with `calcs` (all of them, in order of upload) and the `created_at` of the first
+// uploaded (where it is listed by upload, whichever is the default).
+function listedDatasets(datasets, sets) {
+  const byId = new Map(datasets.map((d) => [d.id, d])), others = new Set(), entries = new Map();
+  for (const s of sets || []) {
+    const calcs = s.ids.map((i) => byId.get(i)).filter(Boolean);
+    if (calcs.length < 2 || !byId.has(s.default)) continue;
+    const first = calcs.reduce((a, b) => (Date.parse(b.created_at) < Date.parse(a.created_at) ? b : a)).created_at;
+    for (const d of calcs) if (d.id !== s.default) others.add(d.id);
+    entries.set(s.default, { calcs, created_at: first });
+  }
+  return datasets.filter((d) => !others.has(d.id)).map((d) => (entries.has(d.id) ? { ...d, ...entries.get(d.id) } : d));
+}
+
+// a listed entry (`listedDatasets`) as the calculation of it ticked (`has(id)`), if only
+// others than its default are (ticked before another was made the default), else as it is
+const listedAs = (d, has) => {
+  const c = has(d.id) ? null : d.calcs?.find((x) => x.id !== d.id && has(x.id));
+  return c ? { ...c, created_at: d.created_at, calcs: d.calcs } : d;
+};
+
+// the end of the last line of a listed entry of the same recordings calculated otherwise:
+// its response calculation, then the others' (HTML)
+const calcsText = (d) => (!d.calcs ? '' : `, ${esc(calcText(d) || 'response calculation not given')}; other response calcs.: `
+  + d.calcs.filter((c) => c.id !== d.id).map((c) => esc(calcText(c) || 'not given')).join(', '));
+
 // when a dataset was uploaded, said in lists grouped by who uploaded them or when
 const uploadedText = (d, group) => (['uploader', 'uploaded'].includes(group) && d.created_at ? `, uploaded ${esc(d.created_at.slice(0, 10))}` : '');
 // the panels of datasets that are of diagnostic odors (e.g. glomeruli_diagnostics), as the
@@ -2904,9 +2936,12 @@ class Browse {
     this.group = LS.get('olfdb.browse_group', 'panel');
     this.unit = LS.get('olfdb.browse_unit', ''); // unitKey of the one coding unit listed, '' for all
     this.selected = null;
+    this.calcSets = []; // the same recordings calculated otherwise, each set's ids and default (GET /api/datasets' calculations)
     this.picked = new Set(); // ticked for download
     this.viewer = null;
     this.cache = new Map();
+    $('#ds-calc').addEventListener('change', (e) => { if (e.target.matches('select')) location.hash = `#browse/${e.target.value}`; });
+    $('#ds-calc').addEventListener('click', (e) => { if (e.target.closest('[data-act=default]')) this._setDefaultCalc(); });
     $$('#tab-browse .seg button').forEach((b) => b.addEventListener('click', () => { this.group = b.dataset.group; LS.set('olfdb.browse_group', this.group); this.renderList(); }));
     $('#browse-unit').addEventListener('change', (e) => { this.unit = e.target.value; LS.set('olfdb.browse_unit', this.unit); this.renderList(); });
     $('#ds-readme-toggle').addEventListener('click', () => {
@@ -3021,7 +3056,10 @@ class Browse {
 
   async load() {
     if (!this.datasets) {
-      try { this.datasets = (await api('/api/datasets')).datasets; } catch (e) { $('#dataset-list').replaceChildren(msgBox('error', esc(e.message))); return; }
+      let res;
+      try { res = await api('/api/datasets'); } catch (e) { $('#dataset-list').replaceChildren(msgBox('error', esc(e.message))); return; }
+      this.datasets = res.datasets;
+      this.calcSets = res.calculations || [];
       const ids = new Set(this.datasets.map((d) => d.id));
       for (const id of this.picked) if (!ids.has(id)) this.picked.delete(id);
     }
@@ -3055,14 +3093,16 @@ class Browse {
     if (!this.datasets) return;
     $('.unit-filter').hidden = !this.datasets.length;
     if (!this.datasets.length) { list.innerHTML = '<div class="empty">Nothing uploaded yet. Use the Upload tab.</div>'; this._syncPicks(); return; }
-    const datasets = this._unitFilter();
-    const item = (d) => `<div class="ds-item${this.selected === d.id ? ' active' : ''}">
+    const datasets = this._unitFilter().map((d) => listedAs(d, (id) => this.picked.has(id)));
+    // (an entry of several calculations is the one shown whichever of them it is)
+    const shown = (d) => this.selected === d.id || !!d.calcs?.some((c) => c.id === this.selected);
+    const item = (d) => `<div class="ds-item${shown(d) ? ' active' : ''}">
         <input type="checkbox" class="pick" data-id="${d.id}" aria-label="Select dataset #${d.id} for download">
         <button type="button" class="list-item" data-id="${d.id}">
           <span class="t">${datasetName(d)}</span>
           ${panelsLine(d, this.group)}
           <span class="s">${fliesText(d)}, ${d.n_units.toLocaleString()} ROIs, ${d.n_odors} odors${lastFlyText(d)}</span>
-          <span class="s">#${d.id}, ${esc(d.uploader_name)}${d.recording_system ? ', ' + esc(d.recording_system) : ''}${uploadedText(d, this.group)}</span>
+          <span class="s">#${d.id}, ${esc(d.uploader_name)}${d.recording_system ? ', ' + esc(d.recording_system) : ''}${uploadedText(d, this.group)}${calcsText(d)}</span>
         </button>
       </div>`;
     const groupHead = (label, ds) => `<div class="list-group"><label><input type="checkbox" class="pick-group" data-ids="${ds.map((d) => d.id).join(',')}"
@@ -3074,8 +3114,9 @@ class Browse {
   }
 
   // The coding unit menu, each unit spelled as first uploaded, the most common first (as in
-  // the Merge tab); returns the datasets to list. A unit no longer uploaded lists them all.
-  _unitFilter() { return filterByUnit(this.datasets, $('#browse-unit'), this.unit); }
+  // the Merge tab); returns the datasets to list (one of the same recordings calculated
+  // otherwise: `listedDatasets`). A unit no longer uploaded lists them all.
+  _unitFilter() { return filterByUnit(listedDatasets(this.datasets, this.calcSets), $('#browse-unit'), this.unit); }
 
   async show(id) {
     this.selected = id;
@@ -3085,7 +3126,7 @@ class Browse {
     $$('#dataset-view details.menu').forEach((menu) => { menu.open = false; }); // they were about another dataset
     $('#ds-title').textContent = 'Loading…';
     $('#ds-sub').textContent = '';
-    $('#ds-calcs').hidden = true;
+    $('#ds-calc').replaceChildren();
     $('#ds-permalink').replaceChildren();
     let d, m;
     try {
@@ -3104,11 +3145,7 @@ class Browse {
     if (md.power_mw) bits.push(`${md.power_mw} mW${md.power_tolerance_mw != null ? ' ±' + md.power_tolerance_mw : ''}`);
     if (md.recording_system) bits.push(md.recording_system);
     $('#ds-sub').textContent = bits.join('; ');
-    // the same recordings calculated otherwise (Database.calculations), each a dataset of its own
-    const calcs = d.calculations || [];
-    $('#ds-calcs').innerHTML = calcs.length ? `Its recordings also calculated as: ${calcs.map((c) => `<a href="#browse/${c.id}">#${c.id}</a>
-      ${esc(c.response_calc || 'response calculation not given')}`).join(', ')}` : '';
-    $('#ds-calcs').hidden = !calcs.length;
+    this._showCalc(d);
     this._showPermalink(d);
     setStatus($('#ds-readme-status'), '');
     this._showReadme(id);
@@ -3119,6 +3156,36 @@ class Browse {
     if (!$('#ds-odors').hidden) this.showOdors(id);
     if (!$('#ds-edit').hidden && this.editOf?.id !== id) this._fillEdit(id);
     this.showDataPaths(id);
+  }
+
+  // How a dataset's responses were calculated, left of its data's menus. Of the same
+  // recordings calculated otherwise (`calculations`, each a dataset of its own), a menu of
+  // them, to show another, and a button to make this one their default (`default_calc`: the
+  // one listed here and in Compare, and merged)
+  _showCalc(d) {
+    const el = $('#ds-calc'), text = (c) => esc(calcText(c) || 'not given');
+    const label = '<span class="muted">Response calculation:</span>';
+    if (!d.calculations?.length) { el.innerHTML = `<span class="ds-calc-text">${label} ${text(d)}</span>`; return; }
+    const isDefault = d.default_calc === d.id;
+    el.innerHTML = `<span class="dl-status" data-role="status"></span>
+      <button type="button" class="btn" data-act="default"${isDefault ? ' disabled title="It is the default of its recordings\' calculations already"'
+        : ' title="List this calculation of its recordings, here and in Compare, instead of the others, and merge it by default"'}>Set Default Response Calculation</button>
+      <label class="ds-calc-text">${label} <select title="The same recordings calculated otherwise, each a dataset of its own">
+        ${[d, ...d.calculations].sort((a, b) => a.id - b.id).map((c) => `<option value="${c.id}"${c.id === d.id ? ' selected' : ''}>${text(c)}${
+          c.id === d.default_calc ? ' (default)' : ''}</option>`).join('')}</select></label>`;
+  }
+
+  // The dataset shown made the default calculation of its recordings
+  async _setDefaultCalc() {
+    const id = this.selected, status = $('#ds-calc [data-role=status]');
+    setStatus(status, 'Saving…');
+    let res;
+    try { res = await api(`/api/datasets/${id}/default_calc`, { method: 'PUT' }); } catch (e) { res = { errors: [e.message] }; }
+    if (!res.ok) { if (this.selected === id) setStatus(status, `Not set: ${res.errors.join('; ')}`, 'error'); return; }
+    this.calcSets = [...this.calcSets.filter((s) => !s.ids.includes(id)), { ids: res.ids, default: res.default }];
+    for (const i of res.ids) { const c = this.cache.get(i); if (c) c.d.default_calc = res.default; }
+    this.renderList();
+    if (this.selected === id) this._showCalc(this.cache.get(id).d);
   }
 
   // A dataset's permalink (permalinks.py): its link, with Copy and Rename…; or a button to make one
@@ -4430,7 +4497,7 @@ class MergePage {
     // the response calculations of this unit's recordings calculated more than one way, to merge one of
     const calcSel = $('#merge-calc');
     if (o.calc && !p.calcs.includes(o.calc)) { calcSel.value = ''; this.preview(); return; } // (one of another unit)
-    calcSel.innerHTML = [['', 'the first uploaded'], ...p.calcs.map((c) => [c, `those of ${c}, where there are`])]
+    calcSel.innerHTML = [['', 'the default of each'], ...p.calcs.map((c) => [c, `those of ${c}, where there are`])]
       .map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join('');
     calcSel.value = o.calc;
     $('#merge-calc-field').hidden = $('#merge-calc-note').hidden = !p.calcs.length;
@@ -6084,6 +6151,7 @@ class ComparePage {
       return;
     }
     this.datasets = ds.datasets;
+    this.calcSets = ds.calculations || []; // (as Browse's)
     this.refs = refs.datasets.filter((r) => r.state === 'ok' && ((r.chemicals?.axis && r.chemicals.matched) || r.glomeruli?.axis));
     const ids = new Set(this.datasets.map((d) => d.id));
     this.o.picked = this.o.picked.filter((id) => ids.has(id));
@@ -6121,14 +6189,16 @@ class ComparePage {
           <span class="t">${datasetName(d)}</span>
           ${panelsLine(d, this.o.group)}
           <span class="s">${fliesText(d)}, ${d.n_units.toLocaleString()} ROIs, ${d.n_odors} odors${lastFlyText(d)}</span>
-          <span class="s">#${d.id}, ${esc(d.uploader_name)}${uploadedText(d, this.o.group)}</span>
+          <span class="s">#${d.id}, ${esc(d.uploader_name)}${uploadedText(d, this.o.group)}${calcsText(d)}</span>
         </span></label>`;
     const head = (g) => {
       const all = g.datasets.every((d) => picked.has(d.id));
       return `<div class="list-group"><label><input type="checkbox" class="pick-group" data-ids="${g.datasets.map((d) => d.id).join(',')}"${all ? ' checked' : ''}>
         ${esc(g.label)} <span class="muted">(${g.datasets.length})</span></label></div>`;
     };
-    list.innerHTML = this._modelsHtml() + datasetGroups(filterByUnit(this.datasets, $('#compare-unit'), this.o.unit), this.o.group)
+    // (one of the same recordings calculated otherwise, as in Browse: `listedDatasets`)
+    const listed = filterByUnit(listedDatasets(this.datasets, this.calcSets), $('#compare-unit'), this.o.unit).map((d) => listedAs(d, (id) => picked.has(id)));
+    list.innerHTML = this._modelsHtml() + datasetGroups(listed, this.o.group)
       .map((g) => `<div class="list-section${g.diag ? ' diag' : ''}">${head(g)}${g.datasets.map(item).join('')}</div>`).join('');
     const n = this.o.picked.length, nm = this.o.models.filter((m) => m.shown).length;
     $('#compare-count').textContent = [n ? `${n} dataset${n === 1 ? '' : 's'}` : '', nm ? `${nm} model run${nm === 1 ? '' : 's'}` : '']

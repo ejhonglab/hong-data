@@ -313,6 +313,9 @@ VOLATILE_SETTINGS = ("fit_worker",)
 
 
 PANEL_RENAMES = "panel_renames"  # the setting of panels shown under other names: JSON {name in the data: name shown}
+# the setting of the datasets chosen (in Browse) as the default calculation of their recordings
+# (`Database.default_calculations`): JSON [id], in the order chosen
+DEFAULT_CALCS = "default_calcs"
 
 
 def _parsed(d: dict) -> dict:
@@ -626,6 +629,30 @@ class Database:
             else:
                 sets.append([d])
         return [[d["id"] for d in s] for s in sets if len(s) > 1]
+
+    def default_calculations(self, datasets: Optional[list[dict]] = None) -> list[dict]:
+        """Each set of the same recordings calculated otherwise (`calculations`, of `datasets`
+        if given), with its default calculation: ``{"ids", "default"}``, the default the one
+        last chosen as it (`set_default_calculation`), else the first uploaded. The default
+        is the one listed in Browse and Compare, and merged (`merge.one_calculation`)."""
+        s = self.get_setting(DEFAULT_CALCS)
+        chosen = json.loads(s["value"]) if s else []
+        return [{"ids": ids, "default": next((i for i in reversed(chosen) if i in ids), ids[0])}
+                for ids in self.calculations(datasets)]
+
+    def set_default_calculation(self, ds_id: int, when: str) -> Optional[dict]:
+        """Choose a dataset as the default calculation of its recordings
+        (`default_calculations`). Returns its set (``{"ids", "default"}``), or None if it
+        is no other calculation's recordings."""
+        datasets = self.list_datasets()
+        ids = next((s for s in self.calculations(datasets) if ds_id in s), None)
+        if ids is None:
+            return None
+        s = self.get_setting(DEFAULT_CALCS)
+        stored = {d["id"] for d in datasets}
+        chosen = [i for i in (json.loads(s["value"]) if s else []) if i in stored and i not in ids]
+        self.set_setting(DEFAULT_CALCS, json.dumps([*chosen, ds_id]), when)
+        return {"ids": ids, "default": ds_id}
 
     def roi_names(self, ds_id: int) -> set[str]:
         """The names of a dataset's ROIs, as in its data (those of every fly)."""

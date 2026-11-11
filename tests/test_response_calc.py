@@ -3,10 +3,12 @@ the same recordings calculated otherwise apart: datasets of the same flies, each
 it was calculated. Run with: OLFDB_DATA_DIR=<a scratch folder> python -m pytest tests/"""
 from __future__ import annotations
 
+import json
+
 import numpy as np
 
 from app import compare, config, odormeta
-from app.db import Database
+from app.db import DEFAULT_CALCS, Database
 from app.export import dataset_stem, datasets_frame
 from app.ingest import load_file
 from app.metadata import Metadata, dataset_title, generate_readme, other_calculation, same_response_calc
@@ -137,3 +139,28 @@ def test_edit(main, stored):  # noqa: F811
     status, r = save(main, ds_id, {**d["metadata"], "manipulations": [{"key": "drug", "value": "CNO"}]})
     assert status == 422 and f"exactly those of dataset #{cno}" in r["errors"][0]
     assert f"and #{cno} does not (to give #{cno} one, edit its details in Browse)" in r["errors"][0]
+
+
+def test_default(main, stored):  # noqa: F811
+    # of the same recordings calculated otherwise, the default (listed in Browse and Compare, and
+    # merged): the first uploaded, until another is chosen
+    a, b, c = (stored(response_calc=calc) for calc in (DFF, "z-score", "raw"))
+    lone = stored(response_calc=DFF, manipulations=[{"key": "TNT"}])
+    assert main.db.default_calculations() == [{"ids": [a, b, c], "default": a}]
+    status, r = call(main.datasets_list)
+    assert status == 200 and r["calculations"] == [{"ids": [a, b, c], "default": a}] and len(r["datasets"]) == 4
+    assert call(main.dataset_get, path_params={"ds_id": b})[1]["default_calc"] == a
+    assert call(main.dataset_get, path_params={"ds_id": lone})[1]["default_calc"] is None
+    # chosen: kept, the last chosen of a set its default
+    assert call(main.dataset_default_calc_save, path_params={"ds_id": c}) == (200, {"ok": True, "ids": [a, b, c], "default": c})
+    assert main.db.default_calculations() == [{"ids": [a, b, c], "default": c}]
+    assert call(main.dataset_get, path_params={"ds_id": a})[1]["default_calc"] == c
+    assert call(main.dataset_default_calc_save, path_params={"ds_id": b})[1]["default"] == b
+    assert json.loads(main.db.get_setting(DEFAULT_CALCS)["value"]) == [b]
+    # none for a dataset with no other calculation of its recordings, or none at all
+    status, r = call(main.dataset_default_calc_save, path_params={"ds_id": lone})
+    assert status == 422 and r["errors"] == [f"dataset #{lone} has no other calculation of its recordings"]
+    assert call(main.dataset_default_calc_save, path_params={"ds_id": lone + 1})[0] == 404
+    # the one chosen taken out of the set (by another manipulation): the first of the others, again
+    assert save(main, b, {**main.db.get_dataset(b)["metadata"], "manipulations": [{"key": "drug", "value": "CNO"}]})[0] == 200
+    assert main.db.default_calculations() == [{"ids": [a, c], "default": a}]
