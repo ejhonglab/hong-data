@@ -6766,7 +6766,9 @@ class ComparePage {
       $('#cmp-shown').textContent = shown.size ? `The datasets of glomeruli shown have ${shown.size} glomerul${shown.size === 1 ? 'us' : 'i'}.`
         : 'No glomeruli shown yet: tick datasets of glomeruli on the left.';
     }
-    const overlap = (ids) => {
+    // (each once: a reference dataset can have several rows or columns of one chemical)
+    const overlap = (given) => {
+      const ids = [...new Set(given)];
       if (!shown.size) return `<span class="overlap">it has ${ids.length} ${N.many}</span>`;
       const n = ids.filter((id) => shown.has(id)).length;
       return `<span class="overlap${n < 3 && this.o.picked.length ? ' few' : ''}">${n} of the ${shown.size} ${N.many} shown${ids.length ? ` (it has ${ids.length})` : ''}</span>`;
