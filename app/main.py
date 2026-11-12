@@ -3301,6 +3301,8 @@ async def admin_reference_check(request: Request) -> Response:
     labels = (c.get("preview") or {}).pop("odor_labels", None)
     if labels:  # (its odors checked against the odor table as an upload's are: what the odor sheet needs)
         c["odor_check"] = await run_in_threadpool(_label_odor_matches, labels)
+    if c.get("preview") and c.get("fields"):  # (VCF's file: whether the Headspace calculator would search it)
+        c["preview"]["headspace"] = await run_in_threadpool(vcf.headspace_use, c["path"], c["fields"]["used"])
     return JSONResponse(c)
 
 
@@ -3333,8 +3335,16 @@ async def admin_reference_delete(request: Request) -> Response:
     `reference.delete`; the last of a bundle imported there (MetaCyc, LOTUS), its folder moved
     to deleted/ (see `bundle_import.Importer.release`: then ``moved``, where to)."""
     ref_id = request.path_params["ref_id"]
+    status, result = await run_in_threadpool(_delete_reference, ref_id)
+    if status == 200:
+        log.info("reference dataset %s deleted in the Admin tab", ref_id)
+    return JSONResponse(result, status_code=status)
 
-    def run() -> tuple[int, dict]:
+
+def _delete_reference(ref_id: str) -> tuple[int, dict]:
+    """`reference.delete`, and of the last reference dataset of a bundle imported in the Admin
+    tab, its folder moved to deleted/ (``moved``, where to)."""
+    with _ref_delete_lock:
         refs = db.list_references()
         status, result = reference.delete(db, ref_id)
         ref = next((r for r in refs if r["id"] == ref_id), None)
@@ -3344,10 +3354,27 @@ async def admin_reference_delete(request: Request) -> Response:
             result["moved"] = filelog.server_paths()[0](str(moved)) if moved else None
         return status, result
 
-    status, result = await run_in_threadpool(run)
-    if status == 200:
-        log.info("reference dataset %s deleted in the Admin tab", ref_id)
-    return JSONResponse(result, status_code=status)
+
+_ref_delete_lock = threading.Lock()  # (one at a time: each sees the others' deletions)
+
+
+async def admin_reference_delete_all(request: Request) -> Response:
+    """Delete the reference datasets added in the Admin tab whose ids are given ({"ids": [...]},
+    those listed when it was asked for, so that one added since is not), each as
+    `admin_reference_delete` does: {"deleted": [{id, moved, revoked}], "errors": [{id, error}]}."""
+    body = await request.json()
+    ids = body.get("ids") if isinstance(body, dict) else None
+    if not isinstance(ids, list) or not ids or not all(isinstance(i, str) for i in ids):
+        return json_error(400, 'expected {"ids": [the ids of the reference datasets to delete]}')
+    deleted, errors = [], []
+    for ref_id in dict.fromkeys(ids):
+        status, result = await run_in_threadpool(_delete_reference, ref_id)
+        if status == 200:
+            deleted.append({"id": ref_id, "moved": result.get("moved"), "revoked": result.get("revoked")})
+            log.info("reference dataset %s deleted in the Admin tab (of all)", ref_id)
+        else:
+            errors.append({"id": ref_id, "error": result.get("error") or "not deleted"})
+    return JSONResponse({"deleted": deleted, "errors": errors})
 
 
 async def admin_models_add(request: Request) -> Response:
@@ -3797,6 +3824,7 @@ routes = [
     Route("/api/admin/permalinks/{slug}", admin_permalink_delete, methods=["DELETE"]),
     Route("/api/admin/references/check", admin_reference_check, methods=["POST"]),
     Route("/api/admin/references", admin_reference_add, methods=["POST"]),
+    Route("/api/admin/references", admin_reference_delete_all, methods=["DELETE"]),
     Route("/api/admin/references/{ref_id}", admin_reference_delete, methods=["DELETE"]),
     Route("/api/admin/references/{ref_id}", admin_reference_update, methods=["PATCH"]),
     Route("/api/admin/models", admin_models_add, methods=["POST"]),

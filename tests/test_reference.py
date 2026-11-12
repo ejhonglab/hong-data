@@ -563,3 +563,41 @@ def test_list_added(env, tmp_path):
     assert r["shape"] == [3, 3] and [x["label"] for x in r["cols"]] == ["APPLE — A", "APPLE — B", "BEER"]
     # each chemical said to be identified or not (shown only if so, by default): linalool by the odor table's CID
     assert [x["chem"]["identified"] for x in r["rows"]] == [True, True, False] and r["chemicals"]["unidentified"] == ["mystery"]
+
+
+def test_change_value_and_delete_all(env, tmp_path):
+    # VCF's (with Henry's law constants): quantities as written (ranges, trace) and their midpoints
+    p = write(tmp_path / "refs" / "vcf.csv", "name,cid,product_name,reference,quantity,mid_ppm,k_henry,group\n"
+              "ethyl acetate,8857,APPLE,A,2-4,3,0.059,Fruits\nlinalool,6549,APPLE,B,1,1,0.02,Fruits\n"
+              "ethyl acetate,8857,BEER,C,trace,0.01,0.059,Drinks\n")
+    other = write(tmp_path / "refs" / "fruits.csv", "chemical,banana\nethyl acetate,1\n")
+    sandbox.activate({"read_dirs": [str(tmp_path / "refs")], "write_dirs": []})
+    fields = {"layout": "list", "rows": {"label": "name", "keep": []}, "cols": {"label": "product_name", "keep": ["reference"]},
+              "value": "mid_ppm", "empty": "missing", "merge": "sum"}
+    # the Headspace calculator would search it so, and not as a matrix
+    c = call(env.admin_reference_check, body={"path": str(p), "fields": fields})[1]
+    assert c["preview"]["headspace"] == {"used": True, "value": "mid_ppm", "merge": "sum"} and c["preview"]["value_warning"] is None
+    assert next(f for f in c["fields"]["fields"] if f["name"] == "cid")["id"] == "cid"
+    c = call(env.admin_reference_check, body={"path": str(p), "fields": {**fields, "layout": "matrix"}})[1]
+    assert c["preview"]["headspace"]["used"] is False
+    assert call(env.admin_reference_add, body={"path": str(p), "title": "VCF", "value_label": "ppm", "fields": fields})[0] == 200
+    assert call(env.admin_reference_add, body={"path": str(other), "title": "Fruits 2"})[0] == 200
+    # its fields listed, to change them; most of quantity's lines not numbers: warned of
+    listed = {r["id"]: r for r in call(env.reference_list)[1]["datasets"]}
+    assert listed["vcf"]["fields"] == fields and listed["vcf"]["value_label"] == "ppm"
+    c = call(env.admin_reference_check, body={"path": str(p), "fields": {**fields, "value": "quantity"}})[1]
+    assert c["preview"]["value_warning"].startswith("67% of its lines' 'quantity' are not numbers (2 of 3, e.g. ")
+    # not changed to an identifier, a field it has not, or one with no numbers
+    for value, why in (("cid", "'cid' identifies chemicals (cid)"), ("nope", "no field of"), ("group", "has no numbers")):
+        status, r = call(env.admin_reference_update, path_params={"ref_id": "vcf"}, body={"fields": {**fields, "value": value}})
+        assert status == 422 and why in r["errors"][0], value
+    assert json.loads(next(r for r in env.db.list_references() if r["id"] == "vcf")["fields"])["value"] == "mid_ppm"
+    # changed: read again by it (its label kept)
+    status, r = call(env.admin_reference_update, path_params={"ref_id": "vcf"}, body={"fields": {**fields, "value": "quantity"}})
+    r = call(env.reference_get, path_params={"ref_id": "vcf"})[1]
+    assert status == 200 and "2 values are not a number" in " ".join(r["notes"]) and r["meta"]["value_label"] == "ppm"
+    # all deleted at once, those asked for (never their files); one not there said so
+    status, r = call(env.admin_reference_delete_all, body={"ids": ["vcf", "fruits-2", "nope"]})
+    assert status == 200 and [d["id"] for d in r["deleted"]] == ["vcf", "fruits-2"] and r["errors"] == [{"id": "nope", "error": "reference dataset not found"}]
+    assert env.db.list_references() == [] and p.exists() and other.exists()
+    assert call(env.admin_reference_delete_all, body={"ids": []})[0] == 400

@@ -108,15 +108,31 @@ def sources(entries: list[dict]) -> list[dict]:
     out = []
     for e in entries:
         fields = reference._fields(e.get("fields"))
-        if e["state"] != "ok" or not fields or fields.get("layout") != "list" or not fields.get("value"):
+        if e["state"] != "ok" or not _searched(fields):
             continue
-        try:
-            names = _columns(Path(e["path"]))
-        except Exception:
-            continue
-        if any(c in names for c in PROPERTY_COLUMNS):
+        if headspace_use(e["path"], fields):
             out.append({"id": e["id"], "title": e["title"], "path": e["path"], "fields": fields})
     return out
+
+
+def _searched(fields: Optional[dict]) -> bool:
+    return bool(fields) and fields.get("layout") == "list" and bool(fields.get("value"))
+
+
+def headspace_use(path: str, fields: Optional[dict]) -> Optional[dict]:
+    """Of a file that is VCF's (with `PROPERTY_COLUMNS`), how the Headspace calculator would
+    take a reference dataset made of it by `fields` (as `reference.parse` takes them):
+    ``used`` (searched: one value per line, of a field of values), ``value`` (that field)
+    and ``merge`` (of its chemicals that are one odor); None if the file is not VCF's (or
+    cannot be read)."""
+    try:
+        names = _columns(Path(path))
+    except Exception:
+        return None
+    if not any(c in names for c in PROPERTY_COLUMNS):
+        return None
+    f = fields or {}
+    return {"used": _searched(f), "value": f.get("value"), "merge": f.get("merge", reference.MERGES[0])}
 
 
 def _property(values: Optional[str], units: Optional[str], factors: dict[str, float]) -> tuple[Optional[float], Optional[str]]:

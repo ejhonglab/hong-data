@@ -151,6 +151,16 @@ def test_search(table):
         vcf.search(table, "kiwi", "mode")
 
 
+def test_headspace_use(tmp_path):
+    p = tmp_path / "vcf.csv"
+    p.write_text(CSV)
+    assert vcf.headspace_use(str(p), FIELDS) == {"used": True, "value": "mid_ppm", "merge": "mean"}
+    assert vcf.headspace_use(str(p), {**FIELDS, "layout": "matrix", "merge": "sum"}) == {"used": False, "value": "mid_ppm", "merge": "sum"}
+    other = tmp_path / "fruits.csv"
+    other.write_text("chemical,banana\nethyl acetate,1\n")
+    assert vcf.headspace_use(str(other), None) is None and vcf.headspace_use(str(tmp_path / "gone.csv"), FIELDS) is None
+
+
 def test_search_merged(tmp_path, monkeypatch):
     # linalool (in the odor table with no stereocenter given) as itself and as each enantiomer; a pentanol of unknown structure
     monkeypatch.setattr(vcf, "_memo", OrderedDict())

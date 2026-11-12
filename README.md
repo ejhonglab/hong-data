@@ -864,7 +864,13 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     A LOTUS bundle is added with its settings (columns, cells, stereochemistry, taxonomy
     first: each value said, the defaults marked, what each makes shown before it is
     added), and these are changed later by its *Change settings…* in the list (the form
-    filled in with them, then *Save changes*): its matrix is made again by them.
+    filled in with them, then *Save changes*): its matrix is made again by them. A file's
+    fields are changed so too (e.g. its value field, or how its chemicals of one odor are
+    merged): a field that identifies chemicals (`cid`, ...), is of its rows or columns, or
+    has no numbers is not offered or not taken; one most of whose lines are not numbers is
+    warned of (VCF's `quantity`, whose ranges `mid_ppm` has numbers for), as is a change
+    of values under a colorbar label typed for the old ones; of VCF's file, the check says
+    whether (and with what values) the Headspace calculator searches it.
     The app never changes the file: it reads a copy into `data/references/`, again
     whenever the file changes. A file outside the folders the server may read is added
     to them (itself, to read only), and read once the server restarts, with what that
@@ -877,7 +883,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     dataset's odors are; those not in the Odors table are listed as an upload's are, with
     their rows to copy into the odor sheet and a button to sync it, here and by the dataset
     in the Reference data tab. Deleting one deletes the copy (never the file), and takes its file off
-    the folders the server may read if it was added there for it. When one cannot be
+    the folders the server may read if it was added there for it; *Delete all…*, under
+    the list, deletes every one added here so, after one question. When one cannot be
     read, it says why, with a red dot on the Admin tab.
     *Import MetaCyc*, below it, does what the script does ([Scripting](#scripting)) from
     the folder of MetaCyc's SmartTables (as `BioCyc/raw`) or a `.zip`/`.tar.gz` of it:

@@ -450,6 +450,8 @@ def _parse_list(path: Path, chemical_axis: str, kind: str, fields: dict) -> tupl
         raise ReferenceError("choose the fields labelling its rows and its columns")
     if value is not None and value not in names:
         raise ReferenceError(f"its values are to be of {value!r}, which it has no field of")
+    if value is not None and _header_key(value) in _ID_FIELD:
+        raise ReferenceError(f"{value!r} identifies chemicals ({_ID_FIELD[_header_key(value)]}), so it cannot be its values")
     row_keys, col_keys = [row_label, *row_keep], [col_label, *col_keep]
     both = set(row_keys) & set(col_keys) | ({value} & set(row_keys + col_keys))
     if both:
@@ -470,6 +472,7 @@ def _parse_list(path: Path, chemical_axis: str, kind: str, fields: dict) -> tupl
     if n_rows * n_cols > MAX_CELLS:
         raise ReferenceError(f"it would be {n_rows:,} rows × {n_cols:,} columns ({n_rows * n_cols:,} cells, and at most "
                              f"{MAX_CELLS:,} are shown): choose fewer fields for its rows or columns")
+    values_given = None
     if value is None:
         values = np.zeros((n_rows, n_cols), dtype=np.float32)
         values[ri, ci] = 1
@@ -483,9 +486,11 @@ def _parse_list(path: Path, chemical_axis: str, kind: str, fields: dict) -> tupl
         mean, count = cells.mean(), cells.count()
         values[mean.index.get_level_values(0), mean.index.get_level_values(1)] = mean.to_numpy(dtype=np.float32)
         n_text = int((given & ~np.isfinite(numbers)).sum())
+        examples = ""
         if n_text:
             examples = ", ".join(repr(v) for v in pd.Series(df[value].iloc[lines].to_numpy()[given & ~np.isfinite(numbers)]).value_counts().index[:3])
             notes.append(f"{n_text:,} value{'s are' if n_text > 1 else ' is'} not a number (e.g. {examples}): missing")
+        values_given = {"lines": int(given.sum()), "not_numbers": n_text, "examples": examples}
         n_many = int((count > 1).sum())
         if n_many:
             notes.append(f"{n_many:,} cell{'s are' if n_many > 1 else ' is'} on more than one line: the mean of their numbers")
@@ -507,6 +512,7 @@ def _parse_list(path: Path, chemical_axis: str, kind: str, fields: dict) -> tupl
         "kind": kind if kind != "detect" else _detect_kind(np.nan_to_num(values)),
         "shape": [n_rows, n_cols],
         "notes": notes,
+        "values_given": values_given,  # (of its value field: how many lines give one, how many not a number)
     }
     return record, values
 
@@ -562,7 +568,8 @@ def describe_fields(path: Path) -> dict:
         vals = [_text(v) for v in df[k]]
         given = [v for v in vals if v is not None]
         numeric = float(pd.to_numeric(pd.Series(given, dtype=object), errors="coerce").notna().mean()) if given else 0.0
-        out.append({"name": str(k), "samples": list(dict.fromkeys(given))[:3], "distinct": len(set(given)), "numeric": round(numeric, 3)})
+        out.append({"name": str(k), "samples": list(dict.fromkeys(given))[:3], "distinct": len(set(given)), "numeric": round(numeric, 3),
+                    "id": _ID_FIELD.get(_header_key(str(k)))})
     n = len(df)
     ids = _id_fields([f["name"] for f in out])
     links = lambda f: bool(f["samples"]) and all(re.match(r"https?://", v) for v in f["samples"])
@@ -929,6 +936,21 @@ def stereo_warning(chem: dict, record: dict, short: bool = False) -> Optional[st
     return out
 
 
+VALUES_NOT_NUMBERS = 0.1  # a value field more of whose lines than this are not numbers is warned of
+
+
+def value_warning(record: dict, value: Optional[str]) -> Optional[str]:
+    """Of a table of one value per line, a warning if many of the lines of its value field
+    (`value`) are not numbers (then missing), as VCF's ``quantity`` (ranges, 'trace') whose
+    ``mid_ppm`` has numbers for them all; None if few are."""
+    g = record.get("values_given")
+    if not g or not value or g["not_numbers"] <= VALUES_NOT_NUMBERS * g["lines"]:
+        return None
+    return (f"{_pct(g['not_numbers'], g['lines'])} of its lines' {value!r} are not numbers ({g['not_numbers']:,} of "
+            f"{g['lines']:,}, e.g. {g['examples']}), so their cells are missing: is another field the numbers of them "
+            f"(e.g. the midpoints of ranges)?")
+
+
 def may_overlap(a: Optional[str], b: Optional[str]) -> bool:
     """Whether two chemicals that are one odor may be one substance, or one may include the
     other (a total of its stereoisomers given beside one of them), rather than distinct ones
@@ -1080,6 +1102,7 @@ def listing(db, index: odormeta.OdorIndex) -> list[dict]:
         item = {k: e.get(k) for k in ("id", "title", "description", "origin", "path", "state", "error", "source",
                                       "read_grant", "created_at", "value_label", "row_label", "col_label", "chemical_axis")}
         item["kind_setting"] = e.get("kind")
+        item["fields"] = _fields(e.get("fields"))  # (as chosen: to change them in the Admin tab)
         item["warning"] = item["stereo"] = None
         if rec:
             chem, gl = chemicals(rec, index), glomeruli(rec)
@@ -1183,8 +1206,8 @@ def check(path_input: str, chemical_axis: str, kind: str, index: odormeta.OdorIn
         ``input``, ``path`` (normalized, or None), ``ok`` (it can be added), ``error``,
         ``readable`` (now: then ``fields``, its fields as `describe_fields` gives them,
         with ``used``: those choices; and if it can be made into a matrix by them,
-        ``preview`` has its ``shape``, ``kind``, ``notes``, ``chemicals`` and
-        ``warning``), ``grant`` (the path adding it would add to the folders the server
+        ``preview`` has its ``shape``, ``kind``, ``notes``, ``chemicals``, ``warning``,
+        ``stereo_warning`` and ``value_warning``), ``grant`` (the path adding it would add to the folders the server
         may read), ``restart`` (whether it is read only after a restart, then with the
         ``steps`` it takes, see `sandbox.access_steps`).
     """
@@ -1221,7 +1244,7 @@ def check(path_input: str, chemical_axis: str, kind: str, index: odormeta.OdorIn
         return {**out, "error": _read_error(Path(p), e)}
     chem, gl = chemicals(record, index), glomeruli(record)
     preview = {"shape": record["shape"], "kind": record["kind"], "notes": record["notes"], "warning": warning(chem, gl),
-               "stereo_warning": stereo_warning(chem, record),
+               "stereo_warning": stereo_warning(chem, record), "value_warning": value_warning(record, used.get("value")),
                "pairwise": record.get("pairwise"), "metacyc": record.get("metacyc"), "lotus": record.get("lotus"),
                "chemicals": {k: chem[k] for k in ("axis", "n", "matched", "identified", "unidentified", "ambiguous", "odors")},
                "glomeruli": {k: gl[k] for k in ("axis", "n", "matched")},

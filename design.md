@@ -859,8 +859,8 @@ between the frontend and the server. Using the app is described in
   22k (104 MB by the 1,178 families they are in), as many cells as MetaCyc's. The view is
   kept sparse (`Sparse`), as MetaCyc's is. It is made by the settings in its `fields`;
   unlike MetaCyc's views, these are changed in place
-  (`PATCH /api/admin/references/{id}`, `reference.update`, which any reference dataset
-  added in the Admin tab could use), the import made again as for any change to `fields`.
+  (`PATCH /api/admin/references/{id}`, `reference.update`, which a file's reference
+  dataset uses too: its *Change settings…*, its fields chosen again, e.g. its value field), the import made again as for any change to `fields`.
   The settings and what the bundle was made from are said above the matrix
   (`lotus.describe`: each with whether the Admin tab changes it), as they were chosen
   for, not read off, the data.
@@ -1656,12 +1656,14 @@ POST   /api/admin/references                {"path", "title", "description", "so
                                             "chemical_axis", "value_label", "row_label", "col_label"}
                                             → added (its file to the folders it may read, if need be)
 PATCH  /api/admin/references/{id}           any of those adding it takes but "path" (e.g. "fields":
-                                            a LOTUS bundle's settings) → changed, its file read
-                                            again by them
+                                            a LOTUS bundle's settings, or a file's value field) →
+                                            changed, its file read again by them
 DELETE /api/admin/references/{id}           its copy deleted (never its file) → {"revoked": the path
                                             taken off the folders it may read, if any; "moved": where
                                             MetaCyc or LOTUS imported for it was moved, if it was
                                             the last of it}
+DELETE /api/admin/references                {"ids": [...]} → each deleted as above: {"deleted": [{id,
+                                            moved, revoked}], "errors": [{id, error}]}
 POST   /api/admin/models                    {"path" (on tensor, from its top), "hidden", "first", "last"
                                             (comma-separated parameters), "skip" (comma-separated
                                             patterns of spike count files that are not models, by

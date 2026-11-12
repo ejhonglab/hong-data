@@ -4075,6 +4075,7 @@ function refSubset(ref, { unidentified = true, onlyOdors = false } = {}) {
 // the Reference data list's entry for ECFP (not a dataset: `Reference._showEcfp`), an id no
 // reference dataset can have (those added in the Admin tab are only a-z, 0-9 and '-')
 const ECFP_REF = '_ecfp';
+const REF_BUNDLE_RE = /\.(sqlite3?|db)$/i; // a reference dataset's file that is a bundle (MetaCyc or LOTUS: their SUFFIXES)
 
 class Reference {
   constructor() {
@@ -4708,6 +4709,15 @@ function showRefCheck(c, note = '') {
     box.appendChild(unidentifiedBox(p.warning, ch.unidentified || [], 'It can be added anyway, with a warning by it in the Reference data tab, where they are listed too.'));
   }
   if (p.stereo_warning) box.appendChild(msgBox('warn', `<b>${esc(p.stereo_warning)}</b> It is said by it in the Reference data tab too.`));
+  if (p.value_warning) box.appendChild(msgBox('warn', `<b>${esc(p.value_warning)}</b>`));
+  const hs = p.headspace; // (VCF's file: as the Headspace calculator would take it)
+  if (hs?.used) {
+    box.appendChild(msgBox('info', `The Headspace calculator searches it (its file is VCF's, with Henry's law constants and vapor pressures):
+      its values, <code>${esc(hs.value)}</code>, taken as mg/kg of the sample, and its chemicals that are one odor ${esc(HS_VCF_MERGED[hs.merge] || hs.merge)} in each sample.`));
+  } else if (hs) {
+    box.appendChild(msgBox('warn', `Its file is VCF's (with Henry's law constants and vapor pressures), but the Headspace calculator searches it only
+      if it is one value per line, with a field of values: as chosen, it would not.`));
+  }
 }
 
 // what is wrong with a folder as typed, as far as can be told without the server (tensor: a
@@ -4839,6 +4849,7 @@ class AdminPage {
       if (b) this.deleteRef(b.dataset.deleteRef);
       const c = e.target.closest('[data-edit-ref]');
       if (c) this.editRef(c.dataset.editRef);
+      if (e.target.closest('[data-delete-all-refs]')) this.deleteAllRefs();
     });
     // MetaCyc and LOTUS imported here (bundle_import.py)
     const helpers = { api, postForm, esc, msgBox, listHtml, fmtBytes, fmtWhen,
@@ -5301,6 +5312,8 @@ class AdminPage {
     // those added here (the built-in examples are only in the Reference data tab), and any that cannot be read
     const listed = this.refs.filter((r) => r.origin === 'admin' || r.state === 'error');
     if (!listed.length) { $('#admin-refs-list').innerHTML = '<p class="muted">None added yet.</p>'; return; }
+    // (a LOTUS bundle's settings, or a file's fields; a MetaCyc bundle's view is added again)
+    const editable = (r) => !!r.lotus || !REF_BUNDLE_RE.test(r.path);
     const stateHtml = (r) => {
       if (r.state === 'error') return `<span class="bad">Cannot be read: ${esc(r.error)}</span>`;
       if (r.state === 'pending') return '<span class="warn">Read once the server restarts (below)</span>';
@@ -5313,8 +5326,9 @@ class AdminPage {
     $('#admin-refs-list').innerHTML = `<table class="odor-table"><thead><tr><th>Title</th><th>File</th><th>State</th><th></th></tr></thead><tbody>
       ${listed.map((r) => `<tr><td><a href="#reference/${esc(r.id)}">${esc(r.title)}</a></td>
         <td><code>${esc(r.path)}</code>${r.origin === 'builtin' ? ' <span class="muted">(built in)</span>' : ''}</td><td>${stateHtml(r)}</td>
-        <td>${r.origin === 'admin' ? `${r.lotus ? `<button type="button" class="btn small" data-edit-ref="${esc(r.id)}">Change settings…</button> ` : ''}<button type="button" class="btn small" data-delete-ref="${esc(r.id)}">Delete…</button>`
-          : '<span class="muted small" title="Remove it from reference_data/manifest.json on the server">built in</span>'}</td></tr>`).join('')}</tbody></table>`;
+        <td>${r.origin === 'admin' ? `${editable(r) ? `<button type="button" class="btn small" data-edit-ref="${esc(r.id)}">Change settings…</button> ` : ''}<button type="button" class="btn small" data-delete-ref="${esc(r.id)}">Delete…</button>`
+          : '<span class="muted small" title="Remove it from reference_data/manifest.json on the server">built in</span>'}</td></tr>`).join('')}</tbody></table>
+      ${listed.filter((r) => r.origin === 'admin').length > 1 ? `<div class="actions"><button type="button" class="btn small" data-delete-all-refs>Delete all…</button></div>` : ''}`;
   }
 
   _refBody() {
@@ -5381,7 +5395,8 @@ class AdminPage {
       ${axis('cols', 'Columns', f.kind === 'dataarray' ? f.fields.filter((x) => x.dim === dims[1]) : f.fields)}
       ${f.kind === 'table' ? `<div class="ref-role"><b>Values</b> <select data-value aria-label="Values">
           <option value="">presence: 1 where a line lists the row and column, else 0</option>
-          ${f.fields.map((x) => `<option value="${esc(x.name)}"${u.value === x.name ? ' selected' : ''}>${esc(x.name)} (${Math.round(x.numeric * 100)}% numbers; several lines' the mean)</option>`).join('')}</select>
+          ${f.fields.map((x) => `<option value="${esc(x.name)}"${u.value === x.name ? ' selected' : ''}${x.id || !x.numeric ? ' disabled' : ''}>${esc(x.name)}
+            (${x.id ? `identifies chemicals: not values` : `${Math.round(x.numeric * 100)}% numbers; several lines' the mean`})</option>`).join('')}</select>
         <select data-empty aria-label="Cells no line lists"><option value="missing">cells no line lists: missing</option>
           <option value="zero"${u.empty === 'zero' ? ' selected' : ''}>cells no line lists: 0</option></select></div>` : ''}
       <p class="muted small">${f.kind === 'dataarray' ? `Its dimensions: rows <code>${esc(dims[0])}</code>, columns <code>${esc(dims[1])}</code>. `
@@ -5520,7 +5535,27 @@ class AdminPage {
       showRefCheck(c, this.refSyncNote);
       this._renderFields(c);
       if (c.preview?.lotus) this._lotusSuggest(c.preview.lotus);
+      this._editNotes(c);
     }
+  }
+
+  // of a reference dataset being changed, as checked (`c`): what its fields chosen change,
+  // under its check (its value field: and its colorbar label, if typed, which does not follow)
+  _editNotes(c) {
+    const was = this.editing && this.editingFields, now = c?.ok && c.preview && c.fields?.used;
+    if (!was || !now) return;
+    const values = (f) => (f.layout === 'list' ? (f.value ? `<code>${esc(f.value)}</code>` : 'presence') : null);
+    const merged = (f) => esc(HS_VCF_MERGED[f.merge || 'mean'] || f.merge);
+    const notes = [];
+    if (values(was) !== values(now) && values(now)) {
+      const label = $('#ref-value-label').value.trim();
+      notes.push(`Its values were ${values(was) || 'its matrix as laid out'}, and are to be ${values(now)}${label
+        ? `, still labelled “${esc(label)}” (<i>Values are</i>, above): change that if it no longer fits` : ''}.`);
+    }
+    if ((was.merge || 'mean') !== (now.merge || 'mean')) {
+      notes.push(`Its chemicals that are one odor were ${merged(was)}, and are to be ${merged(now)} (in the Compare tab and the Headspace calculator).`);
+    }
+    if (notes.length) $('#ref-check').appendChild(msgBox('warn', `${notes.join(' ')} <i>Save changes</i> reads its file again by them.`));
   }
 
   async addRef() {
@@ -5558,7 +5593,7 @@ class AdminPage {
     showRefCheck(null);
     this._renderFields(null);
     this.refFields = null;
-    this.editing = null;
+    this.editing = this.editingFields = null;
     this._ltTitle = this._ltValueLabel = this._ltSource = null;
     $('#ref-path').readOnly = false;
     $('#ref-add').textContent = 'Add';
@@ -5566,25 +5601,30 @@ class AdminPage {
     $('#ref-form-head').textContent = 'Add one';
   }
 
-  // an added LOTUS reference dataset's settings, in the form to change (Save changes) or not
-  // (Cancel); labels as suggested for its settings left empty, to follow them
+  // an added reference dataset's settings (a LOTUS bundle's, or the fields of a file's: e.g.
+  // its value field), in the form to change (Save changes) or not (Cancel); labels as
+  // suggested for its settings left empty, to follow them (`_refBody`)
   editRef(id) {
     const r = this.refs.find((x) => x.id === id), lt = r?.lotus;
     if (!r) return;
     this._resetRefForm();
     this.editing = id;
+    const f = lt ? null : r.fields || null, chosen = !!f && f.layout !== 'matrix';
+    const follows = lt ? { value: lt.value_label, row: 'chemical', col: lt.level }
+      : { value: chosen && f.layout === 'list' ? f.value || 'presence' : '', row: chosen ? f.rows?.label || '' : '', col: chosen ? f.cols?.label || '' : '' };
     $('#ref-path').value = r.path;
     $('#ref-path').readOnly = true;
     $('#ref-title').value = r.title || '';
     this._ltTitle = lt && r.title === lt.title ? r.title : null;
     $('#ref-description').value = r.description || '';
     $('#ref-source').value = r.source || '';
-    $('#ref-value-label').value = r.value_label && r.value_label !== lt?.value_label ? r.value_label : '';
-    $('#ref-row-label').value = r.row_label && r.row_label !== 'chemical' ? r.row_label : '';
-    $('#ref-col-label').value = r.col_label && r.col_label !== lt?.level ? r.col_label : '';
+    $('#ref-value-label').value = r.value_label && r.value_label !== follows.value ? r.value_label : '';
+    $('#ref-row-label').value = r.row_label && r.row_label !== follows.row ? r.row_label : '';
+    $('#ref-col-label').value = r.col_label && r.col_label !== follows.col ? r.col_label : '';
     $('#ref-axis').value = r.chemical_axis || 'detect';
     $('#ref-kind').value = r.kind_setting || 'detect';
-    this.refFields = lt ? { layout: 'lotus', level: lt.level, value: lt.value, stereo: lt.stereo, taxonomy: lt.taxonomy, others: lt.others } : null;
+    this.refFields = lt ? { layout: 'lotus', level: lt.level, value: lt.value, stereo: lt.stereo, taxonomy: lt.taxonomy, others: lt.others } : f;
+    this.editingFields = f; // (as saved: what changing them changes is said, `_editNotes`)
     $('#ref-add').textContent = 'Save changes';
     $('#ref-cancel').hidden = false;
     $('#ref-form-head').textContent = `Change “${r.title}”`;
@@ -5623,6 +5663,7 @@ class AdminPage {
          <code>${esc(by.state.deleted_dir)}</code> (delete them there to free the space).`
       : `Only the app's copy of it is deleted: its file, <code>${esc(r.path)}</code>, is left as it is${imp ? ` (for the other reference datasets of ${esc(name)} imported here)` : ''}.`)
       + (r.read_grant ? ' It was added to the folders the server may read for it; it is taken off them again, unless another reference dataset needs it.' : '');
+    $('#delete-confirm-warn').replaceChildren();
     if (await askDialog($('#delete-confirm')) !== 'delete') return;
     let res;
     try { res = await api(`/api/admin/references/${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch (e) {
@@ -5636,6 +5677,40 @@ class AdminPage {
     if (res.revoked) this._reloadState();
     this.loadRefs();
     by?.load();
+  }
+
+  // every reference dataset added here (as listed now) deleted, after one question, each as
+  // `deleteRef` deletes one: its copy, never its file; a bundle imported here moved to
+  // deleted/ with the last of its reference datasets
+  async deleteAllRefs() {
+    const refs = (this.refs || []).filter((r) => r.origin === 'admin'), out = $('#ref-result');
+    if (!refs.length) return;
+    const imported = this.imports.filter((by) => refs.some((r) => by.importOf(r.id)));
+    $('#delete-confirm-q').textContent = `Delete all ${refs.length} reference datasets added here?`;
+    $('#delete-confirm-detail').innerHTML = `${refs.map((r) => `“${esc(r.title)}”`).join(', ')}. Only the app's copies of them are deleted:
+      their files are left as they are${imported.length ? `, but for the ${imported.map((by) => esc(by.state.name)).join(' and ')} imported here, whose
+      bundles and the files uploaded for them are moved to ${imported.map((by) => `<code>${esc(by.state.deleted_dir)}</code>`).join(' and ')}
+      (delete them there to free the space)` : ''}.${refs.some((r) => r.read_grant)
+      ? ' Files added to the folders the server may read for them are taken off them again.' : ''}`;
+    $('#delete-confirm-warn').replaceChildren(msgBox('warn', 'They are gone from the Reference data, Compare and Headspace calculator tabs until they are added again.'));
+    if (await askDialog($('#delete-confirm')) !== 'delete') return;
+    let res;
+    try { res = await api('/api/admin/references', { method: 'DELETE', json: { ids: refs.map((r) => r.id) } }); } catch (e) {
+      out.replaceChildren(msgBox('error', `Not deleted: ${esc(e.message)}`));
+      this.loadRefs();
+      return;
+    }
+    const title = (id) => refs.find((r) => r.id === id)?.title || id; // (listHtml escapes)
+    const moved = res.deleted.filter((d) => d.moved), revoked = res.deleted.filter((d) => d.revoked);
+    out.replaceChildren(msgBox(res.errors.length ? 'error' : 'ok', `Deleted ${hsPlural(res.deleted.length, 'reference dataset')}; their files were left as they are`
+      + (moved.length ? `, but for those imported here, moved to ${moved.map((d) => `<code>${esc(d.moved)}</code>`).join(', ')}` : '') + '.'
+      + (revoked.length ? ` Taken off the folders the server may read (it can read them until it restarts): ${revoked.map((d) => `<code>${esc(d.revoked)}</code>`).join(', ')}.` : '')
+      + (res.errors.length ? ` Not deleted:${listHtml(res.errors.map((x) => `${title(x.id)}: ${x.error}`))}` : '')));
+    if (res.deleted.some((d) => d.id === this.editing)) this._resetRefForm();
+    reference.invalidate();
+    if (revoked.length) this._reloadState();
+    this.loadRefs();
+    for (const by of imported) by.load();
   }
 
   // the folders of model data added, each with what it has (as the Models tab reads it); the baselines, and the models to choose them from
