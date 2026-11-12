@@ -1012,9 +1012,9 @@ class MatrixViewer {
     // (axis, item) -> more entries of a label's menu ({html, onPick}), axis that of the
     // matrix as given (the same whether or not it is shown transposed)
     this.labelMenuExtra = null;
-    // {other, cols}: a viewer of the same rows in the same order (and with cols, the same
+    // {others, cols}: viewers of the same rows in the same order (and with cols, the same
     // columns), shown beside this one: rows moved, removed or reset, cell sizes, transposing,
-    // chemical labels and scrolling are kept the same in both, and what is hovered is marked
+    // chemical labels and scrolling are kept the same in all, and what is hovered is marked
     this.linked = null;
     this._wire();
     this._syncControls();
@@ -1031,7 +1031,7 @@ class MatrixViewer {
       if (s.dataset.opt === 'sortRows' || s.dataset.opt === 'sortCols') this.edits[this._editAxis(s.dataset.opt === 'sortRows' ? 'rows' : 'cols')].order = null;
       this._save();
       this._rebuild();
-      if (s.dataset.opt === 'chemLabels') this.linked?.other._setLinkedOpts({ chemLabels: s.value });
+      if (s.dataset.opt === 'chemLabels') this._toLinked({ chemLabels: s.value });
     }));
     for (const k of ['cellW', 'cellH']) {
       const range = $(`input[data-opt=${k}]`, tb);
@@ -1041,7 +1041,7 @@ class MatrixViewer {
         this._save();
         this.heatmap.setOptions({ cellW: this.opts.cellW, cellH: this.opts.cellH });
         this.onShow?.();
-        this.linked?.other._setLinkedOpts({ [k]: this.opts[k] });
+        this._toLinked({ [k]: this.opts[k] });
       });
     }
     $$('input[type=checkbox][data-opt]', tb).forEach((cb) => cb.addEventListener('change', () => {
@@ -1054,7 +1054,7 @@ class MatrixViewer {
       this._save();
       this._syncEnabled();
       this._rebuild();
-      if (cb.dataset.opt === 'transpose') this.linked?.other._setLinkedOpts({ transpose: cb.checked });
+      if (cb.dataset.opt === 'transpose') this._toLinked({ transpose: cb.checked });
     }));
     $('[data-role=reset]', tb).addEventListener('click', () => { Object.assign(this.edits, newEdits()); this._rebuild(); this._linkEdits(); });
     $('[data-bad]', tb).addEventListener('change', (e) => { this.hideBad = e.target.checked; this._rebuild(); });
@@ -1062,7 +1062,7 @@ class MatrixViewer {
       this.opts.hideControls = !this.opts.hideControls;
       this._save();
       this._syncControls();
-      this.linked?.other._setLinkedOpts({ hideControls: this.opts.hideControls });
+      this._toLinked({ hideControls: this.opts.hideControls });
       this.onShow?.();
     });
     $('[data-role=fullscreen]', tb).addEventListener('click', () => this.toggleFullscreen());
@@ -1629,18 +1629,23 @@ class MatrixViewer {
   _sharedAxis(axis) { return !!this.linked && (axis === 'rows' || this.linked.cols); }
 
   // ------------------------------------------------------- linked viewers
-  // this viewer's edits of its rows (and columns, if they are the same too) made the other's
+  // this viewer's edits of its rows (and columns, if they are the same too) made the others'
   _linkEdits() {
     const l = this.linked;
     if (!l) return;
-    for (const ax of l.cols ? ['rows', 'cols'] : ['rows']) {
-      const e = this.edits[ax];
-      l.other.edits[ax] = { removed: new Set(e.removed), order: e.order && [...e.order] };
+    for (const other of l.others) {
+      for (const ax of l.cols ? ['rows', 'cols'] : ['rows']) {
+        const e = this.edits[ax];
+        other.edits[ax] = { removed: new Set(e.removed), order: e.order && [...e.order] };
+      }
+      other._rebuild();
     }
-    l.other._rebuild();
   }
 
-  // options as the linked viewer's were just set: cell size, transposing, chemical labels
+  // options just set here set in the linked viewers too (`_setLinkedOpts`)
+  _toLinked(patch) { for (const other of this.linked?.others || []) other._setLinkedOpts(patch); }
+
+  // options as a linked viewer's were just set: cell size, transposing, chemical labels
   _setLinkedOpts(patch) {
     Object.assign(this.opts, patch);
     this._syncToolbar();
@@ -1648,16 +1653,19 @@ class MatrixViewer {
     else { this.heatmap.setOptions({ cellW: this.opts.cellW, cellH: this.opts.cellH }); this.onShow?.(); }
   }
 
-  // scrolled along the shared axis (both, when rows and columns are shared), so is the other
+  // scrolled along the shared axis (both, when rows and columns are shared), so are the others
   _linkScroll() {
     const l = this.linked;
     if (!l) return;
-    const from = this.heatmap.scroll, to = l.other.heatmap.scroll;
-    if (l.cols || !this.opts.transpose) to.scrollTop = from.scrollTop;
-    if (l.cols || this.opts.transpose) to.scrollLeft = from.scrollLeft;
+    const from = this.heatmap.scroll;
+    for (const other of l.others) {
+      const to = other.heatmap.scroll;
+      if (l.cols || !this.opts.transpose) to.scrollTop = from.scrollTop;
+      if (l.cols || this.opts.transpose) to.scrollLeft = from.scrollLeft;
+    }
   }
 
-  // what is hovered here marked there: the row (and with shared columns, the column)
+  // what is hovered here marked in the others: the row (and with shared columns, the column)
   _linkHover(info) {
     const l = this.linked;
     if (!l) return;
@@ -1665,7 +1673,7 @@ class MatrixViewer {
     let mark = null;
     if (info && l.cols) mark = { rows: at(info.rowIndex), cols: at(info.colIndex) };
     else if (info) mark = this.opts.transpose ? { rows: null, cols: at(info.colIndex) } : { rows: at(info.rowIndex), cols: null };
-    l.other.heatmap.setMark(mark);
+    for (const other of l.others) other.heatmap.setMark(mark);
   }
 
   // right-click on a label: remove what it labels (a glomerulus also from every fly)
@@ -2038,8 +2046,8 @@ const calcText = (d) => (d.response_calc || '').trim().replace(/\s+/g, ' ');
 // A dataset as named in the lists of Browse and Compare (HTML): driver > indicator (coding
 // unit), then any manipulations in brackets and its response calculation (as its title has
 // them, metadata.dataset_title), but for an entry of the same recordings calculated
-// otherwise (`listedDatasets`), whose calculations end its last line instead (`calcsText`),
-// or with `withCalc` false.
+// otherwise (`listedDatasets`), whose calculations end its last line instead (`calcsText`;
+// in Compare, a menu under it), or with `withCalc` false.
 function datasetName(d, withCalc = !d.calcs) {
   const calc = withCalc ? calcText(d) : '';
   return `${esc(d.driver)} &gt; ${esc(d.indicator)} <span class="muted">(${esc(d.coding_unit)})</span>`
@@ -2889,8 +2897,8 @@ const listedAs = (d, has) => {
   return c ? { ...c, created_at: d.created_at, calcs: d.calcs } : d;
 };
 
-// the end of the last line of a listed entry of the same recordings calculated otherwise:
-// its response calculation, then the others' (HTML)
+// the end of the last line of a listed entry of the same recordings calculated otherwise, in
+// Browse: its response calculation, then the others' (HTML)
 const calcsText = (d) => (!d.calcs ? '' : `, ${esc(calcText(d) || 'response calculation not given')}; other response calcs.: `
   + d.calcs.filter((c) => c.id !== d.id).map((c) => esc(calcText(c) || 'not given')).join(', '));
 
@@ -2904,6 +2912,73 @@ function sameCalcSets(id, datasets, sets) {
   const key = (s) => JSON.stringify(s.ids.map((i) => calcText(byId.get(i))).sort()), k = key(mine), calc = calcText(byId.get(id));
   return sets.filter((s) => s !== mine && s.ids.every((i) => byId.has(i)) && key(s) === k)
     .map((s) => ({ id: s.ids.find((i) => calcText(byId.get(i)) === calc), default: s.default }));
+}
+
+// sets of the same recordings calculated otherwise with those saved (`saved`) in place of theirs
+const withCalcSets = (sets, saved) => [...sets.filter((s) => !saved.some((x) => s.ids.some((i) => x.ids.includes(i)))), ...saved];
+
+// How dataset `d`'s responses were calculated, as Browse shows it right of its title and
+// Compare in its list (HTML: its label over it). Of the same recordings calculated
+// otherwise (`calcs`, each a dataset of its own; `def`, their default), a menu of them, and
+// right of it a button to make `d` their default (`default_calc`: the one listed in Browse
+// and Compare, and merged), `extra` (more buttons), then a status
+function calcControls(d, calcs, def, extra = '') {
+  const text = (c) => esc(calcText(c) || 'not given'), label = '<span class="muted">Response calculation:</span>';
+  if (!calcs) return `<span class="ds-calc-text">${label}<span>${text(d)}</span></span>`;
+  const sorted = [...calcs].sort((a, b) => a.id - b.id);
+  return `<label class="ds-calc-text">${label}<select data-calcs="${sorted.map((c) => c.id).join(',')}"
+      title="The same recordings calculated otherwise, each a dataset of its own">${sorted.map((c) => `<option value="${c.id}"${c.id === d.id ? ' selected' : ''}>${
+        text(c)}${c.id === def ? ' (default)' : ''}</option>`).join('')}</select></label>
+    <button type="button" class="btn" data-act="default" data-id="${d.id}"${d.id === def ? ' disabled title="It is the default of its recordings\' calculations already"'
+      : ' title="List this calculation of its recordings, in Browse and Compare, instead of the others, and merge it by default"'}><span>Set Default<br>Response Calc.</span></button>
+    ${extra}<span class="dl-status" data-role="status"></span>`;
+}
+
+// Makes dataset `id` the default calculation of its recordings; and, if asked to
+// (`askCalcDefaults`), the same calculation of other recordings calculated the same ways
+// (`sameCalcSets`) the default of each. loaded: GET /api/datasets as last loaded (if it
+// cannot be read again). Browse and Compare are told of the sets saved (`calcsSaved`).
+// Resolves to them ([{ids, default}]), or null if asked to set none; throws with why if
+// they could not be set.
+async function saveDefaultCalc(id, loaded) {
+  let all = loaded;
+  try { all = await api('/api/datasets'); } catch { /* (as last loaded) */ }
+  const byId = new Map(all.datasets.map((d) => [d.id, d]));
+  const sets = all.calculations || [], mine = sets.find((s) => s.ids.includes(id))?.ids || [id];
+  const others = sameCalcSets(id, all.datasets, sets), change = others.filter((s) => s.id !== s.default);
+  let also = [];
+  if (change.length) {
+    const answer = await askCalcDefaults(id, mine, change, others.filter((s) => s.id === s.default), byId);
+    if (answer === 'all') also = change.map((s) => s.id);
+    else if (answer !== 'one') return null;
+  }
+  let res;
+  try { res = await api(`/api/datasets/${id}/default_calc`, { method: 'PUT', json: { others: also } }); } catch (e) { res = { errors: [e.message] }; }
+  if (!res.ok) throw new Error(res.errors.join('; '));
+  const saved = [{ ids: res.ids, default: res.default }, ...res.others];
+  browse.calcsSaved(saved);
+  comparePage.calcsSaved(saved);
+  return saved;
+}
+
+// Asks whether to make dataset `id`'s calculation the default of other recordings calculated
+// the same ways (as its own, `mine`: their ids) too: `change`, [{id, default}] of those of
+// another default (if their defaults differ, a line for each), `already` those of it.
+// Resolves to 'all', 'one' (only its own recordings), or else (none).
+function askCalcDefaults(id, mine, change, already, byId) {
+  const calc = (i) => `“${esc(calcText(byId.get(i)) || 'not given')}”`;
+  const names = (ids) => ids.map((i) => `#${i} ${datasetName(byId.get(i), false)}, ${esc(byId.get(i).uploader_name)}`).join('; ');
+  const byDefault = new Map();
+  for (const s of change) { const k = calcText(byId.get(s.default)); byDefault.set(k, [...(byDefault.get(k) || []), s.default]); }
+  const cases = [...byDefault.values()], n = change.length, they = n === 1 ? 'It now defaults' : 'They now default';
+  $('#calc-default-confirm-q').innerHTML = `Also make ${calc(id)} the default response calculation of the ${n === 1 ? 'other set' : `${n} other sets`}
+    of recordings calculated the same ways? ${cases.length === 1 ? `${they} to ${calc(cases[0][0])}: ${names(cases[0])}.` : `${they} to:`}`;
+  $('#calc-default-confirm-cases').innerHTML = cases.length === 1 ? ''
+    : cases.map((c) => `<li>${calc(c[0])} (${c.length}): ${names(c)}</li>`).join('');
+  const calcs = mine.map(calc);
+  $('#calc-default-confirm-detail').innerHTML = `Each set is calculated as ${calcs.slice(0, -1).join(', ')} and ${calcs.at(-1)}.`
+    + (already.length ? ` Already defaulting to ${calc(id)}: ${names(already.map((s) => s.id))}.` : '');
+  return askDialog($('#calc-default-confirm'));
 }
 
 // when a dataset was uploaded, said in lists grouped by who uploaded them or when
@@ -3180,72 +3255,28 @@ class Browse {
     this.showDataPaths(id);
   }
 
-  // How a dataset's responses were calculated, right of its title (its label over it). Of the
-  // same recordings calculated otherwise (`calculations`, each a dataset of its own), a menu
-  // of them, to show another, and right of it a button to make this one their default
-  // (`default_calc`: the one listed here and in Compare, and merged)
+  // How a dataset's responses were calculated, right of its title (`calcControls`: of the same
+  // recordings calculated otherwise, a menu of them, to show another)
   _showCalc(d) {
-    const el = $('#ds-calc'), text = (c) => esc(calcText(c) || 'not given');
-    const label = '<span class="muted">Response calculation:</span>';
-    if (!d.calculations?.length) { el.innerHTML = `<span class="ds-calc-text">${label}<span>${text(d)}</span></span>`; return; }
-    const isDefault = d.default_calc === d.id;
-    el.innerHTML = `<label class="ds-calc-text">${label}<select title="The same recordings calculated otherwise, each a dataset of its own">
-        ${[d, ...d.calculations].sort((a, b) => a.id - b.id).map((c) => `<option value="${c.id}"${c.id === d.id ? ' selected' : ''}>${text(c)}${
-          c.id === d.default_calc ? ' (default)' : ''}</option>`).join('')}</select></label>
-      <button type="button" class="btn" data-act="default"${isDefault ? ' disabled title="It is the default of its recordings\' calculations already"'
-        : ' title="List this calculation of its recordings, here and in Compare, instead of the others, and merge it by default"'}><span>Set Default<br>Response Calc.</span></button>
-      <span class="dl-status" data-role="status"></span>`;
+    $('#ds-calc').innerHTML = calcControls(d, d.calculations?.length ? [d, ...d.calculations] : null, d.default_calc);
   }
 
-  // The dataset shown made the default calculation of its recordings; and, if asked to
-  // (`_askCalcDefaults`), the same calculation of other recordings calculated the same ways
-  // (`sameCalcSets`) the default of each
+  // The dataset shown made the default calculation of its recordings (`saveDefaultCalc`)
   async _setDefaultCalc() {
     const id = this.selected, button = $('#ds-calc [data-act=default]');
     button.disabled = true; // (until set, or not: one at a time)
-    try { await this._saveDefaultCalc(id); } finally { if (button.isConnected) button.disabled = false; }
+    try { await saveDefaultCalc(id, { datasets: this.datasets, calculations: this.calcSets }); } catch (e) {
+      if (this.selected === id) setStatus($('#ds-calc [data-role=status]'), `Not set: ${e.message}`, 'error');
+    } finally { if (button.isConnected) button.disabled = false; }
   }
 
-  async _saveDefaultCalc(id) {
-    let all = { datasets: this.datasets, calculations: this.calcSets };
-    try { all = await api('/api/datasets'); } catch { /* (as last loaded) */ }
-    const byId = new Map(all.datasets.map((d) => [d.id, d]));
-    const sets = all.calculations || [], mine = sets.find((s) => s.ids.includes(id))?.ids || [id];
-    const others = sameCalcSets(id, all.datasets, sets), change = others.filter((s) => s.id !== s.default);
-    let also = [];
-    if (change.length) {
-      const answer = await this._askCalcDefaults(id, mine, change, others.filter((s) => s.id === s.default), byId);
-      if (answer === 'all') also = change.map((s) => s.id);
-      else if (answer !== 'one') return;
-    }
-    let res;
-    try { res = await api(`/api/datasets/${id}/default_calc`, { method: 'PUT', json: { others: also } }); } catch (e) { res = { errors: [e.message] }; }
-    if (!res.ok) { if (this.selected === id) setStatus($('#ds-calc [data-role=status]'), `Not set: ${res.errors.join('; ')}`, 'error'); return; }
-    const saved = [{ ids: res.ids, default: res.default }, ...res.others];
-    this.calcSets = [...this.calcSets.filter((s) => !saved.some((x) => s.ids.some((i) => x.ids.includes(i)))), ...saved];
+  // the default calculations of sets of recordings saved (`saveDefaultCalc`, here or in Compare)
+  calcsSaved(saved) {
+    this.calcSets = withCalcSets(this.calcSets, saved);
     for (const s of saved) for (const i of s.ids) { const c = this.cache.get(i); if (c) c.d.default_calc = s.default; }
+    if (!this.datasets) return;
     this.renderList();
-    if (this.selected === id) this._showCalc(this.cache.get(id).d);
-  }
-
-  // Asks whether to make dataset `id`'s calculation the default of other recordings calculated
-  // the same ways (as its own, `mine`: their ids) too: `change`, [{id, default}] of those of
-  // another default (if their defaults differ, a line for each), `already` those of it.
-  // Resolves to 'all', 'one' (only its own recordings), or else (none).
-  _askCalcDefaults(id, mine, change, already, byId) {
-    const calc = (i) => `“${esc(calcText(byId.get(i)) || 'not given')}”`;
-    const names = (ids) => ids.map((i) => `#${i} ${datasetName(byId.get(i), false)}, ${esc(byId.get(i).uploader_name)}`).join('; ');
-    const byDefault = new Map();
-    for (const s of change) { const k = calcText(byId.get(s.default)); byDefault.set(k, [...(byDefault.get(k) || []), s.default]); }
-    const cases = [...byDefault.values()], n = change.length, they = n === 1 ? 'It now defaults' : 'They now default';
-    $('#calc-default-confirm-q').innerHTML = `Also make ${calc(id)} the default response calculation of the ${n === 1 ? 'other set' : `${n} other sets`}
-      of recordings calculated the same ways? ${cases.length === 1 ? `${they} to ${calc(cases[0][0])}: ${names(cases[0])}.` : `${they} to:`}`;
-    $('#calc-default-confirm-cases').innerHTML = cases.length === 1 ? ''
-      : cases.map((c) => `<li>${calc(c[0])} (${c.length}): ${names(c)}</li>`).join('');
-    const calcs = mine.map(calc);
-    $('#calc-default-confirm-detail').innerHTML = `Each set is calculated as ${calcs.slice(0, -1).join(', ')} and ${calcs.at(-1)}.`
-      + (already.length ? ` Already defaulting to ${calc(id)}: ${names(already.map((s) => s.id))}.` : '');
-    return askDialog($('#calc-default-confirm'));
+    if (saved.some((s) => s.ids.includes(this.selected)) && this.cache.has(this.selected)) this._showCalc(this.cache.get(this.selected).d);
   }
 
   // A dataset's permalink (permalinks.py): its link, with Copy and Rename…; or a button to make one
@@ -6006,7 +6037,7 @@ const HOLM_URL = 'https://en.wikipedia.org/wiki/Holm%E2%80%93Bonferroni_method';
 const ON = {
   odors: {
     one: 'odor', many: 'odors', sim: 'odor–odor similarity',
-    show: 'Datasets, reference data (over the odors shown that it has) and the two side by side alike; chemical structure only ever as similarity.',
+    show: 'Datasets, reference data (over the odors shown that it has) and those side by side alike; chemical structure only ever as similarity.',
     simNote: "Of two odors: by their responses across a dataset's glomeruli or ROIs (those both have), or by their values across a "
       + "reference dataset's other axis. The correlations between similarities below are of these.",
     match: "Odors are matched by the odor table, mixtures left out. Each space's similarities are shown over the odors shown that it has.",
@@ -6014,7 +6045,7 @@ const ON = {
   },
   panel: {
     one: 'odor', many: 'odors', sim: 'odor–odor similarity',
-    show: "Datasets with the panel chosen, over its odors as presented (concentrations and mixtures as they are), and two of them side by side alike.",
+    show: "Datasets with the panel chosen, over its odors as presented (concentrations and mixtures as they are), and those side by side alike.",
     simNote: "Of two of the panel's odors: by their responses across a dataset's glomeruli or ROIs. The correlations between similarities below are of these.",
     match: "Datasets are matched on the panel's odors: an odor of the odor table alone by it and its concentration, anything else (a mixture, an odor "
       + 'not in the odor table) by how the data names it, but for case. Each dataset is shown over the odors of the panel it has.',
@@ -6023,7 +6054,7 @@ const ON = {
   glomeruli: {
     one: 'glomerulus', many: 'glomeruli', sim: 'glomerulus–glomerulus similarity',
     show: 'Datasets of glomeruli (as glomeruli × odors, every fly averaged) and reference data of glomeruli (over the glomeruli shown that it has), '
-      + 'and the two side by side alike. No odor–odor similarity is shown, nor chemical structure.',
+      + 'and those side by side alike. No odor–odor similarity is shown, nor chemical structure.',
     simNote: "Of two glomeruli: by their responses across a dataset's odors (every one, mixtures and concentrations as they are), or "
       + "by their values across a reference dataset's other axis. The correlations between similarities below are of these.",
     match: "Glomeruli are matched by name (but for case), as datasets' ROIs are named. Each space's similarities are shown over the "
@@ -6070,18 +6101,17 @@ function spaceSims(s, ids, rowOf, noun = 'odor', chems = noun === 'odor') {
     chemicals: chems ? CHEM_ROWS : null, square: true };
 }
 
-// two linked viewers ({el, viewer}) side by side made level, the same height above their
+// linked viewers ([{el, viewer}]) side by side made level, the same height above their
 // cells (header and toolbar), then each fitted to what it shows
-function levelViewers(x, y) {
-  const vs = [x.viewer, y.viewer];
+function levelViewers(views) {
+  const vs = views.map((x) => x.viewer);
   if (vs.some((v) => !v.model)) return;
   const h = Math.max(...vs.map((v) => v.heatmap.naturalHeaderH));
   for (const v of vs) if (v.heatmap.options.minHeaderH !== h) v.heatmap.setOptions({ minHeaderH: h });
   for (const v of vs) v.toolbar.style.minHeight = '';
   const t = Math.ceil(Math.max(...vs.map((v) => v.toolbar.getBoundingClientRect().height)));
   for (const v of vs) v.toolbar.style.minHeight = `${t}px`;
-  fitViewer(x.el, x.viewer);
-  fitViewer(y.el, y.viewer);
+  for (const x of views) fitViewer(x.el, x.viewer);
 }
 
 // a Compare dataset's ROIs used (its columns), and how many more were marked bad and left out
@@ -6126,19 +6156,26 @@ class ComparePage {
     this.blocks = new Map(); // key -> {el, viewer}, kept while shown
     this.job = null; // the bootstrap of p-values running (_rsaP)
     this.all = []; // the spaces shown, as last rendered
-    this.pairs = []; // linked viewers side by side, as last rendered: [[{el, viewer}, {el, viewer}]]
+    this.pairs = []; // linked viewers side by side, as last rendered: [[{el, viewer}, ...]]
     this.pairWidth = 0;
     this.pairRO = new ResizeObserver(([e]) => {
       // their toolbars wrap anew
       if (Math.round(e.contentRect.width) === this.pairWidth) return;
       this.pairWidth = Math.round(e.contentRect.width);
-      this.pairs.forEach(([x, y]) => levelViewers(x, y));
+      this.pairs.forEach((views) => levelViewers(views));
     });
+    this.chosenCalcs = new Set(); // calculations chosen in the list's menus: each listed while none of its recordings' is ticked
     this._seq = 0;
     const tab = $('#tab-compare');
     $$('.seg button', tab).forEach((b) => b.addEventListener('click', () => { this.o.group = b.dataset.group; this._save(); this.renderList(); }));
     $('#compare-unit').addEventListener('change', (e) => { this.o.unit = e.target.value; this._save(); this.renderList(); });
     $('#compare-list').addEventListener('click', (e) => {
+      const act = e.target.closest('.cmp-calc [data-act]');
+      if (act) {
+        if (act.dataset.act === 'default') this._setDefaultCalc(act);
+        else this._compareCalcs(act.dataset.ids.split(',').map(Number));
+        return;
+      }
       const b = e.target.closest('[data-forget-model]');
       if (!b) return;
       e.preventDefault();
@@ -6146,6 +6183,7 @@ class ComparePage {
       this._changed();
     });
     $('#compare-list').addEventListener('change', (e) => {
+      if (e.target.matches('select[data-calcs]')) { this._chooseCalc(+e.target.value, e.target.dataset.calcs.split(',').map(Number)); return; }
       if (e.target.matches('.pick-model')) {
         this.o.models = this.o.models.map((m) => (m.key === e.target.dataset.key ? { ...m, shown: e.target.checked } : m));
         this._changed();
@@ -6155,7 +6193,7 @@ class ComparePage {
       if (!ids) return;
       const picked = new Set(this.o.picked);
       for (const id of ids) { if (e.target.checked) picked.add(id); else picked.delete(id); }
-      this.o.picked = this.datasets.map((d) => d.id).filter((id) => picked.has(id)).reverse(); // oldest first
+      this._pick(picked);
       this._changed();
     });
     $('#compare-clear').addEventListener('click', () => { this.o.picked = []; this._changed(); });
@@ -6167,8 +6205,17 @@ class ComparePage {
     }
     $('#cmp-pair').addEventListener('change', (e) => {
       if (!e.target.dataset.side) return;
-      this.o.pair = [...this.o.pair];
+      this.o.pair = [...this.o.pair, null, null].slice(0, Math.max(2, this.o.pair.length));
       this.o.pair[+e.target.dataset.side] = e.target.value || null;
+      this._changed();
+    });
+    $('#cmp-pair').addEventListener('click', (e) => {
+      const add = e.target.closest('[data-role=add-side]'), remove = e.target.closest('[data-unside]');
+      if (!add && !remove) return;
+      const pair = [...this.o.pair, null, null].slice(0, Math.max(2, this.o.pair.length));
+      if (add) pair.push(null);
+      else pair.splice(+remove.dataset.unside, 1);
+      this.o.pair = pair;
       this._changed();
     });
     $('#cmp-spaces').addEventListener('change', (e) => {
@@ -6246,27 +6293,84 @@ class ComparePage {
     if (!this.datasets) return;
     if (!this.datasets.length) { list.innerHTML = `${this._modelsHtml()}<div class="empty">Nothing uploaded yet. Use the Upload tab.</div>`; return; }
     const picked = new Set(this.o.picked);
-    const item = (d) => `<label class="ds-item${picked.has(d.id) ? ' active' : ''}">
+    // (of the same recordings calculated otherwise, a menu of their calculations under it: `_calcControls`)
+    const item = (d) => `<div class="ds-item cmp-item${picked.has(d.id) ? ' active' : ''}"><label>
         <input type="checkbox" class="pick" data-id="${d.id}"${picked.has(d.id) ? ' checked' : ''}>
         <span class="list-item">
           <span class="t">${datasetName(d)}</span>
           ${panelsLine(d, this.o.group)}
           <span class="s">${fliesText(d)}, ${d.n_units.toLocaleString()} ROIs, ${d.n_odors} odors${lastFlyText(d)}</span>
-          <span class="s">#${d.id}, ${esc(d.uploader_name)}${uploadedText(d, this.o.group)}${calcsText(d)}</span>
-        </span></label>`;
+          <span class="s">#${d.id}, ${esc(d.uploader_name)}${uploadedText(d, this.o.group)}</span>
+        </span></label>${d.calcs ? this._calcControls(d) : ''}</div>`;
     const head = (g) => {
       const all = g.datasets.every((d) => picked.has(d.id));
       return `<div class="list-group"><label><input type="checkbox" class="pick-group" data-ids="${g.datasets.map((d) => d.id).join(',')}"${all ? ' checked' : ''}>
         ${esc(g.label)} <span class="muted">(${g.datasets.length})</span></label></div>`;
     };
     // (one of the same recordings calculated otherwise, as in Browse: `listedDatasets`)
-    const listed = filterByUnit(listedDatasets(this.datasets, this.calcSets), $('#compare-unit'), this.o.unit).map((d) => listedAs(d, (id) => picked.has(id)));
+    const listed = filterByUnit(listedDatasets(this.datasets, this.calcSets), $('#compare-unit'), this.o.unit).map((d) => this._listedAs(d, picked));
     list.innerHTML = this._modelsHtml() + datasetGroups(listed, this.o.group)
       .map((g) => `<div class="list-section${g.diag ? ' diag' : ''}">${head(g)}${g.datasets.map(item).join('')}</div>`).join('');
     const n = this.o.picked.length, nm = this.o.models.filter((m) => m.shown).length;
     $('#compare-count').textContent = [n ? `${n} dataset${n === 1 ? '' : 's'}` : '', nm ? `${nm} model run${nm === 1 ? '' : 's'}` : '']
       .filter(Boolean).join(', ') + (n || nm ? ' shown' : '');
     $('#compare-clear').hidden = !n;
+  }
+
+  // the datasets ticked (a set of their ids), in the order they are shown: oldest first
+  _pick(picked) { this.o.picked = this.datasets.map((d) => d.id).filter((id) => picked.has(id)).reverse(); }
+
+  // a listed entry of the same recordings calculated otherwise (`listedDatasets`) as the one of
+  // them ticked (`listedAs`), else as the one chosen in its menu (`chosenCalcs`), else its default
+  _listedAs(d, picked) {
+    const c = d.calcs && !d.calcs.some((x) => picked.has(x.id)) && d.calcs.find((x) => x.id !== d.id && this.chosenCalcs.has(x.id));
+    return c ? { ...c, created_at: d.created_at, calcs: d.calcs } : listedAs(d, (id) => picked.has(id));
+  }
+
+  // a listed entry's menu of its recordings' calculations, with Set Default Response Calc. as
+  // in Browse (`calcControls`), and a button to compare them all side by side
+  _calcControls(d) {
+    const ids = d.calcs.map((c) => c.id).sort((a, b) => a - b).join(',');
+    return `<div class="ds-calc cmp-calc">${calcControls(d, d.calcs, this.calcSets.find((s) => s.ids.includes(d.id))?.default,
+      `<button type="button" class="btn" data-act="compare" data-ids="${ids}" title="Tick every calculation of these recordings, and show them side by side"
+        ><span>Compare All<br>Response Calcs.</span></button>`)}</div>`;
+  }
+
+  // a calculation chosen in an entry's menu (`ids`: its recordings'): ticked instead of the one
+  // ticked, if one is (so shown instead), else listed instead
+  _chooseCalc(id, ids) {
+    for (const i of ids) this.chosenCalcs.delete(i);
+    this.chosenCalcs.add(id);
+    if (!ids.some((i) => this.o.picked.includes(i))) { this.renderList(); return; }
+    const picked = new Set(this.o.picked.filter((i) => !ids.includes(i)));
+    picked.add(id);
+    this._pick(picked);
+    this._changed();
+  }
+
+  // an entry's calculation made the default of its recordings (`saveDefaultCalc`), from its button
+  async _setDefaultCalc(button) {
+    const status = $('[data-role=status]', button.parentElement);
+    button.disabled = true; // (until set, or not: one at a time)
+    try { await saveDefaultCalc(+button.dataset.id, { datasets: this.datasets, calculations: this.calcSets }); } catch (e) {
+      if (status.isConnected) setStatus(status, `Not set: ${e.message}`, 'error');
+    } finally { if (button.isConnected) button.disabled = false; }
+  }
+
+  // the default calculations of sets of recordings saved (`saveDefaultCalc`, here or in Browse)
+  calcsSaved(saved) {
+    this.calcSets = withCalcSets(this.calcSets, saved);
+    if (this.datasets) this.renderList();
+  }
+
+  // every calculation of some recordings (`ids`) ticked, and shown side by side
+  async _compareCalcs(ids) {
+    this._pick(new Set([...this.o.picked, ...ids]));
+    this.o.pair = ids.map((id) => `ds:${id}`);
+    this._save();
+    this.renderList();
+    await this.render();
+    $('#cmp-pair-view')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   // ------------------------------------------------------------------- spaces
@@ -6513,8 +6617,9 @@ class ComparePage {
     $('#cmp-show option[value=sim]').textContent = `its ${N.sim}`;
     $('#cmp-sim-head').textContent = N.sim[0].toUpperCase() + N.sim.slice(1);
     for (const [id, note] of [['#cmp-show-note', N.show], ['#cmp-sim-note', N.simNote], ['#cmp-match-note', N.match],
-      ['#cmp-pair-note', `Two of the spaces shown next to each other, over the ${N.many} both have, in one order, each row level with its other; `
-        + 'or click a cell of the correlations between similarities.']]) $(id).textContent = note;
+      ['#cmp-pair-note', `Two or more of the spaces shown next to each other, over the ${N.many} all of them have, in one order, each row level `
+        + "with the others'; or click a cell of the correlations between similarities (for its two), or a dataset's Compare All Response Calcs. "
+        + '(for its calculations).']]) $(id).textContent = note;
     $('#cmp-conc-opt').hidden = on !== 'odors';
     $('#cmp-ref-metric-opt').hidden = on === 'panel';
     if (on === 'odors') {
@@ -6555,11 +6660,15 @@ class ComparePage {
     if (active) $('#cmp-ecfp-d').focus();
   }
 
-  // the menus of the two spaces side by side, of those shown
+  // the menus of the spaces side by side, of those shown (two, and any more added), and a
+  // button to add another
   _renderPairOptions(all) {
-    const menu = (k) => `<select data-side="${k}" aria-label="${k ? 'Second' : 'First'} space"><option value="">—</option>${all.map((s) =>
-      `<option value="${esc(s.key)}"${this.o.pair[k] === s.key ? ' selected' : ''}>${esc(s.title)}</option>`).join('')}</select>`;
-    $('#cmp-pair').innerHTML = `<label class="opt">${menu(0)}</label><label class="opt">and ${menu(1)}</label>`;
+    const keys = [...this.o.pair, null, null].slice(0, Math.max(2, this.o.pair.length));
+    const menu = (k) => `<select data-side="${k}" aria-label="Space ${k + 1}"><option value="">—</option>${all.map((s) =>
+      `<option value="${esc(s.key)}"${keys[k] === s.key ? ' selected' : ''}>${esc(s.title)}</option>`).join('')}</select>`;
+    $('#cmp-pair').innerHTML = keys.map((_, k) => `<div class="cmp-side-opt"><label class="opt">${k ? 'and ' : ''}${menu(k)}</label>${k > 1
+      ? `<button type="button" class="link" data-unside="${k}" title="Show one fewer side by side">remove</button>` : ''}</div>`).join('')
+      + '<button type="button" class="btn small" data-role="add-side" title="Show one more side by side">Add another</button>';
   }
 
   // a viewer of the page, kept while it is shown again (by key): on its own (fitted to what
@@ -6683,7 +6792,7 @@ class ComparePage {
       this._pStatus(job);
     }
     if (!this.o.rsa || all.length < 2) this._stopP();
-    // two of them side by side
+    // some of them side by side
     this.pairs = [];
     this.pairRO.disconnect();
     const pair = this._pairSection(all, rowOf, used, shows);
@@ -6812,15 +6921,14 @@ class ComparePage {
     return (key) => ({ label: labels.get(key) ?? key });
   }
 
-  // Two spaces side by side (o.pair): the odors (or glomeruli) both have, in one order (that
-  // of the first dataset of the two, else of the first), each as its data or its
-  // similarities (o.show), each two viewers next to each other linked, so their rows stay
-  // level. A section, or null if none is chosen; its viewers' keys added to `used`, their
-  // shows to `shows`. rowOf: an odor's (or glomerulus's) row
+  // Spaces side by side (o.pair: two or more): the odors (or glomeruli) all have, in one order
+  // (that of the first dataset of them, else of the first), each as its data or its
+  // similarities (o.show), their viewers linked, so their rows stay level. A section, or null
+  // if none is chosen; its viewers' keys added to `used`, their shows to `shows`. rowOf: an
+  // odor's (or glomerulus's) row
   _pairSection(all, rowOf, used, shows) {
     const N = ON[this.o.on];
-    const [ka, kb] = this.o.pair;
-    if (!ka && !kb) return null;
+    if (!this.o.pair.some(Boolean)) return null;
     const section = document.createElement('section');
     section.className = 'cmp-block cmp-pair';
     section.id = 'cmp-pair-view';
@@ -6828,23 +6936,24 @@ class ComparePage {
       <button type="button" class="btn small" data-role="close">Close</button></div>`;
     $('[data-role=close]', section).addEventListener('click', () => { this.o.pair = [null, null]; this._changed(); });
     const sub = $('.cmp-head .muted', section);
-    const a = all.find((s) => s.key === ka), b = all.find((s) => s.key === kb);
-    if (!a || !b || a === b) {
-      sub.textContent = 'Choose two of the spaces shown (on the right), or click a cell of the correlations between similarities.';
+    const chosen = [...new Set(this.o.pair)].map((k) => all.find((s) => s.key === k)).filter(Boolean);
+    if (chosen.length < 2) {
+      sub.textContent = 'Choose two or more of the spaces shown (on the right), or click a cell of the correlations between similarities.';
       return section;
     }
-    const first = [a, b].find((s) => s.key.startsWith('ds:')) || a, has = new Set((first === a ? b : a).space.ids);
-    const ids = first.space.ids.filter((id) => has.has(id));
+    const first = chosen.find((s) => s.key.startsWith('ds:')) || chosen[0], others = chosen.filter((s) => s !== first).map((s) => new Set(s.space.ids));
+    const ids = first.space.ids.filter((id) => others.every((has) => has.has(id)));
+    const titles = `${chosen.slice(0, -1).map((s) => s.title).join(', ')} and ${chosen.at(-1).title}`, two = chosen.length === 2;
     if (ids.length < 2) {
-      sub.textContent = `${a.title} and ${b.title} have ${ids.length ? `only one ${N.one}` : `no ${N.many}`} in common.`;
+      sub.textContent = `${titles} have ${ids.length ? `only one ${N.one}` : `no ${N.many}`} in common.`;
       return section;
     }
-    sub.textContent = `${a.title} and ${b.title}: the ${ids.length} ${N.many} both have, in the order of ${first.title}. Rows moved or removed,
-      cell sizes, transposing and scrolling stay the same in both.`;
+    sub.textContent = `${titles}: the ${ids.length} ${N.many} ${two ? 'both' : 'all'} have, in the order of ${first.title}. Rows moved or removed,
+      cell sizes, transposing and scrolling stay the same in ${two ? 'both' : 'all of them'}.`;
     // chemical structure, with no data worth showing, as its similarities either way
     const state = this._stateKey(), row = document.createElement('div');
     row.className = 'cmp-pair-row';
-    const [x, y] = [a, b].map((s, k) => {
+    const views = chosen.map((s, k) => {
       const asData = this.o.show === 'data' && !!s.space.data, what = asData ? 'data' : 'similarity', key = `pair:${k}`;
       used.add(key);
       const payload = this._memo(`pair:${what}:${s.key}:${state}:${ids.join(',')}`,
@@ -6860,11 +6969,13 @@ class ComparePage {
       shows.push(v.show);
       return { ...v, what };
     });
-    const cols = x.what === 'similarity' && y.what === 'similarity';
-    x.viewer.linked = { other: y.viewer, cols };
-    y.viewer.linked = { other: x.viewer, cols };
-    x.viewer.onShow = y.viewer.onShow = () => levelViewers(x, y);
-    this.pairs = [[x, y]];
+    // (their columns too, if all are similarities: then those are their rows)
+    const cols = views.every((x) => x.what === 'similarity');
+    for (const x of views) {
+      x.viewer.linked = { others: views.filter((y) => y !== x).map((y) => y.viewer), cols };
+      x.viewer.onShow = () => levelViewers(views);
+    }
+    this.pairs = [views];
     section.appendChild(row);
     this.pairWidth = 0;
     this.pairRO.observe(section);

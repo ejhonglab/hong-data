@@ -140,7 +140,7 @@ between the frontend and the server. Using the app is described in
   both): then each space is keyed by glomerulus names (a dataset of glomeruli's, by their
   responses to its odors; a reference dataset's whose labels on one axis are mostly
   glomerulus names, `reference.glomeruli`, by its values along the other), and all the
-  rest (similarities, their correlations and p-values, the two side by side) is the
+  rest (similarities, their correlations and p-values, those side by side) is the
   same, of glomeruli; no odor–odor similarity is shown then. Or on a panel's odors, for
   datasets with a panel in common (whose odors need not be in the odor table, nor be
   alone): then only datasets are spaces, each keyed by the panel's odors as presented
@@ -218,7 +218,7 @@ between the frontend and the server. Using the app is described in
   as a menu of the others when there are (`calculations`, with `GET
   /api/datasets/{id}`), and a merged download takes one calculation of each
   (`merge.one_calculation`). Each set has a default (`Database.default_calculations`):
-  the one last chosen with Browse's *Set Default Response Calc.* (the setting
+  the one last chosen with *Set Default Response Calc.*, in Browse or Compare (the setting
   `default_calcs`, the ids chosen, so that a set is matched anew each time, as datasets
   are edited or deleted), else the first uploaded. Sets calculated the same ways (their
   calculations alike, as `metadata.same_response_calc` matches them: `sameCalcSets` in
@@ -227,10 +227,13 @@ between the frontend and the server. Using the app is described in
   (`Database.set_default_calculations`, all or none), listing the others by what each
   defaults to now. They are matched by name only when asked, not tied together: each
   set's default stays its own. The lists of Browse and Compare list
-  only it (`listedDatasets` in app.js), the others named at the end of its item, so that
-  one recording is one item; listed by upload, it is as of the first uploaded, whichever
-  is the default, as that is when the recordings came. Compare needs nothing more:
-  each dataset is a space of its own there, labelled by its title. Being given every time
+  only it (`listedDatasets` in app.js), the others named at the end of its item in
+  Browse and a menu under it in Compare (Browse's controls, `calcControls`, and
+  `saveDefaultCalc`, which tells both tabs), so that one recording is one item; listed by
+  upload, it is as of the first uploaded, whichever is the default, as that is when the
+  recordings came. Compare needs nothing more: each dataset is a space of its own there,
+  labelled by its title, and *Compare All Response Calcs.* shows them side by side, as
+  any number of spaces can be (`MatrixViewer.linked`: each viewer's others). Being given every time
   it is entered, rather than only once another calculation is uploaded, a calculation
   names a dataset the same way whatever else is stored, so no title, file or permalink
   name changes when another calculation of its recordings comes or goes.

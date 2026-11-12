@@ -511,6 +511,9 @@ table.diff .new { color: var(--ok); }
 .ds-item.active { background: var(--accent-soft); border-left-color: var(--accent); }
 .ds-item .pick { flex: none; margin: 11px 0 0 13px; }
 .ds-item .list-item { border-left: 0; padding-left: 8px; background: none; }
+/* Compare's: the dataset ticked by its text, then any menu of its recordings' calculations under it */
+.cmp-item { flex-direction: column; align-items: stretch; }
+.cmp-item > label { display: flex; align-items: flex-start; cursor: pointer; }
 .sidebar-foot { border-top: 1px solid var(--rule); padding: 8px 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 12.5px; min-height: 42px; }
 .sidebar-foot .grow { flex: 1; }
 .sidebar-foot .dl-status:empty { display: none; }
@@ -555,6 +558,12 @@ table.diff .new { color: var(--ok); }
 .ds-calc .btn { line-height: 1.25; text-align: center; padding: 3px 10px; }
 .ds-calc .dl-status { max-width: 18em; }
 .ds-calc .dl-status:empty { display: none; }
+/* (in Compare's narrow list, its buttons stacked right of the menu) */
+.cmp-calc { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 6px; padding: 0 8px 8px 26px; }
+.cmp-calc .ds-calc-text { grid-row: span 2; font-size: 12px; min-width: 0; }
+.cmp-calc select { max-width: 100%; font-size: 12px; }
+.cmp-calc .btn { font-size: 11.5px; padding: 2px 7px; }
+.cmp-calc .dl-status { grid-column: 1 / -1; max-width: none; }
 /* links to a dataset's data on tensor: red, with the reason, when there is none to follow */
 .data-link > summary .why { font-size: 12px; color: var(--ink-muted); }
 /* the reason under the button's name, not beside it */
@@ -827,10 +836,20 @@ dialog.player::backdrop { background: rgba(29,31,34,.55); }
 .cmp-status.err { color: var(--danger); }
 .cmp-pair { gap: 10px; }
 .cmp-pair .cmp-head .btn { margin-left: auto; }
-.cmp-pair-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; }
+.cmp-pair-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px; }
 .cmp-pair-side { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .cmp-pair-cap { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cmp-pair-cap .muted { font-weight: 400; }
+/* (several side by side are narrow: their toolbars' lines wrap) */
+.cmp-pair-side .vt-status, .cmp-pair-side .viewer.controls-hidden .vt { flex-wrap: wrap; row-gap: 6px; }
+.cmp-pair-side .vt-group { max-width: 100%; min-width: 0; }
+.cmp-pair-side .vt-group > label { display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; }
+.cmp-pair-side .vt select { max-width: 100%; min-width: 0; }
+.cmp-pair-side .viewer.controls-hidden .vt-legend { flex: 1 1 auto; }
+.cmp-side-opt { display: flex; align-items: center; gap: 8px; }
+.cmp-side-opt .opt { flex: 1; min-width: 0; }
+#cmp-pair { display: flex; flex-direction: column; gap: 8px; }
+#cmp-pair > .btn { align-self: flex-start; }
 .compare-options { width: 300px; flex: none; border-left: 1px solid var(--rule); background: var(--panel); overflow: auto; padding: 14px 16px 24px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
 .compare-options h2 { font-size: 13.5px; margin-top: 10px; }
 .compare-options h2:first-child { margin-top: 0; }

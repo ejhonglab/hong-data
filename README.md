@@ -336,7 +336,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   the one listed here and in Compare, and merged unless another is chosen in Merge. Where
   other recordings are calculated the same ways (e.g. each of Yang's in whole-recording z,
   baseline-noise units and unnormalized dFc), it asks whether to make that calculation
-  their default too, saying what each defaults to now.
+  their default too, saying what each defaults to now. Compare's list has the same menu
+  and button under each such entry.
 - **Permalinks**: under a dataset's title, *Make a permalink…* names a link to it that
   stays whatever its number, `http://hal:8080/d/<name>` (lowercase letters, digits
   and `-`; by default as its downloads are named, e.g. `megamat-tom-glomeruli-2023-06-22`),
@@ -421,8 +422,11 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   for glomeruli every fly too (a column per glomerulus, the mean of the flies with it;
   ROIs grouped by fly and named as in Browse, in its order);
   in the viewer of reference data (colors, cell size, transpose, moving and removing
-  rows and columns, figure export), without trials, ROI ordering or clustering. On the
-  right:
+  rows and columns, figure export), without trials, ROI ordering or clustering. Under an
+  entry of the same recordings calculated more than one way are Browse's menu of their
+  calculations (choosing one lists it instead, and if one of them is ticked, ticks and
+  shows it instead) and *Set Default Response Calc.*, and *Compare All Response Calcs.*,
+  which ticks every one of them and shows them side by side. On the right:
   - *Compare on* odors (the default: those of the odor table, alone, at the
     concentration chosen), a panel's odors, or glomeruli. On a panel's odors, datasets
     are compared with each other only, on the panel chosen of those of the datasets
@@ -437,9 +441,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     labels: see [reference_data/README.md](reference_data/README.md)), by
     glomerulus–glomerulus similarity (of their responses across a dataset's odors, or
     their values across a reference dataset's other axis), and side by side on the
-    glomeruli both have; no odor–odor similarity is shown, nor chemical structure.
+    glomeruli all of them have; no odor–odor similarity is shown, nor chemical structure.
   - *Show* each space as its data (by default) or its odor–odor similarity: one menu
-    for the datasets, the reference data and the two side by side (chemical structure
+    for the datasets, the reference data and those side by side (chemical structure
     only ever as similarity). A similarity matrix's columns are always its rows, in
     their order (a dataset's grouped by panel): sorting, moving or removing one moves or
     removes both.
@@ -455,11 +459,12 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     mixtures; an odor at several concentrations as its highest, lowest or the mean of
     them); each says how many of the odors shown it has, and its data or similarities
     over those are shown.
-  - *Side by side*: two of the spaces shown (chosen there, or by clicking a cell of the
-    correlations between similarities), over the odors both have, in one order (the
-    dataset's, if one is), next to each other with each row level with its other: moving
-    or removing a row, cell sizes, transposing, chemical labels and scrolling stay the
-    same in both, and hovering an odor in one marks it in the other.
+  - *Side by side*: two or more of the spaces shown (chosen there, *Add another* for
+    more; or by clicking a cell of the correlations between similarities, for its two, or
+    an entry's *Compare All Response Calcs.*), over the odors all of them have, in one
+    order (the first dataset's, if one is), next to each other with each row level with
+    the others': moving or removing a row, cell sizes, transposing, chemical labels and
+    scrolling stay the same in all, and hovering an odor in one marks it in the others.
   - *Between similarities*: a matrix of the Spearman (or Pearson) correlation of each two
     of the datasets and spaces compared to: of their similarities for each pair of the
     odors both have (one side of each matrix, without its diagonal), each cell saying r
