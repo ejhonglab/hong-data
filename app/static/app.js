@@ -1231,6 +1231,7 @@ class MatrixViewer {
   // columns are: `cluster` ({rows, cols}, e.g. 'KCs' and 'odors'); its meta's `colormap`: the
   // sequential one to start with, and `row_group_label`, `col_group_label`: what its rows' and
   // columns' groups are ('group' if not said). Its columns' groups, if any, come each together.
+  // Its rows and columns marked `bad` (ROIs not to be used) are hidden, if it is of KCs (`kc`), as chosen.
   setGenericData(ref, { title = '', fileStem = 'heatmap', kind: viewerKind = 'generic', kc = false, responseCalc = null } = {}) {
     this._setKind(viewerKind);
     this.title = title;
@@ -1241,11 +1242,11 @@ class MatrixViewer {
     if (ref !== this.source) {
       this.source = ref;
       this.clusterCache = new Map();
-      this.hideBad = ref.cols.some((c) => c.bad);
+      this.hideBad = ref.cols.some((c) => c.bad) || ref.rows.some((r) => r.bad);
       this._editsFor(ref);
       const values = matrixValues(ref), square = !!ref.square, nC = ref.cols.length;
       const hasGroups = ref.rows.some((r) => r.group != null), colGroups = !square && ref.cols.some((c) => c.group != null);
-      let rows = ref.rows.map((r, i) => ({ label: r.label, group: hasGroups ? (r.group ?? '') : null, chem: r.chem, detail: r.detail, i }));
+      let rows = ref.rows.map((r, i) => ({ label: r.label, group: hasGroups ? (r.group ?? '') : null, chem: r.chem, detail: r.detail, bad: r.bad, i }));
       let vals = values;
       if (hasGroups) {
         const first = new Map();
@@ -1265,7 +1266,7 @@ class MatrixViewer {
         kcAxis: 'kcAxis' in ref ? ref.kcAxis : kcAxisOf(ref),
         cluster: ref.cluster || null, // {rows, cols}: what they are, of one that can be clustered
         model: {
-          rows: rows.map((r) => ({ label: r.label, group: r.group, key: r.i, file: r.label, chem: r.chem, detail: r.detail })),
+          rows: rows.map((r) => ({ label: r.label, group: r.group, key: r.i, file: r.label, chem: r.chem, detail: r.detail, bad: r.bad })),
           cols: colIdx.map((j, l) => {
             const c = ref.cols[j];
             return { label: c.label, group: square ? rows[l].group : colGroups ? (c.group ?? '') : null, sub: null, key: j, file: c.label, chem: c.chem, detail: c.detail, bad: c.bad };
@@ -1298,10 +1299,10 @@ class MatrixViewer {
     this._rebuild();
   }
 
-  // the ROIs marked bad (of neural data, its units; else its columns)
+  // the ROIs marked bad (of neural data, its units; else its rows and columns)
   _nBad() {
     if (!this.data) return 0;
-    return (this.kind === 'neural' ? this.data.units : this.data.model.cols).filter((x) => x.bad).length;
+    return (this.kind === 'neural' ? this.data.units : [...this.data.model.rows, ...this.data.model.cols]).filter((x) => x.bad).length;
   }
 
   // the edits of the rows, with the units marked bad removed too while they are hidden
@@ -1358,17 +1359,17 @@ class MatrixViewer {
   // columns of a square matrix as its rows
   _genericModel() {
     const b = this.data.model, nC = b.cols.length, square = this.data.square;
-    const hidden = (j) => this.kc && this.hideBad && b.cols[j].bad;
+    const hidden = (j) => this.kc && this.hideBad && b.cols[j].bad, hiddenRow = (i) => this.kc && this.hideBad && b.rows[i].bad;
     let rowIdx = b.rows.map((_, i) => i), colIdx = b.cols.map((_, j) => j);
     // sorted by their values over those of the other axis shown, as chosen for the axis they are shown on
     const [byRows, byCols] = square ? [this.opts.sortRows, 'file'] : this.opts.transpose ? [this.opts.sortCols, this.opts.sortRows] : [this.opts.sortRows, this.opts.sortCols];
-    const keptRows = rowIdx.filter((i) => !this.edits.rows.removed.has(b.rows[i].key));
+    const keptRows = rowIdx.filter((i) => !this.edits.rows.removed.has(b.rows[i].key) && !hiddenRow(i));
     const keptCols = colIdx.filter((j) => !this.edits.cols.removed.has(b.cols[j].key) && !hidden(j));
     if (byRows !== 'file' && !this._sharedAxis('rows')) rowIdx = sortedByValues(rowIdx, b.rows, keptCols, (i, j) => b.values[i * nC + j], byRows);
     if (byCols !== 'file' && !this._sharedAxis('cols')) colIdx = sortedByValues(colIdx, b.cols, keptRows, (j, i) => b.values[i * nC + j], byCols);
     // (of an axis clustered, the clustering's order: of those not removed, as made by `_clusterGeneric`)
     const cl = this.clustering;
-    const rows = cl?.rows ?? arrange(rowIdx, (i) => b.rows[i].key, this.edits.rows);
+    const rows = (cl?.rows ?? arrange(rowIdx, (i) => b.rows[i].key, this.edits.rows)).filter((i) => !hiddenRow(i));
     const cols = square ? rows : (cl?.cols ?? arrange(colIdx, (j) => b.cols[j].key, this.edits.cols)).filter((j) => !hidden(j));
     // (as given, if none are removed or moved: not copied, as it may be large)
     const same = rows.length === b.rows.length && cols.length === nC && rows.every((i, r) => i === r) && cols.every((j, c) => j === c);
@@ -1407,7 +1408,7 @@ class MatrixViewer {
     const o = this._clusterOpts();
     if (!o.clusterRows && !o.clusterCols) return true;
     const b = this.data.model, hidden = (j) => this.kc && this.hideBad && b.cols[j].bad;
-    const rows = b.rows.map((_, i) => i).filter((i) => !this.edits.rows.removed.has(b.rows[i].key));
+    const rows = b.rows.map((_, i) => i).filter((i) => !this.edits.rows.removed.has(b.rows[i].key) && !(this.kc && this.hideBad && b.rows[i].bad));
     const cols = b.cols.map((_, j) => j).filter((j) => !this.edits.cols.removed.has(b.cols[j].key) && !hidden(j));
     const key = [o.clusterRows, o.clusterCols, o.metric, rows.join(','), cols.join(',')].join('|');
     let cl = this.clusterCache.get(key);
@@ -6117,6 +6118,26 @@ function levelViewers(views) {
 // a Compare dataset's ROIs used (its columns), and how many more were marked bad and left out
 const roisLeft = (d) => `${d.cols.length.toLocaleString()} ROIs${d.nBad ? ` (${d.nBad.toLocaleString()} more marked bad, left out)` : ''}`;
 
+// A dataset as from /api/compare/datasets/<id>, as Compare uses it: its values decoded; its
+// ROIs as Browse shows them to start with, grouped by fly (and in its order), each labelled
+// as it is in its fly; every column as its data is shown (`all`), and for everything else,
+// those of ROIs marked bad left out (`cols`, `values`; `nBad` of them)
+function compareDataset(d) {
+  const given = decodeValues(d.values_b64), nR = d.rows.length, nC = d.cols.length;
+  const order = d.kind === 'rois' ? neuralOrder({ units: d.cols, trials: [] }, ROI_ORDER).unitIdx : d.cols.map((_, j) => j);
+  const cols = d.kind === 'rois' ? order.map((j) => ({ label: roiLabel(d.cols[j]), group: flyKey(d.cols[j]), bad: d.cols[j].bad })) : d.cols;
+  const pick = (idx) => (idx.length === nC && idx.every((j, k) => j === k) ? given
+    : Float32Array.from({ length: nR * idx.length }, (_, k) => given[Math.floor(k / idx.length) * nC + idx[k % idx.length]]));
+  const good = order.filter((j) => !d.cols[j].bad);
+  return { ...d, all: { cols, values: pick(order) }, nBad: nC - good.length, cols: cols.filter((c) => !c.bad), values: pick(good) };
+}
+
+// a dataset's title without its response calculation (as `metadata.dataset_title` ends it)
+function titleWithoutCalc(d) {
+  const c = calcText(d);
+  return c && d.title.endsWith(`, ${c}`) ? d.title.slice(0, -c.length - 2) : d.title;
+}
+
 // what a Compare dataset's columns are, as a matrix's meta says it: glomeruli, or ROIs grouped by fly
 const colsMeta = (d) => ({ kind: 'diverging', ...(d.kind === 'glomeruli' ? { col_label: 'glomerulus' } : { col_label: 'ROI', col_group_label: 'fly' }) });
 
@@ -6134,10 +6155,12 @@ class ComparePage {
     // metric, refMetric: similarity (of odors, or of glomeruli) within datasets, and within reference data;
     // show: each space as its 'data' or its similarities ('sim');
     // bootN, pBy: the resamplings (or permutations) for p-values, and how (a unit pBy names);
-    // pair: the keys of two spaces shown side by side (null: not chosen)
+    // pair: the keys of the spaces shown side by side (two or more; null: not chosen);
+    // calcs: the ids of every calculation of some recordings, shown side by side in place of
+    // everything else (`_compareCalcs`), else null
     this.o = {
       group: 'panel', unit: '', picked: [], on: 'odors', metric: 'pearson', refMetric: 'pearson', show: 'data', spaces: [], ecfpD: 6, conc: 'max',
-      rsa: false, rsaMethod: 'spearman', bootN: 5000, pBy: 'permute', pair: [null, null], panel: null, models: [], ...LS.get(COMPARE_KEY, {}),
+      rsa: false, rsaMethod: 'spearman', bootN: 5000, pBy: 'permute', pair: [null, null], panel: null, models: [], calcs: null, ...LS.get(COMPARE_KEY, {}),
     };
     // `place` once, for datasets alone: under their data ('below'), instead of it, or 'none'
     if (this.o.place) this.o.show = this.o.place === 'instead' ? 'sim' : 'data';
@@ -6147,7 +6170,8 @@ class ComparePage {
     delete this.o.bootUnit; // pBy once, when bootstrapping pairs of odors was the default
     this.datasets = null;
     this.refs = []; // reference datasets with chemicals or glomeruli, as listed
-    this.data = new Map(); // dataset id -> as from /api/compare/datasets/<id>, with its values
+    this.data = new Map(); // dataset id -> as from /api/compare/datasets/<id>, with its values (`compareDataset`)
+    this.unitData = new Map(); // dataset id -> the same by unit, even of glomeruli (?units=1), as its calculations are compared
     this.refData = new Map(); // reference id -> as from /api/reference/<id>
     this.modelRuns = new Map(); // model run id -> as from /api/models/run (o.models: those to compare, from the Models tab)
     this.modelData = new Map(); // o.models' key -> the run as a dataset is here (`modelDataset`)
@@ -6173,7 +6197,7 @@ class ComparePage {
       const act = e.target.closest('.cmp-calc [data-act]');
       if (act) {
         if (act.dataset.act === 'default') this._setDefaultCalc(act);
-        else this._compareCalcs(act.dataset.ids.split(',').map(Number));
+        else this._compareCalcs(act.dataset.ids.split(',').map(Number), +act.dataset.id);
         return;
       }
       const b = e.target.closest('[data-forget-model]');
@@ -6186,6 +6210,7 @@ class ComparePage {
       if (e.target.matches('select[data-calcs]')) { this._chooseCalc(+e.target.value, e.target.dataset.calcs.split(',').map(Number)); return; }
       if (e.target.matches('.pick-model')) {
         this.o.models = this.o.models.map((m) => (m.key === e.target.dataset.key ? { ...m, shown: e.target.checked } : m));
+        this.o.calcs = null;
         this._changed();
         return;
       }
@@ -6194,9 +6219,10 @@ class ComparePage {
       const picked = new Set(this.o.picked);
       for (const id of ids) { if (e.target.checked) picked.add(id); else picked.delete(id); }
       this._pick(picked);
+      this.o.calcs = null; // (anything ticked or not, but by a calculation's menu, ends comparing calculations)
       this._changed();
     });
-    $('#compare-clear').addEventListener('click', () => { this.o.picked = []; this._changed(); });
+    $('#compare-clear').addEventListener('click', () => { this.o.picked = []; this.o.calcs = null; this._changed(); });
     $('#cmp-metric').innerHTML = Object.entries(SIMILARITIES).map(([k, m]) => `<option value="${k}">${m.label}</option>`).join('');
     for (const [id, key, read] of [['#cmp-on', 'on'], ['#cmp-metric', 'metric'], ['#cmp-ref-metric', 'refMetric'], ['#cmp-show', 'show'], ['#cmp-conc', 'conc'],
       ['#cmp-rsa', 'rsa', (el) => el.checked], ['#cmp-rsa-method', 'rsaMethod'], ['#cmp-p-by', 'pBy'],
@@ -6243,13 +6269,14 @@ class ComparePage {
     const key = `${id}|${filter}`;
     this.o.models = [{ key, id, title, filter, nSpikes, shown: true }, ...this.o.models.filter((m) => m.key !== key)];
     this.o.on = 'odors';
+    this.o.calcs = null;
     this._save();
   }
 
   // ECFP6 ticked to compare with (from the Reference data tab's ECFP), each space shown as
   // its odor–odor similarity, on odors
   useEcfp() {
-    Object.assign(this.o, { on: 'odors', show: 'sim', ecfpD: 6, spaces: [...new Set([...this.o.spaces, 'ecfp'])] });
+    Object.assign(this.o, { on: 'odors', show: 'sim', ecfpD: 6, spaces: [...new Set([...this.o.spaces, 'ecfp'])], calcs: null });
     this._changed();
   }
 
@@ -6265,13 +6292,14 @@ class ComparePage {
     this.refs = refs.datasets.filter((r) => r.state === 'ok' && ((r.chemicals?.axis && r.chemicals.matched) || r.glomeruli?.axis));
     const ids = new Set(this.datasets.map((d) => d.id));
     this.o.picked = this.o.picked.filter((id) => ids.has(id));
+    if (!this.o.calcs?.every((id) => ids.has(id)) || !this.o.picked.some((id) => this.o.calcs.includes(id))) this.o.calcs = null;
     this.o.spaces = this.o.spaces.filter((k) => k === 'ecfp' || this.refs.some((r) => `ref:${r.id}` === k));
     for (const [k, d] of this.modelData) if (d.error) { this.modelData.delete(k); this.modelRuns.delete(d.model.id); } // (tried again)
     this.renderList();
     await this.render();
   }
 
-  invalidate() { this.data.clear(); this.memo.clear(); this.modelData.clear(); this.modelRuns.clear(); }
+  invalidate() { this.data.clear(); this.unitData.clear(); this.memo.clear(); this.modelData.clear(); this.modelRuns.clear(); }
 
   // the model runs to compare, as the list on the left shows them
   _modelsHtml() {
@@ -6332,7 +6360,8 @@ class ComparePage {
   _calcControls(d) {
     const ids = d.calcs.map((c) => c.id).sort((a, b) => a - b).join(',');
     return `<div class="ds-calc cmp-calc">${calcControls(d, d.calcs, this.calcSets.find((s) => s.ids.includes(d.id))?.default,
-      `<button type="button" class="btn" data-act="compare" data-ids="${ids}" title="Tick every calculation of these recordings, and show them side by side"
+      `<button type="button" class="btn" data-act="compare" data-ids="${ids}" data-id="${d.id}"
+        title="Show every calculation of these recordings side by side, in place of everything else (this one ticked alone)"
         ><span>Compare All<br>Response Calcs.</span></button>`)}</div>`;
   }
 
@@ -6363,15 +6392,115 @@ class ComparePage {
     if (this.datasets) this.renderList();
   }
 
-  // every calculation of some recordings (`ids`) ticked, and shown side by side
-  async _compareCalcs(ids) {
-    this._pick(new Set([...this.o.picked, ...ids]));
-    this.o.pair = ids.map((id) => `ds:${id}`);
+  // every calculation of some recordings (`ids`) side by side in place of everything else
+  // (`_renderCalcs`), the one listed (`id`) ticked alone, until anything else is ticked or it is not
+  async _compareCalcs(ids, id) {
+    this.o.picked = [id];
+    this.o.models = this.o.models.map((m) => ({ ...m, shown: false }));
+    this.o.calcs = ids;
     this._save();
     this.renderList();
     await this.render();
-    $('#cmp-pair-view')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    $('#cmp-pair-view')?.scrollIntoView({ block: 'start' });
   }
+
+  // a dataset's data as Compare shows it: its odors (rows, by panel) by its glomeruli or ROIs
+  // (by fly; those marked bad too), every trial averaged
+  _datasetData(d) {
+    return this._memo(`data:${d.id}:${display.lowerOdors}`, () => {
+      const showOdor = odorShower(d.rows.map((r) => r.odor));
+      return {
+        meta: { ...colsMeta(d), row_label: 'odor', row_group_label: 'panel' },
+        rows: d.rows.map((r) => ({ label: showOdor(r.odor), group: r.panel })), cols: d.all.cols.map((c) => ({ label: c.label, group: c.group, bad: c.bad })),
+        values: d.all.values,
+      };
+    });
+  }
+
+  // Every calculation of some recordings (o.calcs) side by side, in place of everything else
+  // (`_compareCalcs`): each unit by unit (a ROI of a fly, of glomeruli too: `?units=1`), as
+  // Browse shows a dataset to start with (its ROIs as rows; the viewers' kind 'calcs', so
+  // their transposing is kept apart), over the odors and ROIs all of them have, in the
+  // first's order, and linked; each under its
+  // number and calculation, the recordings' name over them all. seq: of the render
+  async _renderCalcs(view, seq) {
+    const ds = await Promise.all(this.o.calcs.map(async (id) => {
+      if (!this.unitData.has(id)) {
+        const d = this.data.get(id); // (of ROIs, already by unit)
+        try { this.unitData.set(id, d?.kind === 'rois' ? d : compareDataset(await api(`/api/compare/datasets/${id}?units=1`))); } catch (e) {
+          this.unitData.set(id, { id, error: e.message });
+        }
+      }
+      return this.unitData.get(id);
+    }));
+    if (seq !== this._seq) return;
+    this._stopP();
+    this.pairs = [];
+    this.pairRO.disconnect();
+    const failed = ds.filter((d) => d.error);
+    if (failed.length) {
+      view.replaceChildren(...failed.map((d) => msgBox('error', `Dataset #${d.id} could not be shown: ${esc(d.error)}`)));
+      return;
+    }
+    // the odors (by panel and name) and ROIs (by fly and name) all of them have, in the first's order
+    const odorKey = (r) => `${r.panel ?? ''}\u0000${r.odor}`, unitKey = (c) => `${c.group}\u0000${c.label}`;
+    const common = (keysOf) => { const others = ds.slice(1).map((d) => new Set(keysOf(d))); return keysOf(ds[0]).filter((k) => others.every((x) => x.has(k))); };
+    const odors = common((d) => d.rows.map(odorKey)), units = common((d) => d.all.cols.map(unitKey));
+    // (a ROI marked bad in any of them, in all, so that those hidden stay the same)
+    const bad = new Set(ds.flatMap((d) => d.all.cols.filter((c) => c.bad).map(unitKey)));
+    const section = document.createElement('section');
+    section.className = 'cmp-block cmp-pair cmp-calcs';
+    section.id = 'cmp-pair-view';
+    const fewer = ds.some((d) => d.rows.length > odors.length || d.all.cols.length > units.length);
+    section.innerHTML = `<h3 class="cmp-calcs-title">${esc(titleWithoutCalc(ds[0]))}</h3>
+      <p class="muted small cmp-calcs-note">${odors.length && units.length ? `Every response calculation of these recordings, each its
+        ${units.length.toLocaleString()} ROIs by its ${odors.length} odors${fewer ? ' (those all of them have)' : ''}, every trial averaged, as Browse
+        shows them; rows and columns moved or removed, cell sizes, transposing and scrolling stay the same in all of them.`
+        : `These calculations have no ${odors.length ? 'ROIs' : 'odors'} in common.`}</p>`;
+    const used = new Set(), shows = [];
+    if (odors.length && units.length) {
+      const row = document.createElement('div');
+      row.className = 'cmp-pair-row';
+      const views = ds.map((d, k) => {
+        // (its ROIs as rows, by fly, its odors as columns, by panel: as Browse shows them)
+        const payload = this._memo(`calcsdata:${d.id}:${display.lowerOdors}:${this.o.calcs.join(',')}`, () => {
+          const oi = new Map(d.rows.map((r, i) => [odorKey(r), i])), ui = new Map(d.all.cols.map((c, j) => [unitKey(c), j]));
+          const os = odors.map((x) => oi.get(x)), us = units.map((x) => ui.get(x)), nC = d.all.cols.length, n = os.length, v = d.all.values;
+          const values = new Float32Array(us.length * n);
+          os.forEach((i, c) => { const at = i * nC; us.forEach((j, r) => { values[r * n + c] = v[at + j]; }); });
+          const showOdor = odorShower(d.rows.map((r) => r.odor));
+          return {
+            meta: { kind: 'diverging', row_label: 'ROI', row_group_label: 'fly', col_label: 'odor', col_group_label: 'panel' },
+            rows: us.map((j, r) => ({ label: d.all.cols[j].label, group: d.all.cols[j].group, bad: bad.has(units[r]) })),
+            cols: os.map((i) => ({ label: showOdor(d.rows[i].odor), group: d.rows[i].panel })), values,
+          };
+        });
+        const key = `calcs:${k}`;
+        used.add(key);
+        const v = this._viewer(key, payload, `#${d.id} ${d.title}`, `dataset_${d.id}_mean`,
+          { kind: 'calcs', kc: isKcData(d.coding_unit), responseCalc: d.response_calc });
+        const side = document.createElement('div');
+        side.className = 'cmp-pair-side';
+        side.innerHTML = `<div class="cmp-pair-cap" title="${esc(`#${d.id} ${d.title}`)}">#${d.id} ${esc(calcText(d) || 'response calculation not given')}</div>`;
+        side.appendChild(v.el);
+        row.appendChild(side);
+        shows.push(v.show);
+        return v;
+      });
+      for (const x of views) {
+        x.viewer.linked = { others: views.filter((y) => y !== x).map((y) => y.viewer), cols: true };
+        x.viewer.onShow = () => levelViewers(views);
+      }
+      this.pairs = [views];
+      section.appendChild(row);
+    }
+    for (const key of [...this.blocks.keys()]) if (!used.has(key)) this.blocks.delete(key);
+    view.replaceChildren(section);
+    this.pairWidth = 0;
+    this.pairRO.observe(section);
+    shows.forEach((show) => show());
+  }
+
 
   // ------------------------------------------------------------------- spaces
   _memo(key, make) {
@@ -6618,8 +6747,7 @@ class ComparePage {
     $('#cmp-sim-head').textContent = N.sim[0].toUpperCase() + N.sim.slice(1);
     for (const [id, note] of [['#cmp-show-note', N.show], ['#cmp-sim-note', N.simNote], ['#cmp-match-note', N.match],
       ['#cmp-pair-note', `Two or more of the spaces shown next to each other, over the ${N.many} all of them have, in one order, each row level `
-        + "with the others'; or click a cell of the correlations between similarities (for its two), or a dataset's Compare All Response Calcs. "
-        + '(for its calculations).']]) $(id).textContent = note;
+        + "with the others' (and each column, where they have the same); or click a cell of the correlations between similarities, for its two."]]) $(id).textContent = note;
     $('#cmp-conc-opt').hidden = on !== 'odors';
     $('#cmp-ref-metric-opt').hidden = on === 'panel';
     if (on === 'odors') {
@@ -6674,14 +6802,15 @@ class ComparePage {
   // a viewer of the page, kept while it is shown again (by key): on its own (fitted to what
   // it shows) until linked again. cells: its own cell size to start with, table: the CSV its
   // export menu offers (else the matrix as shown), onCellClick: as the heatmap's, responseCalc:
-  // of a dataset's responses, how they were calculated (its colorbar's label)
-  _viewer(key, payload, title, fileStem, { cells = null, table = null, onCellClick = null, kc = false, responseCalc = null } = {}) {
+  // of a dataset's responses, how they were calculated (its colorbar's label), kind: of the
+  // viewer ('calcs' for the calculations of some recordings side by side: transposed apart)
+  _viewer(key, payload, title, fileStem, { cells = null, table = null, onCellClick = null, kc = false, responseCalc = null, kind = 'compare' } = {}) {
     let b = this.blocks.get(key);
     if (!b) {
       const el = document.createElement('div');
       el.className = 'cmp-viewer';
       $('#compare-view').appendChild(el); // attached, to be measured
-      b = { el, viewer: new MatrixViewer(el, { kind: 'compare', cells }) };
+      b = { el, viewer: new MatrixViewer(el, { kind, cells }) };
       $('[data-export=csv]', b.viewer.toolbar).hidden = false;
       this.blocks.set(key, b);
     }
@@ -6693,7 +6822,7 @@ class ComparePage {
     v.heatmap.options.minHeaderH = 0;
     v.toolbar.style.minHeight = '';
     v.onShow = () => fitViewer(b.el, v);
-    return { el: b.el, viewer: v, show: () => v.setGenericData(payload, { title, fileStem, kind: 'compare', kc, responseCalc }) };
+    return { el: b.el, viewer: v, show: () => v.setGenericData(payload, { title, fileStem, kind, kc, responseCalc }) };
   }
 
   // a block of the page: a viewer under its title
@@ -6716,17 +6845,7 @@ class ComparePage {
       } catch (e) { this.modelData.set(m.key, { id: `model:${m.key}`, model: m, title: m.title, error: e.message }); }
     }));
     await Promise.all(this.o.picked.filter((id) => !this.data.has(id)).map(async (id) => {
-      try {
-        const d = await api(`/api/compare/datasets/${id}`), given = decodeValues(d.values_b64), nR = d.rows.length, nC = d.cols.length;
-        // ROIs as Browse shows them to start with: grouped by fly (and in its order), each labelled as it is in its fly
-        const order = d.kind === 'rois' ? neuralOrder({ units: d.cols, trials: [] }, ROI_ORDER).unitIdx : d.cols.map((_, j) => j);
-        const cols = d.kind === 'rois' ? order.map((j) => ({ label: roiLabel(d.cols[j]), group: flyKey(d.cols[j]), bad: d.cols[j].bad })) : d.cols;
-        const pick = (idx) => (idx.length === nC && idx.every((j, k) => j === k) ? given
-          : Float32Array.from({ length: nR * idx.length }, (_, k) => given[Math.floor(k / idx.length) * nC + idx[k % idx.length]]));
-        // every column as its data is shown (`all`); for everything else, those of ROIs marked bad left out
-        const good = order.filter((j) => !d.cols[j].bad);
-        this.data.set(id, { ...d, all: { cols, values: pick(order) }, nBad: nC - good.length, cols: cols.filter((c) => !c.bad), values: pick(good) });
-      } catch (e) { this.data.set(id, { id, error: e.message }); }
+      try { this.data.set(id, compareDataset(await api(`/api/compare/datasets/${id}`))); } catch (e) { this.data.set(id, { id, error: e.message }); }
     }));
     const on = this.o.on, N = ON[on];
     if (on === 'odors') try { await this._fingerprints(); } catch { /* said so when compared to */ }
@@ -6761,6 +6880,7 @@ class ComparePage {
     this._renderPairOptions(all);
     const rowOf = on === 'odors' ? this._chemRows(datasets) : on === 'panel' ? this._panelRows(loaded, panel) : (g) => ({ label: g });
     const state = this._stateKey();
+    if (this.o.calcs) { await this._renderCalcs(view, seq); return; }
 
     const parts = [], shows = [], used = new Set();
     const block = (key, ...args) => { used.add(key); const b = this._block(key, ...args); parts.push(b.section); shows.push(b.show); return b.section; };
@@ -6841,11 +6961,8 @@ class ComparePage {
       if (show !== 'sim') {
         const shownSub = d.nBad ? `${esc(d.coding_unit || '')}: ${d.rows.length} odors × ${d.all.cols.length.toLocaleString()} ROIs, ${d.nBad.toLocaleString()}
           of them marked bad (left out of every comparison); every trial averaged` : sub;
-        block(`ds:${d.id}`, `#${d.id} ${d.title}`, shownSub, this._memo(`data:${d.id}:${display.lowerOdors}`, () => ({
-          meta: { ...colsMeta(d), row_label: 'odor', row_group_label: 'panel' },
-          rows: d.rows.map((r) => ({ label: showOdor(r.odor), group: r.panel })), cols: d.all.cols.map((c) => ({ label: c.label, group: c.group, bad: c.bad })),
-          values: d.all.values,
-        })), `dataset_${d.id}_mean`, { kc: d.kind === 'rois' && isKcData(d.coding_unit), responseCalc: d.response_calc });
+        block(`ds:${d.id}`, `#${d.id} ${d.title}`, shownSub, this._datasetData(d), `dataset_${d.id}_mean`,
+          { kc: d.kind === 'rois' && isKcData(d.coding_unit), responseCalc: d.response_calc });
       }
       if (show !== 'data') {
         block(`sim:${d.id}`, `#${d.id} ${d.title}: odor–odor similarity`, `${metric} of their responses across its ${d.kind === 'glomeruli' ? 'glomeruli' : 'ROIs'}`,
@@ -6967,10 +7084,12 @@ class ComparePage {
       side.appendChild(v.el);
       row.appendChild(side);
       shows.push(v.show);
-      return { ...v, what };
+      return { ...v, payload };
     });
-    // (their columns too, if all are similarities: then those are their rows)
-    const cols = views.every((x) => x.what === 'similarity');
+    // (their columns too, if all have the same: similarities, whose columns are their rows,
+    // or the data of the same ROIs)
+    const same = (a, b) => a.length === b.length && a.every((x, i) => x.label === b[i].label && x.group === b[i].group && !x.bad === !b[i].bad);
+    const cols = views.every((x) => same(x.payload.cols, views[0].payload.cols));
     for (const x of views) {
       x.viewer.linked = { others: views.filter((y) => y !== x).map((y) => y.viewer), cols };
       x.viewer.onShow = () => levelViewers(views);

@@ -47,6 +47,11 @@ def test_dataset(tmp_path):
     trial_means = np.stack([np.nanmean(v[k:k + 2], axis=0) for k in (0, 2, 4)])  # odors × units (DM2, DL5, DM2, VA2)
     expected = np.stack([trial_means[:, 1], (trial_means[:, 0] + trial_means[:, 2]) / 2, trial_means[:, 3]], axis=1)
     np.testing.assert_allclose(m, expected, rtol=1e-6)
+    # by unit (its calculations compared side by side): a column per ROI of each fly, of glomeruli too
+    d = compare.dataset(db, ds_id, tmp_path, by_unit=True)
+    assert d["kind"] == "rois" and [(c["date"], c["fly_num"], c["roi"]) for c in d["cols"]] == [
+        ("2024-01-01", 1, "DM2"), ("2024-01-01", 1, "DL5"), ("2024-01-02", 1, "DM2"), ("2024-01-02", 2, "VA2")]
+    np.testing.assert_allclose(np.frombuffer(base64.b64decode(d["values_b64"]), "<f4").reshape(3, 4), trial_means, rtol=1e-6)
 
     # not glomeruli: a column per ROI of each fly, as its unit is (labelled in the browser)
     ds_id, v = insert(db, tmp_path, cols=[("2024-01-01", 1, 0), ("2024-01-01", 1, 1), ("2024-01-02", 1, 0)])
@@ -93,6 +98,8 @@ def test_api(main, tmp_path):  # noqa: F811
     ds_id, _ = insert(main.db, tmp_path)
     status, r = call(main.compare_dataset, path_params={"ds_id": ds_id})
     assert status == 200 and r["kind"] == "glomeruli" and r["rows"][0]["odor"] == "va @ -3"
+    status, r = call(main.compare_dataset, path_params={"ds_id": ds_id}, params={"units": "1"})
+    assert status == 200 and r["kind"] == "rois"
 
 
 def test_dataset_extra_levels(tmp_path):

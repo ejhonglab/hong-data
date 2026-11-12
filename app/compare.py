@@ -27,8 +27,12 @@ _fp_lock = threading.Lock()
 _fp_cache: dict[tuple, dict] = {}
 
 
-def dataset(db, ds_id: int, datasets_dir: Path) -> Optional[dict]:
+def dataset(db, ds_id: int, datasets_dir: Path, by_unit: bool = False) -> Optional[dict]:
     """A dataset as the Compare tab shows it (see the module's docstring); None if there is none.
+
+    Args:
+        by_unit: a column per ROI of each fly, even of glomeruli (as its calculations are
+            compared side by side, unit by unit), not one per glomerulus.
 
     Returns:
         dict with ``id``, ``title``, ``coding_unit``, ``driver``, ``response_calc`` (as entered at
@@ -74,7 +78,7 @@ def dataset(db, ds_id: int, datasets_dir: Path) -> Optional[dict]:
         rows.append({"panel": panel, "odor": odor, "odor_id": odor_id, "log10_conc": conc,
                      "chem": {"name": o["name"], "abbrev": o.get("abbrev"), "cid": o.get("cid")} if o else None})
 
-    if units and all(u["roi_kind"] == "glomerulus" for u in units):
+    if not by_unit and units and all(u["roi_kind"] == "glomerulus" for u in units):
         names = list(dict.fromkeys(u["roi"] for u in units))
         order = [g for g in glomeruli.GLOMERULUS_NAMES if g in names] + [g for g in names if g not in glomeruli.GLOMERULI]
         cols, columns = [], []

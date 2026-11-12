@@ -34,11 +34,11 @@ expected, and nothing secret is entered. If a download or the page is blocked, s
    raw and motion-corrected data are on tensor.
 4. **Download**: from a dataset's page, or tick several in the list: the original files
    (a zip), or the response matrices as CSV.
-5. **Merge**: every dataset of a coding unit (e.g. glomeruli) in one download (one
+5. **Compare**: tick datasets to see them side by side, averaged, with how alike their
+   odors are, and how that compares with chemical structure or reference data.
+6. **Merge**: every dataset of a coding unit (e.g. glomeruli) in one download (one
    calculation of the same recordings), optionally with groups of datasets (by
    experimenter, rig, response calculation or power) scaled to each other first.
-6. **Compare**: tick datasets to see them side by side, averaged, with how alike their
-   odors are, and how that compares with chemical structure or reference data.
 7. **Models**: models of KCs (their outputs on tensor, added in the Admin tab), each by its
    parameters, in a table sorted by any of them (the baseline models first, in a table of
    their own); open one to see its KCs' spike counts to each odor, or compare them with
@@ -395,28 +395,6 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   sorted, without diagnostic ones (as above; unless there are only those), and the
   uploader's name lowercased without periods, e.g. `megamat_tom_glomeruli_2023-11-19.csv`
   (the long one ends in `_long.csv`).
-- **Merge**: the matrices of every dataset of the chosen coding unit (matched in any
-  case), concatenated as above, in a zip that also has `scaling.csv` (each dataset's group
-  and scale factor). Of the same recordings calculated more than one way (datasets of the
-  same flies, experimenter and manipulations, each with its own response calculation),
-  one is merged: that of the calculation chosen (*Of the same recordings calculated more
-  than one way, merge*, shown when there are some), else their default (as set in Browse,
-  else the first uploaded); the others
-  are listed as left out, in the tab and the zip's README. Datasets can be left at their own scale, or grouped by any of
-  experimenter, recording system, response calculation and power at the fly, each group then multiplied by one
-  factor to match a chosen group, or the average of the groups. By power, only datasets
-  with power measured are grouped (the rest are left as they are): every two in a group
-  have power ranges (power ± its tolerance, ± 0.5 mW where none was entered) that overlap,
-  or are at most a chosen power tolerance apart (0 mW by default). A group's factor best
-  matches (least squares, through zero) its mean responses to the stimuli it shares with
-  the target to the target's, per glomerulus when all ROIs are glomeruli, else averaged
-  over ROIs. A dataset's own concentration of an odor is used when it has it, else its
-  nearest less than the tolerance away (1 log10 unit by default: `x @ -3.9` then stands
-  for `x @ -3`, unless the dataset also has `x @ -3`, while `x @ -4` does not). The tab
-  shows each group's factor, the stimuli and responses it was fitted on, and Pearson's r
-  over them, then the factor each dataset is multiplied by, which can be downloaded on
-  its own (as `scaling.csv`, by `dataset_id` as in the matrices). Odors keep their own
-  concentrations in the matrices.
 - **Compare**: datasets ticked on the left (listed as in Browse) side by side, each its
   odors (rows, by panel) by its glomeruli or ROIs, every trial of an odor averaged, and
   for glomeruli every fly too (a column per glomerulus, the mean of the flies with it;
@@ -426,7 +404,12 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   entry of the same recordings calculated more than one way are Browse's menu of their
   calculations (choosing one lists it instead, and if one of them is ticked, ticks and
   shows it instead) and *Set Default Response Calc.*, and *Compare All Response Calcs.*,
-  which ticks every one of them and shows them side by side. On the right:
+  which shows every one of them side by side in place of everything else (that entry
+  ticked alone, until it is unticked or anything else is ticked): each its ROIs by its
+  odors as Browse shows them (of glomeruli too, fly by fly), under its number and
+  calculation, the recordings' name over them all; over the ROIs and odors all of them
+  have, with rows and columns moved or removed, cell sizes, transposing and scrolling the
+  same in all. On the right:
   - *Compare on* odors (the default: those of the odor table, alone, at the
     concentration chosen), a panel's odors, or glomeruli. On a panel's odors, datasets
     are compared with each other only, on the panel chosen of those of the datasets
@@ -434,7 +417,7 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     default the one most of them have): each over the panel's odors as presented,
     concentrations and mixtures as they are, an odor of the odor table alone matched by
     it and its concentration, anything else by how the data names it (but for case).
-    Everything below (similarities, their correlations and p-values, the two side by
+    Everything below (similarities, their correlations and p-values, those side by
     side) is then of those odors. On glomeruli, everything below is of
     glomeruli instead of odors: only datasets of glomeruli are compared (as glomeruli
     by odors, every fly averaged), to reference datasets of glomeruli (found by their
@@ -460,11 +443,12 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     them); each says how many of the odors shown it has, and its data or similarities
     over those are shown.
   - *Side by side*: two or more of the spaces shown (chosen there, *Add another* for
-    more; or by clicking a cell of the correlations between similarities, for its two, or
-    an entry's *Compare All Response Calcs.*), over the odors all of them have, in one
-    order (the first dataset's, if one is), next to each other with each row level with
-    the others': moving or removing a row, cell sizes, transposing, chemical labels and
-    scrolling stay the same in all, and hovering an odor in one marks it in the others.
+    more; or by clicking a cell of the correlations between similarities, for its two),
+    over the odors all of them have, in one order (the first dataset's, if one is), next
+    to each other with each row level with the others': moving or removing a row, cell
+    sizes, transposing, chemical labels and scrolling stay the same in all (and of
+    columns too, where they have the same: similarities, or the same ROIs), and hovering
+    an odor in one marks it in the others.
   - *Between similarities*: a matrix of the Spearman (or Pearson) correlation of each two
     of the datasets and spaces compared to: of their similarities for each pair of the
     odors both have (one side of each matrix, without its diagonal), each cell saying r
@@ -476,10 +460,32 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     the only one of the three that is exact; 5000 permutations by default) or by
     bootstrap (with replacement, of the pairs of odors or of the odors), Holm–Bonferroni
     adjusted for every two spaces shown, each cell saying the adjusted and raw p (the
-    options panel says why, with links). Like every matrix of the tab, they can be
+    options panel says why, with links, under *How the p-values are found, and why*). Like every matrix of the tab, they can be
     exported as a figure (SVG, PDF, PNG, with the numbers in the cells when they are large
     enough) or a table (CSV: for these, each two spaces once with r, odors, pairs and both
     p-values).
+- **Merge**: the matrices of every dataset of the chosen coding unit (matched in any
+  case), concatenated as above, in a zip that also has `scaling.csv` (each dataset's group
+  and scale factor). Of the same recordings calculated more than one way (datasets of the
+  same flies, experimenter and manipulations, each with its own response calculation),
+  one is merged: that of the calculation chosen (*Of the same recordings calculated more
+  than one way, merge*, shown when there are some), else their default (as set in Browse,
+  else the first uploaded); the others
+  are listed as left out, in the tab and the zip's README. Datasets can be left at their own scale, or grouped by any of
+  experimenter, recording system, response calculation and power at the fly, each group then multiplied by one
+  factor to match a chosen group, or the average of the groups. By power, only datasets
+  with power measured are grouped (the rest are left as they are): every two in a group
+  have power ranges (power ± its tolerance, ± 0.5 mW where none was entered) that overlap,
+  or are at most a chosen power tolerance apart (0 mW by default). A group's factor best
+  matches (least squares, through zero) its mean responses to the stimuli it shares with
+  the target to the target's, per glomerulus when all ROIs are glomeruli, else averaged
+  over ROIs. A dataset's own concentration of an odor is used when it has it, else its
+  nearest less than the tolerance away (1 log10 unit by default: `x @ -3.9` then stands
+  for `x @ -3`, unless the dataset also has `x @ -3`, while `x @ -4` does not). The tab
+  shows each group's factor, the stimuli and responses it was fitted on, and Pearson's r
+  over them, then the factor each dataset is multiplied by, which can be downloaded on
+  its own (as `scaling.csv`, by `dataset_id` as in the matrices). Odors keep their own
+  concentrations in the matrices.
 - **Odors**: the app's own table of odor metadata, one row per chemical, with links and
   structures (drawn as vector graphics by RDKit, from the InChI PubChem gives for each
   CID), vapor pressures (in kPa: the mean of the experimental values on the odor's

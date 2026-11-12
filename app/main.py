@@ -2716,8 +2716,10 @@ def _unmatched(rows: list[dict]) -> list[str]:
 
 async def compare_dataset(request: Request) -> Response:
     """A dataset as the Compare tab shows it: its odors by its ROIs (or glomeruli), each
-    the mean of its trials (and flies), see `compare.dataset`."""
-    result = await run_in_threadpool(compare.dataset, db, int(request.path_params["ds_id"]), config.DATASETS_DIR)
+    the mean of its trials (and flies), see `compare.dataset` (``?units=1``: by ROI, even of
+    glomeruli)."""
+    by_unit = request.query_params.get("units") == "1"
+    result = await run_in_threadpool(compare.dataset, db, int(request.path_params["ds_id"]), config.DATASETS_DIR, by_unit)
     if result is None:
         return json_error(404, "dataset not found")
     return JSONResponse(result)

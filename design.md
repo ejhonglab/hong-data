@@ -232,8 +232,13 @@ between the frontend and the server. Using the app is described in
   `saveDefaultCalc`, which tells both tabs), so that one recording is one item; listed by
   upload, it is as of the first uploaded, whichever is the default, as that is when the
   recordings came. Compare needs nothing more: each dataset is a space of its own there,
-  labelled by its title, and *Compare All Response Calcs.* shows them side by side, as
-  any number of spaces can be (`MatrixViewer.linked`: each viewer's others). Being given every time
+  labelled by its title. *Compare All Response Calcs.* shows them side by side in place of
+  everything else (`o.calcs`, `_renderCalcs`), unit by unit, of glomeruli too (a ROI of a
+  fly being the unit each calculation is of, not a glomerulus averaged over flies:
+  `?units=1`), over the ROIs and odors all of them have, so that their rows and columns
+  are linked (`MatrixViewer.linked`: each viewer's others, any number of them); it is its
+  own view, not the side by side of spaces (`o.pair`, which are compared on odors of the
+  odor table), as those would drop odors not in it and average glomeruli over flies. Being given every time
   it is entered, rather than only once another calculation is uploaded, a calculation
   names a dataset the same way whatever else is stored, so no title, file or permalink
   name changes when another calculation of its recordings comes or goes.
@@ -1455,7 +1460,8 @@ GET    /d/{name}                            → #browse/{name}
 GET    /api/datasets/{id}/matrix            units, trials, base64 float32 values
 GET    /api/datasets/{id}/files/{path}      original files
 GET    /api/compare/datasets/{id}           its odors × glomeruli (or ROIs), every trial (and fly) averaged,
-                                            each odor's odor table id if it is one chemical alone
+                                            each odor's odor table id if it is one chemical alone;
+                                            ?units=1: by ROI, even of glomeruli
 GET    /api/compare/ecfp?diameter=6         ECFP fingerprints of the odor table's chemicals (bits set)
 GET    /api/datasets/{id}/odors             its odors (per panel) matched to the odor table; rows
                                             for the odor sheet for those not in it (and as cells

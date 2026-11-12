@@ -20,8 +20,8 @@ try {
   <nav class="tabs" aria-label="Sections">
     <a href="#upload" data-tab="upload">Upload</a>
     <a href="#browse" data-tab="browse">Browse</a>
-    <a href="#merge" data-tab="merge">Merge</a>
     <a href="#compare" data-tab="compare">Compare</a>
+    <a href="#merge" data-tab="merge">Merge</a>
     <span class="tabs-sep" aria-hidden="true"></span>
     <a href="#reference" data-tab="reference">Reference data</a>
     <a href="#models" data-tab="models">Models</a>
@@ -425,6 +425,7 @@ try {
       <label class="opt">p-values by <select id="cmp-p-by"><option value="permute">permutation (Mantel)</option>
         <option value="pairs">bootstrap of odor pairs</option><option value="odors">bootstrap of odors</option></select></label>
       <label class="opt">From <input type="number" id="cmp-boot-n" min="100" max="100000" step="100"> resamplings (or permutations)</label>
+      <details class="cmp-p-notes"><summary class="muted small">How the p-values are found, and why</summary>
       <p class="muted small">Each correlation's p-value (to the right of it) is two-sided, against no correlation. By bootstrap: twice the share of
         correlations, of what is resampled with replacement, on the other side of 0 (at least 2 / (resamplings + 1)). By permutation: the share of
         correlations, with one space's odors shuffled, as far from 0 or further (at least 1 / (permutations + 1)). As every two spaces shown are tested
@@ -443,6 +444,7 @@ try {
       <p class="muted small">For more details, and the simulations behind them, see
         <a href="https://github.com/ejhonglab/hong-data/blob/main/design.md#statistical-testing" target="_blank" rel="noopener">Statistical testing</a>
         in the design notes.</p>
+      </details>
     </aside>
   </section>
 
