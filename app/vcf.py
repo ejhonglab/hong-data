@@ -12,7 +12,10 @@ A search (`search`) finds the lines of the products whose name, category or grou
 is typed in it, and reduces their quantities to one per chemical: those of one reference
 (a paper's sample) on one product are averaged (as in the reference dataset's matrix),
 then each product's are reduced across its references, then across products (by `STATS`,
-the median by default), each over those that quantify the chemical. The headspace over
+the median by default), each over those that quantify the chemical. Its chemicals that are
+one odor of the odor table are one, as in the Compare tab (`match_odors`, then merged in
+each sample as the reference dataset's ``merge`` field says), and what may miscount them
+is said (``ambiguity``). The headspace over
 each sample, taken as water, is computed from these (`add_headspace`, by `headspace.sample`):
 by Henry's law, else by Raoult's law with its vapor pressure. Both are looked up again
 through chemutils (by main.py, kept apart from the odor table's), and what it looks up
@@ -214,24 +217,59 @@ def _reduce(values: pd.Series, by, stat: str) -> pd.Series:
     return values.groupby(by, sort=False).agg(stat)
 
 
-def search(table: dict, query: str, across_references: str = "median", across_products: str = "median") -> dict:
+def match_odors(table: dict, index) -> list[dict]:
+    """The odor of the odor table each chemical of a file `load` read is, matched as the
+    chemicals of its reference dataset are (`OdorIndex.match_chemical`, by its CID, InChI
+    and name): ``odor_id`` (None if none), ``how``, ``odor`` (its name), and those it could
+    be or may be, ``candidates`` (if ambiguous) and ``maybe`` (if it has no CID or InChI,
+    by its name, `OdorIndex.maybe`), each [{id, name}]."""
+    out = []
+    named = lambda ids: [{"id": i, "name": index.by_id[i]["name"]} for i in ids]  # noqa: E731
+    for c in table["chemicals"]:
+        cands: list[int] = []
+        odor_id, how = index.match_chemical({k: c[k] for k in ("cid", "inchi", "name") if c[k]}, c["name"], cands)
+        out.append({"odor_id": odor_id, "how": how, "odor": index.by_id[odor_id]["name"] if odor_id is not None else None,
+                    "candidates": named(cands),
+                    "maybe": named(index.maybe(c["name"])) if odor_id is None and not (c["cid"] or c["inchi"]) else []})
+    return out
+
+
+_MERGE = {"mean": "mean", "sum": "sum", "max": "max"}  # (reference.MERGES, as pandas names them)
+
+
+def search(table: dict, query: str, across_references: str = "median", across_products: str = "median",
+           matches: Optional[list[dict]] = None, merge: str = "mean") -> dict:
     """The lines of the products (of a file `load` read) whose name, category or group has
     `query` in it (but for case), and one quantity per chemical from them (see the
-    module's docstring); the headspace over the samples is from `add_headspace`.
+    module's docstring); the headspace over the samples is from `add_headspace`. Its
+    chemicals that are one odor of the odor table (`matches`) are one, as in the Compare
+    tab: in each sample (a reference on a product), their quantities (each its lines'
+    mean) made one by `merge`, before being reduced across references and products.
 
     Args:
         across_references, across_products: of `STATS`.
+        matches: of each chemical of `table`, as `match_odors` gives them (None: none are
+            odors of the odor table).
+        merge: of `reference.MERGES`: as its reference dataset's ``merge`` field says.
 
     Returns:
         ``query``, ``products`` (those matched, by name: ``name``, ``category``, ``group``,
         and how many ``lines``, ``references`` and ``chemicals`` of it), ``references``
         (their texts), ``lines`` (each [its chemical's index in ``chemicals``, its
         product's in ``products``, its reference's in ``references``, ``quantity``,
-        ``value``]), ``chemicals`` (each of the lines, those with the highest quantity
-        first: as `load` gives them, and ``ppm`` (the quantity of it, from those of each
-        product, ``per_product``: [product index, quantity, references]), ``lines`` (how
-        many), ``references`` and ``products`` (how many quantify it), and ``min`` and
-        ``max`` (of its lines)).
+        ``value``, the name of its chemical in the file]), ``chemicals`` (each of the
+        lines, but those of one odor one, those with the highest quantity first: as `load`
+        gives them (of several of one odor, of the one that is the odor's own CID or
+        InChI, else with the most lines; named by the odor), and ``odor_id``; ``parts``
+        (those of the file it is: ``name``, ``url``, ``cid``, ``inchi``, ``how`` it is
+        the odor, and ``lines``), ``ppm`` (the quantity of it, from those of each product,
+        ``per_product``: [product index, quantity, references]), ``lines`` (how many),
+        ``references`` and ``products`` (how many quantify it), ``min`` and ``max`` (of
+        its lines); and ``ambiguity``: ``stereo`` (the names of its parts that are the
+        odor only as the same but for stereochemistry), ``overlap`` (None, or of the
+        ``samples`` (of ``of``, those that quantify it) where two of its parts that
+        `reference.may_overlap` are both given, which ``parts``), ``candidates`` and
+        ``maybe`` (as `match_odors` gives them, of a chemical not an odor)).
 
     Raises:
         VcfError: if `query` is empty, or a stat is not one of `STATS`.
@@ -242,41 +280,65 @@ def search(table: dict, query: str, across_references: str = "median", across_pr
     for stat in (across_references, across_products):
         if stat not in STATS:
             raise VcfError(f"quantities are reduced by one of {', '.join(STATS)}")
+    if merge not in _MERGE:
+        raise VcfError(f"quantities of one odor are merged by one of {', '.join(_MERGE)}")
+    chemicals = table["chemicals"]
+    matches = matches or [{"odor_id": None, "how": "none", "odor": None, "candidates": [], "maybe": []}] * len(chemicals)
     lines = table["lines"]
     mask = np.zeros(len(lines), dtype=bool)
     for k in SEARCHED:
         mask |= table["folded"][k].str.contains(q, regex=False).to_numpy()
-    m = lines[mask]
+    m = lines[mask].copy()
     products = sorted(set(m["product"]), key=str.casefold)
     product_of = {p: i for i, p in enumerate(products)}
     refs = list(dict.fromkeys(m["reference"]))
     ref_of = {r: i for i, r in enumerate(refs)}
-    chems = list(dict.fromkeys(m["chem"]))
+    # each chemical, or each odor of the odor table of several, a unit
+    key = lambda chem: ("odor", matches[chem]["odor_id"]) if matches[chem]["odor_id"] is not None else ("chem", chem)  # noqa: E731
+    keys = list(dict.fromkeys(key(c) for c in m["chem"]))
+    unit_of = {k: u for u, k in enumerate(keys)}
+    m["unit"] = [unit_of[key(c)] for c in m["chem"]]
+    parts: list[list[int]] = [[] for _ in keys]
+    for c in dict.fromkeys(m["chem"]):
+        parts[unit_of[key(c)]].append(c)
 
     q_lines = m[np.isfinite(m["value"].to_numpy())]
-    per_ref = q_lines.groupby(["chem", "product", "reference"], sort=False)["value"].mean()
+    per_chem = q_lines.groupby(["chem", "product", "reference"], sort=False)["value"].mean()
+    pc = per_chem.reset_index()
+    pc["unit"] = [unit_of[key(c)] for c in pc["chem"]]
+    per_ref = pc.groupby(["unit", "product", "reference"], sort=False)["value"].agg(_MERGE[merge])
     levels = [per_ref.index.get_level_values(0), per_ref.index.get_level_values(1)]
     per_product = _reduce(per_ref, levels, across_references)
     n_refs = per_ref.groupby(levels, sort=False).size()
     consensus = _reduce(per_product, per_product.index.get_level_values(0), across_products)
-    stats = q_lines.groupby("chem")["value"].agg(["min", "max"])
-    n_lines = m.groupby("chem").size()
-    n_chem_refs = per_ref.groupby(level=0).size()
+    stats = q_lines.groupby("unit")["value"].agg(["min", "max"])
+    n_lines = m.groupby("unit").size()
+    n_chem_lines = m.groupby("chem").size()
+    n_unit_refs = per_ref.groupby(level=0).size()
+    overlaps = _overlaps(pc, parts, chemicals)
 
-    of_chem: dict[int, list] = {}
-    for (chem, prod), v in per_product.items():
-        of_chem.setdefault(chem, []).append([product_of[prod], float(v), int(n_refs[(chem, prod)])])
+    of_unit: dict[int, list] = {}
+    for (unit, prod), v in per_product.items():
+        of_unit.setdefault(unit, []).append([product_of[prod], float(v), int(n_refs[(unit, prod)])])
     out = []
-    for chem in chems:
-        c = table["chemicals"][chem]
-        pp = sorted(of_chem.get(chem, []))
-        out.append({**c, "notes": list(c["notes"]), "chem": chem,
-                    "ppm": float(consensus[chem]) if chem in consensus.index else None, "per_product": pp,
-                    "lines": int(n_lines[chem]), "references": int(n_chem_refs.get(chem, 0)), "products": len(pp),
-                    "min": float(stats.loc[chem, "min"]) if chem in stats.index else None,
-                    "max": float(stats.loc[chem, "max"]) if chem in stats.index else None})
+    for unit, chems in enumerate(parts):
+        # (of several: the odor's own CID or InChI first, then the most lines)
+        rep = min(chems, key=lambda c: (matches[c]["how"] not in ("cid", "inchi"), -int(n_chem_lines[c]), c))
+        c, mt = chemicals[rep], matches[rep]
+        pp = sorted(of_unit.get(unit, []))
+        out.append({**c, "notes": list(c["notes"]), "unit": unit, "odor_id": mt["odor_id"],
+                    **({"name": mt["odor"]} if len(chems) > 1 else {}),
+                    "parts": [{"name": chemicals[x]["name"], "url": chemicals[x]["url"], "cid": chemicals[x]["cid"],
+                               "inchi": chemicals[x]["inchi"], "how": matches[x]["how"], "lines": int(n_chem_lines[x])} for x in chems],
+                    "ppm": float(consensus[unit]) if unit in consensus.index else None, "per_product": pp,
+                    "lines": int(n_lines[unit]), "references": int(n_unit_refs.get(unit, 0)), "products": len(pp),
+                    "min": float(stats.loc[unit, "min"]) if unit in stats.index else None,
+                    "max": float(stats.loc[unit, "max"]) if unit in stats.index else None,
+                    "ambiguity": {"stereo": [chemicals[x]["name"] for x in chems if matches[x]["how"] == "stereo"],
+                                  "overlap": overlaps.get(unit) and {**overlaps[unit], "of": int(n_unit_refs.get(unit, 0))},
+                                  "candidates": mt["candidates"], "maybe": mt["maybe"]}})
     out.sort(key=lambda c: (c["ppm"] is None, -(c["ppm"] or 0), c["name"].casefold()))
-    index = {c.pop("chem"): i for i, c in enumerate(out)}
+    index = {c.pop("unit"): i for i, c in enumerate(out)}
 
     by_product = m.groupby("product")
     summary = []
@@ -284,10 +346,31 @@ def search(table: dict, query: str, across_references: str = "median", across_pr
         g = by_product.get_group(p)
         summary.append({"name": p, "category": g["category"].dropna().iloc[0] if g["category"].notna().any() else None,
                         "group": g["group"].dropna().iloc[0] if g["group"].notna().any() else None,
-                        "lines": len(g), "references": g["reference"].nunique(), "chemicals": g["chem"].nunique()})
-    return {"query": query.strip(), "products": summary, "references": refs, "chemicals": out,
-            "lines": [[index[ch], product_of[p], ref_of[r], qty, None if not np.isfinite(v) else float(v)]
-                      for ch, p, r, qty, v in zip(m["chem"], m["product"], m["reference"], m["quantity"], m["value"])]}
+                        "lines": len(g), "references": g["reference"].nunique(), "chemicals": g["unit"].nunique()})
+    return {"query": query.strip(), "products": summary, "references": refs, "chemicals": out, "merge": merge,
+            "lines": [[index[u], product_of[p], ref_of[r], qty, None if not np.isfinite(v) else float(v), chemicals[ch]["name"]]
+                      for u, ch, p, r, qty, v in zip(m["unit"], m["chem"], m["product"], m["reference"], m["quantity"], m["value"])]}
+
+
+def _overlaps(per_chem: pd.DataFrame, parts: list[list[int]], chemicals: list[dict]) -> dict[int, dict]:
+    """Of each unit of several chemicals (`search`): the samples (a reference on a product) in
+    which two of them that `reference.may_overlap` both have a quantity (not 0), and which
+    (``samples``, ``parts``: their names); of those with any."""
+    out = {}
+    for unit, chems in enumerate(parts):
+        if len(chems) < 2:
+            continue
+        pairs = [(a, b) for x, a in enumerate(chems) for b in chems[x + 1:]
+                 if reference.may_overlap(chemicals[a]["inchi"], chemicals[b]["inchi"])]
+        if not pairs:
+            continue
+        g = per_chem[(per_chem["unit"] == unit) & (per_chem["value"] != 0)]
+        given = g.groupby(["product", "reference"], sort=False)["chem"].agg(set)
+        hit = [s for s in given if any(a in s and b in s for a, b in pairs)]
+        if hit:
+            involved = set().union(*({a, b} for s in hit for a, b in pairs if a in s and b in s))
+            out[unit] = {"samples": len(hit), "parts": [chemicals[c]["name"] for c in chems if c in involved]}
+    return out
 
 
 def add_headspace(chemicals: list[dict], looked: Optional[dict] = None, pending: Optional[set] = None) -> None:

@@ -794,8 +794,9 @@ def chemicals(record: dict, index: odormeta.OdorIndex) -> dict:
         ``axis`` ('rows' | 'cols' | None), ``items`` (per item of that axis: ``odor_id``,
         ``how``, the odor's ``name`` and ``abbrev`` if matched, its ``cid`` and
         ``inchi``, from the file or else the odor table, whether it is ``identified``,
-        and ``conc``: its log10 concentration as written, if an odor as datasets write
-        them), ``n``, ``matched`` (to the odor table), ``identified`` (with a
+        ``conc``: its log10 concentration as written, if an odor as datasets write
+        them, ``candidates``: the odors it could be, if ambiguous, and ``maybe``: those
+        it may be by its name, if not identified, `OdorIndex.maybe`), ``n``, ``matched`` (to the odor table), ``identified`` (with a
         CID or InChI, or a bundle's ID), ``unidentified`` and ``ambiguous`` (labels), and
         ``unrecognized`` (looked for but none found: no identifiers, and no labels the odor
         table knows), and ``odors`` (its labels odors as datasets write them).
@@ -807,21 +808,20 @@ def chemicals(record: dict, index: odormeta.OdorIndex) -> dict:
         return out
     odors_on = odor_axis(record) if record.get("matched") is None else None
 
-    def match(axis: str) -> list[tuple[Optional[int], str]]:
+    def match(axis: str) -> list[tuple[Optional[int], str, list[int]]]:
         if record.get("matched") is not None:  # (as the bundle's module matched them)
-            return [(m[0], m[1]) if m and m[0] in index.by_id else (None, "none") for m in record["matched"]]
+            return [(m[0], m[1], []) if m and m[0] in index.by_id else (None, "none", []) for m in record["matched"]]
         ids = given[axis] or [{}] * len(record[axis])
-        if axis != odors_on:
-            return [index.match_chemical(i, it["label"]) for i, it in zip(ids, record[axis])]
-        # odors as datasets write them: by their abbreviations, as a dataset's odors are matched (but by
-        # identifiers given for one, if any)
         found = []
         for i, it in zip(ids, record[axis]):
-            o = _odor_string(it["label"])
-            if o is None or i:
-                found.append(index.match_chemical(i, o.name if o else it["label"]))
+            o = _odor_string(it["label"]) if axis == odors_on else None
+            cands: list[int] = []
+            # odors as datasets write them: by their abbreviations, as a dataset's odors are matched (but by
+            # identifiers given for one, if any)
+            if o is not None and not i:
+                found.append(index.match(o.name))
             else:
-                found.append(index.match(o.name)[:2])
+                found.append((*index.match_chemical(i, o.name if o else it["label"], cands), cands))
         return found
 
     if setting in ("rows", "cols"):
@@ -836,7 +836,7 @@ def chemicals(record: dict, index: odormeta.OdorIndex) -> dict:
             return {**out, "unrecognized": True}
         axis = "rows" if found["rows"] >= found["cols"] else "cols"
     items, bundled = [], record.get("matched") is not None
-    for ids, it, (odor_id, how) in zip(given[axis] or [{}] * len(record[axis]), record[axis], match(axis)):
+    for ids, it, (odor_id, how, cands) in zip(given[axis] or [{}] * len(record[axis]), record[axis], match(axis)):
         o = index.by_id.get(odor_id) or {}
         given_odor = _odor_string(it["label"]) if axis == odors_on else None
         # (a bundle's chemical matched as the same but for charge or stereochemistry: the odor's)
@@ -844,7 +844,9 @@ def chemicals(record: dict, index: odormeta.OdorIndex) -> dict:
         cid, inchi = first[0].get("cid") or first[1].get("cid"), first[0].get("inchi") or first[1].get("inchi")
         identified = bool(cid or inchi) or bundled
         items.append({"odor_id": odor_id, "how": how, "name": o.get("name"), "abbrev": o.get("abbrev"), "cid": cid, "inchi": inchi,
-                      "identified": identified, "conc": format_conc(given_odor.log10_conc) if given_odor else None})
+                      "identified": identified, "conc": format_conc(given_odor.log10_conc) if given_odor else None,
+                      "candidates": cands if how == "ambiguous" else [],
+                      "maybe": index.maybe(it["label"]) if not identified and odor_id is None and not given_odor else []})
         if how == "ambiguous":
             out["ambiguous"].append(it["label"])
         if not identified:
@@ -925,6 +927,84 @@ def stereo_warning(chem: dict, record: dict, short: bool = False) -> Optional[st
         out += (f" Its {rows} so matched have {mine:,} of the {of_odors:,} values (not 0 or missing) of those {n} "
                 f"({_pct(mine, of_odors)}), and of its {total:,} ({_pct(mine, total)}).")
     return out
+
+
+def may_overlap(a: Optional[str], b: Optional[str]) -> bool:
+    """Whether two chemicals that are one odor may be one substance, or one may include the
+    other (a total of its stereoisomers given beside one of them), rather than distinct ones
+    (then summing them counts some twice): of the InChIs given, `odormeta.stereo_compatible`
+    ones, or either with none."""
+    return not a or not b or odormeta.stereo_compatible(a, b)
+
+
+def unresolved(chem: dict, record: dict, values: Optional[np.ndarray]) -> list[dict]:
+    """The odors of a reference dataset's chemicals (`chemicals`) whose values may be wrong in
+    ways not resolved, each once: ``odor_id``; ``overlap`` (where two of its items that
+    `may_overlap` both have a value, not 0 or missing: how many ``cells`` of its other axis,
+    and which items, by their ``labels``; of `values`, the dataset's, if given); ``maybe``
+    (the labels of chemicals not identified that may be it by their names, `OdorIndex.maybe`:
+    not counted as it); ``ambiguous`` (those of chemicals that could be it or another:
+    counted as neither). Of those with any."""
+    items, axis = chem["items"], chem["axis"]
+    labels = [it["label"] for it in record[axis]] if axis else []
+    out: dict[int, dict] = {}
+
+    def of(odor_id: int) -> dict:
+        return out.setdefault(odor_id, {"odor_id": odor_id, "overlap": {"cells": 0, "labels": []}, "maybe": [], "ambiguous": []})
+
+    groups: dict[int, list[int]] = {}
+    for k, it in enumerate(items):
+        if it["odor_id"] is not None:
+            groups.setdefault(it["odor_id"], []).append(k)
+        for i in it["maybe"]:
+            of(i)["maybe"].append(labels[k])
+        for i in it["candidates"]:
+            of(i)["ambiguous"].append(labels[k])
+    if isinstance(values, np.ndarray):
+        for odor_id, ks in groups.items():
+            if len(ks) < 2:
+                continue
+            held = {k: np.isfinite(v) & (v != 0) for k in ks for v in [values[k] if axis == "rows" else values[:, k]]}
+            both = np.zeros(values.shape[1 if axis == "rows" else 0], dtype=bool)
+            involved = set()
+            for x, a in enumerate(ks):
+                for b in ks[x + 1:]:
+                    if may_overlap(items[a]["inchi"], items[b]["inchi"]):
+                        cells = held[a] & held[b]
+                        if cells.any():
+                            both |= cells
+                            involved |= {a, b}
+            if both.any():
+                of(odor_id)["overlap"] = {"cells": int(both.sum()), "labels": [labels[k] for k in ks if k in involved]}
+    return [u for u in out.values() if u["overlap"]["cells"] or u["maybe"] or u["ambiguous"]]
+
+
+def unresolved_warning(chem: dict, record: dict, values: Optional[np.ndarray], index: odormeta.OdorIndex,
+                       merge: str = MERGES[0]) -> Optional[str]:
+    """`unresolved`, said (None if none)."""
+    found = unresolved(chem, record, values)
+    if not found:
+        return None
+    other = "columns" if chem["axis"] == "rows" else "rows"
+    parts = []
+    for u in found:
+        said = []
+        if u["overlap"]["cells"]:
+            o = u["overlap"]
+            said.append(f"in {o['cells']:,} of its {other}, {', '.join(o['labels'])}, which may be one another's total or the "
+                        f"same, not distinct isomers ({merge_said(merge)}{', so counted twice if so' if merge == 'sum' else ''})")
+        if u["maybe"]:
+            said.append(f"{', '.join(u['maybe'])}, of no structure given, may be it (not counted as it)")
+        if u["ambiguous"]:
+            said.append(f"{', '.join(u['ambiguous'])} could be it or another (counted as neither)")
+        parts.append(f"{index.by_id[u['odor_id']]['name']}: {'; '.join(said)}")
+    n = len(found)
+    return (f"{n} odor{'s' if n > 1 else ''} of the Odors table it has, or may have, may be miscounted, unresolved: "
+            + ". ".join(parts) + ".")
+
+
+def merge_said(merge: str) -> str:
+    return {"sum": "summed", "mean": "averaged", "max": "the highest taken"}.get(merge, merge)
 
 
 def metacyc_source(db, ref_id: str) -> Optional[tuple[Path, Optional[dict]]]:
@@ -1068,7 +1148,9 @@ def load(db, ref_id: str, index: odormeta.OdorIndex) -> Optional[dict[str, Any]]
         "meta": meta, "state": "ok", "rows": rows, "cols": cols, "shape": list(values.shape), "dtype": "float32", **encoded,
         "vmin": vrange[0] if vrange else None, "vmax": vrange[1] if vrange else None,
         "chemicals": {**{k: v for k, v in chem.items() if k != "items"}, "merge": merge}, "warning": warning(chem, gl),
-        "stereo_warning": stereo_warning(chem, record), "notes": record["notes"],
+        "stereo_warning": stereo_warning(chem, record),
+        "unresolved_warning": unresolved_warning(chem, record, values if isinstance(values, np.ndarray) else None, index, merge),
+        "notes": record["notes"],
         "glomeruli": {k: gl[k] for k in ("axis", "n", "matched")},
         "imported_at": record.get("imported_at"),
         **({"square": True, "pairwise": record["pairwise"]} if record.get("pairwise") else {}),

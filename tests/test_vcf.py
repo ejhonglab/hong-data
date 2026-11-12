@@ -8,7 +8,7 @@ from collections import OrderedDict
 
 import pytest
 
-from app import chemprops, config, headspace, reference, vcf
+from app import chemprops, config, headspace, odormeta, reference, vcf
 from tests.test_headspace import EA, PFO, PFO_K, main  # noqa: F401 (fixture)
 from tests.test_tensor import call
 
@@ -123,7 +123,7 @@ def test_search(table):
                                 "chemicals": 3}
     names = [c["name"] for c in r["chemicals"]]
     assert names == ["ethanol", "ethyl acetate", "mystery", "linalool"]  # (the highest quantity first)
-    assert len(r["lines"]) == 8 and r["lines"][0] == [names.index("ethyl acetate"), 1, 0, "1", 1.0]
+    assert len(r["lines"]) == 8 and r["lines"][0] == [names.index("ethyl acetate"), 1, 0, "1", 1.0, "ethyl acetate"]
     assert r["references"] == ["Ref A", "Ref B", "Ref C", "Ref D"]
     # the median of each product's references (each reference's lines averaged), then of the products
     c = r["chemicals"][1]
@@ -149,6 +149,38 @@ def test_search(table):
         vcf.search(table, "  ")
     with pytest.raises(vcf.VcfError, match="one of median"):
         vcf.search(table, "kiwi", "mode")
+
+
+def test_search_merged(tmp_path, monkeypatch):
+    # linalool (in the odor table with no stereocenter given) as itself and as each enantiomer; a pentanol of unknown structure
+    monkeypatch.setattr(vcf, "_memo", OrderedDict())
+    rest = "KIWIFRUIT,{},,,,,,,,Fruits,KIWIFRUIT,{}"
+    p = tmp_path / "vcf.csv"
+    p.write_text(HEADER + "".join(f"{line}\n" for line in [
+        f'"{INCHI_LIN}",linalool,,' + rest.format("Ref A", 1), f'"{INCHI_LIN}/t10-/m1/s1",(S)-linalool,,' + rest.format("Ref A", 2),
+        f'"{INCHI_LIN}/t10-/m0/s1",(R)-linalool,,' + rest.format("Ref B", 3), f'"{INCHI_LIN}/t10-/m1/s1",(S)-linalool,,' + rest.format("Ref B", 4),
+        ',pentanol (unkn.str.),,' + rest.format("Ref A", 5)]))
+    table = vcf.load({"id": "vcf", "title": "VCF", "path": str(p), "fields": FIELDS})
+    index = odormeta.OdorIndex([{"id": 1, "name": "linalool", "abbrev": "lin", "cid": 6549, "inchi": f"InChI={INCHI_LIN}"},
+                                {"id": 2, "name": "1-pentanol", "abbrev": "1-5ol", "cid": 6276, "inchi": "InChI=1S/C5H12O/c1-2-3-4-5-6/h6H,2-5H2,1H3"}])
+    matches = vcf.match_odors(table, index)
+    assert [(m["odor_id"], m["how"]) for m in matches] == [(1, "inchi"), (1, "stereo"), (1, "stereo"), (None, "none")]
+    assert matches[3]["maybe"] == [{"id": 2, "name": "1-pentanol"}]
+    # one odor one: each sample's summed (Ref A 1 + 2, Ref B 3 + 4), then the median of the references
+    r = vcf.search(table, "kiwi", matches=matches, merge="sum")
+    lin, pent = r["chemicals"]
+    assert (lin["name"], lin["odor_id"], lin["ppm"], lin["lines"], lin["references"], lin["cid"]) == ("linalool", 1, 5.0, 4, 2, None)
+    assert [x["name"] for x in lin["parts"]] == ["linalool", "(S)-linalool", "(R)-linalool"] and r["products"][0]["chemicals"] == 2
+    assert r["lines"][1] == [0, 0, 0, None, 2.0, "(S)-linalool"] and r["merge"] == "sum"
+    # what may be miscounted: linalool given in Ref A with its (S)- enantiomer (its total?), not in Ref B (each enantiomer)
+    assert lin["ambiguity"] == {"stereo": ["(S)-linalool", "(R)-linalool"], "candidates": [], "maybe": [],
+                                "overlap": {"samples": 1, "of": 2, "parts": ["linalool", "(S)-linalool"]}}
+    assert pent["odor_id"] is None and pent["ambiguity"]["maybe"] == [{"id": 2, "name": "1-pentanol"}] and pent["ambiguity"]["overlap"] is None
+    # averaged, as a reference dataset's are by default; each of its own, matched to none
+    assert vcf.search(table, "kiwi", matches=matches)["chemicals"][1]["ppm"] == 2.5
+    assert [c["name"] for c in vcf.search(table, "kiwi")["chemicals"]] == ["pentanol (unkn.str.)", "(R)-linalool", "(S)-linalool", "linalool"]
+    with pytest.raises(vcf.VcfError, match="merged by one of"):
+        vcf.search(table, "kiwi", merge="first")
 
 
 def test_add_headspace(table):

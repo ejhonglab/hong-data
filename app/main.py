@@ -2539,7 +2539,8 @@ def _vcf_search(body: dict) -> dict:
     """`vcf.search` of a VCF reference dataset (``source``, its id; else the first of
     `vcf.sources`) for ``query``, its quantities reduced ``across_references`` and
     ``across_products``, each chemical with the odor of the odor table it is (``odor_id``,
-    matched as reference datasets' are), and its headspace over the samples
+    matched as reference datasets' are: `vcf.match_odors`; those of one odor one, merged as
+    the dataset's ``merge`` field says, as in the Compare tab), and its headspace over the samples
     (`vcf.add_headspace`), from what was looked up of it through chemutils, the rest asked
     to be looked up in the background (`_vcf_needs`): ``lookups`` says how many chemicals
     have something being looked up (``pending``) and differ from the file (``mismatches``,
@@ -2556,12 +2557,11 @@ def _vcf_search(body: dict) -> dict:
     if source is None:
         raise vcf.VcfError("no such VCF reference dataset" if body.get("source") else
                            "no VCF reference dataset: add one in the Admin tab (Reference data)")
-    res = vcf.search(vcf.load(source), str(body.get("query") or ""), body.get("across_references") or "median",
-                     body.get("across_products") or "median")
+    table = vcf.load(source)
+    res = vcf.search(table, str(body.get("query") or ""), body.get("across_references") or "median",
+                     body.get("across_products") or "median", vcf.match_odors(table, odormeta.OdorIndex(db.list_odors())),
+                     source["fields"].get("merge", reference.MERGES[0]))
     chems = res["chemicals"]
-    index = odormeta.OdorIndex(db.list_odors())
-    for c in chems:
-        c["odor_id"] = index.match_chemical({k: c[k] for k in ("cid", "inchi", "name") if c[k]}, c["name"])[0]
     known = [c for c in chems if c["cid"] and c["inchi"]]
     looked = db.vcf_properties(c["cid"] for c in known)
     now = time.time()

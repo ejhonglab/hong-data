@@ -527,6 +527,32 @@ def stereo_compatible(a: str, b: str) -> bool:
     return (sa[2] or sb[2]) and all(sa[1][k] != sb[1][k] for k in both)
 
 
+_UNKNOWN_STRUCTURE = re.compile(r"\(\s*unkn\.?\s*str\.?\s*\)")
+# a name's parts that tell isomers apart: stereo descriptors ('(E)-', '(1S,5R)-', '(+)-'), and
+# locants and prefixes of position or stereochemistry ('1-', '2,6-', 'alpha-', 'p-', 'cis-'),
+# also inside it ('hexen-1-ol')
+_ISOMER_PARTS = (re.compile(r"\([\d,\s+\-±rsezξ*]+\)-"),
+                 re.compile(r"(?<![a-z])(?:\d+[a-z]?'?(?:,\d+[a-z]?'?)*|alpha|beta|gamma|delta|[αβγδε]|cis|trans|endo|exo"
+                            r"|[ompndl]|dl|sec|tert)-"),
+                 re.compile(r"-\d+(?:,\d+)*-"))
+
+
+def name_stems(name: str) -> set[str]:
+    """A chemical's name, and the synonym it may give after it ('methylphenol (=cresol)'), each
+    without what tells isomers apart (`_ISOMER_PARTS`) or says its structure is unknown (VCF's
+    '(unkn.str.)'): '1-pentanol' and 'pentanol (unkn.str.)' are both 'pentanol'."""
+    s = _UNKNOWN_STRUCTURE.sub("", name.casefold())
+    main, _, synonym = s.partition("(=")
+    out = set()
+    for n in (main, synonym[:-1] if synonym.rstrip().endswith(")") else synonym):
+        for rx in _ISOMER_PARTS:
+            n = rx.sub("", n)
+        n = re.sub(r"[\s\-]+", "", n)
+        if len(n) > 2:
+            out.add(n)
+    return out
+
+
 # -------------------------------------------------------- datasets <-> odors
 
 
@@ -541,9 +567,12 @@ class OdorIndex:
         self.by_cid: dict[int, list[int]] = {}
         self.by_id_field: dict[str, dict[str, list[int]]] = {f: {} for f in ("inchi", "cas", "metacyc", "lotus")}
         self.by_skeleton: dict[str, list[int]] = {}  # (`inchi_skeleton`)
+        self.by_stem: dict[str, list[int]] = {}  # (`name_stems`)
         for o in odors:
             for n in [o["name"], *(o.get("aliases") or [])]:
                 self._add(self.by_name, n.casefold(), o["id"])
+                for s in name_stems(n):
+                    self._add(self.by_stem, s, o["id"])
             for lab in [o.get("abbrev"), *(o.get("aliases") or [])]:
                 if lab:
                     self._add(self.by_label, lab, o["id"])
@@ -591,7 +620,13 @@ class OdorIndex:
             return folded.pop(), "abbrev", []
         return None, "none", sorted(folded)
 
-    def match_chemical(self, ids: dict, label: str) -> tuple[Optional[int], str]:
+    def maybe(self, label: str) -> list[int]:
+        """The odors a chemical not identified (no CID or InChI) may be, by its name (`label`):
+        those named alike but for what tells isomers apart (`name_stems`), e.g. 1-pentanol and
+        3-pentanol of VCF's 'pentanol (unkn.str.)'."""
+        return list(dict.fromkeys(i for s in name_stems(label) for i in self.by_stem.get(s, [])))
+
+    def match_chemical(self, ids: dict, label: str, candidates: Optional[list] = None) -> tuple[Optional[int], str]:
         """The odor a chemical of a reference dataset is: by its CID, else its InChI, else as
         the same but for stereochemistry (its InChI `stereo_compatible` with the odor's:
         e.g. dl-menthone as menthone of no stereocenters given), else by its CAS, MetaCyc or
@@ -602,6 +637,7 @@ class OdorIndex:
             ids: the chemical's identifiers in the file (``cid``, ``inchi``, ``cas``,
                 ``metacyc``, ``lotus``, ``name``, ``abbrev``; any may be missing).
             label: its label in the file.
+            candidates: if given, the odors it could be are added to it when it is ambiguous.
 
         Returns:
             (odor id or None, how: 'cid' | 'inchi' | 'stereo' | 'cas' | 'metacyc' | 'lotus' |
@@ -630,6 +666,8 @@ class OdorIndex:
             if len(found) == 1:
                 return found[0], how
             if len(found) > 1:
+                if candidates is not None:
+                    candidates.extend(found)
                 return None, "ambiguous"
         return None, "none"
 

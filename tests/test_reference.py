@@ -146,14 +146,28 @@ def test_match_stereo():
     ix = odormeta.OdorIndex([menthone, {**menthone, "id": 3, "name": "l-menthone", "abbrev": "lmen", "cid": 26447, "inchi": L_MENTHONE}])
     assert ix.match_chemical({"inchi": L_MENTHONE}, "") == (3, "inchi") and ix.match_chemical({"inchi": D_ISOMENTHONE}, "") == (1, "stereo")
     ix = odormeta.OdorIndex([{**menthone, "inchi": L_MENTHONE}, {**menthone, "id": 3, "name": "d-isomenthone", "inchi": D_ISOMENTHONE}])
-    assert ix.match_chemical({"inchi": MENTHONE}, "") == (None, "ambiguous")
+    cands = []
+    assert ix.match_chemical({"inchi": MENTHONE}, "", cands) == (None, "ambiguous") and cands == [1, 3]
+
+
+def test_maybe():
+    # by name, but for what tells isomers apart: of chemicals with no structure given (VCF's "(unkn.str.)")
+    stems = odormeta.name_stems
+    assert stems("methylphenol (unkn.str.) (=cresol (unkn.str.))") == {"methylphenol", "cresol"}
+    assert stems("(E)-2-hexenal") == stems("trans-2-hexenal") == {"hexenal"} and stems("p-1-menthen-8-ol") == {"menthenol"}
+    assert stems("alpha-terpineol") == stems("α-terpineol (=p-1-menthen-8-ol)") - {"menthenol"} == {"terpineol"}
+    assert stems("(1S,5R)-(+)-sabinene") == {"sabinene"} and "butanone" not in stems("x (=4-(3-hydroxy-2-methylphenyl)-2-butanone)")
+    ix = odormeta.OdorIndex([{"id": 1, "name": "1-pentanol", "abbrev": "1-5ol"}, {"id": 2, "name": "3-octanol", "abbrev": "3oct"},
+                             {"id": 3, "name": "p-cresol", "abbrev": "pcre", "aliases": ["4-methylphenol"]}])
+    assert ix.maybe("pentanol (unkn.str.)") == [1] and ix.maybe("octanol (unkn.str.)") == [2] and ix.maybe("hexanol (unkn.str.)") == []
+    assert ix.maybe("methylphenol (unkn.str.) (=cresol (unkn.str.))") == [3]
 
 
 def test_list_stereo(env, tmp_path):
     # linalool (in the odor table with no stereocenter given) twice: as itself and as one enantiomer
     p = write(tmp_path / "refs" / "vcf.csv", "name,inchi,product_name,reference,quantity\n"
               f'linalool,"{INCHI_LIN}",APPLE,A,1\n(S)-linalool,"{S_LINALOOL}",APPLE,A,2\n(S)-linalool,"{S_LINALOOL}",BEER,B,4\n'
-              "ethyl acetate,,BEER,B,3\nmystery,,BEER,B,5\n")
+              "ethyl acetate,,BEER,B,3\nmystery,,BEER,B,5\nheptanone (unkn.str.),,BEER,B,6\n")
     sandbox.activate({"read_dirs": [str(tmp_path / "refs")], "write_dirs": []})
     fields = {"layout": "list", "rows": {"label": "name", "keep": ["inchi"]}, "cols": {"label": "product_name", "keep": ["reference"]},
               "value": "quantity", "empty": "missing", "merge": "sum"}
@@ -161,7 +175,7 @@ def test_list_stereo(env, tmp_path):
     assert c["fields"]["used"]["merge"] == "sum"
     full = ("1 of the 2 odors of the Odors table it has (each once, its rows of one merged) is matched only as the same but for "
             "stereochemistry that one of the two leaves unspecified: linalool, as (S)-linalool. "
-            "Its rows so matched have 2 of the 4 values (not 0 or missing) of those 2 (50%), and of its 5 (40%).")
+            "Its rows so matched have 2 of the 4 values (not 0 or missing) of those 2 (50%), and of its 6 (33%).")
     assert c["preview"]["stereo_warning"] == full
     assert call(env.admin_reference_add, body={"path": str(p), "title": "VCF", "fields": fields})[0] == 200
     listed = next(r for r in call(env.reference_list)[1]["datasets"] if r["id"] == "vcf")
@@ -169,7 +183,12 @@ def test_list_stereo(env, tmp_path):
     assert listed["chemicals"]["odor_ids"] == [4, 4, 1]
     r = call(env.reference_get, path_params={"ref_id": "vcf"})[1]
     assert r["stereo_warning"] == full and r["chemicals"]["merge"] == "sum"
-    assert [x["chem"]["how"] for x in r["rows"]] == ["inchi", "stereo", "name", "none"]
+    assert [x["chem"]["how"] for x in r["rows"]] == ["inchi", "stereo", "name", "none", "none"]
+    # what is not resolved: linalool given with its (S)- enantiomer in one product (its total?), a heptanone of no structure
+    assert r["unresolved_warning"] == (
+        "2 odors of the Odors table it has, or may have, may be miscounted, unresolved: 2-heptanone: heptanone (unkn.str.), "
+        "of no structure given, may be it (not counted as it). linalool: in 1 of its columns, linalool, (S)-linalool, which may "
+        "be one another's total or the same, not distinct isomers (summed, so counted twice if so).")
     # none so matched: no warning; merged as averaged unless said
     fields = {**fields, "rows": {"label": "name", "keep": []}}
     fields.pop("merge")

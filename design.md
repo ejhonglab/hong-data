@@ -1270,7 +1270,21 @@ and columns (by the fields chosen for it), and its values taken as mg/kg.
   reference dataset's matrix: e.g. two cultivars), then reduced across the product's
   references, then across products (median by default; mean, geometric mean, max or
   min), each over those that quantify it: a paper that does not list a chemical may not
-  have looked for it, so absence is not taken as 0.
+  have looked for it, so absence is not taken as 0. Its chemicals that are one odor of the
+  odor table (`vcf.match_odors`, as its reference dataset's are matched: CID, InChI, the
+  same but for stereochemistry, ...) are one, as in the Compare tab: in each sample, their
+  quantities merged by the dataset's ``merge`` field (`vcf._MERGE`, as
+  `reference.MERGES`), before the reductions; its constants and vapor pressure of the one
+  that is the odor's own CID or InChI, else with the most lines (stereoisomers' differ
+  little, enantiomers' not at all).
+- **Ambiguity** (`search`'s ``ambiguity``, said as the Reference data tab says it,
+  `reference.unresolved`): what may be miscounted, unresolved, first: an odor's chemicals
+  given in one sample that `reference.may_overlap` (the same, or one leaving unspecified
+  what the other gives, so maybe its total: summed, twice; or not, as VCF's isomenthone,
+  whose InChI has no stereo layers, beside dl-menthone), a chemical with no CID or InChI
+  that may be an odor by its name (`OdorIndex.maybe`: names but for locants and
+  stereo descriptors, so `pentanol (unkn.str.)` may be 1-pentanol), one that could be
+  several odors; then the odors only as the same but for stereochemistry.
 - **Headspace over the samples** (`headspace.sample`, `vcf.add_headspace`): each taken as
   water (0.997 g/mL), each chemical on its own (dilute): c = ppm · ρ_water / M,
   p = c / H_cp, at most its vapor pressure; else Raoult's law with its vapor pressure,

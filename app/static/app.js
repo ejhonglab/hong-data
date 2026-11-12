@@ -4212,7 +4212,7 @@ class Reference {
       }
       msgs.push(box);
     }
-    if (ref.stereo_warning) msgs.push(msgBox('warn', `<b>${esc(ref.stereo_warning)}</b>`));
+    for (const w of [ref.stereo_warning, ref.unresolved_warning]) if (w) msgs.push(msgBox('warn', `<b>${esc(w)}</b>`));
     const notes = [];
     if (c.axis && c.odors) {
       notes.push(`Its ${c.axis === 'rows' ? 'rows' : 'columns'} are odors as datasets write them (<code>&lt;abbreviation&gt; @ &lt;log10 conc&gt;</code>):
@@ -8000,6 +8000,49 @@ const HS_MAX_ODORS = 50; // in a mixture (main.HEADSPACE_MAX_ODORS)
 const HS_VCF_LAW = { henry: "Henry's law", raoult: "vapor pressure (Raoult's law)" }; // (over the samples)
 const hsPlural = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
 const hsNotes = (notes) => (notes.length ? `<ul>${notes.map((t) => `<li>${t}</li>`).join('')}</ul>` : ''); // (each HTML)
+const HS_VCF_MERGED = { sum: 'summed', mean: 'averaged', max: 'the highest taken' }; // (reference.MERGES)
+
+// what may make a VCF search's chemicals (as /api/headspace/vcf gives them, `vcf.search`'s
+// ambiguity) miscounted, as the Reference data tab warns of it: {html: warnings of it all
+// (first what is not resolved, then the odors of the odor table only as the same but for
+// stereochemistry), of: chemical -> what of it, as text}
+function hsVcfAmbiguity(chems, merge, odorName = () => null) {
+  const of = new Map(), unresolved = [], stereo = [];
+  const add = (c, text) => of.set(c, [of.get(c), text].filter(Boolean).join('; '));
+  const named = (xs) => xs.map((x) => x.name).join(' or ');
+  const odorRow = new Map(chems.filter((c) => c.odor_id != null).map((c) => [c.odor_id, c]));
+  for (const c of chems) {
+    const a = c.ambiguity;
+    if (a.overlap) {
+      const t = `in ${hsPlural(a.overlap.samples, 'sample')} of the ${a.overlap.of} quantifying it, VCF gives ${a.overlap.parts.join(' and ')},
+        which may be one another's total or the same chemical, not distinct isomers (${HS_VCF_MERGED[merge] || merge}${merge === 'sum' ? ', so then counted twice' : ''})`;
+      add(c, t);
+      unresolved.push([c.name, t]);
+    }
+    for (const [odors, t, also] of [[a.maybe, `of no structure given in VCF, may be ${named(a.maybe)}, but is not counted as ${a.maybe.length > 1 ? 'any of them' : 'it'}`,
+      'may be it too (no structure given in VCF), but is not counted as it'],
+    [a.candidates, `could be ${named(a.candidates)}, so is counted as none of them`, 'could be it too, but is not counted as it']]) {
+      if (!odors.length) continue;
+      add(c, t);
+      unresolved.push([c.name, t]);
+      for (const o of odors) if (odorRow.has(o.id)) add(odorRow.get(o.id), `${c.name} ${also}`);
+    }
+    if (a.stereo.length) {
+      const odor = odorName(c.odor_id) || 'the odor';
+      const t = `${c.parts.length > 1 ? `${a.stereo.join(', ')} ${a.stereo.length > 1 ? 'are' : 'is'}` : 'it is'} ${odor} of the odor table only as the same
+        but for stereochemistry that one of the two leaves unspecified`;
+      add(c, t);
+      stereo.push([c.name, t]);
+    }
+  }
+  const list = (xs) => `<ul class="small">${xs.slice(0, 20).map(([n, t]) => `<li><b>${esc(n)}</b>: ${esc(t)}</li>`).join('')}${
+    xs.length > 20 ? `<li>and ${xs.length - 20} more (⚠ below, and in the CSV)</li>` : ''}</ul>`;
+  const html = (unresolved.length ? `<div class="msg warn"><b>${unresolved.length === 1 ? 'This may be' : 'These may be'} miscounted, unresolved
+      (⚠ by ${unresolved.length === 1 ? 'it' : 'each'} below):</b>${list(unresolved)}</div>` : '')
+    + (stereo.length ? `<div class="msg warn"><b>${stereo.length === 1 ? 'An odor' : 'Odors'} of the odor table here only as the same but for
+      stereochemistry (as matched in the Reference data and Compare tabs):</b>${list(stereo)}</div>` : '');
+  return { html, of };
+}
 
 // a value linked to the first URL in where it is from (as VCF's file gives them), titled by all of that
 function sourceLink(html, source) {
@@ -8137,7 +8180,12 @@ class HeadspaceVcf {
     const odors = this.page.odors;
     const showAbbrev = abbrevShower([...(odors?.values() || [])].map((o) => o.abbrev));
     const plural = hsPlural;
-    const name = (c) => (c.url ? `<a href="${esc(c.url)}" target="_blank" rel="noopener" title="Its page in VCF">${esc(c.name)}</a>` : esc(c.name));
+    const vcfLink = (p) => (p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener" title="Its page in VCF">${esc(p.name)}</a>` : esc(p.name));
+    const ambiguity = hsVcfAmbiguity(chems, res.merge, (id) => odors?.get(id)?.name);
+    const warned = (c) => (ambiguity.of.has(c) ? ` <span class="warn" title="${esc(ambiguity.of.get(c))}">⚠</span>` : '');
+    // (of several chemicals of the file that are one odor: the odor's name, and theirs under it)
+    const name = (c) => (c.parts.length > 1 ? `${esc(c.name)}${warned(c)}<div class="muted small">${c.parts.map(vcfLink).join(', ')}:
+      ${HS_VCF_MERGED[res.merge] || res.merge} in each sample</div>` : `${vcfLink(c)}${warned(c)}`);
     const cid = (c) => (c.cid ? `<a href="https://pubchem.ncbi.nlm.nih.gov/compound/${c.cid}" target="_blank" rel="noopener">${c.cid}</a>` : '<span class="muted">none</span>');
     const odor = (c) => {
       const o = c.odor_id != null ? odors?.get(c.odor_id) : null;
@@ -8167,7 +8215,8 @@ class HeadspaceVcf {
     const productRows = products.map((p) => `<tr><td>${esc(p.name)}</td><td>${esc(p.category || '')}</td><td>${esc(p.group || '')}</td>
       <td class="num">${p.references}</td><td class="num">${p.chemicals}</td><td class="num">${p.lines}</td></tr>`).join('');
     const lineOrder = lines.map((_, k) => k).sort((a, b) => rank.get(lines[a][0]) - rank.get(lines[b][0]) || (lines[b][4] ?? -1) - (lines[a][4] ?? -1));
-    const lineRows = lineOrder.slice(0, HS_VCF_MAX_LINES).map((k) => lines[k]).map(([ci, pi, ri, qty, v]) => `<tr><td>${esc(chems[ci].name)}</td>
+    const lineRows = lineOrder.slice(0, HS_VCF_MAX_LINES).map((k) => lines[k]).map(([ci, pi, ri, qty, v, named]) => `<tr><td>${esc(named)}${
+      chems[ci].parts.length > 1 ? ` <span class="muted small">(${esc(chems[ci].name)})</span>` : ''}</td>
       <td>${esc(products[pi].name)}</td><td class="hs-ref">${esc(references[ri])}</td><td class="num">${esc(qty ?? '')}</td><td class="num">${sigHtml(v)}</td></tr>`).join('');
     const per = (c) => new Map(c.per_product.map(([i, v, n], j) => [i, { ppm: v, refs: n, pa: c.per_product_pa[j] }]));
 
@@ -8213,12 +8262,12 @@ class HeadspaceVcf {
     const lk = res.lookups || { pending: 0, mismatches: 0 };
     const mismatched = order.map((i) => chems[i]).filter((c) => c.mismatches.length);
     const what = (c) => c.mismatches.map((m) => (m.prop === 'k_henry' ? 'K_H' : 'vapor pressure')).join(' and ');
-    const notices = (lk.pending ? `<p class="msg info">Looking up K<sub>H</sub> and vapor pressures of ${plural(lk.pending, 'chemical')} through chemutils,
+    const notices = ambiguity.html + (lk.pending ? `<p class="msg info">Looking up K<sub>H</sub> and vapor pressures of ${plural(lk.pending, 'chemical')} through chemutils,
         in the background: those VCF's file lacks first, then checking those it has (a few seconds each, the first time: kept). This updates as they come.</p>` : '')
       + (mismatched.length ? `<p class="msg warn">For ${plural(mismatched.length, 'chemical')} of these, chemutils finds a K<sub>H</sub> or vapor pressure
         that differs from VCF's file's by more than ${Math.round(lk.tolerance * 100)}%: what it finds is used (⚠ by the file's, below).
         <span class="small">${mismatched.slice(0, 12).map((c) => `${esc(c.name)} (${what(c)})`).join(', ')}${mismatched.length > 12 ? `, and ${mismatched.length - 12} more` : ''}.</span></p>` : '');
-    const across = `each reference's lines on a product averaged, the ${statLabel(this.asked.across_references)} of each product's references${several ? `, then the ${statLabel(this.asked.across_products)} of the products` : ''}, of those that quantify it`;
+    const across = `each reference's lines on a product averaged${chems.some((c) => c.parts.length > 1) ? ` (and of those that are one odor of the odor table, ${HS_VCF_MERGED[res.merge] || res.merge}, as in the Compare tab)` : ''}, the ${statLabel(this.asked.across_references)} of each product's references${several ? `, then the ${statLabel(this.asked.across_products)} of the products` : ''}, of those that quantify it`;
     box.innerHTML = `${head}${notices}
       <h3>Products</h3>
       <div class="hs-wide"><table class="odor-table hs-table"><thead><tr><th>Product</th><th>Category</th><th>Group</th><th class="num">References</th>
@@ -8324,13 +8373,14 @@ class HeadspaceVcf {
     let rows;
     if (which === 'lines') {
       rows = [['chemical', 'inchi', 'cid', 'odor', 'product', 'category', 'group', 'reference', 'quantity', 'mg_kg'],
-        ...lines.map(([ci, pi, ri, qty, v]) => {
-          const c = chems[ci], p = products[pi];
-          return [c.name, c.inchi ?? '', c.cid ?? '', odor(c), p.name, p.category ?? '', p.group ?? '', references[ri], qty ?? '', v ?? ''];
+        ...lines.map(([ci, pi, ri, qty, v, named]) => {
+          const c = chems[ci], p = products[pi], part = c.parts.find((x) => x.name === named) || c;
+          return [named, part.inchi ?? '', part.cid ?? '', odor(c), p.name, p.category ?? '', p.group ?? '', references[ri], qty ?? '', v ?? ''];
         })];
     } else {
       const withOil = oil && !oil.error;
-      rows = [['chemical', 'inchi', 'cid', 'odor', 'molar_mass_g_mol', 'lines', 'references', 'products', 'min_mg_kg', 'max_mg_kg', 'mg_kg',
+      const ambiguity = hsVcfAmbiguity(chems, this.res.merge, (id) => this.page.odors?.get(id)?.name).of;
+      rows = [['chemical', 'inchi', 'cid', 'odor', 'vcf_chemicals', 'ambiguity', 'molar_mass_g_mol', 'lines', 'references', 'products', 'min_mg_kg', 'max_mg_kg', 'mg_kg',
         ...products.map((p) => `mg_kg ${p.name}`), 'law', 'k_henry_mol_m3_pa', 'k_henry_from', 'k_henry_source', 'file_k_henry_mol_m3_pa',
         'vapor_pressure_kpa', 'vapor_pressure_from', 'vapor_pressure_source', 'file_vapor_pressure_kpa',
         ...HS_UNITS.map(([k]) => `headspace_${k}`), ...products.map((p) => `headspace_pa ${p.name}`), 'notes',
@@ -8339,7 +8389,8 @@ class HeadspaceVcf {
       chems.forEach((c, i) => {
         const per = new Map(c.per_product.map(([j, v], n) => [j, [v, c.per_product_pa[n]]]));
         const r = withOil ? oil.chemicals[i] : null;
-        rows.push([c.name, c.inchi ?? '', c.cid ?? '', odor(c), c.molar_mass ?? '', c.lines, c.references, c.products, c.min ?? '', c.max ?? '', c.ppm ?? '',
+        rows.push([c.name, c.inchi ?? '', c.cid ?? '', odor(c), c.parts.map((p) => p.name).join('; '), ambiguity.get(c) ?? '',
+          c.molar_mass ?? '', c.lines, c.references, c.products, c.min ?? '', c.max ?? '', c.ppm ?? '',
           ...products.map((_, j) => per.get(j)?.[0] ?? ''), c.law ?? '', c.k_henry ?? '', c.k_henry_from ?? '', c.k_henry_source ?? '',
           c.file.k_henry ?? '', c.vapor_pressure ?? '', c.vapor_pressure_from ?? '', c.vapor_pressure_source ?? '', c.file.vapor_pressure ?? '', ...HS_UNITS.map(([, , , f]) => (c.pa == null ? '' : f(c.pa, c.molar_mass) ?? '')),
           ...products.map((_, j) => per.get(j)?.[1] ?? ''), [...c.notes, ...c.headspace_notes].join('; '),

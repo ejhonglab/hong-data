@@ -584,7 +584,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   warning is ticked. Another is by one with chemicals matched to the Odors tab only as
   the same but for stereochemistry (e.g. VCF's dl-menthone as menthone, whose
   stereocenters the Odors tab leaves unspecified): how many of the odors it has (each
-  once) are, which, and how many of its values (not 0 or missing) are theirs. Of a table with chemicals not in the Odors table too, a box under
+  once) are, which, and how many of its values (not 0 or missing) are theirs. A third,
+  by the matrix, lists the odors that may be miscounted, unresolved, as the Headspace
+  calculator's VCF search does (below). Of a table with chemicals not in the Odors table too, a box under
   its notes shows only those that are (and of its other axis, only what any of them is
   not 0 or missing in, e.g. the pathways they are in). One that cannot be read is listed
   by its name alone, with why.
@@ -718,7 +720,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     (suggested as you type). Shown: the products matched, every matching line, each
     chemical's quantity in the samples (mg/kg: each reference's lines on a product
     averaged, then the median of a product's references, then of the products; or the
-    mean, geometric mean, maximum or minimum), and the headspace over the samples taken
+    mean, geometric mean, maximum or minimum; its chemicals that are one odor of the
+    Odors tab one, as the Compare tab has them: in each sample merged as the dataset
+    says, e.g. summed, named by the odor with theirs under it), and the headspace over the samples taken
     as water, by Henry's law, else by Raoult's law with its vapor pressure, saying which.
     Both are looked up again through chemutils in the background (those the file lacks
     first, then those it has, to check them; kept apart from the odor table's, and the
@@ -726,7 +730,13 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     estimates (*estimate*: a Henry's law constant from solubility over vapor pressure, a
     vapor pressure from the structure). Where what it finds differs from the file's by
     more than 10%, a warning lists those chemicals, and the file's value is shown by each
-    (⚠). *Sort the tables by* quantity (the default), headspace or name. With up to 8
+    (⚠). Warnings above the tables (and ⚠ by each, said in its CSV too) list what may
+    be miscounted, unresolved: an odor given in a sample both as itself and as a
+    stereoisomer of it (maybe its total, then summed twice; or VCF's isomenthone, whose
+    InChI gives no stereochemistry, beside dl-menthone), a chemical of no structure given
+    that may be an odor by its name (`pentanol (unkn.str.)`, 1-pentanol: not counted as
+    it), one that could be two odors (neither); and then the odors here only as the same
+    but for stereochemistry. *Sort the tables by* quantity (the default), headspace or name. With up to 8
     products, each product's values are columns too. If
     chosen, also the v/v of each in paraffin oil, all together, that gives the same
     headspace (by Henry's law with constants estimated as chemutils does, or Raoult's law only);
