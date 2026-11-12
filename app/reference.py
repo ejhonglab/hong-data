@@ -521,9 +521,10 @@ def describe_fields(path: Path) -> dict:
     """A file's fields, for choosing which make a matrix's rows, columns and values (the
     Admin tab): ``kind`` ('table' | 'dataarray'), ``fields`` ({name, samples (a few
     values), distinct (how many), numeric (share of its values that are numbers), and
-    for a DataArray, ``dim``}), ``dims`` (a DataArray's) and ``suggested`` (choices to
-    start from, as `parse` takes them: for a table, ``layout`` 'list' if it looks like
-    one, one value per line, else 'matrix'). Of a MetaCyc bundle: ``kind`` 'metacyc', its
+    for a DataArray, ``dim``; of a table, ``id``: the identifier it is, if any}), ``dims``
+    (a DataArray's) and ``suggested`` (choices to start from, as `parse` takes them: for a
+    table, ``layout`` 'list' if it looks like one, one value per line, else 'matrix'; of
+    VCF's, as for it, then with ``recognized`` 'vcf', `_vcf_suggested`). Of a MetaCyc bundle: ``kind`` 'metacyc', its
     ``about`` (version, when built, counts) and its view's options to start from; of a
     LOTUS bundle, ``kind`` 'lotus', its ``about`` (`lotus.about_summary`), the options to
     start from and the ``choices`` of each (`lotus.choices`)."""
@@ -570,26 +571,54 @@ def describe_fields(path: Path) -> dict:
         numeric = float(pd.to_numeric(pd.Series(given, dtype=object), errors="coerce").notna().mean()) if given else 0.0
         out.append({"name": str(k), "samples": list(dict.fromkeys(given))[:3], "distinct": len(set(given)), "numeric": round(numeric, 3),
                     "id": _ID_FIELD.get(_header_key(str(k)))})
+    names = [f["name"] for f in out]
+    vcf_like = _vcf_suggested(names)
+    if vcf_like:
+        return {"kind": "table", "dims": None, "fields": out, "suggested": vcf_like, "recognized": "vcf"}
     n = len(df)
-    ids = _id_fields([f["name"] for f in out])
+    ids = _id_fields(names)
     links = lambda f: bool(f["samples"]) and all(re.match(r"https?://", v) for v in f["samples"])
     numeric = [f["name"] for f in out if f["numeric"] > 0.5 and f["name"] not in ids]
     text = [f for f in out if f["name"] not in numeric]
-    # one value per line: few columns of numbers (but identifiers), and at least two of text
-    # whose values repeat (a row's and a column's), as a matrix's labels do not
-    looks_long = len(numeric) <= 2 and sum(1 for f in text if f["name"] not in ids and f["distinct"] < n and not links(f)) >= 2
-    row_label = (next((f["name"] for f in text if _header_key(f["name"]) in ID_HEADERS["name"]), None)
-                 or next((f["name"] for f in text if f["name"] not in ids), None))
-    # a column of mostly numbers, by its name if one says so; else presence
-    value_like = lambda f: bool(re.search(r"value|quantit|conc|amount|abundance|response", f["name"], re.I))
-    value = ([f["name"] for f in out if f["numeric"] > 0.5 and value_like(f)] or numeric or [None])[0]
+    row = (next((f for f in text if _header_key(f["name"]) in ID_HEADERS["name"]), None)
+           or next((f for f in text if f["name"] not in ids), None))
+    row_label = row and row["name"]
+    # a column of mostly numbers, by its name if one says so (of those, the most numbers); else presence
+    value_like = lambda f: bool(re.search(r"value|quantit|conc|amount|abundance|response|ppm|ppb", f["name"], re.I))
+    likely = [f for f in out if f["numeric"] > 0.5 and value_like(f) and f["name"] not in ids]
+    value = max(likely, key=lambda f: f["numeric"])["name"] if likely else (numeric or [None])[0]
     # a column's label: text (not a value's, however few of them are numbers)
     col_label = next((f["name"] for f in text if f["name"] not in ids and f["name"] != row_label and f["name"] != value
                       and not value_like(f) and f["numeric"] <= 0.1 and 1 < f["distinct"] < n and not links(f)), None)
+    # one value per line: its rows' labels repeat (each row on several lines), as a matrix's do
+    # not, and a column's label can be found (however many other columns have numbers, e.g.
+    # properties of each row's chemical)
+    looks_long = bool(row) and col_label is not None and 0 < row["distinct"] <= LONG_LABELS * n
     suggested = {"layout": "list" if looks_long else "matrix",
                  "rows": {"label": row_label, "keep": [k for k in ids if k != row_label]},
                  "cols": {"label": col_label, "keep": []}, "value": value, "empty": "missing"}
     return {"kind": "table", "dims": None, "fields": out, "suggested": suggested}
+
+
+LONG_LABELS = 0.8  # a table whose rows' labels are no more than this share of its lines is taken for one value per line
+
+
+def _vcf_suggested(names: list[str]) -> Optional[dict]:
+    """The fields to make a matrix of a file that is VCF's, as made by the vcf repo's scripts
+    (with Henry's law constants or vapor pressures, as the Headspace calculator takes it,
+    `vcf.PROPERTY_COLUMNS`; and ``name`` and ``product_name``): a chemical's lines one row
+    (told apart by its InChI and CID), a product as one paper (``reference``) gives it one
+    column (with its group and category), the midpoints of quantities' ranges its values if
+    the file has them (``mid_ppm``), and of its chemicals one odor, their amounts summed. None
+    if it is not VCF's."""
+    from . import vcf  # (which imports this module)
+
+    have = set(names)
+    if not have & set(vcf.PROPERTY_COLUMNS) or not {"name", "product_name"} <= have:
+        return None
+    return {"layout": "list", "rows": {"label": "name", "keep": [k for k in ("inchi", "cid") if k in have]},
+            "cols": {"label": "product_name", "keep": [k for k in ("reference", "group", "category") if k in have]},
+            "value": next((v for v in ("mid_ppm", "quantity") if v in have), None), "empty": "missing", "merge": "sum"}
 
 
 def _fields(spec: Any) -> Optional[dict]:

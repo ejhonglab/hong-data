@@ -744,7 +744,14 @@ between the frontend and the server. Using the app is described in
   `data/references/<id>/` (its labels and identifiers as JSON, its numbers as float32,
   or of a matrix most of whose cells are 0, its other cells: `sparse.Sparse`, as
   `values.npz`), made again whenever the file's size or time changes; a failed read is kept too, so a
-  broken file is not read on every listing. A file outside the folders the server may
+  broken file is not read on every listing. The fields its form starts from
+  (`reference.describe_fields`) take a table for one value per line when its rows'
+  labels repeat (at most `LONG_LABELS` of its lines distinct), not by how few fields have
+  numbers (VCF's has five: quantity, max_ppm, mid_ppm and its chemicals' properties); and
+  VCF's CSV, recognized as the Headspace calculator recognizes it (`_vcf_suggested`), starts
+  from its own fields, as they cannot be guessed and wrong ones give plausible numbers:
+  each product as one paper gives it a column (else papers are averaged), `mid_ppm` (else
+  42% of quantities, ranges and 'trace', are missing), its chemicals of one odor summed. A file outside the folders the server may
   read is added to them as itself (Landlock takes a rule on a single file), not its
   folder, and read after the next restart, like any other change to them; deleting the
   dataset takes it off again unless another one needs it. Its chemicals are matched to

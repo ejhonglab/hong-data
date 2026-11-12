@@ -848,8 +848,11 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     columns are chemicals (or found from identifier columns, e.g. `cid`, `pubchem_cid`,
     `inchi`, `cas`, `name`, or rows labelled so; of a DataArray, coordinates named so).
     Once read, its fields are listed, to choose which make the matrix (the rest are
-    ignored): a table laid out as its matrix, or one value per line (a long table, e.g.
-    VCF's: suggested when it looks like one), whose rows and columns are each
+    ignored): a table laid out as its matrix, or one value per line (a long table:
+    suggested when the labels of its rows repeat, each on several lines; VCF's CSV, as
+    the vcf repo makes it, is recognized, and its own fields suggested: rows `name` with
+    `inchi` and `cid`, columns `product_name` with `reference`, `group` and `category`,
+    values `mid_ppm` in ppm, its chemicals of one odor summed), whose rows and columns are each
     combination of the fields chosen for them (labelled by the first, the others told
     apart and shown on hover), and whose values are a field of numbers (the mean of
     several lines of a cell) or presence (1 where a line lists a row and column); of a

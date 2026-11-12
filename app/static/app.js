@@ -5385,6 +5385,11 @@ class AdminPage {
         ${of.length ? `<span class="muted">and</span> ${of.map((x) => `<label class="chip" title="${tip(x)}"><input type="checkbox" data-keep value="${esc(x.name)}"${keep.has(x.name) ? ' checked' : ''}${x.name === spec.label ? ' disabled' : ''}> ${named(x)}</label>`).join('')}` : ''}</div>`;
     };
     const parts = ['<h4>Its fields</h4>'];
+    if (f.recognized === 'vcf') {
+      parts.push(`<p class="small">VCF's CSV (as the vcf repo makes it): its fields suggested for it, each chemical's lines a row, each product as one
+        paper gives it a column, its values the midpoints of ranges (<code>mid_ppm</code>, if it has them; ppm), and its chemicals that are one odor summed.</p>`);
+      if (!this.editing && !$('#ref-value-label').value.trim()) $('#ref-value-label').value = 'ppm';
+    }
     if (f.kind === 'table') {
       parts.push(`<div class="ref-role"><b>Layout</b>
         <label class="chip"><input type="radio" name="ref-layout" value="matrix"${u.layout !== 'list' ? ' checked' : ''}> a matrix, as laid out (labels in its first column)</label>

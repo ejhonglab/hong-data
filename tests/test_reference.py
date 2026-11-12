@@ -538,6 +538,20 @@ def test_list(env, tmp_path, monkeypatch):
     # a matrix as laid out is not taken for a list
     m = write(tmp_path / "m.csv", "chemical,cid,banana,apple\nlinalool,6549,1,2\nethyl acetate,8857,2,3\nfoo,,3,4\n")
     assert reference.describe_fields(m)["suggested"]["layout"] == "matrix"
+    # one value per line however many other fields have numbers (each chemical's properties): its rows' labels repeat
+    long = write(tmp_path / "long.csv", "chemical,product,amount,molar_mass,boiling_point\n"
+                 "ethyl acetate,APPLE,1,88.1,77\nlinalool,APPLE,2,154.2,198\nethyl acetate,BEER,3,88.1,77\nlinalool,BEER,4,154.2,198\n")
+    d = reference.describe_fields(long)
+    assert d["suggested"] == {"layout": "list", "rows": {"label": "chemical", "keep": []}, "cols": {"label": "product", "keep": []},
+                              "value": "amount", "empty": "missing"} and "recognized" not in d
+    # VCF's (as the vcf repo makes it, with Henry's law constants): its own fields, the midpoints, summed
+    vcf = write(tmp_path / "vcf2.csv", "inchi,name,quantity,product_name,reference,vcf_url,cid,k_henry,vapor_pressure,group,category,max_ppm,mid_ppm\n"
+                '"1S/C4H8O2/c1-3-6-4(2)5/h3H2,1-2H3",ethyl acetate,2-4,APPLE,Ref A,https://x/1,8857,0.059,12.6,Fruits,APPLE,4,3\n'
+                '"1S/C4H8O2/c1-3-6-4(2)5/h3H2,1-2H3",ethyl acetate,1,BEER,Ref B,https://x/1,8857,0.059,12.6,Drinks,BEER,1,1\n')
+    d = reference.describe_fields(vcf)
+    assert d["recognized"] == "vcf" and d["suggested"] == {
+        "layout": "list", "rows": {"label": "name", "keep": ["inchi", "cid"]}, "cols": {"label": "product_name", "keep": ["reference", "group", "category"]},
+        "value": "mid_ppm", "empty": "missing", "merge": "sum"}
     # too large a matrix: refused, saying how large
     monkeypatch.setattr(reference, "MAX_CELLS", 3)
     with pytest.raises(reference.ReferenceError, match="2 rows × 2 columns"):
