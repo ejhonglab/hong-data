@@ -651,6 +651,8 @@ function neuralOrder(data, { rowOrder, roiSort, odorOrder }) {
 
 // The order clustering starts from (ties keep it), whatever order is shown
 const CLUSTER_INPUT_ORDER = { rowOrder: 'fly', roiSort: 'file', odorOrder: 'file' };
+// Browse's order of ROIs to start with (as the viewer's options are at first), as Compare orders them
+const ROI_ORDER = { rowOrder: 'fly', roiSort: 'file', odorOrder: 'file' };
 
 // The items of one axis less those removed, in the order they were dragged into if they
 // were. edit: {removed: Set of keys, order: [keys] or null}
@@ -1227,7 +1229,8 @@ class MatrixViewer {
   // calculated (`setResponseCalc`)
   // it can be clustered (by rows and/or columns, as neural data can) if it says what its rows and
   // columns are: `cluster` ({rows, cols}, e.g. 'KCs' and 'odors'); its meta's `colormap`: the
-  // sequential one to start with
+  // sequential one to start with, and `row_group_label`, `col_group_label`: what its rows' and
+  // columns' groups are ('group' if not said). Its columns' groups, if any, come each together.
   setGenericData(ref, { title = '', fileStem = 'heatmap', kind: viewerKind = 'generic', kc = false, responseCalc = null } = {}) {
     this._setKind(viewerKind);
     this.title = title;
@@ -1241,7 +1244,7 @@ class MatrixViewer {
       this.hideBad = ref.cols.some((c) => c.bad);
       this._editsFor(ref);
       const values = matrixValues(ref), square = !!ref.square, nC = ref.cols.length;
-      const hasGroups = ref.rows.some((r) => r.group != null);
+      const hasGroups = ref.rows.some((r) => r.group != null), colGroups = !square && ref.cols.some((c) => c.group != null);
       let rows = ref.rows.map((r, i) => ({ label: r.label, group: hasGroups ? (r.group ?? '') : null, chem: r.chem, detail: r.detail, i }));
       let vals = values;
       if (hasGroups) {
@@ -1263,13 +1266,16 @@ class MatrixViewer {
         cluster: ref.cluster || null, // {rows, cols}: what they are, of one that can be clustered
         model: {
           rows: rows.map((r) => ({ label: r.label, group: r.group, key: r.i, file: r.label, chem: r.chem, detail: r.detail })),
-          cols: colIdx.map((j, l) => { const c = ref.cols[j]; return { label: c.label, group: square ? rows[l].group : null, sub: null, key: j, file: c.label, chem: c.chem, detail: c.detail, bad: c.bad }; }),
+          cols: colIdx.map((j, l) => {
+            const c = ref.cols[j];
+            return { label: c.label, group: square ? rows[l].group : colGroups ? (c.group ?? '') : null, sub: null, key: j, file: c.label, chem: c.chem, detail: c.detail, bad: c.bad };
+          }),
           values: vals,
           cellText: ref.cellText, // (row, col) of the matrix as given: text to write in that cell
           rowTitle: ref.meta.row_label || 'row',
-          rowGroupTitle: hasGroups ? 'group' : null,
+          rowGroupTitle: hasGroups ? ref.meta.row_group_label || 'group' : null,
           colTitle: ref.meta.col_label || 'column',
-          colGroupTitle: square && hasGroups ? 'group' : null,
+          colGroupTitle: square && hasGroups ? ref.meta.row_group_label || 'group' : colGroups ? ref.meta.col_group_label || 'group' : null,
         },
       };
     }
@@ -1697,10 +1703,13 @@ class MatrixViewer {
     return r?.key >= 0 && c?.key >= 0 ? { row: r.key, col: c.key } : null;
   }
 
-  // the matrix as shown, as a CSV table: its row labels (and groups) then a column each
+  // the matrix as shown, as a CSV table: its row labels (and groups) then a column each, its
+  // group after its label where the labels alone would not tell the columns apart (e.g. ROIs of flies)
   tableCsv() {
     const m = this.model, groups = m.rows.some((r) => r.group != null);
-    const head = [...(groups ? [m.rowGroupTitle || 'group'] : []), m.rowTitle || 'row', ...m.cols.map((c) => c.label)];
+    const labels = m.cols.map((c) => c.label), same = new Set(labels).size < labels.length;
+    const head = [...(groups ? [m.rowGroupTitle || 'group'] : []), m.rowTitle || 'row',
+      ...m.cols.map((c) => (same && c.group != null && c.group !== '' ? `${c.label} (${c.group})` : c.label))];
     const lines = [head, ...m.rows.map((r, i) => [...(groups ? [r.group ?? ''] : []), r.label,
       ...Array.from(m.values.subarray(i * m.cols.length, (i + 1) * m.cols.length), (v) => (v === v ? String(v) : ''))])];
     return lines.map((cells) => cells.map(csvCell).join(',')).join('\n') + '\n';
@@ -6078,6 +6087,9 @@ function levelViewers(x, y) {
 // a Compare dataset's ROIs used (its columns), and how many more were marked bad and left out
 const roisLeft = (d) => `${d.cols.length.toLocaleString()} ROIs${d.nBad ? ` (${d.nBad.toLocaleString()} more marked bad, left out)` : ''}`;
 
+// what a Compare dataset's columns are, as a matrix's meta says it: glomeruli, or ROIs grouped by fly
+const colsMeta = (d) => ({ kind: 'diverging', ...(d.kind === 'glomeruli' ? { col_label: 'glomerulus' } : { col_label: 'ROI', col_group_label: 'fly' }) });
+
 // a viewer's height fitted to what it shows, up to most of the window's
 function fitViewer(el, v) {
   if (!v.model) return;
@@ -6295,7 +6307,7 @@ class ComparePage {
       }));
       return {
         ids, sim: similarityMatrix(vectors, this.o.metric),
-        data: { vectors, cols: d.cols.map((c) => ({ label: c.label })), meta: { kind: 'diverging', col_label: d.kind === 'glomeruli' ? 'glomerulus' : 'ROI' } },
+        data: { vectors, cols: d.cols.map((c) => ({ label: c.label, group: c.group })), meta: colsMeta(d) },
       };
     });
   }
@@ -6371,7 +6383,7 @@ class ComparePage {
       }));
       return {
         ids, labels, sim: similarityMatrix(vectors, this.o.metric),
-        data: { vectors, cols: d.cols.map((c) => ({ label: c.label })), meta: { kind: 'diverging', col_label: d.kind === 'glomeruli' ? 'glomerulus' : 'ROI' } },
+        data: { vectors, cols: d.cols.map((c) => ({ label: c.label, group: c.group })), meta: colsMeta(d) },
       };
     });
   }
@@ -6596,11 +6608,15 @@ class ComparePage {
     }));
     await Promise.all(this.o.picked.filter((id) => !this.data.has(id)).map(async (id) => {
       try {
-        const d = await api(`/api/compare/datasets/${id}`), values = decodeValues(d.values_b64);
+        const d = await api(`/api/compare/datasets/${id}`), given = decodeValues(d.values_b64), nR = d.rows.length, nC = d.cols.length;
+        // ROIs as Browse shows them to start with: grouped by fly (and in its order), each labelled as it is in its fly
+        const order = d.kind === 'rois' ? neuralOrder({ units: d.cols, trials: [] }, ROI_ORDER).unitIdx : d.cols.map((_, j) => j);
+        const cols = d.kind === 'rois' ? order.map((j) => ({ label: roiLabel(d.cols[j]), group: flyKey(d.cols[j]), bad: d.cols[j].bad })) : d.cols;
+        const pick = (idx) => (idx.length === nC && idx.every((j, k) => j === k) ? given
+          : Float32Array.from({ length: nR * idx.length }, (_, k) => given[Math.floor(k / idx.length) * nC + idx[k % idx.length]]));
         // every column as its data is shown (`all`); for everything else, those of ROIs marked bad left out
-        const nR = d.rows.length, nC = d.cols.length, good = d.cols.map((_, j) => j).filter((j) => !d.cols[j].bad);
-        const kept = good.length === nC ? values : Float32Array.from({ length: nR * good.length }, (_, k) => values[Math.floor(k / good.length) * nC + good[k % good.length]]);
-        this.data.set(id, { ...d, all: { cols: d.cols, values }, nBad: nC - good.length, cols: good.map((j) => d.cols[j]), values: kept });
+        const good = order.filter((j) => !d.cols[j].bad);
+        this.data.set(id, { ...d, all: { cols, values: pick(order) }, nBad: nC - good.length, cols: cols.filter((c) => !c.bad), values: pick(good) });
       } catch (e) { this.data.set(id, { id, error: e.message }); }
     }));
     const on = this.o.on, N = ON[on];
@@ -6717,8 +6733,8 @@ class ComparePage {
         const shownSub = d.nBad ? `${esc(d.coding_unit || '')}: ${d.rows.length} odors × ${d.all.cols.length.toLocaleString()} ROIs, ${d.nBad.toLocaleString()}
           of them marked bad (left out of every comparison); every trial averaged` : sub;
         block(`ds:${d.id}`, `#${d.id} ${d.title}`, shownSub, this._memo(`data:${d.id}:${display.lowerOdors}`, () => ({
-          meta: { kind: 'diverging', row_label: 'odor', col_label: d.kind === 'glomeruli' ? 'glomerulus' : 'ROI' },
-          rows: d.rows.map((r) => ({ label: showOdor(r.odor), group: r.panel })), cols: d.all.cols.map((c) => ({ label: c.label, bad: c.bad })),
+          meta: { ...colsMeta(d), row_label: 'odor', row_group_label: 'panel' },
+          rows: d.rows.map((r) => ({ label: showOdor(r.odor), group: r.panel })), cols: d.all.cols.map((c) => ({ label: c.label, group: c.group, bad: c.bad })),
           values: d.all.values,
         })), `dataset_${d.id}_mean`, { kc: d.kind === 'rois' && isKcData(d.coding_unit), responseCalc: d.response_calc });
       }

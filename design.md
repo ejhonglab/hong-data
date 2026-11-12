@@ -250,7 +250,9 @@ between the frontend and the server. Using the app is described in
   when their ids repeat across them; for Sum over KCs, summed apart). A fly's count of
   ROIs is still over all its parts. In Compare, a glomerulus column is the mean over the
   flies and sides that have it, as a reference dataset's glomerulus is one; ROI columns
-  are labelled with their levels. Downloads have a level for each (empty for datasets
+  are grouped by fly and labelled as Browse's rows are (`flyKey`, `roiLabel`: 'L 0' under
+  'YYYY-MM-DD fly 2'), in Browse's first order (`ROI_ORDER`): the server gives each ROI's
+  fields, not its label, so that the two cannot drift apart. Downloads have a level for each (empty for datasets
   without it), so that a download reads back as it was uploaded.
 - **Dates are read value by value.** As YYYYMMDD (text or a number) first, then any way
   pandas reads one: a number pandas would take for nanoseconds since 1970 is not a date,

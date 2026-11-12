@@ -48,11 +48,11 @@ def test_dataset(tmp_path):
     expected = np.stack([trial_means[:, 1], (trial_means[:, 0] + trial_means[:, 2]) / 2, trial_means[:, 3]], axis=1)
     np.testing.assert_allclose(m, expected, rtol=1e-6)
 
-    # not glomeruli: a column per ROI of each fly
+    # not glomeruli: a column per ROI of each fly, as its unit is (labelled in the browser)
     ds_id, v = insert(db, tmp_path, cols=[("2024-01-01", 1, 0), ("2024-01-01", 1, 1), ("2024-01-02", 1, 0)])
     d = compare.dataset(db, ds_id, tmp_path)
-    assert d["kind"] == "rois" and [c["label"] for c in d["cols"]] == ["2024-01-01 fly 1: 0", "2024-01-01 fly 1: 1",
-                                                                       "2024-01-02 fly 1: 0"]
+    assert d["kind"] == "rois" and [(c["date"], c["fly_num"], c["roi"], c["extra"]) for c in d["cols"]] == [
+        ("2024-01-01", 1, "0", {}), ("2024-01-01", 1, "1", {}), ("2024-01-02", 1, "0", {})]
     m = np.frombuffer(base64.b64decode(d["values_b64"]), "<f4").reshape(3, 3)
     np.testing.assert_allclose(m[0], v[0:2].mean(axis=0))
     assert compare.dataset(db, ds_id + 1, tmp_path) is None
@@ -96,13 +96,13 @@ def test_api(main, tmp_path):  # noqa: F811
 
 
 def test_dataset_extra_levels(tmp_path):
-    # a ROI's other levels in its label (each side of a brain); glomeruli the mean over both
+    # a ROI's other levels given (each side of a brain); glomeruli the mean over both
     db = Database(tmp_path / "db.sqlite3")
     apply_all(db, rows_of(HEADER + "valeric acid,va,,7991,,,,,,,,,\nethyl acetate,ea,,8857,,,,,,,,,\n"))
     cols = [("2024-01-01", 1, "L", "0"), ("2024-01-01", 1, "R", "0")]
     ds_id, v = insert(db, tmp_path, cols=cols, col_names=("date", "fly_num", "hemibrain", "roi"))
-    assert [c["label"] for c in compare.dataset(db, ds_id, tmp_path)["cols"]] == ["2024-01-01 fly 1 hemibrain L: 0",
-                                                                                  "2024-01-01 fly 1 hemibrain R: 0"]
+    assert [(c["extra"], c["roi"]) for c in compare.dataset(db, ds_id, tmp_path)["cols"]] == [({"hemibrain": "L"}, "0"),
+                                                                                              ({"hemibrain": "R"}, "0")]
     ds_id, v = insert(db, tmp_path, cols=[("2024-01-01", 1, "L", "DM2"), ("2024-01-01", 1, "R", "DM2")],
                       col_names=("date", "fly_num", "hemibrain", "roi"))
     d = compare.dataset(db, ds_id, tmp_path)
