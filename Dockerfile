@@ -62,8 +62,11 @@ USER olfdb
 CMD ["python", "-m", "app.fit_worker"]
 
 
-# the web server (the default target, docker-compose.yml's olfdb service)
+# the web server (the default target, docker-compose.yml's olfdb service): with the X libraries
+# RDKit's drawing loads (the Odors tab's structures), not in the slim image, nor in the worker's
 FROM base AS web
+RUN apt-get update && apt-get install -y --no-install-recommends libxrender1 libxext6 libexpat1 \
+ && rm -rf /var/lib/apt/lists/*
 COPY app ./app
 COPY config ./config
 COPY reference_data ./reference_data
