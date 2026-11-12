@@ -440,8 +440,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     by default, of any even diameter up to 12), and every reference dataset with
     chemicals. Odors are matched across them by the Odors table (one chemical alone, not
     mixtures; an odor at several concentrations as its highest, lowest or the mean of
-    them); each says how many of the odors shown it has, and its data or similarities
-    over those are shown.
+    them; a reference dataset's chemicals that are one odor, e.g. its stereoisomers, made
+    one as it was added to say: averaged, summed or the highest); each says how many of
+    the odors shown it has (and, in yellow, how many of them it has only as the same but
+    for stereochemistry), and its data or similarities over those are shown.
   - *Side by side*: two or more of the spaces shown (chosen there, *Add another* for
     more; or by clicking a cell of the correlations between similarities, for its two),
     over the odors all of them have, in one order (the first dataset's, if one is), next
@@ -579,7 +581,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   table with chemicals not identified by a CID or InChI (in the file, or through the
   Odors tab), naming the first of them, with all of them to show and copy (also when
   adding one in the Admin tab); these are left out of its matrix unless a box by the
-  warning is ticked. Of a table with chemicals not in the Odors table too, a box under
+  warning is ticked. Another is by one with chemicals matched to the Odors tab only as
+  the same but for stereochemistry (e.g. VCF's dl-menthone as menthone, whose
+  stereocenters the Odors tab leaves unspecified): how many of the odors it has (each
+  once) are, which, and how many of its values (not 0 or missing) are theirs. Of a table with chemicals not in the Odors table too, a box under
   its notes shows only those that are (and of its other axis, only what any of them is
   not 0 or missing in, e.g. the pathways they are in). One that cannot be read is listed
   by its name alone, with why.
@@ -838,7 +843,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     combination of the fields chosen for them (labelled by the first, the others told
     apart and shown on hover), and whose values are a field of numbers (the mean of
     several lines of a cell) or presence (1 where a line lists a row and column); of a
-    DataArray, which coordinates label and describe its rows and columns. Each choice
+    DataArray, which coordinates label and describe its rows and columns; and how the
+    Compare tab makes one of its chemicals that are one odor (averaged, summed, e.g.
+    amounts of an odor's stereoisomers in a sample, or the highest). Each choice
     shows what it makes (its size, chemicals identified) before it is added. A MetaCyc
     bundle (`.sqlite`) is added once for each view: compounds by pathways, or the
     pathway LCA distance (through reactions, as computed for the thesis, or through
@@ -852,8 +859,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     whenever the file changes. A file outside the folders the server may read is added
     to them (itself, to read only), and read once the server restarts, with what that
     takes in Docker or systemd. Chemicals are matched to the Odors table by CID, else
-    InChI, else CAS, MetaCyc or LOTUS ID, name or abbreviation, never against a CID or
-    InChI given. An axis whose labels are mostly odors as datasets write them
+    InChI, else InChI but for stereochemistry (stereocenters or cis/trans one of the two
+    leaves unspecified, the rest alike; warned of, above), else CAS, MetaCyc or LOTUS ID,
+    name or abbreviation, never otherwise against a CID or InChI given. An axis whose labels are mostly odors as datasets write them
     (`<abbreviation> @ <log10 conc>`, e.g. `2h @ -3`; at least 3) is taken to be its
     chemicals (unless *Chemicals are* says otherwise), matched by abbreviation as a
     dataset's odors are; those not in the Odors table are listed as an upload's are, with

@@ -749,9 +749,20 @@ between the frontend and the server. Using the app is described in
   folder, and read after the next restart, like any other change to them; deleting the
   dataset takes it off again unless another one needs it. Its chemicals are matched to
   the odor table when it is served, not when it is read, so that the names shown follow
-  the Odors tab: by CID, else InChI, else CAS, MetaCyc or LOTUS ID, name or
-  abbreviation, never against a CID or InChI given (a name alone can name another
-  isomer). An axis whose labels are odors as datasets write them (`reference.odor_axis`:
+  the Odors tab: by CID, else InChI, else InChI but for stereochemistry
+  (`odormeta.stereo_compatible`: the same without stereo layers, and of the stereocenters
+  and double bonds both specify, none different, compared by atom number, with `/m` and
+  relative or racemic `/s` taken into account; of two such odors, neither), else CAS,
+  MetaCyc or LOTUS ID, name or abbreviation, never otherwise against a CID or InChI given
+  (a name alone can name another isomer). The stereo step is for chemicals named by a
+  source that may not tell stereoisomers apart, or an Odors table entry that does not
+  (VCF's dl-menthone and isomenthone, of a bottle sold as menthone of mixed isomers); it
+  is warned of (`reference.stereo_warning`, with how much of the data it brings in,
+  from each item's count of cells not 0 or missing kept in its import, ``nonzero``,
+  record version 3), and the Compare tab makes the items of one odor one by the
+  dataset's ``merge`` field (mean by default; VCF's amounts summed). Summing counts twice
+  where a source gives a total of every stereoisomer beside its parts (VCF's linalool
+  beside (R)- and (S)-linalool in a few papers). An axis whose labels are odors as datasets write them (`reference.odor_axis`:
   `<abbreviation> @ <log10 conc>`, at least 3 and over half of its labels, e.g. ORN
   responses by glomeruli) is its chemicals unless the file gives identifiers or the Admin
   says otherwise (before the guess from labels, which would be no chemicals at all for

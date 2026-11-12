@@ -459,6 +459,74 @@ def fetch_inchis(cids: list[int]) -> dict[int, str]:
     return out
 
 
+# ------------------------------------------------------------ stereochemistry
+
+
+_STEREO_LAYERS = ("b", "t", "m", "s")
+_BOND_RE = re.compile(r"(\d+-\d+)([-+?u])")
+_CENTER_RE = re.compile(r"(\d+)([-+?u])")
+_FLIP = {"+": "-", "-": "+"}
+
+
+def inchi_skeleton(inchi: str) -> str:
+    """An InChI without its stereo layers (``/b``, ``/t``, ``/m``, ``/s``, also of its
+    isotopic layer): the same for every stereoisomer, cis/trans ones too."""
+    parts = inchi.split("/")
+    return "/".join(p for i, p in enumerate(parts) if i < 2 or p[:1] not in _STEREO_LAYERS)
+
+
+def _stereo(inchi: str) -> Optional[tuple[dict, dict, bool]]:
+    """An InChI's stereo, as it specifies it: (its double bonds' parities, by bond; its
+    stereocenters', by atom, as they are, not as listed, see ``/m``; whether they may as well
+    be all inverted: of no known absolute configuration, ``/s2`` or ``/s3``, or the same
+    inverted, no ``/m``). Unspecified ones ('?', 'u') left out. None if it is not read: of
+    several components, or with layers not as expected (then only the same InChI is its)."""
+    parts = inchi.split("/")
+    if len(parts) < 2 or "." in parts[1]:
+        return None
+    layers: dict[str, str] = {}
+    for p in parts[2:]:
+        if p[:1] in ("i", "f", "r"):  # (the isotopic, fixed-H and reconnected layers: stereo of their own)
+            break
+        layers[p[:1]] = p[1:]
+    bonds, centers = layers.get("b", ""), layers.get("t", "")
+    if any(not re.fullmatch(rf"({rx.pattern})(,{rx.pattern})*", s) for rx, s in ((_BOND_RE, bonds), (_CENTER_RE, centers)) if s):
+        return None
+    m = layers.get("m")
+    if m not in (None, "0", "1"):
+        return None
+    flip = m == "1"
+    b = {k: v for k, v in _BOND_RE.findall(bonds) if v in "+-"}
+    t = {k: _FLIP[v] if flip else v for k, v in _CENTER_RE.findall(centers) if v in "+-"}
+    return b, t, m is None or layers.get("s") in ("2", "3")
+
+
+def stereo_compatible(a: str, b: str) -> bool:
+    """Whether two InChIs could be of one chemical: the same structure but for
+    stereochemistry, and none of it that both specify differs (unspecified in either, any
+    of it may be). E.g. menthone (stereocenters unspecified) is l-menthone's, and
+    d-isomenthone's, but l-menthone is not d-isomenthone's (one stereocenter differs), nor
+    (Z)-2-hexenal (E)-2-hexenal's.
+
+    Stereocenters are compared by their atoms' numbers, which are the same in two InChIs
+    of one skeleton but where symmetry leaves the numbering to their stereo (rare in
+    volatiles): those may be told apart when they could have been one.
+    """
+    if a == b:
+        return True
+    if inchi_skeleton(a) != inchi_skeleton(b):
+        return False
+    sa, sb = _stereo(a), _stereo(b)
+    if sa is None or sb is None:
+        return False
+    if any(sa[0][k] != sb[0][k] for k in sa[0].keys() & sb[0].keys()):
+        return False
+    both = sa[1].keys() & sb[1].keys()
+    if all(sa[1][k] == sb[1][k] for k in both):
+        return True
+    return (sa[2] or sb[2]) and all(sa[1][k] != sb[1][k] for k in both)
+
+
 # -------------------------------------------------------- datasets <-> odors
 
 
@@ -472,6 +540,7 @@ class OdorIndex:
         self.by_folded_label: dict[str, list[int]] = {}
         self.by_cid: dict[int, list[int]] = {}
         self.by_id_field: dict[str, dict[str, list[int]]] = {f: {} for f in ("inchi", "cas", "metacyc", "lotus")}
+        self.by_skeleton: dict[str, list[int]] = {}  # (`inchi_skeleton`)
         for o in odors:
             for n in [o["name"], *(o.get("aliases") or [])]:
                 self._add(self.by_name, n.casefold(), o["id"])
@@ -484,6 +553,8 @@ class OdorIndex:
             for f, index in self.by_id_field.items():
                 if o.get(f):
                     self._add(index, o[f].strip(), o["id"])
+            if o.get("inchi"):
+                self._add(self.by_skeleton, inchi_skeleton(o["inchi"].strip()), o["id"])
 
     @staticmethod
     def _add(index: dict, key, odor_id: int) -> None:
@@ -521,9 +592,11 @@ class OdorIndex:
         return None, "none", sorted(folded)
 
     def match_chemical(self, ids: dict, label: str) -> tuple[Optional[int], str]:
-        """The odor a chemical of a reference dataset is: by its CID, else its InChI, else by
-        its CAS, MetaCyc or LOTUS ID, name, abbreviation, or `label` (as a name, then an
-        abbreviation); but never an odor whose CID or InChI differs from one given.
+        """The odor a chemical of a reference dataset is: by its CID, else its InChI, else as
+        the same but for stereochemistry (its InChI `stereo_compatible` with the odor's:
+        e.g. dl-menthone as menthone of no stereocenters given), else by its CAS, MetaCyc or
+        LOTUS ID, name, abbreviation, or `label` (as a name, then an abbreviation); but
+        never otherwise an odor whose CID or InChI differs from one given.
 
         Args:
             ids: the chemical's identifiers in the file (``cid``, ``inchi``, ``cas``,
@@ -531,8 +604,8 @@ class OdorIndex:
             label: its label in the file.
 
         Returns:
-            (odor id or None, how: 'cid' | 'inchi' | 'cas' | 'metacyc' | 'lotus' | 'name' |
-            'abbrev' | 'ambiguous' | 'none')
+            (odor id or None, how: 'cid' | 'inchi' | 'stereo' | 'cas' | 'metacyc' | 'lotus' |
+            'name' | 'abbrev' | 'ambiguous' | 'none')
         """
         cid, inchi = ids.get("cid"), ids.get("inchi")
 
@@ -542,13 +615,18 @@ class OdorIndex:
 
         names = [n.casefold() for n in (ids.get("name"), label) if n]
         labels = [a for a in (ids.get("abbrev"), label) if a]
+        inchi = inchi and str(inchi).strip()
+        stereo = [i for i in self.by_skeleton.get(inchi_skeleton(inchi), []) if self.by_id[i]["inchi"].strip() != inchi
+                  and stereo_compatible(inchi, self.by_id[i]["inchi"].strip())] if inchi else []
         tries = [("cid", self.by_cid.get(cid, []) if cid else []),
-                 *((f, self.by_id_field[f].get(str(ids[f]).strip(), [])) for f in ("inchi", "cas", "metacyc", "lotus") if ids.get(f)),
+                 ("inchi", self.by_id_field["inchi"].get(inchi, []) if inchi else []),
+                 ("stereo", stereo),
+                 *((f, self.by_id_field[f].get(str(ids[f]).strip(), [])) for f in ("cas", "metacyc", "lotus") if ids.get(f)),
                  *(("name", self.by_name.get(n, [])) for n in names),
                  *(("abbrev", self.by_label.get(a, [])) for a in labels),
                  *(("abbrev", self.by_folded_label.get(a.casefold(), [])) for a in labels)]
         for how, found in tries:
-            found = [i for i in found if agrees(i)]
+            found = [i for i in found if how == "stereo" or agrees(i)]
             if len(found) == 1:
                 return found[0], how
             if len(found) > 1:

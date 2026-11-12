@@ -108,6 +108,76 @@ def test_match_chemical(env):
     assert by({}, "nothing") == (None, "none")
 
 
+MENTHONE = "InChI=1S/C10H18O/c1-7(2)9-5-4-8(3)6-10(9)11/h7-9H,4-6H2,1-3H3"  # (RDKit's, of each)
+L_MENTHONE, D_MENTHONE = MENTHONE + "/t8-,9+/m1/s1", MENTHONE + "/t8-,9+/m0/s1"  # (2S,5R), (2R,5S)
+D_ISOMENTHONE = MENTHONE + "/t8-,9-/m1/s1"  # (2R,5R)
+HEXENAL = "InChI=1S/C6H10O/c1-2-3-4-5-6-7/h4-6H,2-3H2,1H3"
+S_LINALOOL = INCHI_LIN + "/t10-/m1/s1"
+
+
+def test_stereo_compatible():
+    ok = odormeta.stereo_compatible
+    # stereocenters: any where either leaves them unspecified, else only alike
+    assert ok(MENTHONE, L_MENTHONE) and ok(D_ISOMENTHONE, MENTHONE) and ok(L_MENTHONE, L_MENTHONE)
+    assert not ok(L_MENTHONE, D_ISOMENTHONE) and not ok(L_MENTHONE, D_MENTHONE)
+    # one of two given (RDKit's): what has it so (C5 as l-menthone's: d-isomenthone's too; C2 as l-menthone's: neither d- one's);
+    # relative (trans, either enantiomer, by hand): menthone, not isomenthone
+    c5, c2 = MENTHONE + "/t8-,9?/m1/s1", MENTHONE + "/t8?,9-/m0/s1"
+    assert ok(c5, L_MENTHONE) and ok(c5, D_ISOMENTHONE) and not ok(c5, D_MENTHONE)
+    assert ok(c2, L_MENTHONE) and not ok(c2, D_ISOMENTHONE) and not ok(c2, D_MENTHONE) and ok(c2, c5)
+    trans = MENTHONE + "/t8-,9+/s2"
+    assert ok(trans, L_MENTHONE) and ok(trans, D_MENTHONE) and not ok(trans, D_ISOMENTHONE)
+    # cis/trans alike; another structure, or one of several components (only itself), never
+    assert ok(HEXENAL, HEXENAL + "/b5-4+") and not ok(HEXENAL + "/b5-4-", HEXENAL + "/b5-4+")
+    assert not ok(MENTHONE, INCHI_LIN) and not ok("InChI=1S/C2H4O2.Na/c1-2(3)4;/h1H3,(H,3,4);/q;+1/p-1", "InChI=1S/C2H4O2/c1-2(3)4/h1H3,(H,3,4)")
+    assert odormeta.inchi_skeleton(L_MENTHONE) == MENTHONE == odormeta.inchi_skeleton(MENTHONE)
+
+
+def test_match_stereo():
+    menthone = {"id": 1, "name": "menthone", "abbrev": "men", "cid": 6986, "inchi": MENTHONE}
+    t2h = {"id": 2, "name": "trans-2-hexenal", "abbrev": "t2h", "cid": 5281168, "inchi": HEXENAL + "/b5-4+"}
+    ix = odormeta.OdorIndex([menthone, t2h])
+    # as the same but for stereochemistry, once neither CID nor InChI is the odor's (whatever CID is given)
+    assert ix.match_chemical({"cid": 26447, "inchi": L_MENTHONE}, "dl-menthone") == (1, "stereo")
+    assert ix.match_chemical({"cid": 6986, "inchi": MENTHONE}, "isomenthone") == (1, "cid")
+    assert ix.match_chemical({"inchi": HEXENAL}, "2-hexenal") == (2, "stereo")
+    assert ix.match_chemical({"inchi": HEXENAL + "/b5-4-"}, "(Z)-2-hexenal") == (None, "none")
+    # the odor of its own InChI first; of two it could be, neither
+    ix = odormeta.OdorIndex([menthone, {**menthone, "id": 3, "name": "l-menthone", "abbrev": "lmen", "cid": 26447, "inchi": L_MENTHONE}])
+    assert ix.match_chemical({"inchi": L_MENTHONE}, "") == (3, "inchi") and ix.match_chemical({"inchi": D_ISOMENTHONE}, "") == (1, "stereo")
+    ix = odormeta.OdorIndex([{**menthone, "inchi": L_MENTHONE}, {**menthone, "id": 3, "name": "d-isomenthone", "inchi": D_ISOMENTHONE}])
+    assert ix.match_chemical({"inchi": MENTHONE}, "") == (None, "ambiguous")
+
+
+def test_list_stereo(env, tmp_path):
+    # linalool (in the odor table with no stereocenter given) twice: as itself and as one enantiomer
+    p = write(tmp_path / "refs" / "vcf.csv", "name,inchi,product_name,reference,quantity\n"
+              f'linalool,"{INCHI_LIN}",APPLE,A,1\n(S)-linalool,"{S_LINALOOL}",APPLE,A,2\n(S)-linalool,"{S_LINALOOL}",BEER,B,4\n'
+              "ethyl acetate,,BEER,B,3\nmystery,,BEER,B,5\n")
+    sandbox.activate({"read_dirs": [str(tmp_path / "refs")], "write_dirs": []})
+    fields = {"layout": "list", "rows": {"label": "name", "keep": ["inchi"]}, "cols": {"label": "product_name", "keep": ["reference"]},
+              "value": "quantity", "empty": "missing", "merge": "sum"}
+    c = call(env.admin_reference_check, body={"path": str(p), "fields": fields})[1]
+    assert c["fields"]["used"]["merge"] == "sum"
+    full = ("1 of the 2 odors of the Odors table it has (each once, its rows of one merged) is matched only as the same but for "
+            "stereochemistry that one of the two leaves unspecified: linalool, as (S)-linalool. "
+            "Its rows so matched have 2 of the 4 values (not 0 or missing) of those 2 (50%), and of its 5 (40%).")
+    assert c["preview"]["stereo_warning"] == full
+    assert call(env.admin_reference_add, body={"path": str(p), "title": "VCF", "fields": fields})[0] == 200
+    listed = next(r for r in call(env.reference_list)[1]["datasets"] if r["id"] == "vcf")
+    assert listed["stereo"] == "1 of its 2 odors of the Odors table matched only as the same but for stereochemistry (50% of their values)"
+    assert listed["chemicals"]["odor_ids"] == [4, 4, 1]
+    r = call(env.reference_get, path_params={"ref_id": "vcf"})[1]
+    assert r["stereo_warning"] == full and r["chemicals"]["merge"] == "sum"
+    assert [x["chem"]["how"] for x in r["rows"]] == ["inchi", "stereo", "name", "none"]
+    # none so matched: no warning; merged as averaged unless said
+    fields = {**fields, "rows": {"label": "name", "keep": []}}
+    fields.pop("merge")
+    status, _ = call(env.admin_reference_update, path_params={"ref_id": "vcf"}, body={"fields": fields})
+    r = call(env.reference_get, path_params={"ref_id": "vcf"})[1]
+    assert status == 200 and r["stereo_warning"] is None and r["chemicals"]["merge"] == "mean"
+
+
 def test_builtin_and_chemicals(env):
     status, r = call(env.reference_list)
     fruits, gone = r["datasets"]

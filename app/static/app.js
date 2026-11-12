@@ -4041,6 +4041,17 @@ function setAdminBadge(items) {
 // whether a reference dataset's chemicals can be shown as only those in the Odors table: some are, and some not
 function canOnlyOdors(ref) { const c = ref.chemicals; return !!c?.axis && c.matched > 0 && c.matched < c.n; }
 
+// vectors of one length made one, cell by cell ('mean' | 'sum' | 'max' of those not missing,
+// missing where all are; 'first': the first)
+function mergeVectors(vectors, how) {
+  if (vectors.length === 1 || how === 'first') return vectors[0];
+  return Float32Array.from(vectors[0], (_, j) => {
+    let s = how === 'max' ? -Infinity : 0, n = 0;
+    for (const v of vectors) { const x = v[j]; if (x === x) { n++; s = how === 'max' ? Math.max(s, x) : s + x; } }
+    return n ? (how === 'mean' ? s / n : s) : NaN;
+  });
+}
+
 // a reference dataset with only some of its chemicals: those not identified (no CID or
 // InChI) left out unless `unidentified`; with `onlyOdors`, those not in the Odors table
 // too, and of its other axis (unless its columns are its rows) each item where all of
@@ -4149,7 +4160,7 @@ class Reference {
     }
     list.innerHTML = this.items.map((it) => {
       const ok = it.state === 'ok';
-      const why = ok ? (it.warning ? `<span class="s warn">⚠ ${esc(it.warning)}</span>` : '')
+      const why = ok ? [it.warning, it.stereo].filter(Boolean).map((w) => `<span class="s warn">⚠ ${esc(w)}</span>`).join('')
         : `<span class="s ${it.state === 'error' ? 'bad' : 'muted'}">${esc(it.state === 'error' ? `Cannot be read: ${it.error}` : 'Read once the server restarts')}</span>`;
       return `<button type="button" class="list-item${this.selected === it.id ? ' active' : ''}" data-id="${esc(it.id)}">
         <span class="t">${esc(it.title)}</span>${ok && it.description ? `<span class="s">${esc(it.description)}</span>` : ''}${why}</button>`;
@@ -4201,6 +4212,7 @@ class Reference {
       }
       msgs.push(box);
     }
+    if (ref.stereo_warning) msgs.push(msgBox('warn', `<b>${esc(ref.stereo_warning)}</b>`));
     const notes = [];
     if (c.axis && c.odors) {
       notes.push(`Its ${c.axis === 'rows' ? 'rows' : 'columns'} are odors as datasets write them (<code>&lt;abbreviation&gt; @ &lt;log10 conc&gt;</code>):
@@ -4695,6 +4707,7 @@ function showRefCheck(c, note = '') {
   } else if (p.warning) {
     box.appendChild(unidentifiedBox(p.warning, ch.unidentified || [], 'It can be added anyway, with a warning by it in the Reference data tab, where they are listed too.'));
   }
+  if (p.stereo_warning) box.appendChild(msgBox('warn', `<b>${esc(p.stereo_warning)}</b> It is said by it in the Reference data tab too.`));
 }
 
 // what is wrong with a folder as typed, as far as can be told without the server (tensor: a
@@ -5294,7 +5307,8 @@ class AdminPage {
       const [nr, nc] = r.shape;
       return `${nr.toLocaleString()} × ${nc.toLocaleString()}, ${esc(r.kind)}${r.imported_at ? `, read ${esc(fmtWhen(r.imported_at))}` : ''}`
         + (r.warning ? `<br><span class="warn">⚠ ${esc(r.warning)}</span>${r.chemicals?.axis && r.chemicals.identified < r.chemicals.n
-          ? ` <a href="#reference/${esc(r.id)}">(which)</a>` : ''}` : '');
+          ? ` <a href="#reference/${esc(r.id)}">(which)</a>` : ''}` : '')
+        + (r.stereo ? `<br><span class="warn">⚠ ${esc(r.stereo)}</span> <a href="#reference/${esc(r.id)}">(which)</a>` : '');
     };
     $('#admin-refs-list').innerHTML = `<table class="odor-table"><thead><tr><th>Title</th><th>File</th><th>State</th><th></th></tr></thead><tbody>
       ${listed.map((r) => `<tr><td><a href="#reference/${esc(r.id)}">${esc(r.title)}</a></td>
@@ -5375,9 +5389,15 @@ class AdminPage {
         those labelled alike are told apart by the others (all shown on hover), and fields named as identifiers (<code>cid</code>,
         <code>inchi</code>, <code>name</code>, …) identify chemicals. Fields not chosen are ignored.</p></div>`;
     parts.push(list);
+    parts.push(`<div class="ref-role"><b>Its chemicals that are one odor</b> <select data-merge aria-label="Its chemicals that are one odor">
+        <option value="mean">averaged</option><option value="sum">summed (amounts, e.g. of an odor's stereoisomers in a sample)</option>
+        <option value="max">the highest (e.g. of presence)</option></select>
+      <span class="muted small">in the Compare tab, cell by cell, of those not missing (e.g. one named two ways, or stereoisomers of an odor
+        whose stereochemistry the Odors table leaves unspecified)</span></div>`);
     box.innerHTML = `<div class="ref-fields">${parts.join('')}</div>`;
     const values = $('[data-value]', box);
     if (values) values.value = u.value || '';
+    $('[data-merge]', box).value = u.merge || 'mean';
   }
 
   // A MetaCyc bundle (metacyc.py): which of its views, and its options; its title suggested
@@ -5482,6 +5502,8 @@ class AdminPage {
     };
     const out = { rows: axis('rows'), cols: axis('cols') };
     if (layout) Object.assign(out, { layout, value: $('[data-value]', box)?.value || null, empty: $('[data-empty]', box)?.value || 'missing' });
+    const merge = $('[data-merge]', box)?.value;
+    if (merge) out.merge = merge;
     return out;
   }
 
@@ -6622,24 +6644,27 @@ class ComparePage {
   }
 
   // a reference dataset's, of its chemicals (on 'odors') or its glomeruli (on 'glomeruli'),
-  // by their values along its other axis (each once, the first of its rows or columns); on
-  // odors, of a dataset with chemicals not in the Odors table too, only along the items of
-  // that axis any of those in it are not 0 or missing in (`refSubset`). Of distances between
-  // its chemicals (pairwise: its columns its rows), the negative of its own values, whatever
-  // the similarity chosen for reference data
+  // by their values along its other axis (each once: of a glomerulus, the first of its rows
+  // or columns; of an odor, those of its chemicals that are it merged as the dataset says,
+  // `mergeVectors`); on odors, of a dataset with chemicals not in the Odors table too, only
+  // along the items of that axis any of those in it are not 0 or missing in (`refSubset`). Of
+  // distances between its chemicals (pairwise: its columns its rows), the negative of its own
+  // values, whatever the similarity chosen for reference data
   _refSpace(given, on = 'odors') {
     if (given.pairwise && on === 'odors') return this._pairwiseSpace(given);
     return this._memo(`ref:${given.meta.id}:${on}:${this.o.refMetric}`, () => {
       const ref = on === 'odors' && canOnlyOdors(given) ? refSubset(given, { onlyOdors: true }) : given;
       const axis = on === 'odors' ? ref.chemicals.axis : ref.glomeruli.axis;
       const values = matrixValues(ref), nR = ref.rows.length, nC = ref.cols.length, onRows = axis === 'rows';
-      const ids = [], vectors = [];
+      const of = new Map();
       (onRows ? ref.rows : ref.cols).forEach((it, k) => {
         const id = on === 'odors' ? it.chem?.odor_id : it.glomerulus;
-        if (id == null || ids.includes(id)) return;
-        ids.push(id);
-        vectors.push(onRows ? values.subarray(k * nC, (k + 1) * nC) : Float32Array.from({ length: nR }, (_, r) => values[r * nC + k]));
+        if (id == null) return;
+        if (!of.has(id)) of.set(id, []);
+        of.get(id).push(onRows ? values.subarray(k * nC, (k + 1) * nC) : Float32Array.from({ length: nR }, (_, r) => values[r * nC + k]));
       });
+      const ids = [...of.keys()], how = on === 'odors' ? ref.chemicals.merge || 'mean' : 'first';
+      const vectors = ids.map((id) => mergeVectors(of.get(id), how));
       const m = ref.meta;
       return {
         ids, sim: similarityMatrix(vectors, this.o.refMetric),
@@ -6782,7 +6807,8 @@ class ComparePage {
     const refs = this._refsOn();
     for (const r of refs) {
       html.push(`<div class="space"><label class="check"><input type="checkbox" data-space="ref:${esc(r.id)}"${checked(`ref:${r.id}`)}> ${esc(r.title)}</label>
-        ${overlap((on === 'odors' ? r.chemicals.odor_ids : r.glomeruli.names) || [])}</div>`);
+        ${overlap((on === 'odors' ? r.chemicals.odor_ids : r.glomeruli.names) || [])}${on === 'odors' && r.stereo
+          ? `<a class="overlap few" href="#reference/${esc(r.id)}" title="Which, in the Reference data tab">⚠ ${esc(r.stereo)}</a>` : ''}</div>`);
     }
     if (!refs.length) html.push(`<p class="muted small">${esc(N.none)}</p>`);
     const active = document.activeElement?.id === 'cmp-ecfp-d';

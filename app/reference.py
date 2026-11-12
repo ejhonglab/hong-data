@@ -21,8 +21,11 @@ Chemicals can be identified by columns named ``cid`` (or ``pubchem_cid``, ...),
 ``inchi``, ``cas``, ``metacyc``, ``lotus``, ``name`` or ``abbrev`` (then the rows are
 chemicals), or by rows labelled so (then the columns are). They are matched to the odor
 table when served (`chemicals`), so that they are shown by its names whatever it is
-changed to: by CID, else InChI, else the other identifiers and labels, never against a
-CID or InChI. Glomeruli are found by their labels (`glomeruli`): such a dataset (of
+changed to: by CID, else InChI, else InChI but for stereochemistry one of them does not
+specify (`odormeta.stereo_compatible`: warned of, `stereo_warning`), else the other
+identifiers and labels, never otherwise against a CID or InChI. Several of them one odor
+are one in the Compare tab, as their ``merge`` field says (`MERGES`, e.g. VCF's amounts
+of stereoisomers summed). Glomeruli are found by their labels (`glomeruli`): such a dataset (of
 glomeruli by anything else, and no odors) is compared with datasets on their glomeruli.
 """
 from __future__ import annotations
@@ -76,6 +79,9 @@ ID_HEADERS = {
 }
 _ID_FIELD = {h: f for f, hs in ID_HEADERS.items() for h in hs}
 MEMO_SIZE = 8  # files read but not imported (built in, or being checked) kept parsed
+# how the Compare tab makes one of several items of its chemical axis that are one odor
+# (``merge`` of its fields; the first, the default): cell by cell, of those not missing
+MERGES = ("mean", "sum", "max")
 
 _lock = threading.Lock()  # one import at a time
 _memo: "OrderedDict[tuple, tuple[dict, np.ndarray | Sparse]]" = OrderedDict()
@@ -205,6 +211,9 @@ def parse(path: Path, chemical_axis: str = "detect", kind: str = "detect", field
         module matched them (see `chemicals`). values: float32 (rows x cols, NaN where
         missing), or of a bundle's view, maybe a `Sparse` matrix.
 
+        Of a file not a bundle, also ``nonzero`` {rows, cols: per item, how many of its
+        cells are not 0 or missing}.
+
     Raises:
         ReferenceError: if it has no numbers. Errors reading the file are raised as they are.
     """
@@ -218,9 +227,18 @@ def parse(path: Path, chemical_axis: str = "detect", kind: str = "detect", field
             record["kind"] = kind
         return record, values
     if path.suffix.lower() in NETCDF_SUFFIXES:
-        return _parse_dataarray(path, chemical_axis, kind, fields)
-    if fields and fields.get("layout") == "list":
-        return _parse_list(path, chemical_axis, kind, fields)
+        record, values = _parse_dataarray(path, chemical_axis, kind, fields)
+    elif fields and fields.get("layout") == "list":
+        record, values = _parse_list(path, chemical_axis, kind, fields)
+    else:
+        record, values = _parse_matrix(path, chemical_axis, kind)
+    held = np.isfinite(values) & (values != 0)
+    record["nonzero"] = {"rows": held.sum(axis=1).tolist(), "cols": held.sum(axis=0).tolist()}
+    return record, values
+
+
+def _parse_matrix(path: Path, chemical_axis: str, kind: str) -> tuple[dict, np.ndarray]:
+    """`parse` of a table laid out as its matrix."""
     df = read_table(path)
     labels = [_text(v) or "" for v in df.index]
     headers = [_text(c) or "" for c in df.columns]
@@ -590,6 +608,8 @@ def _fields(spec: Any) -> Optional[dict]:
         out["value"] = str(spec["value"]) if spec["value"] else None
     if spec.get("empty") in ("zero", "missing"):
         out["empty"] = spec["empty"]
+    if spec.get("merge") in MERGES:
+        out["merge"] = spec["merge"]
     if out.get("layout") == "metacyc":  # a view and its options (checked by metacyc.options)
         out.update({k: spec[k] for k in ("view", "via", "classes") if isinstance(spec.get(k), str)})
         if "max_pathways" in spec:
@@ -648,8 +668,8 @@ def _parsed(path: Path, chemical_axis: str, kind: str, fields: Optional[dict] = 
 
 
 # of an import's record of a file (not a bundle): one of an older version is read again
-# (2: its items' fields kept, a level each in a download, see `_items`)
-RECORD_VERSION = 2
+# (2: its items' fields kept, a level each in a download, see `_items`; 3: ``nonzero``)
+RECORD_VERSION = 3
 
 
 def cache_dir(ref_id: str) -> Path:
@@ -869,6 +889,44 @@ def warning(chem: dict, glomeruli: Optional[dict] = None) -> Optional[str]:
     return None
 
 
+def _pct(a: int, b: int) -> str:
+    p = 100 * a / b if b else 0
+    return f"{p:.0f}%" if p >= 10 or p == 0 else f"{p:.1f}%" if p >= 1 else f"{p:.2g}%"
+
+
+def stereo_warning(chem: dict, record: dict, short: bool = False) -> Optional[str]:
+    """The warning of a matrix some of whose chemicals are the Odors table's only as the same
+    but for stereochemistry (`OdorIndex.match_chemical`'s 'stereo'): how many of the odors it
+    has are (each once, however many of its items are one: as the Compare tab merges them),
+    which (unless `short`), and how many of its values (not 0 or missing) are theirs. None if
+    none are."""
+    items, axis = chem["items"], chem["axis"]
+    stereo = [k for k, it in enumerate(items) if it["how"] == "stereo"]
+    if not stereo:
+        return None
+    n = len({it["odor_id"] for it in items if it["odor_id"] is not None})
+    odors = {items[k]["odor_id"] for k in stereo}
+    counts = (record.get("nonzero") or {}).get(axis)
+    of_odors = sum(counts[k] for k, it in enumerate(items) if it["odor_id"] is not None) if counts else 0
+    mine = sum(counts[k] for k in stereo) if counts else 0
+    rows = "rows" if axis == "rows" else "columns"
+    if short:
+        return (f"{len(odors)} of its {n} odors of the Odors table matched only as the same but for stereochemistry"
+                + (f" ({_pct(mine, of_odors)} of their values)" if counts else ""))
+    which = {}
+    for k in stereo:
+        which.setdefault(items[k]["name"], []).append(record[axis][k]["label"])
+    shown = "; ".join(f"{name}, as {', '.join(labels)}" for name, labels in which.items())
+    out = (f"{len(odors)} of the {n} odors of the Odors table it has (each once, its {rows} of one merged) "
+           f"{'is' if len(odors) == 1 else 'are'} matched only as the same but for stereochemistry that one of the two "
+           f"leaves unspecified: {shown}.")
+    if counts:
+        total = sum(counts)
+        out += (f" Its {rows} so matched have {mine:,} of the {of_odors:,} values (not 0 or missing) of those {n} "
+                f"({_pct(mine, of_odors)}), and of its {total:,} ({_pct(mine, total)}).")
+    return out
+
+
 def metacyc_source(db, ref_id: str) -> Optional[tuple[Path, Optional[dict]]]:
     """`bundle_source` of a MetaCyc bundle."""
     return bundle_source(db, ref_id, "metacyc")
@@ -942,7 +1000,7 @@ def listing(db, index: odormeta.OdorIndex) -> list[dict]:
         item = {k: e.get(k) for k in ("id", "title", "description", "origin", "path", "state", "error", "source",
                                       "read_grant", "created_at", "value_label", "row_label", "col_label", "chemical_axis")}
         item["kind_setting"] = e.get("kind")
-        item["warning"] = None
+        item["warning"] = item["stereo"] = None
         if rec:
             chem, gl = chemicals(rec, index), glomeruli(rec)
             item.update(kind=rec["kind"], shape=rec["shape"], notes=rec["notes"], imported_at=rec.get("imported_at"),
@@ -951,7 +1009,7 @@ def listing(db, index: odormeta.OdorIndex) -> list[dict]:
                                    "odor_ids": [i["odor_id"] for i in chem["items"] if i["odor_id"] is not None]},
                         glomeruli={"axis": gl["axis"], "n": gl["n"], "matched": gl["matched"],
                                    "names": [n for n in gl["names"] if n is not None]},
-                        warning=warning(chem, gl))
+                        warning=warning(chem, gl), stereo=stereo_warning(chem, rec, short=True))
         out.append(item)
     return out
 
@@ -982,6 +1040,7 @@ def load(db, ref_id: str, index: odormeta.OdorIndex) -> Optional[dict[str, Any]]
     if o is None or o["state"] != "ok":
         return o and {k: o[k] for k in ("meta", "state", "error")}
     meta, record, values, chem, gl = o["meta"], o["record"], o["values"], o["chem"], o["gl"]
+    merge = (_fields(o["entry"].get("fields")) or {}).get("merge", MERGES[0])
     meta["kind"] = record["kind"]
     meta["metacyc"] = record.get("metacyc")
     meta["lotus"] = record.get("lotus")
@@ -1008,7 +1067,8 @@ def load(db, ref_id: str, index: odormeta.OdorIndex) -> Optional[dict[str, Any]]
     return {
         "meta": meta, "state": "ok", "rows": rows, "cols": cols, "shape": list(values.shape), "dtype": "float32", **encoded,
         "vmin": vrange[0] if vrange else None, "vmax": vrange[1] if vrange else None,
-        "chemicals": {k: v for k, v in chem.items() if k != "items"}, "warning": warning(chem, gl), "notes": record["notes"],
+        "chemicals": {**{k: v for k, v in chem.items() if k != "items"}, "merge": merge}, "warning": warning(chem, gl),
+        "stereo_warning": stereo_warning(chem, record), "notes": record["notes"],
         "glomeruli": {k: gl[k] for k in ("axis", "n", "matched")},
         "imported_at": record.get("imported_at"),
         **({"square": True, "pairwise": record["pairwise"]} if record.get("pairwise") else {}),
@@ -1079,6 +1139,7 @@ def check(path_input: str, chemical_axis: str, kind: str, index: odormeta.OdorIn
         return {**out, "error": _read_error(Path(p), e)}
     chem, gl = chemicals(record, index), glomeruli(record)
     preview = {"shape": record["shape"], "kind": record["kind"], "notes": record["notes"], "warning": warning(chem, gl),
+               "stereo_warning": stereo_warning(chem, record),
                "pairwise": record.get("pairwise"), "metacyc": record.get("metacyc"), "lotus": record.get("lotus"),
                "chemicals": {k: chem[k] for k in ("axis", "n", "matched", "identified", "unidentified", "ambiguous", "odors")},
                "glomeruli": {k: gl[k] for k in ("axis", "n", "matched")},
