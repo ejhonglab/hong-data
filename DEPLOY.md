@@ -362,6 +362,28 @@ Logs: `journalctl -u olfdb` (with the systemd unit) or `docker compose logs` (`d
 compose logs worker` for the fit worker's; each fit's own log is in the tab, and in
 `data/fits/<fit>/log.txt`, with its model and results).
 
+### A container that never started after a restart
+
+After a restart, a container (seen with `olfdb-worker`, 2026-11-13) can be left
+not running, while `docker ps` still shows it *Up* for hours. Queued fits and predictions
+then wait forever. `docker inspect` gives the real state:
+
+```bash
+docker inspect -f '{{.State.Status}} {{.State.Error}}' olfdb-worker
+# created failed to set up container networking: endpoint with name olfdb-worker already exists in network olfdb_default
+```
+
+A stale network endpoint from its last run is still registered, and restarting again hits
+the same error. Remove it, then start the container:
+
+```bash
+docker network disconnect -f olfdb_default olfdb-worker
+docker start olfdb-worker
+```
+
+A job that was running when the worker stopped is marked *interrupted*, not queued again:
+submit it again.
+
 ### Updating al-diag-seg
 
 The fit worker's al-diag-seg is installed from GitHub at the commit pinned in
