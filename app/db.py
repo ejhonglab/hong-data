@@ -279,6 +279,20 @@ CREATE TABLE IF NOT EXISTS model_baselines (  -- models chosen in the Admin tab,
     imported_at TEXT,                  -- when its files were copied into the data folder (model_data.import_baseline), NULL if never
     imported_json TEXT                 -- what they were: {"files": {name: {size, mtime_ns, sha256}}}, to tell drift by
 );
+CREATE TABLE IF NOT EXISTS model_runs (  -- baseline models run on datasets of glomeruli, asked for in the Models tab, by the model worker (see model_runs.py)
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,                -- who asked for it (their first name, from Settings)
+    ip TEXT,                           -- from where
+    created_at TEXT NOT NULL,          -- when it was asked for
+    started_at TEXT,
+    finished_at TEXT,
+    status TEXT NOT NULL,              -- queued, running, done, failed, cancelled, interrupted (model_runs.STATUSES)
+    cancel INTEGER NOT NULL DEFAULT 0, -- 1: asked to stop
+    options_json TEXT NOT NULL,        -- model_runs.options: its baseline (and how it is run), datasets, panels and tuning
+    progress_json TEXT,                -- the stage it is at, and what it last said
+    result_json TEXT,                  -- how it was scaled and came out, and its files
+    error TEXT
+);
 """
 # columns added since the first release: (table, column, type)
 # what is looked up through chemutils for an odor CID (chemprops.PROPERTIES): property -> the

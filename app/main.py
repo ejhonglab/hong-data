@@ -39,7 +39,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from . import (backup, bundle_import, chemprops, compare, config, dilution, export, filelog, fits, headspace, lotus,
-               lotus_import, matrix_download, merge, metacyc, metacyc_import, model_data, movies, odormeta, permalinks,
+               lotus_import, matrix_download, merge, metacyc, metacyc_import, model_data, model_runs, orn_input, movies, odormeta, permalinks,
                predictions, reference, roi_training, sandbox, tensor, thorimage, vcf, version, yamlcheck)
 from .db import PANEL_RENAMES, PROPERTY_COLUMNS, Database, rename_panel
 from .glomeruli import GLOMERULI, load_glomeruli
@@ -1756,6 +1756,105 @@ async def models_run_download(request: Request) -> Response:
     (its KCs), "cols" (its odors), "transpose"}), see `matrix_download.model_download`."""
     return await _matrix_download(request, lambda body, fmt, dest, picked: matrix_download.model_download(
         db, str(body.get("id") or ""), _odor_index(), fmt, dest, config.TENSOR_ROOT, **picked))
+
+
+def _aware_run(r: dict) -> dict:
+    for k in ("created_at", "started_at", "finished_at"):
+        r[k] = _aware(r[k])
+    return r
+
+
+async def model_runs_list(request: Request) -> Response:
+    """The baseline models run on datasets, and what running one takes (`model_runs.listing`):
+    the model worker, the baselines (each runnable or not, and why), the datasets of glomeruli."""
+    def get():
+        out = model_runs.listing(db, config.TENSOR_ROOT)
+        for r in out["runs"]:
+            _aware_run(r)
+        return _json_gzipped(request, out)
+    return await run_in_threadpool(get)
+
+
+async def model_runs_preview(request: Request) -> Response:
+    """How datasets would be made a model's input ({"datasets": ids, "panels": names, or none
+    for their default ones}): their ``panels`` (`orn_input.panels`), and ``scaling``
+    (`orn_input.summary`, with ``said``) or, if they cannot be, ``error``."""
+    body = await request.json()
+    ids = body.get("datasets") if isinstance(body, dict) else None
+    if not isinstance(ids, list) or not all(isinstance(i, int) and not isinstance(i, bool) for i in ids):
+        return json_error(400, 'expected {"datasets": [ids], "panels": [names]}')
+
+    def get():
+        panels = orn_input.panels(db, ids)
+        chosen = body.get("panels") if isinstance(body.get("panels"), list) else [p["name"] for p in panels if p["default"]]
+        out = {"panels": panels, "chosen": chosen, "scaling": None, "error": None}
+        try:
+            s = orn_input.scale(db, ids, _odor_index(), chosen)
+            out["scaling"] = {**orn_input.summary(s), "said": orn_input.said(s)}
+        except orn_input.InputError as e:
+            out["error"] = str(e)
+        return out
+    return JSONResponse(await run_in_threadpool(get))
+
+
+async def model_runs_create(request: Request) -> Response:
+    """Asks for a baseline model run on datasets: {"name" (as for a fit), "baseline" (its id),
+    "datasets" (ids), "panels" (names; none: their default ones), "tuning" ("fixed" | "tuned")}.
+    422 without a name, or for what cannot be run (`model_runs.options`), or scaled."""
+    body = await request.json()
+    if not isinstance(body, dict):
+        return json_error(400, "expected a JSON object")
+    name = _user_name(body.get("name"))
+    if not name:
+        return json_error(422, "say who you are: enter your first name in Settings")
+    if first_name_problem(name):
+        return json_error(422, "the name must be a first name alone, with no spaces (e.g. Ann)")
+
+    def run():
+        opts = model_runs.options(db, body, config.TENSOR_ROOT)
+        orn_input.scale(db, opts["datasets"], _odor_index(), opts["panels"])  # (refused now, not when its turn comes)
+        return _aware_run(model_runs.create(db, name, _client_ip(request), opts))
+
+    try:
+        r = await run_in_threadpool(run)
+    except (model_runs.RunError, orn_input.InputError) as e:
+        return json_error(422, str(e))
+    log.info("model run %s asked for by %s: %s", r["id"], name, model_runs.title(db, r))
+    return JSONResponse(r, status_code=201)
+
+
+async def model_runs_cancel(request: Request) -> Response:
+    """Stops a model run: one queued now, one running within seconds (`model_runs.request_cancel`)."""
+    r = await run_in_threadpool(model_runs.request_cancel, db, request.path_params["id"])
+    return JSONResponse(_aware_run(r)) if r else json_error(404, "no such model run")
+
+
+async def model_runs_delete(request: Request) -> Response:
+    """Deletes a model run and its files. 409 while it runs (stop it first)."""
+    done = await run_in_threadpool(model_runs.delete, db, request.path_params["id"])
+    if done is None:
+        return json_error(404, "no such model run")
+    if done is False:
+        return json_error(409, "it is running: stop it first")
+    return JSONResponse({"deleted": True})
+
+
+async def model_runs_download(request: Request) -> Response:
+    """A model run done, to save: its folder as a zip, sent as it is written (everything
+    fit_and_plot_mb_model wrote, its inputs, the script that ran it and its provenance); or
+    with ``?what=csv``, its spike counts alone, KCs × odors, as the model wrote them."""
+    run_id = request.path_params["id"]
+    r = await run_in_threadpool(model_runs.get, db, run_id)
+    if r is None or r["status"] != "done":
+        return json_error(404, "no such model run done")
+    top = f"olfdb_model_run_{run_id}_" + re.sub(r"[^\w.-]+", "_", r["options"]["baseline"]["name"])
+    if request.query_params.get("what") == "csv":
+        path = model_runs.run_dir(run_id) / "output" / "model" / "spike_counts.csv"
+        if not path.is_file():
+            return json_error(404, "its spike counts are gone")
+        return FileResponse(path, filename=f"{top}_spike_counts.csv", media_type="text/csv")
+    return StreamingResponse(model_runs.stream_zip(run_id, top), media_type="application/zip",
+                             headers={"content-disposition": f'attachment; filename="{top}.zip"'})
 
 
 async def _matrix_download(request: Request, write) -> Response:
@@ -3640,8 +3739,8 @@ def _running_jobs(full: bool) -> dict:
                      "then": "It would stop part way (what it has looked up is kept), to be run again."})
     if not full:
         return {"jobs": jobs, "queued": 0}
-    worker = predictions.worker_jobs(db)
-    return {"jobs": jobs + worker["jobs"], "queued": worker["queued"]}
+    worker, models = predictions.worker_jobs(db), model_runs.worker_jobs(db)
+    return {"jobs": jobs + worker["jobs"] + models["jobs"], "queued": worker["queued"] + models["queued"]}
 
 
 async def _ask_full_restart() -> Optional[str]:
@@ -3778,6 +3877,12 @@ routes = [
     Route("/api/models/baselines", models_baselines),
     Route("/api/models/run", models_run),
     Route("/api/models/run/download", models_run_download, methods=["POST"]),
+    Route("/api/models/runs", model_runs_list),
+    Route("/api/models/runs", model_runs_create, methods=["POST"]),
+    Route("/api/models/runs/preview", model_runs_preview, methods=["POST"]),
+    Route("/api/models/runs/{id:int}", model_runs_delete, methods=["DELETE"]),
+    Route("/api/models/runs/{id:int}/cancel", model_runs_cancel, methods=["POST"]),
+    Route("/api/models/runs/{id:int}/download", model_runs_download),
     Route("/api/merge", merge_units),
     Route("/api/merge/preview", merge_preview, methods=["POST"]),
     Route("/api/merge/download", merge_download),

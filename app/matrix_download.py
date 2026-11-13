@@ -248,7 +248,11 @@ def model_download(db, run_id: str, index: odormeta.OdorIndex, fmt: str, dest: P
     exp, model, b = info["experiment"], info["model"], info.get("baseline")
     exp_dir = info["folder"] / exp["key"]
     params = "\n".join(f"- {k}: {'' if v is None else v}" for k, v in model["params"].items())
-    if b:  # (a baseline's imported copy)
+    if info.get("job"):  # (a baseline run on datasets, model_runs.py: all of it is its own download)
+        where = f"run #{info['job']}"
+        origin = (f"From olfdb's model run #{info['job']} (a baseline model run on datasets, in the Models tab), whose own download "
+                  f"has everything it wrote and what it was run on. Downloaded {dt.datetime.now():%Y-%m-%d %H:%M}.")
+    elif b:  # (a baseline's imported copy)
         where = b["experiment"]
         origin = (f"From olfdb's copy of a baseline model's files (chosen in the Admin tab), imported {b['imported_at'][:16]} "
                   f"from `{where}` on tensor (from its top). Downloaded {dt.datetime.now():%Y-%m-%d %H:%M}.")
@@ -258,7 +262,7 @@ def model_download(db, run_id: str, index: odormeta.OdorIndex, fmt: str, dest: P
                   f"`{info['source']['path']}` (added in the Admin tab). Downloaded {dt.datetime.now():%Y-%m-%d %H:%M}.")
     lines = [f"# Model run {info['file']}", "", origin, "",
              f"Its model: row {model['row'] + 1} of `{where}/params.csv` (below, its parameters).", "", params or "(none)", "",
-             "## Files", "", f"- `{info['path'].name}`: its spike counts, as {'imported' if b else 'on tensor'}."]
+             "## Files", "", f"- `{info['path'].name}`: its spike counts, as {'run' if info.get('job') else 'imported' if b else 'on tensor'}."]
     with zipfile.ZipFile(dest, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
         _zip_file(zf, info["path"], f"{stem}/{info['path'].name}")
         for name, what in ((model_data.PARAMS, "the parameters of its experiment's models (its own: the row above)"),

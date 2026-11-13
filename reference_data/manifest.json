@@ -1,6 +1,17 @@
 {
  "datasets": [
   {
+   "id": "hallem-carlson-2006",
+   "title": "Hallem & Carlson 2006: ORN responses",
+   "description": "Every ORN response the paper tabulates, as the change in spike rate from the spontaneous rate: its 110 odors at 10^-2, 10 of them at 10^-4, 10^-6 and 10^-8, and 9 fruits pure (@ 0) and at 10^-2 to 10^-6 (its supplemental tables). Each receptor as its glomerulus (DM3: Or47a). What ORN data is scaled to before a baseline model is run on it (Models tab).",
+   "file": "hallem_carlson_2006.csv",
+   "kind": "diverging",
+   "value_label": "Δ spikes/s",
+   "row_label": "glomerulus",
+   "col_label": "odor",
+   "source": "Hallem & Carlson, Cell 125 (2006) 143-160; as tabulated in olfsysm (hc_data.csv), made by reference_data/make_hallem.py"
+  },
+  {
    "id": "example-fruit-volatiles",
    "title": "EXAMPLE: volatile concentrations across fruits (synthetic)",
    "description": "Placeholder with random numbers so the tab has something to show. Replace with real data (see reference_data/README.md).",

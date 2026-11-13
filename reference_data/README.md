@@ -167,3 +167,9 @@ missing where there is no common ancestor.
 The two `example_*.csv` files are synthetic placeholders, marked `"example": true` in
 the manifest: they are shown only while there is no other reference dataset, built in
 or added in the Admin tab.
+
+`hallem_carlson_2006.csv` (Hallem & Carlson 2006: ORN responses, glomeruli x odors, every
+response they tabulate) is made by `make_hallem.py` from the tables of an
+[olfsysm](https://github.com/ejhonglab/olfsysm) checkout. It is also what ORN data is scaled
+to before a baseline model is run on it in the Models tab (`app/orn_input.py`), so keep its
+file name and layout.

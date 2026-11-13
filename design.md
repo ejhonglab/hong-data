@@ -494,6 +494,48 @@ between the frontend and the server. Using the app is described in
   bases share tags) and row (E35 has two rows of one tag), not by the folder's id or the
   row alone, so it survives the folder being deleted and added again, and rows added
   before it.
+- **Baseline models are run on datasets by a worker of their own, one at a time**
+  (`model_runs.py`, `model_worker.py`, `orn_input.py`): a `model_runs` row per run, claimed
+  only while none is running (`model_runs.claim`), by a third container (the Dockerfile's
+  `model` stage) that has olfsysm. The web server has no olfsysm, so the worker says what it
+  is (`data/model_runs/worker.json`, every 20 s: the arguments `fit_mb_model` takes, its
+  olfsysm build and checkout), and from that the web server works out which baselines can be
+  run (`model_runs.plan`): a baseline's `params.csv` row is taken as a call of
+  `fit_and_plot_mb_model` (its `base_kwargs_json`, its other columns that are arguments of
+  it, its threshold and APL weights as pyolfsysm's `optimizable_model_params`, its
+  `target_rate`), and any other column that is not off (0, false, or 1 for a gain) is a
+  mechanism of the experiment that made it, which nothing here can run: the reference
+  model (E44: a gain on eight glomeruli, a breadth exponent) is so, and says so. How a
+  baseline is run is kept with the run when it is asked for, so it runs as asked even if
+  the baseline changes. olfsysm is in an environment of its own in that image
+  (`OLFDB_MODEL_PYTHON`): hong2p's extras need pydantic 1 and the app pydantic 2. The model
+  is run by the script written into the run's folder (`run.py`, in a process of its own:
+  stopped by killing it, its output its log), the same one that runs it again elsewhere,
+  so what is offered for reproducing a run is what ran it. Progress is by the clock
+  (against the median of the last runs tuned alike: `fit_and_plot_mb_model` says nothing
+  of how far it is), with its log's last line. Its spike counts are copied into a
+  folder laid out as an experiment of one model (`view/`: a `params.csv` row, a
+  `provenance.json`), so the Models tab opens, filters, compares and downloads them as
+  any model's (`model_data.JOB_RUN`, ids `olfdb:runs/<id>/<file>`).
+- **ORN responses are scaled into spike rates by one factor, from Hallem & Carlson's**
+  (`orn_input.scale`): the least-squares factor through zero (no offset: 0 response is 0
+  change, as pyolfsysm's own dF/F fit has it) over every odor and glomerulus the datasets
+  share with the built-in reference dataset of all Hallem & Carlson tabulate
+  (`reference_data/hallem_carlson_2006.csv`, made by `make_hallem.py` from olfsysm's
+  tables), odors matched through the odor table (else by name), their dilution one log₁₀
+  unit above ours (`HALLEM_SHIFT`: their 10⁻² our 10⁻³, pyolfsysm's convention), else the
+  nearest within the Merge tab's tolerance. Unlike pyolfsysm's own pipeline, flies are
+  not each scaled first (the datasets are means over flies already, as merges take
+  them), so its megamat factor (about 170 per unit dF/F) is not pyolfsysm's 127. With
+  fewer than `MIN_ODORS` odors or `MIN_POINTS` pairs in common, a factor from them alone
+  is too noisy (four odors gave 466), so the datasets are pinned to the combination of
+  all datasets of their coding unit first (`_combination`: merged as the Merge tab
+  merges groups, each dataset a group scaled to the average of the responses more than
+  one has), and that to Hallem's. The factor is from every panel's odors, whichever
+  panels the model is run on (diagnostic panels, left out of the model by default, have
+  most of what is in common with Hallem's). Glomeruli not measured for every odor are
+  left out rather than filled in: left out, a glomerulus has no input for any odor,
+  where a 0 for some odors would make those odors differ by it.
 - **A baseline's files are imported when it is chosen, and it is shown as imported**
   (`model_data.import_baseline`, into `data/model_baselines/<id>/`, laid out as its
   experiment's folder: its runs, `params.csv`, `provenance.json` and its fit's
@@ -1412,7 +1454,8 @@ constants in oil what they were estimated with), `vcf_properties` (the same of V
 estimated Henry's law constants, by CID and property, apart from the odor table's), `settings` (site-wide settings from the Admin tab:
 the odor sheet's link, panels shown renamed), `reference_datasets` (reference datasets added there),
 `model_sources` (folders of model data added there, by their path on tensor, with their lists of parameters and of spike count files that are not models),
-`model_baselines` (models chosen there to show first, by their experiment's folder on tensor, name, base and row; when their files were imported, and their sizes, times and SHA-256), `fits`
+`model_baselines` (models chosen there to show first, by their experiment's folder on tensor, name, base and row; when their files were imported, and their sizes, times and SHA-256),
+`model_runs` (baseline models run on datasets: who asked, its baseline and how it is run, datasets, panels and tuning, its progress and result), `fits`
 (fits of al-diag-seg models) and
 `file_log` (the files the server has read or written in its own folders). Files:
 `data/datasets/<id>/` holds the original data file (or files, if several were combined:
@@ -1554,6 +1597,17 @@ GET    /api/models/run?id=<path on tensor>  a run's spike counts: KCs (labels, t
 POST   /api/models/run/download             {"id", "format": "files" | "wide", "rows", "cols", "transpose"}
                                             → its files (zip) or its spike counts as shown (CSV), see
                                             matrix_download.py
+GET    /api/models/runs                     the baselines (each runnable or not, why), the datasets of
+                                            glomeruli, the model worker, and every run (its progress,
+                                            or result), with the done runs' models for the viewer
+POST   /api/models/runs/preview             {"datasets", "panels"} → their panels, and how they
+                                            would be scaled into spike rates (or why they cannot be)
+POST   /api/models/runs                     {"name", "baseline", "datasets", "panels", "tuning":
+                                            "fixed" | "tuned"} → queued (one is run at a time)
+POST   /api/models/runs/{id}/cancel         stops it (queued: now; running: within seconds)
+DELETE /api/models/runs/{id}                it and its files deleted (409 while it runs)
+GET    /api/models/runs/{id}/download       everything it wrote and was run on, as a zip;
+                                            ?what=csv: its spike counts alone (KCs × odors)
 GET    /api/roi_training/download[?stacks=0&datasets=1,2]
                                             a zip of their files where they are on tensor, sent as it is
                                             written, with roi_training.json, and their anatomical stacks

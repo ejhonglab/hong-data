@@ -20,6 +20,7 @@ REFERENCE_CACHE_DIR = DATA_DIR / "references"  # reference datasets added in the
 METACYC_DIR = DATA_DIR / "metacyc"  # MetaCyc imported in the Admin tab: the files uploaded and the bundle built, by import
 LOTUS_DIR = DATA_DIR / "lotus"  # LOTUS imported in the Admin tab: the files uploaded and the bundle built, by import
 MODEL_BASELINES_DIR = DATA_DIR / "model_baselines"  # the files of models chosen as baselines in the Admin tab, as imported, by baseline id
+MODEL_RUNS_DIR = DATA_DIR / "model_runs"  # baseline models run on datasets (model_runs.py): each run's files, by its id; the model worker's word of itself
 ROI_TRAINING_DIR = DATA_DIR / "roi_training"  # average images computed for ROI training downloads (roi_training.py), by source file
 TMP_DIR = DATA_DIR / "tmp"  # the server's temporary files (uploads being received), so it writes nothing outside DATA_DIR
 ADMIN_FILE = DATA_DIR / "admin.json"  # folders the server may read and write (Admin tab, see sandbox.py)

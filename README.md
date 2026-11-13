@@ -42,7 +42,9 @@ expected, and nothing secret is entered. If a download or the page is blocked, s
 7. **Models**: models of KCs (their outputs on tensor, added in the Admin tab), each by its
    parameters, in a table sorted by any of them (the baseline models first, in a table of
    their own); open one to see its KCs' spike counts to each odor, or compare them with
-   datasets in the Compare tab.
+   datasets in the Compare tab. *Run a baseline model on ORN data* runs one on your own
+   datasets of glomeruli (one run at a time, with how far along it is), to see and save
+   its KCs' spike counts, its plots and what is needed to run it again.
 8. **Headspace calculator**: search for odors of the odor table to put in a mixture (or
    start from a panel's odors), give each a concentration (log10 v/v, as in your data),
    and calculate how much of each is in the air above it (in ppm, µg/L and other units).
@@ -654,7 +656,42 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   settings: hundreds). The baseline models (chosen in the Admin tab) come first, in a table
   of their own with the `params.csv` parameters they have, loaded before the rest: as
   imported into the site when chosen, with a warning saying how their files on tensor
-  differ from that, if they do. Click a
+  differ from that, if they do.
+  *Run a baseline model on ORN data*, under them, runs one on datasets of glomeruli: choose
+  the baseline, the datasets (several are taken as one: the mean of theirs) and which of
+  their panels' odors the model is run on (all but diagnostic panels, unless chosen). Each
+  glomerulus's mean response to each odor (over the flies; odors of one component, and
+  glomeruli measured for every one of them) is scaled into a change in spike rate by one
+  factor: the one that best matches (least squares, through zero) the responses, to every
+  panel's odors, that they have in common with [Hallem & Carlson's
+  (2006)](#reference/hallem-carlson-2006), a built-in reference dataset of all they
+  tabulate (110 odors at 10⁻², 10 of them down to 10⁻⁸, and fruits), per odor and
+  glomerulus, their dilution taken as one log₁₀ unit above the concentration here (their
+  10⁻² as 10⁻³: as pyolfsysm takes them; else the nearest less than 1 away). With fewer
+  than 5 odors (50 odor–glomerulus pairs) in common, the datasets are first scaled to the
+  combination of all datasets of their coding unit, made as the Merge tab merges them
+  (each of the others a group, scaled to the average of what more than one has), and
+  that combination to Hallem & Carlson's; what was done is said before it is run, and
+  kept with it. The model is run by pyolfsysm's `fit_and_plot_mb_model`, with the
+  baseline's settings (its `params.csv` row's `base_kwargs_json`, and its other columns
+  that are settings of it), either *as the baseline was tuned* (its own threshold and
+  APL weights: the same model, on this input; the default) or *tuned again on these
+  odors* (to the response rate it was tuned to). A baseline with anything
+  `fit_and_plot_mb_model` does not take (another experiment's own mechanism: a gain on
+  some glomeruli, a breadth exponent) cannot be run, and is listed saying which. One
+  model is run at a time (others wait their turn, in the order asked for), with a bar of
+  how far along it is (by how long the last runs took) and what it last said; it can be
+  stopped. A run done is listed with its response rate and factor: *Show* opens its KCs'
+  spike counts to each odor below, as any model's (to filter, cluster, compare with
+  datasets, or save as shown: *Download › Spike counts, wide CSV*); *Spike counts (CSV)*
+  saves them as the model wrote them (KCs as rows, an odor a column); *Everything (zip)*
+  saves all `fit_and_plot_mb_model` wrote (`output/model/`: its plots, spike counts,
+  responses, weights, parameters and `model_provenance.json`), `inputs/` (the mean
+  responses, those scaled, every response compared with Hallem & Carlson's and their
+  table, the baseline's parameters, the arguments of the call), `run.py` (the script
+  that ran it: with olfsysm installed at the commit given, `python run.py` runs it
+  again from those files), `provenance.json`, a README and its log.
+  Click a
   parameter to sort by it (again: the other way), type in *Find models* to list only those
   with it in a value shown (or a run's name), and tick *Hide parameters the same for every
   model that has them* to see what differs. Only the rows and columns in view are drawn, so

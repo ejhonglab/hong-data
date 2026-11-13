@@ -1138,6 +1138,30 @@ try {
         <div id="models-base-status"></div>
         <div id="models-base-table" class="models-table-wrap models-base-wrap"></div>
       </div>
+      <div class="step" id="model-runs-step" hidden>
+        <div class="step-head"><h2>Run a baseline model on ORN data</h2></div>
+        <p class="muted small">A baseline model above, run on datasets of glomeruli (ORN responses): each glomerulus's mean response to each odor,
+          scaled into changes in spike rate by the responses they have in common with <a href="#reference/hallem-carlson-2006">Hallem &amp; Carlson's (2006)</a>
+          (those of every panel; their dilution 10<sup>−2</sup> taken as a concentration of 10<sup>−3</sup> here, and so on), or, with too few in common,
+          by first scaling them to the combination of all datasets of their coding unit, as the <a href="#merge">Merge tab</a> scales groups. The model is run by
+          pyolfsysm's <code>fit_and_plot_mb_model</code>, one run at a time; when done, its KCs' spike counts to each odor are shown below, and saved with
+          everything it wrote and what is needed to run it again.</p>
+        <div id="mruns-worker" aria-live="polite"></div>
+        <div class="grid mruns-form">
+          <label class="field"><span>Baseline model</span><select id="mruns-baseline"></select></label>
+          <div class="field"><span>Its threshold and APL weights</span><div id="mruns-tuning" class="mruns-checks" role="radiogroup" aria-label="Its threshold and APL weights"></div></div>
+          <div class="field"><span>Datasets of glomeruli <span class="muted">(several: as one, their mean)</span></span><div id="mruns-datasets" class="mruns-checks"></div></div>
+          <div class="field"><span>Panels <span class="muted">(whose odors the model is run on)</span></span><div id="mruns-panels" class="mruns-checks"></div></div>
+        </div>
+        <div id="mruns-why" aria-live="polite"></div>
+        <div id="mruns-scaling" aria-live="polite"></div>
+        <p class="muted small" id="mruns-who"></p>
+        <div class="actions"><button type="button" class="btn primary" id="mruns-start" disabled>Run it</button>
+          <span class="muted small" id="mruns-queue"></span></div>
+        <div id="mruns-status" aria-live="polite"></div>
+        <div id="mruns-active"></div>
+        <div id="mruns-past" class="models-table-wrap mruns-past"></div>
+      </div>
       <div id="models-status" aria-live="polite"></div>
       <div class="step" id="models-table-step" hidden>
         <div class="step-head"><h2>Every model <span class="muted" id="models-count"></span></h2></div>

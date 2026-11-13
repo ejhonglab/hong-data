@@ -70,6 +70,19 @@ starts it again, with the GPU.
 On a server without an NVIDIA GPU, delete the `worker` service from `docker-compose.yml`:
 everything else works, and fits asked for wait, the tab saying no worker is running.
 
+### The model worker
+
+Baseline models asked for in the Models tab (*Run a baseline model on ORN data*) run in a
+third container, `olfdb-model`, one at a time, on the CPU (at most 16 cores: `cpus` in
+`docker-compose.yml`). Its image has olfsysm, the MB model, compiled when the image is
+built from a checkout of [olfsysm](https://github.com/ejhonglab/olfsysm) at the commit of
+the Dockerfile's `OLFSYSM` (with the connectome data it reads; about 4 GB), in an
+environment of its own (`/opt/model-venv`, with the packages of `requirements-model.txt`).
+To run another olfsysm, push its commit, set `OLFSYSM` to it (in full) and restart
+(`restart-olfdb`, section 4): only that image is rebuilt, in a few minutes. Without the
+service (delete `model` from `docker-compose.yml`), everything else works, and runs asked
+for wait, the tab saying no model worker is running.
+
 ## 2. Put the code on the server
 
 ```bash
@@ -117,8 +130,8 @@ curl -s http://localhost:8080/api/health     # {"ok":true,...}
 docker compose logs -f                       # Ctrl-C to stop following
 ```
 
-This starts two containers: `olfdb`, the site, and `olfdb-worker`, which runs fits (with
-the GPU: section 1). The first build takes a while: the worker's image has PyTorch, CUDA's
+This starts three containers: `olfdb`, the site, `olfdb-worker`, which runs fits (with
+the GPU: section 1), and `olfdb-model`, which runs models (section 1, "The model worker"). The first build takes a while: the worker's image has PyTorch, CUDA's
 libraries and Cellpose's weights in it (about 9 GB), installed again only when
 `requirements.txt` or `requirements-worker.txt` change (a new al-diag-seg, in
 `requirements-alseg.txt`, is installed on top of them in seconds).

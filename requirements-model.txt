@@ -1,0 +1,7 @@
+# what pyolfsysm (the MB model's Python side, in the olfsysm checkout the Dockerfile's model stage
+# makes) needs that is not on PyPI, for the model worker's own environment (/opt/model-venv: not the
+# app's, whose pydantic 2 hong2p's extras cannot be installed beside): hong2p with its extras, and natmix
+hong2p[all] @ git+https://github.com/ejhonglab/hong2p@ae2abda6bd6e9df4b6475a243c286dfeeb09ac70
+natmix @ git+https://github.com/ejhonglab/natmix@66748bb08c9023a8d8cea8f1b7cd0bd6d0be37d3
+# drosolf (Hallem's table, and which receptor each glomerulus has), as pyolfsysm needs it: newer than PyPI's
+drosolf @ git+https://github.com/tom-f-oconnell/drosolf@2ff359109ed9d4c05e2f4c296111ca186cb0e892

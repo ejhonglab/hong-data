@@ -12,6 +12,7 @@ import { BundleImport } from './imports.js';
 import { FitsPanel, fmtDuration } from './fits.js';
 import { PredictPanel } from './predictions.js';
 import { ModelsPage } from './models.js';
+import { ModelRuns } from './model_runs.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -8783,6 +8784,10 @@ const modelsPage = new ModelsPage({
   onCompare: (m) => { comparePage.addModel(m); location.hash = '#compare'; },
 });
 const settings = new SettingsPage();
+const modelRuns = new ModelRuns({
+  $, esc, api, msgBox, askDialog, fmtWhen, fmtSize, LS, getName: () => settings.current().name,
+  setJobs: (view) => modelsPage.setJobs(view), onChange: () => modelsPage.forget('olfdb:runs/'),
+});
 const roiTraining = new RoiTrainingPage();
 const headspacePage = new HeadspacePage();
 const headspaceVcf = new HeadspaceVcf(headspacePage);
@@ -8806,7 +8811,7 @@ function route() {
   if (name === 'browse') { browse.load().then(() => { if (id) { if (/^\d+$/.test(id)) browse.show(+id); else browse.openPermalink(decodeURIComponent(id)); } }); }
   if (name === 'odors') { odorsPage.highlightId = id ? +id : null; odorsPage.load().then(() => { if (id) odorsPage.highlight(+id); }); }
   if (name === 'reference') { reference.load().then(() => { if (id) reference.show(id); }); }
-  if (name === 'models') modelsPage.load().then(() => (id ? modelsPage.show(decodeURIComponent(id)) : modelsPage.close()));
+  if (name === 'models') Promise.all([modelsPage.load(), modelRuns.load()]).then(() => (id ? modelsPage.show(decodeURIComponent(id)) : modelsPage.close()));
   if (name === 'settings') settings.load().then(() => { if (id === 'name') settings.focusName(); });
   if (name === 'al-segmentation') roiTraining.load();
   if (name === 'headspace') headspacePage.load().then(() => headspaceVcf.load());

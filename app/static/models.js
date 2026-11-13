@@ -50,6 +50,7 @@ export class ModelsPage {
     this.h = h;
     this.data = null; // as from /api/models
     this.base = null; // as from /api/models/baselines
+    this.jobs = null; // the models of baseline runs on datasets, done (model_runs.js: /api/models/runs' view), listed as base's
     this.loadedAt = 0;
     this._loading = null; // the load under way
     this.runs = new Map(); // run id -> as from /api/models/run
@@ -384,9 +385,20 @@ export class ModelsPage {
     $('#models-exp').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
-  // the model of a run, and the listing it is in (of every model, else of the baselines)
+  // the done baseline runs on datasets, as model_runs.js has them (their spike counts opened as any model's)
+  setJobs(view) {
+    prep(view);
+    this.jobs = view;
+  }
+
+  // a run's spike counts read again when next opened (a baseline run on datasets deleted, or done again)
+  forget(prefix) {
+    for (const m of [this.runs, this.shown]) for (const k of [...m.keys()]) if (k.startsWith(prefix)) m.delete(k);
+  }
+
+  // the model of a run, and the listing it is in (of every model, else of the baselines, else of the runs on datasets)
   _find(id) {
-    for (const d of [this.data, this.base]) {
+    for (const d of [this.data, this.base, this.jobs]) {
       const m = d?.models.find((x) => x.runs.some((r) => r.id === id));
       if (m) return { d, m };
     }
@@ -489,7 +501,7 @@ export class ModelsPage {
     $('#model-sub').innerHTML = `${shown.n.toLocaleString()} of its ${nK.toLocaleString()} KCs shown (${filter === 'all' ? 'all of them'
       : filter === 'spiking' ? 'those spiking to some odor' : `those with at least ${fmtValue(nSpikes)} spikes to some odor`}) × ${nO} odors
       (${matched === nO ? 'all' : `${matched} of them`} matched to the Odors tab)${run.kcs.groups ? ', grouped by KC type' : ''}.
-      From <code>${this.h.esc(run.file)}</code>${run.imported ? `, as imported into olfdb ${this.h.esc(this.h.fmtWhen(run.imported.at))}` : ''}${run.transposed
+      From ${run.job ? `model run #${run.job} (above): ` : ''}<code>${this.h.esc(run.file)}</code>${run.imported ? `, as imported into olfdb ${this.h.esc(this.h.fmtWhen(run.imported.at))}` : ''}${run.transposed
         ? ', its KCs as columns there' : ''}.`;
     if (!this.viewer) {
       const el = $('#model-viewer');

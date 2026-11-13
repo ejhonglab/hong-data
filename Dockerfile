@@ -62,6 +62,39 @@ USER olfdb
 CMD ["python", "-m", "app.fit_worker"]
 
 
+# the model worker (model_worker.py, docker-compose.yml's model service): also olfsysm, the MB model
+# (its C++ extension, compiled here, and pyolfsysm with the connectome data it reads), as a checkout
+# of one commit, installed from it: pyolfsysm says what it ran by its checkout's commit, and runs
+# only a build of its C++ sources as committed (so git stays, and may read a checkout that is root's).
+# In an environment of its own (OLFDB_MODEL_PYTHON), which the worker runs each model with: hong2p's
+# extras need pydantic 1, the app pydantic 2.
+FROM base AS model
+COPY requirements-model.txt .
+ARG OLFSYSM=a6edec7587bb9acb6ffa609002d42ebb09ec3c16
+RUN apt-get update && apt-get install -y --no-install-recommends git build-essential libxrender1 libxext6 libexpat1 libgl1 libglib2.0-0 \
+ && rm -rf /var/lib/apt/lists/* \
+ && git config --system --add safe.directory /opt/olfsysm \
+ && git init -q /opt/olfsysm && git -C /opt/olfsysm fetch -q --depth 1 https://github.com/ejhonglab/olfsysm ${OLFSYSM} \
+ && git -C /opt/olfsysm checkout -q FETCH_HEAD \
+ && python -m venv /opt/model-venv \
+ && /opt/model-venv/bin/pip install --no-cache-dir -r requirements-model.txt \
+ && /opt/model-venv/bin/pip install --no-cache-dir -e /opt/olfsysm
+ENV OLFDB_MODEL_PYTHON=/opt/model-venv/bin/python
+
+COPY app ./app
+COPY config ./config
+COPY reference_data ./reference_data
+COPY manage.py .
+COPY --from=version /version.json ./VERSION.json
+
+ENV OLFDB_DATA_DIR=/data OLFDB_REFERENCE_DIR=/srv/olfdb/reference_data MPLBACKEND=Agg
+RUN mkdir -p /data && chown -R olfdb:olfdb /data
+VOLUME ["/data"]
+USER olfdb
+
+CMD ["python", "-m", "app.model_worker"]
+
+
 # the web server (the default target, docker-compose.yml's olfdb service): with the X libraries
 # RDKit's drawing loads (the Odors tab's structures), not in the slim image, nor in the worker's
 FROM base AS web

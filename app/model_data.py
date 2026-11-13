@@ -73,6 +73,8 @@ MAX_ENTRIES = 100_000  # files and folders scanned in a folder at most (not one 
 N_SPIKES = "n_spikes_for_response"  # how many spikes are a response, of a model's parameters
 BASELINE_RUN = "olfdb:baselines/"  # the start of the id of a run of a baseline's imported copy (`baseline_listing`): then <its id>/<its file>
 PARTIAL = ".partial"  # a baseline's files being imported (`import_baseline`), until all are
+JOB_RUN = "olfdb:runs/"  # the start of the id of the spike counts of a baseline run on datasets (model_runs.py): then <its id>/<its file>
+JOB_VIEW = "view"  # in such a run's folder: its spike counts, with a params.csv and provenance.json, as an experiment of one model
 
 _lock = threading.Lock()
 _scans: dict[str, tuple[tuple, dict]] = {}  # folder on the server -> (its files' sizes and times, its scan)
@@ -764,9 +766,13 @@ def run_info(db, run_id: str, root: Path) -> dict:
     """`run_file`'s, as ``source``, ``path`` and ``experiment``, with the ``folder`` added (on
     the server), the run's ``file`` there and its ``model`` (as `scan`'s). Of a run of a
     baseline's imported copy (`BASELINE_RUN`), ``source`` is None, ``folder`` the copy's, ``file``
-    its path from its experiment's parent's, and ``baseline`` the baseline (`_baseline_rows`')."""
+    its path from its experiment's parent's, and ``baseline`` the baseline (`_baseline_rows`'). Of
+    a baseline run on datasets (`JOB_RUN`), ``source`` is None too, ``job`` its id, and
+    ``folder`` its `JOB_VIEW`."""
     if run_id.startswith(BASELINE_RUN):
         return _baseline_run_info(db, run_id)
+    if run_id.startswith(JOB_RUN):
+        return _job_run_info(run_id)
     srcs = [s for s in sources(db) if run_id.startswith(s["path"] + "/")]
     src = max(srcs, key=lambda s: len(s["path"]), default=None)
     rel = run_id[len(src["path"]) + 1:] if src else ""
@@ -785,6 +791,35 @@ def run_info(db, run_id: str, root: Path) -> dict:
         raise LookupError(f"{rel} is not a model run of {src['path']} (any more)")
     return {"source": src, "folder": folder, "file": rel, "path": folder / rel, "model": model,
             "experiment": next(e for e in s["experiments"] if e["key"] == model["experiment"])}
+
+
+def runs_root() -> Path:
+    return config.MODEL_RUNS_DIR
+
+
+def job_dir(job_id: int) -> Path:
+    """The folder of a baseline run on datasets (model_runs.py)."""
+    return runs_root() / str(int(job_id))
+
+
+def job_view_dir(job_id: int) -> Path:
+    return job_dir(job_id) / JOB_VIEW
+
+
+def _job_run_info(run_id: str) -> dict:
+    jid, _, rel = run_id[len(JOB_RUN):].partition("/")
+    if not jid.isdigit() or not rel.endswith(SUFFIX):
+        raise LookupError("no such model run (of a baseline run on datasets)")
+    folder = job_view_dir(int(jid))
+    try:
+        s = scan(folder)
+    except ScanError:
+        raise LookupError(f"run #{jid} has no spike counts (it is not done, or was deleted)") from None
+    m = next((m for m in s["models"] if any(r["file"] == rel for r in m["runs"])), None)
+    if m is None:
+        raise LookupError(f"{rel} is not of run #{jid}")
+    return {"source": None, "job": int(jid), "folder": folder, "file": f"run_{jid}/{rel}", "path": folder / rel, "model": m,
+            "experiment": s["experiments"][0]}
 
 
 def _baseline_run_info(db, run_id: str) -> dict:
@@ -875,5 +910,6 @@ def run(db, run_id: str, index: OdorIndex, root: Optional[Path] = None) -> dict:
     b, imported = info.get("baseline"), None
     if b:
         imported = {"at": b["imported_at"], "drift": drift(b, info["experiment"], info["model"], root)}
-    return {"id": run_id, "file": f"{b['experiment']}/{info['path'].relative_to(info['folder']).as_posix()}" if b else run_id, "imported": imported,
+    file = f"{b['experiment']}/{info['path'].relative_to(info['folder']).as_posix()}" if b else info["file"] if info.get("job") else run_id
+    return {"id": run_id, "file": file, "imported": imported, "job": info.get("job"),
             "provenance": info["experiment"]["provenance"], "fit_provenance": fit_provenance(info), **read_run(info["path"], index)}
