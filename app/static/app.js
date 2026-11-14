@@ -11,6 +11,7 @@ import { LotusPanel, decisionsHtml } from './lotus.js';
 import { BundleImport } from './imports.js';
 import { FitsPanel, fmtDuration } from './fits.js';
 import { PredictPanel } from './predictions.js';
+import { ExtractPanel } from './extract.js';
 import { ModelsPage } from './models.js';
 import { ModelRuns } from './model_runs.js';
 
@@ -8522,12 +8523,15 @@ class RoiTrainingPage {
     });
     this.fits = new FitsPanel({ $, esc, api, msgBox, askDialog, fmtWhen, fmtSize, getName: () => settings.current().name });
     this.predict = new PredictPanel({ $, esc, api, msgBox, askDialog, fmtWhen, getName: () => settings.current().name,
-      player: () => player, flies: () => this.data?.flies || null });
+      player: () => player, flies: () => this.data?.flies || null, onData: () => this.extract?.predictionsChanged() });
+    this.extract = new ExtractPanel({ $, esc, api, msgBox, askDialog, fmtWhen, getName: () => settings.current().name,
+      flies: () => this.data?.flies || null, predictions: () => this.predict.data?.predictions || null });
   }
 
   async load(again = false) {
     this.fits.load();
     this.predict.load();
+    this.extract.load();
     if (this.data && !again) return;
     const seq = ++this._seq;
     $('#rt-download').hidden = true;
@@ -8541,6 +8545,7 @@ class RoiTrainingPage {
     this.data = r;
     this._render();
     this.predict.renderFlies();
+    if (this.extract.data) this.extract.renderFlies();
   }
 
   // whose a fly's ROIs are: its datasets' uploaders

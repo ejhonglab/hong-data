@@ -53,7 +53,8 @@ expected, and nothing secret is entered. If a download or the page is blocked, s
    them, and the dilutions in paraffin oil that would give the same headspace.
 9. **AL segmentation**: a fly's glomerulus ROIs drawn and named by a model
    ([al-diag-seg](https://github.com/tom-f-oconnell/al-diag-seg)) fit on the server, viewed
-   beside the fly's own and downloaded; one download of what there is on tensor to train
+   beside the fly's own, edited and downloaded; the signals of a fly's ROIs (traces, dF/F and
+   responses) extracted from its movies as al_analysis does; one download of what there is on tensor to train
    such a model, of every fly of a glomeruli dataset with a diagnostic panel, and the flies
    left out, with why; how many glomeruli each fly has, and which glomeruli few of the flies
    have. Models fit to them on the server's GPU, scored on flies held out, and downloaded to
@@ -821,6 +822,36 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   someone else changed them meanwhile, it says so instead of overwriting theirs. The ROIs
   as predicted, and the fly's own, are only ever shown: nothing changes them. Predicting a
   fly's ROIs again deletes its edited ones with the rest (it says so when asking).
+  *Extract signals*, below it, computes the signals of a fly's ROIs from its
+  motion-corrected movies as al_analysis does, with the same numbers (checked against what
+  al_analysis left for 9 recordings of 4 flies: identical to the last digit): for each
+  recording of the fly (a folder with `mocorr.tif`, else `flipped.tif` or `raw.tif`, and
+  `trial_frames_and_odors.json`; one done again, `<name>_redo`, in place of the first), each
+  ROI's trace (the mean of the movie over its pixels on a plane), its dF/F in each trial
+  ((F − F0) / F0, F0 its mean over the trial's time points before the odor), and its
+  response to each trial's odor: the dF/F of largest magnitude, with its sign, in the first
+  two time points from the odor's onset. Choose the fly (one of the site's, one whose ROIs
+  were predicted, or any on tensor by its folder) and its ROIs: those a model predicted,
+  as edited in the viewer or as predicted, or the fly's own (the `RoiSet.zip` of each
+  recording, as al_analysis reads them; ROIs named `AL` or ending in `+` are left out, as
+  there). An ROI drawn on several planes (one name, several outlines) gives one signal,
+  in one of four ways: its best plane in each recording, the one whose largest response
+  over that recording's trials is greatest (al_analysis' way, the default); its best plane
+  over all the fly's recordings, the same in each; the mean of all its voxels; or its
+  planes' traces, each relative to its mean, averaged with weights 1 / the variance of its
+  dF/F before the odors (the less noisy planes counting more). The fit worker runs them,
+  one at a time, beside fits and predictions (a few seconds per GB of movies; those waiting
+  and running say when they should end, from how long the last ones took), and keeps each
+  on the server (`data/extractions/<id>/`) to download as a zip: `responses.csv` (trials ×
+  ROIs, every recording's trials, with al_analysis' panel and odor names),
+  `responses_glomeruli.csv` (the same of the ROIs named as glomeruli alone, which the
+  Upload tab takes as it is), and per recording `traces.csv`, `plane_traces.csv` (every
+  plane of every ROI), `dff.csv`, `responses.csv` (as al_analysis' own table of it) and
+  `planes.csv` (each plane's pixels, largest response, noise, weight, and whether it is
+  al_analysis' best), with `provenance.json` (the files read, how it was computed, the
+  software, who asked), a `README.txt` and its log. What is questionable in this
+  calculation, and by how much it matters, is in
+  [design.md](design.md#signals-extracted-as-al_analysis-does).
   *Download training data*: of every glomeruli dataset with a diagnostic panel, each fly whose
   folder in the dataset's motion-corrected data (as al_analysis lays it out) has
   diagnostic recordings (folders with `trialmean_dff.tif`, the mean dF/F of each odor, and
@@ -892,7 +923,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     in, the baseline models' files as imported, AL segmentation fits (each ~1.2 GB: its
     model, held-out flies' results and log), and datasets deleted there (not raw or
     motion-corrected data, nor uploads under way, nor other model data, which is read on
-    tensor, nor AL segmentation predictions, which a fit's model makes again). Each backup is a folder `olfdb-backup-<date>_<time>`
+    tensor, nor AL segmentation predictions, which a fit's model makes again, but for their ROIs as edited by hand in
+    the viewer, which are kept; nor signals extracted, made again likewise). Each backup is a folder `olfdb-backup-<date>_<time>`
     laid out like `data/`; files unchanged since the backup before it there are hard
     links to it, so each takes the space of what changed only. Listed with when each was
     made, its size and what is new in it; above them, when the last was made and whether

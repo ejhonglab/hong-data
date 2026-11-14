@@ -283,8 +283,11 @@ def test_tiff(root):
         assert {k: m.info()[k] for k in "tzcyx"} == {"t": len(data), "z": 3, "c": 1, "y": 6, "x": 8} and m.info()["dtype"] == "uint16"
         np.testing.assert_array_equal(m.planes(1, 5, 2, 0), data[1:, 2])
         np.testing.assert_array_equal(m.planes(0, 2, None, 0), data[:2].max(axis=1))
+        np.testing.assert_array_equal(m.volumes(1, 99), data[1:])  # (whole volumes, for computing on: extract.py)
         with pytest.raises(movies.MovieError):
             m.planes(0, 1, 3, 0)
+        with pytest.raises(movies.MovieError):
+            m.volumes(len(data), 1)
     assert movies.open_movie(root / "tom/analysis/2023-11-19/1/t1/mocorr.tif").fps == 4.0
     # big-endian, as hong2p writes them: memory-mapped in the file's byte order
     big = root / "big.tif"
@@ -292,12 +295,15 @@ def test_tiff(root):
     m = movies.open_movie(big)
     assert m.data is not None and m.info()["dtype"] == "uint16"
     np.testing.assert_array_equal(m.planes(1, 2, 0, 0), tzyx[1:3, 0])
+    assert m.volumes(0, 2).dtype == np.dtype(">u2")  # (the file's own numbers: not converted, as those sent to the browser are)
+    np.testing.assert_array_equal(m.volumes(0, 2), tzyx[:2])
     # a movie of one plane
     one = root / "tyx.tif"
     tifffile.imwrite(one, tzyx[:, 0], imagej=True, metadata={"axes": "TYX"})
     m = movies.open_movie(one)
     assert m.shape == {"t": 5, "z": 1, "c": 1, "y": 6, "x": 8}
     np.testing.assert_array_equal(m.planes(3, 1, None, 0), tzyx[3:4, 0])
+    np.testing.assert_array_equal(m.volumes(3, 2), tzyx[3:5, :1])
 
 
 def test_raw(root):
@@ -308,6 +314,7 @@ def test_raw(root):
                         "fps": 7.5, "warnings": []}
     np.testing.assert_array_equal(m.planes(2, 2, 1, 0), data[2:, 1, 0])
     np.testing.assert_array_equal(m.planes(0, 4, None, 0), data[:, :3, 0].max(axis=1))  # without the flyback frame
+    np.testing.assert_array_equal(m.volumes(1, 2), data[1:3, :3, 0])
     with path.open("ab") as f:
         f.write(b"\0" * 10)
     assert "longer than 4 whole volumes" in movies.open_movie(path).warnings[0]

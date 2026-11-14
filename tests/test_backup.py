@@ -100,6 +100,15 @@ def test_backup(site):
     assert not (into / f"{backup.PREFIX}2020-01-01_000000{backup.PARTIAL}").exists()
 
 
+def test_backup_edited_rois(site):
+    """Of a prediction, a backup has its ROIs as edited by hand in the viewer: what its model would not make again."""
+    db, data, into = site
+    for name in ("x_pred-edited_RoiSet.zip", "x_pred-edited.json", ".x_pred-edited_RoiSet.tmp.zip"):  # (the last: one being written)
+        (data / "predictions/1" / name).write_text(name)
+    b = into / backup.make(db, into)["name"]
+    assert sorted(p.name for p in (b / "predictions").rglob("*") if p.is_file()) == ["x_pred-edited.json", "x_pred-edited_RoiSet.zip"]
+
+
 def test_backup_api(site, main, monkeypatch):  # noqa: F811
     db, data, into = site
     monkeypatch.setattr(main, "db", db)

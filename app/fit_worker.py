@@ -41,7 +41,7 @@ from importlib import metadata
 from pathlib import Path
 from typing import Optional
 
-from . import config, filelog, fits, odormeta, predictions, roi_training, sandbox, version
+from . import config, extract, filelog, fits, odormeta, predictions, roi_training, sandbox, version
 from .db import Database
 from .glomeruli import load_glomeruli
 
@@ -524,6 +524,58 @@ def run_prediction(db, p: dict, on_gpu: bool, why_cpu: Optional[str] = None) -> 
     log.info("prediction %s: %s%s", p["id"], status, f" ({error})" if error else "")
 
 
+# ---------------------------------------------------------------- extractions
+
+def run_extraction(db, e: dict) -> None:
+    """Runs one extraction of a fly's ROIs' signals (claimed: `extract.claim`) to the end: done or
+    failed. Its folder is made anew (`extract.README` says what is in it)."""
+    d = extract.out_dir(e["id"])
+    shutil.rmtree(d, ignore_errors=True)
+    d.mkdir(parents=True)
+    status, error, result, last = "failed", None, None, [0.0]
+
+    def progress(done: float, total: float, recording: str) -> None:
+        if time.time() - last[0] >= SAVE_S:
+            last[0] = time.time()
+            extract.update(db, e["id"], progress={"recording": recording, "done": done, "total": total})
+
+    with open(d / "log.txt", "a", buffering=1) as out, _output_to(out):
+        try:
+            print(f"extraction {e['id']}: fly {e['fly']} ({e['fly_dir']}), ROIs {json.dumps(e['rois'])}, options {json.dumps(e['options'])}, "
+                  f"asked for by {e['name']} ({e['ip']}) at {e['created_at']}")
+            result = extract.run(db, e, print, progress)
+            status = "done"
+        except Exception as err:  # noqa: BLE001 (any failure is the extraction's, said in its log and record)
+            error = str(err) if isinstance(err, extract.ExtractError) else f"{type(err).__name__}: {err}"
+            traceback.print_exc()
+    extract.update(db, e["id"], status=status, finished_at=extract.now(), error=error, result=result, progress=None)
+    log.info("extraction %s: %s%s", e["id"], status, f" ({error})" if error else "")
+
+
+def extract_loop(db, state: dict, stop: Optional[threading.Event] = None) -> None:
+    """Runs the extractions asked for, one at a time, beside fits and predictions (they need no
+    GPU, and little but reading a fly's movies), until `stop` is set, if given.
+    ``state["extraction"]``: the one running."""
+    while not (stop and stop.is_set()):
+        try:
+            e = extract.claim(db)
+        except Exception:  # noqa: BLE001
+            log.exception("could not look for extractions to make")
+            e = None
+        if e is None:
+            time.sleep(POLL_S)
+            continue
+        state["extraction"] = e["id"]
+        log.info("extraction %s: started (asked for by %s)", e["id"], e["name"])
+        try:
+            run_extraction(db, e)
+        except Exception:  # noqa: BLE001 (said in its record; the thread goes on)
+            log.exception("extraction %s", e["id"])
+        finally:
+            _free_ram()
+            state["extraction"] = None
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     # (after logging's own handler, which keeps writing to the process's stderr)
@@ -542,17 +594,19 @@ def main() -> None:
         log.info("fits' work/ folders removed: %.1f GB freed", freed / 1e9)
     for i in predictions.interrupt_running(db):
         log.warning("prediction %s was left running by a worker before this one: marked interrupted", i)
+    for i in extract.interrupt_running(db):
+        log.warning("extraction %s was left running by a worker before this one: marked interrupted", i)
     info = {"host": host_name(), "pid": os.getpid(), "started": fits.now(), **gpu(), **versions(),
             "landlock": status["kernel"]["enforced"]}
     log.info("fit worker on %s: GPU %s, al-diag-seg %s", info["host"], info["gpu"], info["alseg"])
-    state = {"fit": None, "prediction": None}
+    state = {"fit": None, "prediction": None, "extraction": None}
     gpu_lock = threading.Lock()  # held by a fit, or a prediction on the GPU
 
     def beat():
         n = 0
         while True:
             try:
-                fits.heartbeat(db, {**info, "fit": state["fit"], "prediction": state["prediction"]})
+                fits.heartbeat(db, {**info, "fit": state["fit"], "prediction": state["prediction"], "extraction": state["extraction"]})
                 n += 1
                 if n * fits.HEARTBEAT_S % filelog.SAVE_S < fits.HEARTBEAT_S:
                     filelog.flush(db)
@@ -564,8 +618,11 @@ def main() -> None:
     stop = threading.Event()  # (set once the GPU can no longer be used)
     predictor = threading.Thread(target=predict_loop, args=(db, state, gpu_lock, bool(info["gpu"]), stop), daemon=True)
     predictor.start()
+    extractor = threading.Thread(target=extract_loop, args=(db, state, stop), daemon=True)
+    extractor.start()
     fit_loop(db, state, gpu_lock, bool(info["gpu"]), stop)
     predictor.join()  # (a prediction on the CPU ends first)
+    extractor.join()  # (and an extraction under way)
     log.error("exiting, for Docker to start the worker again, with the GPU")
     sys.exit(1)
 

@@ -9,7 +9,8 @@ in the Admin tab (their files uploaded and their bundles), the files of baseline
 imported (model_data.import_baseline), al-diag-seg fits (their models, held-out flies'
 results, manifest and log: not `NOT_KEPT`), datasets deleted in the Admin tab, the folders
 set in the Admin tab). Not other model data, which is read on tensor (model_data.py), nor
-predictions, which a fit's model makes again. Not what only passes through the data folder
+predictions, which a fit's model makes again, but for their ROIs as edited by hand in the
+viewer (`ALSO_KEPT`), nor signals extracted, made again likewise. Not what only passes through the data folder
 (uploads under way, downloads being sent, temporary files), nor raw and motion-corrected
 data, which stay on tensor. A file unchanged since the last backup in the same folder (by
 size and time) is a hard link to its copy there, so each backup is whole on its own but
@@ -51,6 +52,9 @@ LISTED = 500  # files new, changed or removed since the last backup listed by `s
 _tables: dict[str, tuple[tuple, Optional[dict]]] = {}  # a backup's database (from before they were in its MANIFEST) -> (its size and time, its tables)
 FITS = "fits"  # al-diag-seg fits, in the data folder (fits.fits_dir)
 NOT_KEPT = ("fits/*/work",)  # folders of those kept not copied (their paths in the data folder): a fit's Cellpose files, while it runs
+# files copied though their folders are not: a prediction's ROIs as edited by hand in the viewer (predictions.save_edited),
+# the one part of a prediction its model does not make again
+ALSO_KEPT = ("predictions/*/*_pred-edited*",)
 
 
 def _kept() -> list[Path]:
@@ -71,6 +75,8 @@ def data_files() -> dict[str, list[int]]:
             rel = Path(d).relative_to(config.DATA_DIR).as_posix()
             dirs[:] = [x for x in dirs if not any(fnmatch.fnmatchcase(f"{rel}/{x}", pat) for pat in NOT_KEPT)]
             paths += [Path(d) / n for n in names]
+    for pat in ALSO_KEPT:
+        paths += [p for p in sorted(config.DATA_DIR.glob(pat)) if p.is_file() and not p.name.startswith(".")]
     out = {}
     for p in paths:
         try:

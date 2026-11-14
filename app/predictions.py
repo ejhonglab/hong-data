@@ -268,9 +268,10 @@ def estimate(preds: list[dict], gpu: bool, fit_running: bool, t: Optional[float]
 
 
 def worker_jobs(db) -> dict:
-    """What restarting the fit worker would stop: the fits and predictions running, as the
-    web server's `_running_jobs` gives its own (``jobs``, each its ``what``, ``started_at``,
-    ``ends_at`` and ``then``), and ``queued``: how many are waiting (left to start after).
+    """What restarting the fit worker would stop: the fits, predictions and extractions of
+    signals (`extract`) running, as the web server's `_running_jobs` gives its own (``jobs``,
+    each its ``what``, ``started_at``, ``ends_at`` and ``then``), and ``queued``: how many are
+    waiting (left to start after).
     Also run in the worker's container by restart-olfdb when the web server does not answer."""
     jobs = []
     all_fits = fits.listing(db)["fits"]
@@ -287,7 +288,17 @@ def worker_jobs(db) -> dict:
                          # (not a guess, nor a time already past)
                          "started_at": p["started_at"], "ends_at": p["eta"]["ends_at"] if p["eta"]["from"] and p["eta"]["seconds"] else None,
                          "then": "It would be stopped and marked interrupted, to be asked for again."})
-    queued = sum(f["status"] == "queued" for f in all_fits) + sum(p["status"] == "queued" for p in preds)
+    from . import extract  # (it imports this module)
+
+    exts = extract.all_extractions(db)
+    extract.estimate(exts)
+    for x in exts:
+        if x["status"] == "running":
+            jobs.append({"what": f"The signals of {x['fly']}'s ROIs being extracted, asked for by {x['name']}",
+                         "started_at": x["started_at"], "ends_at": x["eta"]["ends_at"] if x["eta"]["seconds"] else None,
+                         "then": "It would be stopped and marked interrupted, to be asked for again."})
+    queued = (sum(f["status"] == "queued" for f in all_fits) + sum(p["status"] == "queued" for p in preds)
+              + sum(x["status"] == "queued" for x in exts))
     return {"jobs": jobs, "queued": queued}
 
 
@@ -553,14 +564,19 @@ def delete_edited(db, pred_id: int, base, by: Optional[str], ip: Optional[str]) 
 
 def stream_zip(pred_id: int, top: str):
     """A prediction's folder as a zip, under ``top``, as it is written."""
+    return zip_folder(pred_dir(pred_id), top)
+
+
+def zip_folder(d: Path, top: str):
+    """A folder's files as a zip, under ``top``, as it is written (but for hidden ones: those
+    being written)."""
     import zipfile
 
-    d = pred_dir(pred_id)
     sink = roi_training._Sink()
     when = dt.datetime.now().timetuple()[:6]
     with zipfile.ZipFile(sink, "w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
         for p in sorted(d.rglob("*")):
-            if not p.is_file():
+            if not p.is_file() or p.name.startswith("."):
                 continue
             info = zipfile.ZipInfo(f"{top}/{p.relative_to(d).as_posix()}", when)
             info.compress_type = zipfile.ZIP_DEFLATED

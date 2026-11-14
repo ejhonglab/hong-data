@@ -517,6 +517,36 @@ try {
       <div id="predict-list"></div>
     </div>
 
+    <div class="step" id="extract-step">
+      <div class="step-head"><h2>Extract signals</h2></div>
+      <p class="muted small">Computes the signals of a fly's ROIs from its motion-corrected movies, as al_analysis does, with the same
+        numbers: each ROI's trace in every recording (the mean of the movie over its pixels), its dF/F in each trial (against the
+        trial's time points before the odor), and its response to each trial's odor, one number per ROI and trial (the dF/F of
+        largest magnitude, with its sign, in the first two time points from the odor's onset). With the ROIs a model predicted, as
+        they are or as edited in the viewer, or the fly's own. The fit worker computes them, beside fits and predictions, and
+        keeps them on the server to download: tables (CSV) of the traces, dF/F and responses, the latter also as the Upload tab
+        takes them.</p>
+      <div class="grid predict-options">
+        <label class="field"><span>Fly</span><select id="extract-fly"></select></label>
+        <label class="field"><span>ROIs</span><select id="extract-rois"></select></label>
+      </div>
+      <div class="grid predict-paths" id="extract-paths" hidden>
+        <label class="field"><span>Its motion-corrected data folder <span class="muted">(from the top of tensor: its recordings'
+          <code>mocorr.tif</code>, <code>trial_frames_and_odors.json</code> and <code>RoiSet.zip</code>, as al_analysis leaves them)</span></span>
+          <input id="extract-dir" data-tensor-path spellcheck="false" placeholder="e.g. Ann/analysis/2026-03-31/1"></label>
+      </div>
+      <div class="grid predict-options">
+        <label class="field"><span>The signal of an ROI drawn on several planes</span><select id="extract-mode"></select></label>
+      </div>
+      <p class="small muted" id="extract-mode-note"></p>
+      <p class="small" id="extract-who"></p>
+      <div class="actions">
+        <button type="button" class="btn primary" id="extract-start">Extract its signals</button>
+      </div>
+      <div id="extract-status" aria-live="polite"></div>
+      <div id="extract-list"></div>
+    </div>
+
     <div class="step">
       <div class="step-head"><h2>Download training data</h2></div>
       <div id="rt-status" aria-live="polite"></div>

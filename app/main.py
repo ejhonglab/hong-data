@@ -38,7 +38,7 @@ from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, R
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import (backup, bundle_import, chemprops, compare, config, dilution, export, filelog, fits, headspace, lotus,
+from . import (backup, bundle_import, chemprops, compare, config, dilution, export, extract, filelog, fits, headspace, lotus,
                lotus_import, matrix_download, merge, metacyc, metacyc_import, model_data, model_runs, orn_input, movies, odormeta, permalinks,
                predictions, reference, roi_training, sandbox, tensor, thorimage, vcf, version, yamlcheck)
 from .db import PANEL_RENAMES, PROPERTY_COLUMNS, Database, rename_panel
@@ -1739,6 +1739,70 @@ async def predictions_download(request: Request) -> Response:
         return json_error(404, "no such prediction done")
     top = f"olfdb_prediction_{pred_id}_{p['fly']}_fit_{p['fit_id']}"
     return StreamingResponse(predictions.stream_zip(pred_id, top), media_type="application/zip",
+                             headers={"content-disposition": f'attachment; filename="{top}.zip"'})
+
+
+# ----------------------------------------------------------------- extractions
+
+async def extractions_list(request: Request) -> Response:
+    """Every extraction of a fly's ROIs' signals, with when those waiting and running should end, and
+    how one signal may be made of an ROI's planes (`extract.listing`)."""
+    return JSONResponse(await run_in_threadpool(extract.listing, db, config.TENSOR_ROOT))
+
+
+async def extractions_create(request: Request) -> Response:
+    """Asks for the signals of a fly's ROIs: {"name" (as for a fit), "rois": "own" (with "dir": the
+    fly's motion-corrected data folder), or "predicted" or "edited" (with "prediction": its id),
+    "mode" (of `extract.MODES`)}. 201 with it, queued. 422 without a name; 400 for what cannot be
+    extracted (`extract.locate` says why)."""
+    body = await request.json()
+    if not isinstance(body, dict):
+        return json_error(400, "expected a JSON object")
+    name = _user_name(body.get("name"))
+    if not name:
+        return json_error(422, "say who you are: enter your first name in Settings")
+    if first_name_problem(name):
+        return json_error(422, "the name must be a first name alone, with no spaces (e.g. Ann)")
+
+    def run():
+        opts = extract.options(body)
+        of = extract.locate(db, body, config.TENSOR_ROOT, [Path(p) for p in sandbox.folders()])
+        return extract.create(db, of, opts, name, _client_ip(request))
+
+    try:
+        return JSONResponse(await run_in_threadpool(run), status_code=201)
+    except ValueError as e:
+        return json_error(400, str(e))
+
+
+async def extractions_delete(request: Request) -> Response:
+    """Deletes an extraction and its files. 409 while it runs."""
+    done = await run_in_threadpool(extract.delete, db, request.path_params["id"])
+    if done is None:
+        return json_error(404, "no such extraction")
+    if done is False:
+        return json_error(409, "it is running: wait for it to end")
+    return JSONResponse({"deleted": True})
+
+
+async def extractions_log(request: Request) -> Response:
+    """An extraction's log (its last 200 kB)."""
+    p = extract.out_dir(request.path_params["id"]) / "log.txt"
+    if not p.is_file():
+        return json_error(404, "no log of that extraction (it has not started, or is deleted)")
+    with open(p, "rb") as f:
+        f.seek(max(0, p.stat().st_size - 200_000))
+        return PlainTextResponse(f.read().decode("utf-8", errors="replace"))
+
+
+async def extractions_download(request: Request) -> Response:
+    """An extraction's folder, as a zip sent as it is written (`extract.stream_zip`)."""
+    ext_id = request.path_params["id"]
+    e = await run_in_threadpool(extract.get, db, ext_id)
+    if e is None or e["status"] != "done":
+        return json_error(404, "no such extraction done")
+    top = f"olfdb_signals_{ext_id}_{e['fly']}_{e['rois']['kind']}_rois"
+    return StreamingResponse(extract.stream_zip(ext_id, top), media_type="application/zip",
                              headers={"content-disposition": f'attachment; filename="{top}.zip"'})
 
 
@@ -3754,7 +3818,7 @@ def _ends_at(started_at: Optional[str], done, total) -> Optional[str]:
 def _running_jobs(full: bool) -> dict:
     """What a restart would stop: the web server's jobs under way (a backup, an import of
     reference data, a re-lookup of odor properties) and, if `full` (the fit worker made again
-    too), the fits and predictions running.
+    too), the fits, predictions and extractions of signals running.
 
     Returns:
         dict with ``jobs`` (each its ``what``, ``started_at``, ``ends_at``: when it should end,
@@ -3915,6 +3979,11 @@ routes = [
     Route("/api/predictions/{id:int}/edited", predictions_edited_save, methods=["PUT"]),
     Route("/api/predictions/{id:int}/edited", predictions_edited_delete, methods=["DELETE"]),
     Route("/api/predictions/{id:int}/download", predictions_download),
+    Route("/api/extractions", extractions_list),
+    Route("/api/extractions", extractions_create, methods=["POST"]),
+    Route("/api/extractions/{id:int}", extractions_delete, methods=["DELETE"]),
+    Route("/api/extractions/{id:int}/log", extractions_log),
+    Route("/api/extractions/{id:int}/download", extractions_download),
     Route("/api/models", models_list),
     Route("/api/models/baselines", models_baselines),
     Route("/api/models/run", models_run),

@@ -260,6 +260,23 @@ CREATE TABLE IF NOT EXISTS predictions (  -- glomerulus ROIs a fit's model predi
     error TEXT,
     UNIQUE (fit_id, fly_dir)
 );
+CREATE TABLE IF NOT EXISTS extractions (  -- signals of a fly's ROIs extracted from its movies, asked for in the AL segmentation tab, by the fit worker (see extract.py)
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fly_dir TEXT NOT NULL,             -- the fly's motion-corrected data folder, on the server
+    fly TEXT NOT NULL,                 -- its name, as a prediction's
+    rois_json TEXT NOT NULL,           -- which ROIs: their kind (own, predicted, edited), and the prediction and fit they are of
+    options_json TEXT NOT NULL,        -- extract.options: how one signal is made of an ROI's planes
+    bytes INTEGER,                     -- of its recordings' movies (what its time is estimated by)
+    name TEXT NOT NULL,                -- who asked for it, from Settings
+    ip TEXT,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT,
+    status TEXT NOT NULL,              -- queued, running, done, failed, interrupted (extract.STATUSES)
+    progress_json TEXT,                -- how far it is: the recording it reads, and bytes of movies read, of how many
+    result_json TEXT,                  -- its recordings, ROIs, and how long it took
+    error TEXT
+);
 CREATE TABLE IF NOT EXISTS model_sources (  -- folders of model outputs added in the Admin tab, for the Models tab (see model_data.py)
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     path TEXT NOT NULL UNIQUE,         -- on tensor, from its top (read there, never copied)

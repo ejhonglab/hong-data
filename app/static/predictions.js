@@ -84,6 +84,7 @@ export class PredictPanel {
     this.renderFlies();
     this._renderList();
     this._renderHowto();
+    this.h.onData?.(); // (what else lists the predictions: Extract signals' ROIs)
   }
 
   _model() { return this.data?.models.find((m) => String(m.id) === this.h.$('#predict-model').value) || null; }

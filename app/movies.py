@@ -503,6 +503,25 @@ class Movie:
             out = out.max(axis=1)
         return np.asarray(out).astype(self.dtype, copy=False)
 
+    def volumes(self, t0: int, n: int, c: int = 0) -> np.ndarray:
+        """(n, z, y, x) volumes from time `t0` on, of channel `c`, in the file's own number type
+        (not the one sent to the browser, as `planes`'), read in one piece where the file has
+        them so: for computing on a movie (`extract`), not showing it."""
+        s = self.shape
+        if not (0 <= t0 < s["t"] and n > 0 and 0 <= c < s["c"]):
+            raise MovieError("no such volume")
+        n = min(n, s["t"] - t0)
+        if self.tif is None:  # raw: (t, z + flyback, c, y, x)
+            return np.asarray(self.data[t0:t0 + n, :s["z"], c])
+        if self.data is None:
+            return self._pages(t0, n, None, c)
+        key = tuple(_index(r, t0, n, None, c) for r in self.roles)
+        kept = [r for r in self.roles if r in "tzyx"]
+        out = np.asarray(self.data[key]).transpose([kept.index(r) for r in "tzyx" if r in kept])
+        if "t" not in kept:
+            out = out[np.newaxis]
+        return out if "z" in kept else out[:, np.newaxis]
+
     def _pages(self, t0: int, n: int, z: Optional[int], c: int) -> np.ndarray:
         """Like `planes`, from the TIFF's pages one at a time (data not in one piece)."""
         dims = [self.series.shape[i] for i, r in enumerate(self.roles) if r not in "yx"]

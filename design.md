@@ -124,7 +124,9 @@ between the frontend and the server. Using the app is described in
   says which tables changed since. Of a backup from before they were kept there, they are
   read from its copy of the database, once.
   AL segmentation fits are backed up (a trained model takes a GPU for over an hour), but
-  not their `work/`, nor predictions (minutes each, from a fit's model).
+  not their `work/`, nor predictions (minutes each, from a fit's model), but for a
+  prediction's ROIs as edited by hand in the viewer, which nothing makes again; nor
+  signals extracted (seconds each, from the movies).
 - **The Compare tab computes similarities in the browser**, as the viewer does the rest:
   the server only averages each dataset (`app/compare.py`: trials, then flies per
   glomerulus) and gives the ECFP fingerprints of the odor table's chemicals, which need
@@ -1412,6 +1414,132 @@ and columns (by the fields chosen for it), and its values taken as mg/kg.
   most headspace first, become the mixture above in paraffin oil, by the same model, to
   check or change (their headspace is then calculated as the mixture's).
 
+## Signals extracted as al_analysis does
+
+*Extract signals* (the AL segmentation tab; `app/extract.py`) computes, for a fly's ROIs,
+what al_analysis' `ij_traces` and `compute_trial_stats` compute, with hong2p's
+`ijroi_masks`, `extract_traces_bool_masks` and `rois2best_planes_only`: each ROI's trace
+in each recording, and its response in each trial.
+
+- **The same numbers, not nearly the same.** Signals extracted here are to be put beside
+  those al_analysis made, so every step is its step: the same recordings' movies
+  (`mocorr.tif`, else `flipped.tif`, else `raw.tif`), ROIs left out (`AL`, names ending in
+  `+`), masks, means (of the movie's own number type, over a mask's pixels in the same
+  order, so the same to the last bit), baseline (the mean over all of a trial's time
+  points before the odor: `n_volumes_for_baseline = None`), statistic
+  (`sign_preserving_maxabs` over `n_volumes_for_response = 2` time points) and best plane
+  (the greatest of each plane's largest response over the recording's trials; the first,
+  of planes alike). Checked against al_analysis' own `full_traces`, `best_plane_traces` and
+  `ij_trial_df_cache` of 9 recordings of 4 of Tom's flies (2023-05-08/1, 2023-11-21/2 and
+  /3, 2024-01-05/1): every trace of every plane, the planes chosen and every response
+  identical, bit for bit, as are their row and column labels, but for two odors'
+  abbreviations (below).
+- **Masks are hong2p's, flaws and all.** hong2p asks matplotlib's `Path.contains_points`
+  whether the point (x, y) is in an ROI's polygon, for whole x and y, with the image's rows
+  as matplotlib's x. `extract.inside` is that rule in numpy (its crossings test, edge by
+  edge, the same inequalities: checked against matplotlib on 3,000 random polygons, and on
+  every ROI of a fly), as matplotlib is not in the site's image, and making a mask over a
+  polygon's bounding box alone is faster than asking it of every pixel of the plane. That
+  the rows are x matters: which side of an outline a point exactly on it falls is decided
+  by the direction of the ray cast, and ImageJ's quarter-pixel points put many pixels
+  exactly on outlines. Read the other way (rows as y), 65 of a fly's 100 masks differed.
+- **One signal of an ROI's planes, four ways.** al_analysis' (`best_plane`) is the default,
+  so that what is extracted here is what it would have made. `best_plane_fly` chooses
+  the plane once for the fly (the greatest of each plane's largest response in any
+  recording), so that a glomerulus is the same pixels in every panel. `all_planes` is the
+  mean of all its voxels (each plane's mean, by its pixels). `weighted` answers "a weighted
+  average, how?": each plane's trace is divided by its mean over the recording, so that a
+  brighter plane does not count more for being brighter, and the planes are averaged with
+  weights 1 / σ², σ² the variance of that plane's dF/F over the time points before each
+  odor (about each trial's own F0, pooled over the recording's trials). That is the
+  average of least variance of independent estimates of one quantity, so the best there
+  is if the planes hold the same dF/F and differ only in noise; where a plane's signal is
+  weaker (the edge of a glomerulus) it is still counted by its noise alone. Weighting by
+  the response itself (a matched filter) would count such planes less, but chooses by the
+  responses it then reports, the fault of the best plane (below), so it is not offered.
+  Not by the planes' pixels alone either: that is `all_planes`.
+- **Run by the fit worker, in a thread of its own** (`fit_worker.extract_loop`), like
+  predictions: the web server is one process, and reading a fly's movies (1.5 GB for a
+  fly of five recordings: 23 s the first time, from tensor, 2 to 3 s once the server has
+  them in memory) is not for a request to wait on, nor is it worth a third container. It
+  needs no GPU, so it runs whatever fits and predictions are doing. Its time is estimated
+  from the seconds the last ten took per byte of their flies' movies, and from how far it
+  has read once it has begun.
+- **Names are al_analysis'.** A recording's panel is as its `get_panel` names it (from the
+  folder's name: `glomeruli_diagnostics` for one with `diag` in it, `megamat`, ...), else
+  the name less a number at its end. An odor is abbreviated as hong2p abbreviates its name,
+  else by its own abbreviation in the recording's trials (from the odor's YAML): for two
+  odors of nine recordings these differ from the tables al_analysis left (`1-prop` for its
+  `1-3ol`, `PAA` for `paa`), whose abbreviations come from a cache of every YAML it has
+  loaded on its computer; they are the ones it changes those to later
+  (`convert_my_abbrevs_to_remy`). `responses_glomeruli.csv` is laid out as an upload, of
+  the ROIs an upload accepts, so that it can be dropped on the Upload tab.
+- **Not kept in backups**: an extraction is made again from the movies and the ROIs. The
+  ROIs edited by hand are (`backup.ALSO_KEPT`), as nothing makes those again.
+
+### What is questionable in the calculation
+
+Looked for in the code, then measured on three of Tom's flies (2023-05-08/1, 2023-11-21/2,
+2024-01-05/1: 17 recordings, 97 to 117 outlines each), with `extract.py`'s own functions.
+None of it is corrected in what is extracted (the numbers are al_analysis'), but two of
+the ways to combine planes avoid the second.
+
+1. **Masks are not the pixels ImageJ shows in an outline.** ImageJ takes a pixel whose
+   centre (x + 0.5, y + 0.5) is inside; hong2p takes it if its corner (x, y) is, so every
+   mask is that of the outline moved half a pixel right and down, and pixels whose corner
+   is exactly on the outline go in or out by the direction the outline was drawn in. A
+   square drawn over 3 × 3 pixels is 2 × 3 pixels of them and of the next column; a
+   diamond is 14 pixels drawn one way round and 24 the other (`tests/test_extract.py`).
+   On the flies, 9% of an outline's pixels (median; up to 32%) are in one of hong2p's and
+   ImageJ's masks and not the other, and 64 to 67% of outlines would give another mask
+   drawn the other way round (by 1 to 2 pixels). It matters little to the responses:
+   those with ImageJ's masks correlate with al_analysis' at r ≥ 0.997 in every recording,
+   and responses over 0.2 differ by 1.0 to 1.4% (median), 5 to 7.5% at the 95th
+   percentile, though the worst by twice their size. al-diag-seg makes its training masks
+   from the same outlines with scikit-image's rule, which need not treat points on an
+   outline as either does.
+2. **The best plane is chosen in each recording, so a glomerulus changes plane between a
+   fly's recordings.** Of the ROIs drawn on several planes (about half: 27 to 34 a fly),
+   74 to 85% were read on different planes in different recordings of the same fly (up to
+   4 planes). Their responses on a recording's own best plane are, in the median, the same
+   as on the fly's (1.00 ×), but from 0.33 to 1.75 × for single ROIs (and once of the
+   other sign): a glomerulus' diagnostic and panel responses can be of different pixels, at
+   different gains.
+   al_analysis says so itself (its TODO to choose across a fly's recordings).
+   `best_plane_fly` does that.
+3. **The plane is chosen by the largest single response, signed.** One trial decides, so
+   one artefact can. And for a glomerulus that is only ever inhibited, the largest
+   response is the least negative one: its "best" plane is the one that responds least,
+   or is noisiest.
+4. **The plane is chosen by the responses then reported**, which favours a plane's
+   noise. Measured by choosing on two of three repeats and reading the third: an ROI's
+   largest response on its chosen plane is 1.13 to 1.16 × the mean of its planes' on the
+   trials it was chosen by, and 1.10 to 1.11 × on the others, so 2 to 5% of it is the
+   choosing. Small beside 2.
+5. **F0 is of very few time points.** It is the mean of all of a trial's time points
+   before the odor, which is 4 or 5 of them in the 2023-05-08 fly and 2 or 3 in the later
+   two: at 2, the noise of F0 adds half again to the variance of a response of one time
+   point. Nothing earlier is there to use (a trial starts where the one before ends), so
+   this is of how the trials are cut, not of `n_volumes_for_baseline`. What is left of
+   the response before does not bias it: after a response over 0.5, F0 over all the time
+   points is within 0.4% (median) of F0 over the last two.
+6. **The statistic is biased away from zero where there is no response.** The larger in
+   magnitude of two time points is never near zero: taken of two time points with no
+   odor (the last two before it, in the fly with enough of them), it has a mean magnitude
+   of 0.063 and s.d. 0.090, where their mean has 0.037 and 0.058. Non-responses are so
+   about 1.6 × as far from zero as they need be, with either sign. The mean of the two,
+   al_analysis' statistic before this one, keeps the sign too.
+7. **Two time points catch most peaks, not all.** Of responses passing 0.3 anywhere in
+   their trial, 86 to 95% peak in the first two time points from onset; 3 to 9% peak
+   later than the third, and for 4 to 10% the first two hold under 80% of the peak. The
+   comment at `n_volumes_for_response` asks for it in seconds: the movies do not say
+   their volume rate (no `finterval`), so that was not checked here.
+8. **No background is subtracted before dF/F** (al_analysis has a TODO for it), so F0
+   holds the detector's offset and out-of-focus light, and dF/F is smaller by that share,
+   differently in dim and bright glomeruli. Nor is F0 kept from being near zero.
+9. Smaller: `ijroi_masks` asserts square frames (rows and columns were never told apart
+   by a test); an ROI named twice on one plane counts as two planes.
+
 ## Code layout
 
 ```
@@ -1424,9 +1552,11 @@ app/yamlcheck.py   odor YAML parsing, what looks wrong in one, and the matrix �
 app/thorimage.py   Experiment.xml summary, and a .raw file's layout (with hong2p.thor)
 app/fits.py        fits of al-diag-seg models: records, options, held-out flies, their manifest, time estimates
 app/fit_worker.py  the fit worker (python -m app.fit_worker): runs fits one at a time, with al-diag-seg,
-                   and predictions beside them (GPU or CPU)
+                   and predictions (GPU or CPU) and extractions of signals beside them
 app/predictions.py predictions of flies' glomerulus ROIs by fits' models: records, the fly's folders, time
                    estimates, the viewer's images, their ROIs as edited there, downloads
+app/extract.py     signals of a fly's ROIs extracted from its movies as al_analysis does: masks, traces, dF/F,
+                   responses, one signal of an ROI's planes; records, time estimates, its files
 app/model_data.py  model data for the Models tab: folders of model outputs on tensor, scanned into a table of
                    models (params.csv rows, provenance.json keys), their spike count files matched, a run read
 app/metadata.py    form model (pydantic) and README.md generation
@@ -1470,8 +1600,8 @@ app/static/        frontend: index.html, app.js, heatmap.js, colormaps.js (+ mpl
                    pvalue-worker.js their p-values), metacyc.js (MetaCyc below its matrices: pathways
                    drawn, compounds, LCA paths, search), lotus.js (LOTUS with its matrices: how
                    made, a cell's organisms and papers), imports.js (MetaCyc and LOTUS imported
-                   in the Admin tab), fits.js and predictions.js (the AL segmentation tab's fits and
-                   predictions), models.js (the Models
+                   in the Admin tab), fits.js, predictions.js and extract.js (the AL segmentation tab's
+                   fits, predictions and extractions of signals), models.js (the Models
                    tab: its table of models and a run's viewer), latex.js (labels with
                    LaTeX math, by MathJax: vendor/mathjax/)
 manage.py          list / show / export / delete datasets from the server
@@ -1494,7 +1624,8 @@ the odor sheet's link, panels shown renamed), `reference_datasets` (reference da
 `model_sources` (folders of model data added there, by their path on tensor, with their lists of parameters and of spike count files that are not models),
 `model_baselines` (models chosen there to show first, by their experiment's folder on tensor, name, base and row; when their files were imported, and their sizes, times and SHA-256),
 `model_runs` (baseline models run on datasets: who asked, its baseline and how it is run, datasets, panels and tuning, its progress and result), `fits`
-(fits of al-diag-seg models) and
+(fits of al-diag-seg models), `predictions` (glomerulus ROIs their models predicted for flies), `extractions`
+(signals of flies' ROIs extracted from their movies) and
 `file_log` (the files the server has read or written in its own folders). Files:
 `data/datasets/<id>/` holds the original data file (or files, if several were combined:
 `datasets.data_files`, with each one's sha256; `data_file` and `data_sha256` are the first's),
@@ -1502,7 +1633,8 @@ the odor sheet's link, panels shown renamed), `reference_datasets` (reference da
 `odor_yaml/*.yaml` and the `Experiment.xml`. Also
 under `data/`: `admin.json` (the folders set in the Admin tab), `deleted/<id>/` (the
 folders of datasets deleted in the Admin tab), `references/<id>/` (reference datasets
-added there, as read), `staging/`, `exports/`,
+added there, as read), `fits/<id>/`, `predictions/<id>/` and `extractions/<id>/` (what each of those made:
+`fits.py`, `predictions.py` and `extract.py` say what), `staging/`, `exports/`,
 `odor_previews/` (parsed sheets awaiting confirmation), `tmp/`
 (temporary files, such as uploads being received) and `chemutils_cache.sqlite`
 (chemutils' cache of what it looked up; not backed up). An `odor_structures/` folder, of
@@ -1637,6 +1769,14 @@ PUT    /api/predictions/{id}/edited         save its ROIs as edited in the playe
                                             409 if they were changed elsewhere since base
 DELETE /api/predictions/{id}/edited?base=   delete its edited ROIs (those predicted are left as they are)
 GET    /api/predictions/{id}/download       its folder, as a zip sent as it is written
+GET    /api/extractions                     every extraction of a fly's ROIs' signals (those waiting and running
+                                            with when they should end), the ways to make one signal of an ROI's
+                                            planes, and the seconds one takes per GB of movies (extract.py)
+POST   /api/extractions                     ask for one: {name, rois: "own" (with dir: the fly's motion-corrected
+                                            data folder) | "predicted" | "edited" (with prediction: its id), mode}
+DELETE /api/extractions/{id}                delete one and its files (409 while it runs)
+GET    /api/extractions/{id}/log            its log
+GET    /api/extractions/{id}/download       its folder (its tables, README.txt, provenance.json), as a zip
 GET    /api/models                          every model of the folders of model data added (model_data.listing):
                                             the folders (whether they can be read), the table's columns,
                                             experiments (params.csv's columns, provenance.json as
