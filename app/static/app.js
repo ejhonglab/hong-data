@@ -2643,7 +2643,7 @@ class UploadFlow {
     }
     const hours = this.options?.stage_ttl_hours ?? 48;
     box.innerHTML = odorSheetHelp(c, `<p><b>${k} of its ${n} odors ${k === 1 ? 'is' : 'are'} not in the ${table}</b>: the dataset can be saved once ${k === 1 ? 'it is' : 'they are'}.</p>${caps}${clashes}`, {
-      note: this.syncNote,
+      note: this.syncNote, fold: 'upload',
       ambiguousFix: 'attach an odor YAML naming the dataset\'s (above), or give them abbreviations of their own in the sheet and sync it here.',
       after: ` You can leave this page meanwhile: this upload is kept for ${hours} hours after you last worked on it, and continues where you
         left it when you open the Upload tab again in this browser.`,
@@ -3754,32 +3754,43 @@ async function syncOdorSheet(btn) {
   } catch (e) { setStatus(out, `Not synced: ${e.message}`, 'error'); return null; } finally { btn.disabled = false; }
 }
 
+const MISSING_FOLD_AT = 6;
+const missingFoldOpen = new Set(['upload']); // the `fold`s of `odorSheetHelp` open (an upload's at first, as it is what to do next)
+document.addEventListener('toggle', (e) => { // (toggle does not bubble: caught on the way down)
+  const d = e.target;
+  if (d.matches?.('details.missing-fold')) missingFoldOpen[d.open ? 'add' : 'delete'](d.dataset.fold);
+}, true);
+
 // What a matrix's odors not each one odor in the odor table need, as an upload's check says
 // it (`c`: the server's _odor_matches of them): those not in it as rows for the odor sheet (a
 // button copying them: data-copy-sheet), those more than one odor in it goes by (`ambiguousFix`:
 // what to do), and a button syncing it (data-sync-sheet, `note` after it: how the last went).
 // head: what is said first (and anything after it); after: said under the sync button.
-function odorSheetHelp(c, head, { note = '', ambiguousFix = '', after = '' } = {}) {
-  const parts = [head];
-  if (c.missing.length) parts.push(`<p>Not in it:</p>${missingRowsHtml(c.missing, c.sheet, 'sync it here (below)')}`);
+// With more than MISSING_FOLD_AT not in it, all but `head` is folded away (`fold`: where, so that
+// it stays open there once opened).
+function odorSheetHelp(c, head, { note = '', ambiguousFix = '', after = '', fold = '' } = {}) {
+  const rest = [], k = c.missing.length, folded = k > MISSING_FOLD_AT;
+  if (k) rest.push(`${folded ? '' : '<p>Not in it:</p>'}${missingRowsHtml(c.missing, c.sheet, 'sync it here (below)')}`);
   const ambiguous = ambiguousOdors(c.rows);
-  if (ambiguous.length) parts.push(`<p>More than one odor in it goes by ${odorLabels(ambiguous)}: ${ambiguousFix}</p>`);
-  parts.push(`<div class="actions"><button type="button" class="btn" data-sync-sheet>Sync from the odor sheet</button><span class="status">${esc(note)}</span></div>
+  if (ambiguous.length) rest.push(`<p>More than one odor in it goes by ${odorLabels(ambiguous)}: ${ambiguousFix}</p>`);
+  rest.push(`<div class="actions"><button type="button" class="btn" data-sync-sheet>Sync from the odor sheet</button><span class="status">${esc(note)}</span></div>
     <p class="small">Adds the odors new in the sheet to the odor table, then checks these again (changes to odors already in it are
     left for the <a href="#odors">Odors tab</a>).${after}</p>`);
-  return `<div class="msg error">${parts.join('')}</div>`;
+  if (!folded) return `<div class="msg error">${head}${rest.join('')}</div>`;
+  return `<div class="msg error">${head}<details class="missing-fold" data-fold="${esc(fold)}"${missingFoldOpen.has(fold) ? ' open' : ''}>
+    <summary>Which they are (${k} odor names), and how to add them${note ? ` <span class="muted">(${esc(note)})</span>` : ''}</summary>${rest.join('')}</details></div>`;
 }
 
 // A reference dataset's odors (as datasets write them: `chem`, its chemicals) not each one
 // odor in the odor table, said as an upload's are (`check`: the server's _odor_matches of
 // them; `note`: how the last sync went), as an element: the Reference data tab, and the Admin
-// tab's form adding one
-function referenceOdorHelp(check, chem, note = '') {
+// tab's form adding one (`fold`: which, as `odorSheetHelp` takes it)
+function referenceOdorHelp(check, chem, note = '', fold = 'reference') {
   const n = chem.n, k = chem.n - chem.matched;
   const box = document.createElement('div');
   box.innerHTML = odorSheetHelp(check, `<p><b>${k} of its ${n} odors ${k === 1 ? 'is' : 'are'} not in the <a href="#odors">odor table</a></b>
     (by their abbreviations, as a dataset's odors are): ${k === 1 ? 'it is' : 'they are'} left out of comparisons with datasets until then.</p>`,
-  { note, ambiguousFix: 'give them abbreviations of their own in the sheet and sync it here.' });
+  { note, fold, ambiguousFix: 'give them abbreviations of their own in the sheet and sync it here.' });
   return box.firstElementChild;
 }
 
@@ -4704,7 +4715,7 @@ function showRefCheck(c, note = '') {
       innerHTML: `<b>How its matrix is made</b> (shown with it in the Reference data tab):${decisionsHtml(p.lotus, esc)}` }));
   }
   if (p.warning && ch.odors && c.odor_check && ch.matched < ch.n) {
-    const help = referenceOdorHelp(c.odor_check, ch, note);
+    const help = referenceOdorHelp(c.odor_check, ch, note, 'reference-add');
     help.insertAdjacentHTML('beforeend', '<p class="small">It can be added anyway: the Reference data tab says so by it, with this.</p>');
     box.appendChild(help);
   } else if (p.warning) {

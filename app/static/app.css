@@ -449,6 +449,8 @@ button.link { background: none; border: 0; padding: 0; color: var(--accent); tex
 #model-viewer { min-height: 300px; }
 #model-path-msg, #model-path-msg:empty { display: block; min-height: 1.4em; } /* (its line kept, so what is below it does not move as it changes) */
 ul.missing-odors { margin: 4px 0 8px; padding-left: 20px; }
+.missing-fold { margin: 6px 0; }
+.missing-fold summary { cursor: pointer; font-weight: 500; }
 .odor-table .notes { max-width: 300px; color: var(--ink-muted); }
 .odor-table td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .structure-cell { width: 76px; }
