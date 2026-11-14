@@ -1528,13 +1528,20 @@ the ways to combine planes avoid the second.
    largest response on its chosen plane is 1.13 to 1.16 × the mean of its planes' on the
    trials it was chosen by, and 1.10 to 1.11 × on the others, so 2 to 5% of it is the
    choosing. Small beside 2.
-5. **F0 is of very few time points.** It is the mean of all of a trial's time points
-   before the odor, which is 4 or 5 of them in the 2023-05-08 fly and 2 or 3 in the later
-   two: at 2, the noise of F0 adds half again to the variance of a response of one time
-   point. Nothing earlier is there to use (a trial starts where the one before ends), so
-   this is of how the trials are cut, not of `n_volumes_for_baseline`. What is left of
-   the response before does not bias it: after a response over 0.5, F0 over all the time
-   points is within 0.4% (median) of F0 over the last two.
+5. **F0 is of very few time points, which is a choice and costs little.** It is the mean
+   of all of a trial's time points before the odor: 4 or 5 volumes in the 2023-05-08 fly
+   and 2 or 3 in the later two. Imaging is triggered by the stimulus, a block per trial, so
+   nothing else is next to the odor (the time points before a trial's start are the end of
+   the block before, across the unimaged time between trials), and using them alone is the
+   same for every trial and assumes nothing of how responses decay. Its cost is noise: the
+   variance of a response R of one time point is about σ²(1 + (1 + R)² / n), σ one time
+   point's noise (4 to 5.5% of F0). Measured, a baseline with less noise (the median of
+   five neighbouring trials' F0) cuts the s.d. of a response between an odor's repeats by
+   11 to 16% (7 to 8% with the trial's own F0 still subtracted), and F0 does move between
+   successive trials by 1.4 to 1.6 × the variance its noise would give, so pooling would
+   cost a bias. There is none as it is: after a response over 0.5, F0 over all the time
+   points is within 0.4% (median) of F0 over the last two (`notes/trace_extraction_notes.md`
+   has the rest).
 6. **The statistic is biased away from zero where there is no response.** The larger in
    magnitude of two time points is never near zero: taken of two time points with no
    odor (the last two before it, in the fly with enough of them), it has a mean magnitude
@@ -1544,8 +1551,9 @@ the ways to combine planes avoid the second.
 7. **Two time points catch most peaks, not all.** Of responses passing 0.3 anywhere in
    their trial, 86 to 95% peak in the first two time points from onset; 3 to 9% peak
    later than the third, and for 4 to 10% the first two hold under 80% of the peak. The
-   comment at `n_volumes_for_response` asks for it in seconds: the movies do not say
-   their volume rate (no `finterval`), so that was not checked here.
+   comment at `n_volumes_for_response` asks for it in seconds: two volumes are 3.0 s in
+   the 2023-05-08 fly (0.67 volumes/s) and 4.5 s in the later two (0.44), by their
+   `Experiment.xml` (the motion-corrected movies do not say).
 8. **No background is subtracted before dF/F** (al_analysis has a TODO for it), so F0
    holds the detector's offset and out-of-focus light, and dF/F is smaller by that share,
    differently in dim and bright glomeruli. Nor is F0 kept from being near zero.
