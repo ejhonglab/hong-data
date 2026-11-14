@@ -822,7 +822,7 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   someone else changed them meanwhile, it says so instead of overwriting theirs. The ROIs
   as predicted, and the fly's own, are only ever shown: nothing changes them. Predicting a
   fly's ROIs again deletes its edited ones with the rest (it says so when asking).
-  Clicking a predicted ROI's name in the viewer's list opens a table of what that name
+  Clicking a predicted ROI's name, in the viewer's list or where it is drawn on the image, opens a table of what that name
   cost, which stays until closed (its ×, Escape, or a click outside it): a column for each
   term of the cost (odor tuning, position, shape, atlas overlap, layout; hover over one
   for what its value is), their weights, then a row for each of the 5 glomeruli that cost

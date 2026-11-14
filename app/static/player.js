@@ -579,6 +579,14 @@ export class MoviePlayer {
     else showIdentity(dialog, `${title}${copy ? ', unchanged' : ''}`, terms, label, this.esc);
   }
 
+  // the ROI whose name, drawn on the image, the pointer is on (a predicted one's, or its copy's): its
+  // index, or null (the last drawn, if names overlap: the one on top)
+  _nameAt(e) {
+    const r = this.canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+    const hit = (this.nameBoxes || []).findLast((b) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
+    return hit ? hit.i : null;
+  }
+
   // the pointer's place in the image, in pixels (as ROIs' points are)
   _imagePoint(e) {
     const r = this.canvas.getBoundingClientRect(), { scale, ox, oy } = this.view;
@@ -950,6 +958,7 @@ export class MoviePlayer {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#111';
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    this.nameBoxes = []; // where predicted ROIs' names (and their copies') are drawn, to click: `_nameAt`
     if (!this.current) return;
     ctx.imageSmoothingEnabled = false;
     ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * ox, dpr * oy);
@@ -983,6 +992,9 @@ export class MoviePlayer {
         ctx.shadowBlur = 3;
         ctx.fillText(r.name, cx / n + 4, cy / n);
         ctx.shadowBlur = 0;
+        if (this.mode === 'prediction' && r.source !== 'manual') {
+          this.nameBoxes.push({ i, x: cx / n + 2, y: cy / n - 12, w: ctx.measureText(r.name).width + 4, h: 16 });
+        }
       }
     });
     ctx.globalAlpha = 1;
@@ -1108,14 +1120,18 @@ export class MoviePlayer {
         this._paint();
       } else if (this.movie) { // (over a point that can be dragged, or an edited ROI that can be chosen)
         const hit = this._handleAt(e), at = hit ? hit.i : -1;
-        c.style.cursor = hit ? 'crosshair' : this._editedAt(e) != null ? 'pointer' : '';
+        c.style.cursor = hit ? 'crosshair' : this._nameAt(e) != null || this._editedAt(e) != null ? 'pointer' : '';
         if (at !== this.hoverHandle) { this.hoverHandle = at; this._paint(); }
       }
       this._readout(e);
     });
     c.addEventListener('pointerup', (e) => {
+      const named = drag && !drag.moved && this.movie ? this._nameAt(e) : null;
       if (this.edit?.drag) this._dropHandle();
-      else if (drag && !drag.moved && this.movie && this.edit?.hist?.current) {
+      else if (named != null) { // (a click on an ROI's name: the ROI chosen, if it is not, and what the name cost)
+        if (named !== this.selectedRoi) this._selectRoi(named);
+        this._showIdentity(named);
+      } else if (drag && !drag.moved && this.movie && this.edit?.hist?.current) {
         const i = this._editedAt(e), chosen = this.selectedRoi != null && this.rois[this.selectedRoi]?.source === 'edited';
         if (i != null ? i !== this.selectedRoi : chosen) this._selectRoi(i ?? this.selectedRoi);
       }
@@ -1123,7 +1139,7 @@ export class MoviePlayer {
     });
     c.addEventListener('pointercancel', () => { drag = null; if (this.edit?.drag) this._dropHandle(); });
     c.addEventListener('pointerleave', () => { this.$('.player-pixel').textContent = ''; });
-    c.addEventListener('dblclick', (e) => { if (this._handleAt(e) || this._editedAt(e) != null) return; this._fit(); this._paint(); });
+    c.addEventListener('dblclick', (e) => { if (this._handleAt(e) || this._nameAt(e) != null || this._editedAt(e) != null) return; this._fit(); this._paint(); });
   }
 
   // the wheel over a slider steps it: a step a notch (a trackpad's scrolling added up), up
