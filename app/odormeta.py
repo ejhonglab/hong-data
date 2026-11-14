@@ -7,9 +7,16 @@ existing inventory sheet's "Chemical", "Abbreviation", "CAS #", ... also work):
     name, abbrev, aliases (;-separated), cid (PubChem), cas, solvent, supplier,
     catalog_no, catalog_url, metacyc, lotus, inventory, notes
 
-It is read through its CSV export (shared as "anyone with the link can view"); nothing
-is written to it. Syncing is two steps: `preview` validates the sheet (or an uploaded
-CSV) and diffs it against the database, and the caller then applies the new odors plus
+The sheet may have a second tab named ``aliases`` (`ALIASES_TAB`) with more aliases, one
+per row: the odor (its abbreviation, else its name) and the alias, under the headers
+``abbrev`` and ``alias``. They are added to those of the odors' own rows, and checked: an
+alias given twice, or one that is another odor's name, abbreviation or alias, is an
+error.
+
+It is read through its CSV export (shared as "anyone with the link can view"; the
+aliases tab from its export as xlsx, which has every tab); nothing is written to it.
+Syncing is two steps: `preview` validates the sheet (or an uploaded CSV) and diffs it
+against the database, and the caller then applies the new odors plus
 only those changes and deletions a user confirmed. The database copy is what the rest
 of the app uses, so it keeps working without the sheet.
 """
@@ -101,14 +108,98 @@ def _cas_ok(cas: str) -> bool:
     return int(digits[-1]) == sum(int(c) * (i + 1) for i, c in enumerate(reversed(digits[:-1]))) % 10
 
 
-def parse_sheet(text: str) -> tuple[list[dict], list[str], list[str]]:
-    """Odor rows of a sheet (CSV text), with every problem found.
+ALIASES_TAB = "aliases"  # the odor sheet's tab of more aliases, one per row (found by this name, whatever its case)
+# accepted headers of its two columns (as `HEADERS`)
+ALIAS_HEADERS = {"odor": ("abbrev", "abbreviation", "abbr", "odor", "name", "chemical"), "alias": ("alias", "aliases")}
+
+
+def parse_aliases_tab(tab: list[list[str]]) -> tuple[list[dict], list[str]]:
+    """The aliases of the odor sheet's aliases tab (its rows of cells): each ``row`` (its
+    line in the tab), ``odor`` (the abbreviation or name it is given for) and ``alias``; and
+    the errors of rows that are not one of each."""
+    where = f"the {ALIASES_TAB} tab"
+    h = next((i for i, r in enumerate(tab) if any(c.strip() for c in r)), None)
+    if h is None:
+        return [], []
+    keys = [_header_key(c) for c in tab[h]]
+    col = {f: next((j for j, k in enumerate(keys) if k in hs), None) for f, hs in ALIAS_HEADERS.items()}
+    if col["odor"] is None or col["alias"] is None or col["odor"] == col["alias"]:
+        return [], [f"{where} needs two columns, with the headers 'abbrev' (the odor, by its abbreviation or name) and 'alias' "
+                    f"(its first row has {', '.join(repr(c.strip()) for c in tab[h] if c.strip())})"]
+    found, errors = [], []
+    for i in range(h + 1, len(tab)):
+        odor, alias = (re.sub(r"\s+", " ", tab[i][col[f]].strip()) if col[f] < len(tab[i]) else "" for f in ("odor", "alias"))
+        if not odor and not alias:
+            continue
+        if not odor or not alias:
+            errors.append(f"row {i + 1} of {where} has no {'odor' if not odor else 'alias'} ({odor or alias!r})")
+            continue
+        found.append({"row": i + 1, "odor": odor, "alias": alias})
+    return found, errors
+
+
+def add_aliases(rows: list[dict], found: list[dict]) -> list[str]:
+    """Adds the aliases of the aliases tab (`parse_aliases_tab`'s) to those of the odor rows
+    they are given for (by abbreviation, else by name), but those that are errors, which
+    are returned: of an odor not in the sheet (or of an abbreviation several have), given
+    twice (in the tab, or already the odor's name, abbreviation or alias in its own row),
+    or the name, abbreviation or alias of another odor (also one of the tab)."""
+    where = f"the {ALIASES_TAB} tab"
+    errors: list[str] = []
+    names: dict[str, list[dict]] = {}  # (casefolded, as datasets' odors are matched by name)
+    labels: dict[str, list[dict]] = {}
+    for r in rows:
+        names.setdefault(r["name"].casefold(), []).append(r)
+        for lab in dict.fromkeys([r["abbrev"], *r["aliases"]]):
+            if lab:
+                labels.setdefault(lab, []).append(r)
+    given: dict[tuple[str, str], int] = {}  # (odor name, alias) -> the row of the tab it is first on
+    todo = []
+    for a in found:
+        at, alias = f"row {a['row']} of {where}", a["alias"]
+        of = [r for r in rows if r["abbrev"] == a["odor"]] or names.get(a["odor"].casefold(), [])
+        if len(of) != 1:
+            errors.append(f"{at}: " + (f"no odor of the sheet has the abbreviation or name {a['odor']!r}" if not of else
+                                       f"{len(of)} odors of the sheet have the abbreviation {a['odor']!r} "
+                                       f"({', '.join(r['name'] for r in of)}): give the name of the one meant"))
+            continue
+        r = of[0]
+        if (r["name"], alias) in given:
+            errors.append(f"{at}: the alias {alias!r} of {r['name']} is on row {given[(r['name'], alias)]} too")
+            continue
+        given[(r["name"], alias)] = a["row"]
+        own = "name" if alias.casefold() == r["name"].casefold() else "abbreviation" if alias == r["abbrev"] else \
+            "aliases in its own row" if alias in r["aliases"] else None
+        if own:
+            errors.append(f"{at}: {alias!r} is already {'one of the ' if own.startswith('aliases') else 'the '}{own} of {r['name']}")
+            continue
+        todo.append((a, r))
+    by_alias: dict[str, list[tuple[dict, dict]]] = {}
+    for a, r in todo:
+        by_alias.setdefault(a["alias"], []).append((a, r))
+    for alias, same in by_alias.items():
+        mine = {r["name"] for _, r in same}
+        others = {o["name"] for o in [*names.get(alias.casefold(), []), *labels.get(alias, [])]} - mine
+        if len(mine) > 1:
+            errors.append(f"{where} gives the alias {alias!r} to {len(mine)} odors: "
+                          + ", ".join(f"{r['name']} (row {a['row']})" for a, r in same))
+        if others:
+            errors.append(f"row {same[0][0]['row']} of {where}: the alias {alias!r} of {same[0][1]['name']} is already the name, "
+                          f"abbreviation or alias of {', '.join(sorted(others))}")
+        if len(mine) == 1 and not others:
+            same[0][1]["aliases"].append(alias)
+    return errors
+
+
+def parse_sheet(text: str, aliases_tab: Optional[list[list[str]]] = None) -> tuple[list[dict], list[str], list[str]]:
+    """Odor rows of a sheet (CSV text), with every problem found, and with the aliases of
+    its aliases tab (`aliases_tab`: its rows of cells, if it has one) added to theirs.
 
     Returns:
         (rows, errors, warnings). Each row has all `FIELDS` (None when empty; aliases
         a list; cid an int) plus ``row``, its line in the sheet. Errors (missing name
-        column or names, duplicate names, malformed CID / CAS / LOTUS ID / URL) mean
-        the sheet should not be synced; warnings (ignored columns, shared
+        column or names, duplicate names, malformed CID / CAS / LOTUS ID / URL, what
+        `parse_aliases_tab` and `add_aliases` find) mean the sheet should not be synced; warnings (ignored columns, shared
         abbreviations) do not.
     """
     lines, h = _rows(text)
@@ -161,6 +252,9 @@ def parse_sheet(text: str) -> tuple[list[dict], list[str], list[str]]:
     for same in by_name.values():
         if len(same) > 1:
             errors.append(f"name {same[0]['name']!r} is on more than one row (rows {', '.join(str(r['row']) for r in same)})")
+    if aliases_tab is not None:
+        found, tab_errors = parse_aliases_tab(aliases_tab)
+        errors += tab_errors + add_aliases(rows, found)
     labels: dict[str, set[str]] = {}
     for r in rows:
         for lab in [r["abbrev"], *r["aliases"]]:
@@ -273,14 +367,55 @@ def after_sync(odors: list[dict], d: dict) -> list[dict]:
 # ----------------------------------------------------------------------- sheet
 
 
-def export_url(sheet_url: str) -> str:
-    """CSV export URL of a Google sheet, from its link as copied from the browser."""
+def export_url(sheet_url: str, whole: bool = False) -> str:
+    """CSV export URL of a Google sheet (of the tab its link is of), from its link as copied
+    from the browser; with `whole`, that of the whole spreadsheet (every tab) as xlsx."""
     u = urllib.parse.urlparse(sheet_url.strip())
     m = re.match(r"^/spreadsheets/d/([A-Za-z0-9_-]+)", u.path)
     if u.netloc != "docs.google.com" or not m:
         raise SheetError(f"not a Google sheet link: {sheet_url}")
+    if whole:
+        return f"https://docs.google.com/spreadsheets/d/{m.group(1)}/export?format=xlsx"
     gid = re.search(r"gid=(\d+)", f"{u.query}#{u.fragment}")
     return f"https://docs.google.com/spreadsheets/d/{m.group(1)}/export?format=csv&gid={gid.group(1) if gid else 0}"
+
+
+def _cell(v) -> str:
+    """A cell of an xlsx sheet as the sheet's CSV would have it (a whole number without its '.0')."""
+    if v is None:
+        return ""
+    return str(int(v)) if isinstance(v, float) and v.is_integer() else str(v)
+
+
+def aliases_tab_of(xlsx: bytes) -> Optional[list[list[str]]]:
+    """The rows of cells of the tab named `ALIASES_TAB` (whatever its case) of a spreadsheet
+    (xlsx); None if it has no such tab."""
+    import openpyxl
+
+    try:
+        book = openpyxl.load_workbook(io.BytesIO(xlsx), read_only=True, data_only=True)
+    except Exception as e:
+        raise SheetError(f"could not read the Google sheet's tabs ({e})") from None
+    try:
+        name = next((n for n in book.sheetnames if n.strip().casefold() == ALIASES_TAB), None)
+        return None if name is None else [[_cell(v) for v in row] for row in book[name].iter_rows(values_only=True)]
+    finally:
+        book.close()
+
+
+def fetch_aliases_tab(sheet_url: str, timeout: float = 30) -> Optional[list[list[str]]]:
+    """The odor sheet's aliases tab (`aliases_tab_of`), None if it has none: from the whole
+    spreadsheet as xlsx, as a tab alone can only be asked for by its number, which its name
+    does not tell. Raises SheetError if the spreadsheet can't be read."""
+    try:
+        with urllib.request.urlopen(export_url(sheet_url, whole=True), timeout=timeout) as res:
+            ctype = res.headers.get("content-type", "")
+            body = res.read()
+    except Exception as e:
+        raise SheetError(f"could not read the Google sheet's tabs ({e})") from None
+    if "spreadsheet" not in ctype:
+        raise SheetError("the Google sheet's tabs did not come back as xlsx: is it shared as 'anyone with the link can view'?")
+    return aliases_tab_of(body)
 
 
 def fetch_sheet(sheet_url: str, timeout: float = 20) -> str:
@@ -319,7 +454,7 @@ class SheetWatch:
                 state = {"checked_at": dt.datetime.now().isoformat(timespec="seconds"), "error": None}
                 try:
                     text = fetch_sheet(url)
-                    rows, _, _ = parse_sheet(text)
+                    rows, _, _ = parse_sheet(text, fetch_aliases_tab(url))
                     state.update(fingerprint=fingerprint(rows), n_rows=len(rows), columns=sheet_columns(text))
                 except SheetError as e:
                     state.update(fingerprint=None, n_rows=None, columns=None, error=str(e))

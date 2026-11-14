@@ -506,7 +506,13 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   renames that would unlink datasets. A badge on the tab shows when the sheet changed
   since its last sync. An odor's *aliases* (in one cell, separated by `;`) are its other
   abbreviations and names alike: data, odor YAMLs and reference data naming it by any of
-  them are matched to it, e.g. `IaA` with aliases `IAA; isopentyl acetate`. "Download
+  them are matched to it, e.g. `IaA` with aliases `IAA; isopentyl acetate`. The sheet can
+  also have a second tab named `aliases` that lists more of them, one per row, under the
+  headers `abbrev` (the odor: its abbreviation, else its name) and `alias`; other columns
+  there (e.g. where an alias is from) are ignored. They are added to those of the odors'
+  own rows, and nothing is synced while an alias there is of an odor not in the sheet,
+  is given twice (or is already that odor's name, abbreviation or alias), or is the
+  name, abbreviation or alias of another odor: the preview says which rows. "Download
   table" saves the odors shown (all, or those the filter matches), in the tab's order, as
   a CSV (every field of each odor, its links and the datasets using it) or LaTeX (a
   longtable of names, IDs, supplier and catalog number, vapor pressure and molar mass,

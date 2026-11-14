@@ -3934,6 +3934,11 @@ class OdorsPage {
     const nothing = !p.added.length && !p.changed.length && !p.missing.length;
     const empty = '<span class="muted">(empty)</span>';
     const parts = [`<h3 class="subhead">${esc(p.source)}: ${p.n_rows} odors</h3>`];
+    const tab = p.aliases_tab; // (of the sheet, not of a file: its tab of more aliases, one per row)
+    if (tab) {
+      parts.push(`<p class="muted small">${tab.found ? `Its <code>${esc(tab.name)}</code> tab lists ${tab.n} alias${tab.n === 1 ? '' : 'es'}, added to those of the odors' own rows.`
+        : `It has no tab named <code>${esc(tab.name)}</code>: one can list more aliases, one per row, under the headers <code>abbrev</code> (the odor) and <code>alias</code>.`}</p>`);
+    }
     if (p.errors.length) parts.push(`<div class="msg error"><b>Fix these in the ${where} first</b> (nothing is synced until they are):${listHtml(p.errors)}</div>`);
     if (p.warnings.length) parts.push(`<div class="msg warn">Worth a look:${listHtml(p.warnings)}</div>`);
     if (nothing && !p.errors.length) parts.push(`<div class="msg ok">The odor table already matches the ${where} (${p.unchanged} odors).</div>`);

@@ -2160,8 +2160,8 @@ def _cleanup_previews(max_age_s: float = 86400) -> None:
             pass
 
 
-def _preview(text: str, source: str, sheet_url: Optional[str] = None) -> dict:
-    rows, errors, warnings = odormeta.parse_sheet(text)
+def _preview(text: str, source: str, sheet_url: Optional[str] = None, aliases_tab: Optional[list[list[str]]] = None) -> dict:
+    rows, errors, warnings = odormeta.parse_sheet(text, aliases_tab)
     errors += _case_errors(rows)
     fp = odormeta.fingerprint(rows)
     if sheet_url:
@@ -2177,6 +2177,9 @@ def _preview(text: str, source: str, sheet_url: Optional[str] = None) -> dict:
     return {
         "ok": not errors, "source": source, "fingerprint": fp, "errors": errors, "warnings": warnings,
         "n_rows": len(rows), "unchanged": d["unchanged"],
+        # the sheet's aliases tab: how many aliases it lists (None: an uploaded file, which has none; `found`: whether the sheet has one)
+        "aliases_tab": None if sheet_url is None else {"found": aliases_tab is not None, "name": odormeta.ALIASES_TAB,
+                                                       "n": len(odormeta.parse_aliases_tab(aliases_tab or [])[0])},
         "added": d["added"],
         "changed": [
             {"id": c["id"], "name": c["row"]["name"], "old_name": c["odor"]["name"], "rename": c["rename"],
@@ -2205,9 +2208,10 @@ async def odors_preview(request: Request) -> Response:
             return json_error(400, "no odor sheet is set up (its link goes in the Admin tab)")
         try:
             text = await run_in_threadpool(odormeta.fetch_sheet, url)
+            tab = await run_in_threadpool(odormeta.fetch_aliases_tab, url)
         except odormeta.SheetError as e:
             return json_error(502, str(e))
-        return JSONResponse(await run_in_threadpool(_preview, text, SHEET_SOURCE, url))
+        return JSONResponse(await run_in_threadpool(_preview, text, SHEET_SOURCE, url, tab))
     return JSONResponse(await run_in_threadpool(_preview, text, source))
 
 

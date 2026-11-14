@@ -330,3 +330,76 @@ def test_case():
         "row 2 (Ethyl Acetate): 'Ethyl Acetate', 'EA', 'Ea' have capital letters, and new odor names, abbreviations and "
         "aliases must be lowercase (set in the Admin tab)"]
     assert odormeta.uppercase_errors(rows, {"Ethyl Acetate", "EA", "Ea"}) == []  # already in the database
+
+
+def test_aliases_tab(tmp_path, monkeypatch):
+    """The odor sheet's tab of more aliases, one per row: added to the rows' own, and checked."""
+    import io
+
+    import openpyxl
+
+    sheet = HEADER + ("ethyl acetate,ea,EtOAc,8857,,,,,,,,,\n1-octen-3-ol,1o3ol,,18827,,,,,,,,,\n"
+                      "1-octanol,1-8ol,,957,,,,,,,,,\ngeosmin,geos,,29746,,,,,,,,,\nperfume geosmin,geos,,1213,,,,,,,,,\n")
+    tab = [["", ""], ["Abbreviation", "Alias", "from"], ["1o3ol", "oct", "Hallem"], ["1-octanol", " 1-octyl  alcohol ", ""], ["", ""],
+           ["ea", "ethyl ethanoate", ""]]
+    rows, errors, _ = odormeta.parse_sheet(sheet, tab)
+    by = {r["name"]: r["aliases"] for r in rows}
+    assert not errors and by["1-octen-3-ol"] == ["oct"] and by["1-octanol"] == ["1-octyl alcohol"]
+    assert by["ethyl acetate"] == ["EtOAc", "ethyl ethanoate"]
+    assert odormeta.parse_sheet(sheet, [])[1] == [] and odormeta.parse_sheet(sheet, None)[0][1]["aliases"] == []
+    assert odormeta.fingerprint(rows) != odormeta.fingerprint(odormeta.parse_sheet(sheet)[0])
+
+    def errs(*lines):
+        return odormeta.parse_sheet(sheet, [["abbrev", "alias"], *map(list, lines)])[1]
+
+    assert errs(("zzz", "x")) == ["row 2 of the aliases tab: no odor of the sheet has the abbreviation or name 'zzz'"]
+    assert "2 odors of the sheet have the abbreviation 'geos' (geosmin, perfume geosmin)" in errs(("geos", "x"))[0]
+    assert not errs(("perfume geosmin", "x"))  # (by name, where the abbreviation is shared)
+    assert errs(("1o3ol", "oct"), ("ea", "y"), ("1o3ol", "oct")) == ["row 4 of the aliases tab: the alias 'oct' of 1-octen-3-ol is on row 2 too"]
+    assert errs(("ea", "EtOAc")) == ["row 2 of the aliases tab: 'EtOAc' is already one of the aliases in its own row of ethyl acetate"]
+    assert errs(("ea", "ea"))[0].endswith("'ea' is already the abbreviation of ethyl acetate")
+    assert errs(("ea", "Ethyl Acetate"))[0].endswith("'Ethyl Acetate' is already the name of ethyl acetate")
+    # one alias of two odors: in the tab, or already another's in its row
+    assert errs(("1o3ol", "oct"), ("1-8ol", "oct")) == ["the aliases tab gives the alias 'oct' to 2 odors: 1-octen-3-ol (row 2), 1-octanol (row 3)"]
+    assert errs(("1o3ol", "1-8ol")) == ["row 2 of the aliases tab: the alias '1-8ol' of 1-octen-3-ol is already the name, abbreviation or alias of 1-octanol"]
+    assert "of 1-octanol" in errs(("1o3ol", "1-Octanol"))[0] and "of ethyl acetate" in errs(("1o3ol", "EtOAc"))[0]
+    for r in odormeta.parse_sheet(sheet, [["abbrev", "alias"], ["1o3ol", "oct"], ["1-8ol", "oct"]])[0]:
+        assert "oct" not in r["aliases"]  # (neither has it)
+    assert errs(("ea", ""))[0] == "row 2 of the aliases tab has no alias ('ea')"
+    assert "needs two columns" in odormeta.parse_sheet(sheet, [["odor names", "x"], ["ea", "y"]])[1][0]
+
+    # the tab, found by its name in the spreadsheet as xlsx
+    book = openpyxl.Workbook()
+    book.active.title = "inventory"
+    ws = book.create_sheet("Aliases ")
+    for line in [["abbrev", "alias"], ["1o3ol", "oct"], ["ea", 8857.0], ["1-8ol", None]]:
+        ws.append(line)
+    buf = io.BytesIO()
+    book.save(buf)
+    assert odormeta.aliases_tab_of(buf.getvalue()) == [["abbrev", "alias"], ["1o3ol", "oct"], ["ea", "8857"], ["1-8ol", ""]]
+    del book["Aliases "]
+    buf = io.BytesIO()
+    book.save(buf)
+    assert odormeta.aliases_tab_of(buf.getvalue()) is None
+    with pytest.raises(odormeta.SheetError):
+        odormeta.aliases_tab_of(b"not a spreadsheet")
+    assert odormeta.export_url("https://docs.google.com/spreadsheets/d/abc/edit#gid=7", whole=True).endswith("/d/abc/export?format=xlsx")
+
+    # the preview: its aliases, and what the tab has
+    from app import main
+    from tests.test_tensor import call
+    monkeypatch.setattr(main, "db", Database(tmp_path / "db.sqlite3"))
+    monkeypatch.setattr(config, "ODOR_PREVIEWS_DIR", tmp_path)
+    monkeypatch.setattr(config, "ODOR_SHEET_URL", "https://docs.google.com/spreadsheets/d/abc/edit")
+    monkeypatch.setattr(odormeta, "fetch_sheet", lambda url, timeout=20: sheet)
+    monkeypatch.setattr(main, "sheet_watch", odormeta.SheetWatch(600))
+    status, p = call(main.odors_preview, body={})
+    assert status == 200 and p["aliases_tab"] == {"found": False, "name": "aliases", "n": 0}
+    monkeypatch.setattr(odormeta, "fetch_aliases_tab", lambda url, timeout=30: tab)
+    status, p = call(main.odors_preview, body={})
+    assert p["ok"] and p["aliases_tab"] == {"found": True, "name": "aliases", "n": 3}
+    assert {r["name"]: r["aliases"] for r in p["added"]}["1-octen-3-ol"] == ["oct"]
+    assert call(main.odors_status)[1]["fingerprint"] == p["fingerprint"]  # (read with its tab, as the preview)
+    monkeypatch.setattr(odormeta, "fetch_aliases_tab", lambda url, timeout=30: [["abbrev", "alias"], ["zzz", "x"]])
+    status, p = call(main.odors_preview, body={})
+    assert not p["ok"] and "no odor of the sheet" in p["errors"][0]

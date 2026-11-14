@@ -646,7 +646,15 @@ between the frontend and the server. Using the app is described in
   is read through its CSV export (shared by link: no credentials, nothing written back),
   its link set in the Admin tab and kept in the database (`settings`), so that it is
   used at once and backed up with everything else (`OLFDB_ODOR_SHEET_URL` is the
-  fallback).
+  fallback). More aliases can be listed one per row in a second tab named `aliases`
+  (`odormeta.ALIASES_TAB`: easier to paste into than cells of `;`-separated ones), read
+  from the spreadsheet's export as xlsx, as a tab alone can be exported only by its
+  number, which its name does not tell (and the export that takes a name gives the first
+  tab for a name there is none of). They are merged into the rows' own before anything
+  else sees them (`parse_sheet`), so the fingerprint, the diff and the table have them as
+  any alias; unlike a shared abbreviation in the rows, which only warns, an alias there
+  that is given twice or is another odor's name, abbreviation or alias is an error
+  (`add_aliases`): the tab is for lists pasted in, which is where such slips come from.
   A sync is two steps: a preview validates the sheet and diffs it against the database,
   then an apply adds the new odors plus only the changes and deletions a user confirmed,
   logged in `odor_syncs` (tied to no one, whether from the sheet or a CSV import from the
@@ -1878,7 +1886,8 @@ GET    /api/odors                           the odor table (with each odor's `in
 GET    /api/odors/status                    the odor sheet, when it was last read, whether it
                                             changed since the last sync
 POST   /api/odors/preview                   the sheet (or multipart 'file', a CSV) validated and
-                                            diffed against the odor table
+                                            diffed against the odor table (`aliases_tab`: whether the
+                                            sheet has a tab of aliases, and how many it lists)
 POST   /api/odors/apply                     {"fingerprint", "changes", "deletions"}
 GET    /api/odors/structure/{cid}           its structure, drawn by RDKit (SVG)
 GET    /api/odors/template.csv              config/odor_sheet_template.csv
