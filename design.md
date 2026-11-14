@@ -1716,7 +1716,7 @@ app/static/        frontend: index.html, app.js, heatmap.js, colormaps.js (+ mpl
                    drawn, compounds, LCA paths, search), lotus.js (LOTUS with its matrices: how
                    made, a cell's organisms and papers), imports.js (MetaCyc and LOTUS imported
                    in the Admin tab), fits.js, predictions.js and extract.js (the AL segmentation tab's
-                   fits, predictions and extractions of signals), models.js (the Models
+                   fits, predictions and extractions of signals; flymenu.js: a menu of flies with a search box), models.js (the Models
                    tab: its table of models and a run's viewer), latex.js (labels with
                    LaTeX math, by MathJax: vendor/mathjax/)
 manage.py          list / show / export / delete datasets from the server

@@ -354,6 +354,23 @@ dialog.confirm .actions { justify-content: flex-end; }
 .fit-options { grid-template-columns: repeat(auto-fill, minmax(200px, 260px)); }
 .predict-options, .predict-paths { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); margin-bottom: 8px; }
 .predict-options select { width: 100%; }
+.step-about { margin-bottom: 10px; }
+.step-about summary { cursor: pointer; }
+.step-about[open] summary { margin-bottom: 6px; }
+.extract-choose { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; }
+.extract-choose .grid { flex: 1; min-width: 280px; }
+.extract-last { display: flex; flex-direction: column; align-items: center; gap: 1px; margin-bottom: 8px; line-height: 1.25; }
+.extract-last .muted { font-size: 11.5px; }
+.fly-menu > summary { display: flex; align-items: center; justify-content: space-between; gap: 6px; cursor: pointer; border: 1px solid var(--rule-strong);
+  border-radius: 4px; padding: 6px 8px; background: var(--field); }
+.fly-menu-chosen { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fly-menu .menu-list { min-width: 100%; }
+.fly-menu-items { display: flex; flex-direction: column; max-height: min(50vh, 420px); overflow-y: auto; margin-top: 4px; }
+.fly-menu-group { padding: 6px 10px 2px; font-size: 12px; font-weight: 600; color: var(--ink-muted); }
+.fly-menu-items button.active { background: var(--surface-2); font-weight: 600; }
+.fly-tag { color: var(--ink-muted); }
+.tag-ok { color: var(--ok); }
+.tag-warn { color: var(--orange); }
 .extract-window { margin-bottom: 6px; }
 .extract-window input { max-width: 300px; }
 #extract-window-note { margin-top: 0; min-height: 1.4em; }

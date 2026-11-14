@@ -6,6 +6,7 @@
 // extraction made, to download.
 
 import { fmtDuration } from './fits.js';
+import { FlyMenu } from './flymenu.js';
 import { tip } from './tips.js';
 
 const STATUS_NAMES = { queued: 'Queued', running: 'Running', done: 'Done', failed: 'Failed', interrupted: 'Interrupted' };
@@ -59,13 +60,19 @@ const windowCell = (x, esc) => {
 
 export class ExtractPanel {
   // helpers: { $, esc, api, msgBox, askDialog, fmtWhen, getName (the name in Settings, '' if none), flies (the tab's
-  // flies, as from /api/roi_training; null until found), predictions (those listed, as from /api/predictions) }
+  // flies, as from /api/roi_training; null until found), mine (the flies on tensor of whoever is named in Settings:
+  // { name, flies }, as the Predict box has them), predictions (those listed, as from /api/predictions) }
   constructor(h) {
     this.h = h;
     this.data = null; // as from /api/extractions
     this.timer = null;
     const { $ } = h;
-    $('#extract-fly').addEventListener('change', () => { this.flyChosen = $('#extract-fly').value; this.roisChosen = null; this.renderRois(); });
+    this.listed = new Map(); // the menu's flies, by folder (`_flies`)
+    this.menu = new FlyMenu($('#extract-fly'), { esc: h.esc, onPick: (v) => { this.flyChosen = v; this.roisChosen = null; this.renderRois(); } });
+    $('#extract-last').addEventListener('click', () => {
+      const p = this._lastPrediction();
+      if (p && this.listed.has(trim(p.tensor_dir))) { this._chooseLast(p); this.renderRois(); }
+    });
     $('#extract-rois').addEventListener('change', () => { this.roisChosen = $('#extract-rois').value; this._renderStart(); });
     for (const id of ['#extract-dir', '#extract-raw-dir', '#extract-window']) $(id).addEventListener('input', () => this._renderStart());
     $('#extract-mode').addEventListener('change', () => this._renderMode());
@@ -126,41 +133,91 @@ export class ExtractPanel {
     if (this.data) this.renderFlies();
   }
 
-  // the fly menu: the flies of the site's datasets (by uploader), those others whose ROIs a model has predicted, then
-  // any other on tensor; called again when the tab's flies, or the predictions, are found or change
+  // The flies to choose from, each { dir, raw_dir, date, fly_num, who (whose it is: null for another's
+  // fly with predicted ROIs), manual (whether it has ROIs of its own), preds (the predictions done of
+  // it, newest first), name }: those of the site's datasets (which have ROIs of their own), and those
+  // in the folders of whoever is named in Settings that have ROIs of their own or predicted ones;
+  // then any others with predicted ROIs.
+  _flies() {
+    const flies = this.h.flies() || [], mine = this.h.mine?.() || { name: '', flies: [] }, preds = this._predictions();
+    const same = (a, b) => a.trim().toLowerCase() === b.trim().toLowerCase();
+    const of = (dir) => preds.filter((p) => trim(p.tensor_dir) === dir);
+    const out = new Map();
+    const whos = new Set(flies.map((f) => [...new Set(f.datasets.map((d) => d.uploader || '?'))].join(' + ')));
+    for (const f of flies) {
+      out.set(trim(f.dir), { dir: trim(f.dir), raw_dir: f.raw_dir, date: f.date, fly_num: f.fly_num, manual: true, preds: of(trim(f.dir)),
+        who: [...new Set(f.datasets.map((d) => d.uploader || '?'))].join(' + ') });
+    }
+    const mineAs = [...whos].find((w) => same(w, mine.name)) || mine.name;
+    for (const f of mine.flies) {
+      const dir = trim(f.dir), ps = of(dir);
+      if (!out.has(dir) && (f.rois || ps.length)) out.set(dir, { dir, raw_dir: f.raw_dir, date: f.date, fly_num: f.fly_num, manual: f.rois, preds: ps, who: mineAs });
+    }
+    for (const p of preds) {
+      const dir = trim(p.tensor_dir);
+      if (p.tensor_dir && !out.has(dir)) out.set(dir, { dir, raw_dir: p.tensor_raw_dir, name: p.fly, manual: false, preds: of(dir), who: null });
+    }
+    return [...out.values()];
+  }
+
+  // the last prediction made: of those whoever is named in Settings asked for, or edited, if there are any (else of
+  // all), the one predicted, or edited, last
+  _lastPrediction() {
+    const me = (this.h.getName() || '').trim().toLowerCase(), when = (p) => (p.edited?.saved_at > p.finished_at ? p.edited.saved_at : p.finished_at) || '';
+    const preds = this._predictions().filter((p) => p.tensor_dir);
+    const mine = preds.filter((p) => me && [p.name, p.edited?.by].some((n) => (n || '').trim().toLowerCase() === me));
+    return (mine.length ? mine : preds).reduce((a, p) => (!a || when(p) > when(a) ? p : a), null);
+  }
+
+  // the fly menu: each fly with what ROIs it has ("manual": its own; "predictions, edited", or "predictions,
+  // unchecked": none of its predictions was edited in the viewer), by whose it is (those of whoever is named in
+  // Settings first; of each person's, those with edited predictions, then unchecked ones, then only their own
+  // ROIs), then any other on tensor; called again when the tab's flies, that person's, or the predictions change
   renderFlies() {
-    const { $, esc } = this.h;
-    const sel = $('#extract-fly'), flies = this.h.flies(), preds = this._predictions();
-    const predicted = new Set(preds.map((p) => trim(p.tensor_dir)));
-    const groups = new Map();
-    for (const f of flies || []) {
-      const who = [...new Set(f.datasets.map((d) => d.uploader || '?'))].join(' + ');
-      if (!groups.has(who)) groups.set(who, []);
-      groups.get(who).push(f);
-    }
-    const known = new Set((flies || []).map((f) => trim(f.dir)));
-    const others = [...new Map(preds.filter((p) => p.tensor_dir && !known.has(trim(p.tensor_dir))).map((p) => [trim(p.tensor_dir), p])).values()];
-    const opts = [...groups].sort(([a], [b]) => a.localeCompare(b)).map(([who, fs]) => `<optgroup label="${esc(who)}'s flies">${fs
-      .sort((a, b) => a.date.localeCompare(b.date) || a.fly_num - b.fly_num)
-      .map((f) => `<option value="${esc(trim(f.dir))}">${esc(f.date)} fly ${f.fly_num}${predicted.has(trim(f.dir)) ? ' · ROIs predicted' : ''}</option>`).join('')}</optgroup>`);
-    if (others.length) {
-      opts.push(`<optgroup label="Other flies with predicted ROIs">${others.map((p) => `<option value="${esc(trim(p.tensor_dir))}">${
-        esc(p.fly)}</option>`).join('')}</optgroup>`);
-    }
-    sel.innerHTML = `${opts.join('')}${flies ? '' : '<option value="" disabled>(the site\'s flies: looking on tensor…)</option>'}
-      <option value="${OTHER}">Another fly on tensor: its folder…</option>`;
-    const values = [...sel.options].filter((o) => !o.disabled).map((o) => o.value);
-    // (the one chosen; else the fly whose ROIs were last predicted, or edited; else the first)
-    const last = preds.find((p) => values.includes(trim(p.tensor_dir)));
-    sel.value = values.includes(this.flyChosen) ? this.flyChosen : last ? trim(last.tensor_dir) : values[0];
+    const { $ } = this.h, known = this.h.flies(), list = this._flies(), me = (this.h.getName() || '').trim().toLowerCase();
+    this.listed = new Map(list.map((f) => [f.dir, f]));
+    const edited = (f) => f.preds.some((p) => p.edited);
+    const tags = (f) => [...(f.manual ? [{ text: 'manual', cls: 'tag-ok' }] : []), ...(!f.preds.length ? []
+      : [edited(f) ? { text: 'predictions, edited', cls: 'tag-ok' } : { text: 'predictions, unchecked', cls: 'tag-warn' }])];
+    const rank = (f) => (edited(f) ? 0 : f.preds.length ? 1 : 2);
+    const parts = (f) => f.dir.split('/').slice(-2).join('/'); // (a fly's folder: <date>/<n>, as searched for)
+    const item = (f) => ({ value: f.dir, label: f.date ? `${f.date} fly ${f.fly_num}` : f.name, tags: tags(f),
+      search: `${f.date ? `${f.date}/${f.fly_num}` : ''} ${parts(f)}` });
+    const by = new Map();
+    for (const f of list) if (f.who != null) by.set(f.who, [...(by.get(f.who) || []), f]);
+    const isMine = (who) => Boolean(me) && who.split(' + ').some((w) => w.trim().toLowerCase() === me);
+    const groups = [...by].sort(([a], [b]) => isMine(b) - isMine(a) || a.localeCompare(b)).map(([who, fs]) => ({ label: `${who}'s flies`,
+      items: fs.sort((a, b) => rank(a) - rank(b) || a.date.localeCompare(b.date) || a.fly_num - b.fly_num).map(item) }));
+    const others = list.filter((f) => f.who == null);
+    if (others.length) groups.push({ label: 'Other flies with predicted ROIs', items: others.map(item) });
+    this.menu.set(groups, [{ value: OTHER, label: 'Another fly on tensor: its folder…' }], known ? '' : "The site's flies: looking on tensor…");
+    // (the one chosen; else the last prediction's fly, with those ROIs; else the first)
+    const values = this.menu.values(), last = this._lastPrediction();
+    const chosen = values.includes(this.flyChosen), byDefault = !chosen && last && values.includes(trim(last.tensor_dir));
+    this.menu.choose(chosen ? this.flyChosen : byDefault ? trim(last.tensor_dir) : values[0]);
+    this.roisDefault = byDefault ? this._roisOf(last) : null; // (until a fly is chosen by hand, or by the button)
+    const b = $('#extract-last'), f = last && this.listed.get(trim(last.tensor_dir));
+    b.disabled = !f;
+    b.title = f ? `Chooses ${last.fly}, with the ROIs fit #${last.fit_id}'s model predicted for it${last.edited ? ', as edited in the viewer' : ''}` : 'No prediction is done yet';
+    $('#extract-last-fly').textContent = f ? (f.date ? `${f.date}/${f.fly_num}` : last.fly) : 'none yet';
     this.renderRois();
   }
+
+  // the fly of a prediction chosen, with its ROIs: as edited, if they were, else as predicted
+  _chooseLast(p) {
+    this.flyChosen = trim(p.tensor_dir);
+    this.roisChosen = this._roisOf(p);
+    this.menu.choose(this.flyChosen);
+  }
+
+  // a prediction's entry in the ROIs menu: its ROIs as edited, if they were, else as predicted
+  _roisOf(p) { return `${p.edited ? 'edited' : 'predicted'}:${p.id}`; }
 
   // the ROIs menu, for the fly chosen: those each model predicted for it (as edited in the viewer, if they were; and
   // as predicted), then its own, if it is a fly of the site's datasets (which have ROIs) or one entered by hand
   renderRois() {
     const { $, esc, fmtWhen } = this.h;
-    const fly = $('#extract-fly').value, sel = $('#extract-rois');
+    const fly = this.menu.value, sel = $('#extract-rois');
     $('#extract-paths').hidden = fly !== OTHER;
     const opts = [];
     for (const p of fly === OTHER ? [] : this._predictions().filter((q) => trim(q.tensor_dir) === fly)) {
@@ -171,11 +228,11 @@ export class ExtractPanel {
       }
       opts.push([`predicted:${p.id}`, `Predicted by ${by}, as predicted`]);
     }
-    const site = (this.h.flies() || []).some((f) => trim(f.dir) === fly);
-    if (site || fly === OTHER) opts.push(['own', "The fly's own: the RoiSet.zip of its recordings on tensor"]);
+    if (this.listed.get(fly)?.manual || fly === OTHER) opts.push(['own', "The fly's own: the RoiSet.zip of its recordings on tensor"]);
     sel.innerHTML = opts.length ? opts.map(([v, label]) => `<option value="${esc(v)}">${esc(label)}</option>`).join('')
       : '<option value="">(none: choose a fly)</option>';
-    if (opts.some(([v]) => v === this.roisChosen)) sel.value = this.roisChosen;
+    const want = this.roisChosen ?? this.roisDefault;
+    if (opts.some(([v]) => v === want)) sel.value = want;
     this._renderStart();
   }
 
@@ -190,13 +247,13 @@ export class ExtractPanel {
   // what to ask for: { rois, prediction } or { rois: 'own', dir, raw_dir (if known, or entered) }, with the `window`
   // entered (if one is), or null if nothing can be yet
   _asked() {
-    const { $ } = this.h, fly = $('#extract-fly').value, [kind, id] = ($('#extract-rois').value || '').split(':');
+    const { $ } = this.h, fly = this.menu.value, [kind, id] = ($('#extract-rois').value || '').split(':');
     const win = this._window();
     if (!kind || win === null) return null;
     const opts = win === undefined ? {} : { window: win };
     if (kind !== 'own') return { rois: kind, prediction: Number(id), ...opts };
     if (fly !== OTHER) {
-      const raw = (this.h.flies() || []).find((f) => trim(f.dir) === fly)?.raw_dir;
+      const raw = this.listed.get(fly)?.raw_dir;
       return { rois: 'own', dir: fly, ...(raw ? { raw_dir: raw } : {}), ...opts };
     }
     const top = trim(this.data?.tensor_root);

@@ -8550,9 +8550,10 @@ class RoiTrainingPage {
     });
     this.fits = new FitsPanel({ $, esc, api, msgBox, askDialog, fmtWhen, fmtSize, getName: () => settings.current().name });
     this.predict = new PredictPanel({ $, esc, api, msgBox, askDialog, fmtWhen, getName: () => settings.current().name,
-      player: () => player, flies: () => this.data?.flies || null, onData: () => this.extract?.predictionsChanged() });
+      player: () => player, flies: () => this.data?.flies || null, onData: () => this.extract?.predictionsChanged(),
+      onMine: () => { if (this.extract?.data) this.extract.renderFlies(); } });
     this.extract = new ExtractPanel({ $, esc, api, msgBox, askDialog, fmtWhen, getName: () => settings.current().name,
-      flies: () => this.data?.flies || null, predictions: () => this.predict.data?.predictions || null });
+      flies: () => this.data?.flies || null, mine: () => this.predict.mine, predictions: () => this.predict.data?.predictions || null });
   }
 
   async load(again = false) {

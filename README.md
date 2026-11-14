@@ -866,8 +866,15 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   2 at 0.44), and never fewer than the 2 al_analysis always takes; the box says how many
   that is in each of the fly's recordings, and how it was worked out when hovered over (2,
   saying why, where the pulse's or a volume's length is not found). Enter a number of
-  volumes to use that in every recording instead: 2 for al_analysis' own numbers. Choose the fly (one of the site's, one whose ROIs
-  were predicted, or any on tensor by its folder) and its ROIs: those a model predicted,
+  volumes to use that in every recording instead: 2 for al_analysis' own numbers. Choose the fly (one of the site's, one of yours on tensor
+  (in the folders saved under your name in Settings) with ROIs of its own or predicted ones, one whose ROIs
+  were predicted, or any on tensor by its folder) and its ROIs. The fly menu has a box to search the flies
+  by date and number (`2024-06-11/2`, or any part of it), lists your flies first, and says of each which ROIs it
+  has: *manual* (its own) and *predictions, edited* in green, *predictions, unchecked* in orange (none of
+  its predictions was edited in the viewer); of each person's, those with edited predictions come first,
+  then unchecked ones, then those with only their own. *Last prediction*, left of it, chooses the fly whose ROIs
+  were last predicted or edited (those you asked for or edited, if there are any), with those ROIs, which is
+  also what is chosen to begin with. The ROIs are: those a model predicted,
   as edited in the viewer or as predicted, or the fly's own (the `RoiSet.zip` of each
   recording, as al_analysis reads them; ROIs named `AL` or ending in `+` are left out, as
   there). An ROI drawn on several planes (one name, several outlines) gives one signal,

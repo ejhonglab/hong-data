@@ -519,6 +519,7 @@ try {
 
     <div class="step" id="extract-step">
       <div class="step-head"><h2>Extract signals</h2></div>
+      <details class="step-about"><summary class="muted small">What is computed, and how</summary>
       <p class="muted small">Computes the signals of a fly's ROIs from its motion-corrected movies, as al_analysis does (with the
         same numbers, for its response window of two volumes): each ROI's trace in every recording (the mean of the movie over its
         pixels), its dF/F in each trial (against the trial's time points before the odor), and its response to each trial's odor,
@@ -526,9 +527,20 @@ try {
         from the odor's onset, as many as below). With the ROIs a model predicted, as they are or as edited in the viewer, or the
         fly's own. The fit worker computes them, beside fits and predictions, and keeps them on the server to download: tables
         (CSV) of the traces, dF/F and responses, the latter also as the Upload tab takes them.</p>
-      <div class="grid predict-options">
-        <label class="field"><span>Fly</span><select id="extract-fly"></select></label>
-        <label class="field"><span>ROIs</span><select id="extract-rois"></select></label>
+      </details>
+      <div class="extract-choose">
+        <button type="button" class="btn extract-last" id="extract-last" disabled>Last prediction<span class="muted" id="extract-last-fly"></span></button>
+        <div class="grid predict-options">
+          <div class="field"><span>Fly</span>
+            <details class="menu fly-menu" id="extract-fly">
+              <summary aria-label="Fly"></summary>
+              <div class="menu-list">
+                <input type="search" placeholder="Search the flies: YYYY-MM-DD/n" aria-label="Search the flies by date and number" autocomplete="off" spellcheck="false">
+                <div class="fly-menu-items"></div>
+              </div>
+            </details></div>
+          <label class="field"><span>ROIs</span><select id="extract-rois"></select></label>
+        </div>
       </div>
       <div class="grid predict-paths" id="extract-paths" hidden>
         <label class="field"><span>Its motion-corrected data folder <span class="muted">(from the top of tensor: its recordings'

@@ -99,6 +99,7 @@ export class PredictPanel {
     const changed = JSON.stringify(flies) !== JSON.stringify(this.mine.flies) || name !== this.mine.name;
     this.mine = { name, flies };
     if (changed && this.data) this.renderFlies();
+    if (changed) this.h.onMine?.();
   }
 
   _model() { return this.data?.models.find((m) => String(m.id) === this.h.$('#predict-model').value) || null; }
