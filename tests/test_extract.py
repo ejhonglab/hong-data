@@ -91,8 +91,9 @@ def recording(d, seed=0, gain=1.0, dtype="<u2"):
     return tifffile.imread(d / "mocorr.tif")
 
 
-def reference(movie, rois, trials):
-    """Traces and responses computed as al_analysis and hong2p write them, step by step, with pandas."""
+def reference(movie, rois, trials, n_response=extract.N_RESPONSE):
+    """Traces and responses computed as al_analysis and hong2p write them, step by step, with pandas (its
+    ``n_volumes_for_response``: `n_response`)."""
     traces = np.empty((len(movie), len(rois)))  # (float64, whatever the movie's numbers: as extract_traces_bool_masks')
     for i, r in enumerate(rois):
         traces[:, i] = np.mean(movie[:, r["z"]][:, full_mask_of(r, movie.shape[2:])], axis=1)
@@ -101,7 +102,7 @@ def reference(movie, rois, trials):
     for t in trials:
         base = traces[t["start"]:t["onset"]].mean(axis=0)
         dff = (traces[t["onset"]:t["end"] + 1] - base) / base
-        x = dff[:extract.N_RESPONSE]
+        x = dff[:n_response]
         idx = np.abs(x).idxmax(axis=0)
         stats.append([x.loc[at, col] for col, at in zip(idx.index, idx)])
     stats = pd.DataFrame(stats)
@@ -193,6 +194,92 @@ def test_best_plane_of_the_fly(tmp_path):
     assert extract.panel("my_odors_3") == "my_odors" and extract.panel("kiwi_ea_eb_only") == "kiwi" and extract.panel("7") == "7"
 
 
+# ------------------------------------------------------- the response window
+
+RAW_XML = ('<ThorImageExperiment><Name name="t"/><Date date="01/01/2024 10:00:00" uTime="1704103200"/>'
+           '<LSM pixelX="20" pixelY="16" widthUM="10" heightUM="8" pixelSizeUM="0.5" frameRate="{fps}" averageMode="0" averageNum="1"/>'
+           '<ZStage name="ThorZPiezo" steps="{z}" stepSizeUM="10" zStreamFrames="1"/>'
+           '<Streaming enable="1" zFastEnable="1" flybackFrames="{flyback}" frames="30"/><PMT enableA="1" gainA="50" enableB="0" gainB="0"/>'
+           '<ExperimentNotes text="{notes}"/></ThorImageExperiment>')
+STIMULI = "20240101_100000_stimuli_0.yaml"
+
+
+def raw_recording(d, fps=4.01, z=5, flyback=1, notes=rf"C:\Users\ann\olf\20240101_100000_stimuli\{STIMULI}"):
+    """A raw recording's folder, with ThorImage's Experiment.xml: its notes naming the stimulus file, as olf leaves them."""
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "Experiment.xml").write_text(RAW_XML.format(fps=fps, z=z, flyback=flyback, notes=notes))
+    return d
+
+
+def stimuli(data_dir, pulse_us=3_000_000, name=STIMULI, generated=True):
+    """A stimulus YAML where hong2p keeps a data folder's, in the folder olf generated it into (or not in one)."""
+    d = data_dir / "stimulus_data_files" / (name.rsplit("_", 1)[0] if generated else "")
+    d.mkdir(parents=True, exist_ok=True)
+    (d / name).write_text(f"settings:\n  timing:\n    pre_pulse_us: 7000000\n    pulse_us: {pulse_us}\n    post_pulse_us: 20000000\n"
+                          "pins2odors:\n  2: {name: ethyl acetate, log10_conc: -2}\npin_sequence:\n  pins: [2, 2, 2]\n")
+    return d / name
+
+
+def test_window(tmp_path):
+    # as many volumes as an odor pulse can reach, from the first whose middle is after the valve opens: in each of the
+    # recordings whose ThorSync data was looked at (pulse, volume: seconds), the most any trial's reached
+    for pulse, volume, n in [(3, 1.496, 3), (3, 2.256, 2), (3, 2.73, 2), (3, 3.003, 2), (3, 1.742, 3), (3, 0.95, 4), (2, 0.337, 7), (1, 1.01, 2)]:
+        assert extract.window_volumes(pulse, volume) == n, (pulse, volume)
+    assert extract.window_volumes(1, 3) == 1 and extract.window_volumes(3, 3) == 2 and extract.window_volumes(3, 2) == 3
+
+    # of a recording: the pulse's length by the stimulus file its notes name, a volume's by its Experiment.xml
+    fly = tmp_path / "ann/raw_data/2024-01-01/1"
+    rec = raw_recording(fly / "megamat1")
+    path = stimuli(tmp_path / "ann")
+    t = extract.recording_timing(rec)
+    assert (t["pulse_s"], t["planes"], t["flyback"], t["fps"], t["missing"]) == (3.0, 5, 1, 4.01, None) and np.isclose(t["volume_s"], 6 / 4.01)
+    assert (t["xml"], t["yaml"]) == (str(rec / "Experiment.xml"), str(path))
+    w = extract.window(rec, extract.WINDOW)
+    assert (w["volumes"], w["reach"], w["set"]) == (3, 3, False)
+    for part in ("3 volumes from the odor's onset", "The odor pulse is 3 s", f"pulse_us of {STIMULI}", "a volume 1.496 s",
+                 "5 planes and 1 flyback at 4.01 frames/s", "floor(3 / 1.496 + 1/2) + 1 = 3 volumes", "al_analysis takes 2"):
+        assert part in w["how"], (part, w["how"])
+    # slower volumes: fewer, and never fewer than al_analysis' two
+    assert extract.window(raw_recording(fly / "slow", fps=2.0), extract.WINDOW)["volumes"] == 2
+    w = extract.window(raw_recording(fly / "slower", fps=0.6), extract.WINDOW)
+    assert (w["volumes"], w["reach"]) == (2, 1) and "= 1 volume from it; never fewer than al_analysis' 2." in w["how"]
+    # faster ones, of one plane, and a stimulus file not in a folder of its own
+    stimuli(tmp_path / "ann", pulse_us=2_000_000, name="odors.yaml", generated=False)
+    w = extract.window(raw_recording(fly / "fast", fps=2.97, z=1, flyback=0, notes="odors.yaml, fly 1"), extract.WINDOW)
+    assert (w["volumes"], w["pulse_s"]) == (7, 2.0) and "1 plane at 2.97 frames/s" in w["how"]
+    # notes with "" for what the folder's name says already, as hong2p reads them; and naming a generator's own configuration
+    ditto = raw_recording(fly / "ditto", notes="20240101_100000_stimuli/&quot;&quot;_stimuli_0.yaml")
+    assert extract.recording_timing(ditto)["yaml"] == str(path) and extract.window(ditto, extract.WINDOW)["volumes"] == 3
+    (tmp_path / "ann/stimulus_data_files/kiwi.yaml").write_text("generator: basic\npre_pulse_s: 7\npulse_s: 5\npost_pulse_s: 20\nodors: []\n")
+    w = extract.window(raw_recording(fly / "kiwi", notes="kiwi.yaml&#xD;&#xA;odors: 2/3"), extract.WINDOW)
+    assert (w["volumes"], w["pulse_s"]) == (4, 5.0) and "pulse_s of kiwi.yaml" in w["how"]
+
+    # set: that many, what the pulse can reach still said
+    w = extract.window(rec, 2)
+    assert (w["volumes"], w["reach"], w["set"]) == (2, 3, True) and w["how"].startswith("2 volumes from the odor's onset, as set. The odor pulse is 3 s")
+    assert extract.window(rec, 1)["how"].startswith("1 volume from")
+    # not to be worked out: al_analysis' two, saying why
+    for d, why in [(None, "raw data folder is not known"), (fly / "none", "no Experiment.xml"),
+                   (raw_recording(fly / "unnamed", notes="fly 1"), "name no stimulus YAML"),
+                   (raw_recording(fly / "lost", notes="20240101_110000_stimuli_0.yaml"), "is in no stimulus_data_files/ above it")]:
+        w = extract.window(d, extract.WINDOW)
+        assert (w["volumes"], w["reach"], w["set"]) == (2, None, False) and why in w["missing"] and why in w["how"] and "as al_analysis" in w["how"], w
+        assert extract.window(d, 5)["volumes"] == 5 and why in extract.window(d, 5)["how"]
+    # ... unless it is in another folder given (those of odor YAMLs users set in Settings)
+    (tmp_path / "configs").mkdir()
+    (tmp_path / "configs/20240101_110000_stimuli_0.yaml").write_text("settings: {timing: {pulse_us: 1000000}}\n")
+    assert extract.window(fly / "lost", extract.WINDOW, [tmp_path / "none", tmp_path / "configs"])["pulse_s"] == 1.0
+    stimuli(tmp_path / "ann", name="20240101_110000_stimuli_0.yaml").write_text("pins2odors: {}\n")
+    assert "gives no pulse length" in extract.window(fly / "lost", extract.WINDOW)["missing"]
+
+    # asked for: none (those the pulse can reach), or a whole number of volumes
+    assert extract.options({}) == {"mode": "best_plane", "window": "pulse"} == extract.options({"window": "", "mode": None})
+    assert extract.options({"window": "3"})["window"] == 3 == extract.options({"window": 3.0})["window"]
+    for bad in (0, -1, 2.5, "two", True, extract.MAX_WINDOW + 1, [2], float("inf"), float("nan")):
+        with pytest.raises(ValueError, match="window:"):
+            extract.options({"window": bad})
+
+
 # ----------------------------------------------------------- asked for, and run
 
 def test_api_and_worker(main, tensor, monkeypatch):  # noqa: F811
@@ -215,9 +302,9 @@ def test_api_and_worker(main, tensor, monkeypatch):  # noqa: F811
     (fly / "suite2p").mkdir()
     status, e = call(main.extractions_create, method="POST", body=body)
     assert status == 201 and (e["status"], e["fly"], e["name"], e["ip"], e["rois"], e["options"]) == (
-        "queued", "ann_2024-01-01_1", "Bob", "10.1.2.3", {"kind": "own"}, {"mode": "best_plane"})
+        "queued", "ann_2024-01-01_1", "Bob", "10.1.2.3", {"kind": "own"}, {"mode": "best_plane", "window": "pulse"})
     size = (fly / "megamat1/mocorr.tif").stat().st_size
-    assert e["bytes"] == 3 * size and e["fly_dir"] == str(fly)
+    assert e["bytes"] == 3 * size and e["fly_dir"] == str(fly) and e["raw_dir"] is None  # (not where hong2p would have it, nor given)
 
     # waiting: when it should end is a guess, said to be one; and what a restart would stop counts it
     status, r = call(main.extractions_list)
@@ -277,8 +364,14 @@ def test_api_and_worker(main, tensor, monkeypatch):  # noqa: F811
     assert len(parsed.trials) == 8 and {t["panel"] for t in parsed.trials} == {"megamat"}
     prov = json.loads((d / "provenance.json").read_text())
     assert prov["rois"]["kind"] == "own" and len(prov["rois"]["files"]) == 2 and len(prov["rois"]["files"][0]["sha256"]) == 64
-    assert prov["recordings"][0]["movie"]["shape"] == {"t": T, "z": Z, "c": 1, "y": Y, "x": X} and prov["computed"]["n_volumes_for_response"] == 2
-    assert prov["asked_for"]["by"] == "Bob" and prov["fly"]["date"] == "2024-01-01" and "al_analysis" in (d / "README.txt").read_text()
+    assert prov["recordings"][0]["movie"]["shape"] == {"t": T, "z": Z, "c": 1, "y": Y, "x": X}
+    # (its raw data folder not known: al_analysis' two volumes from the odor's onset, saying so)
+    assert prov["computed"]["n_volumes_for_response"] == {"megamat1": 2, "megamat2_redo": 2} and prov["computed"]["response_window"] == "pulse"
+    assert "raw data folder is not known" in prov["recordings"][0]["response_window"]["missing"]
+    assert [c["window"]["volumes"] for c in res["recordings"]] == [2, 2] and "megamat1: a response is taken from 2 volumes" in log
+    readme = (d / "README.txt").read_text()
+    assert prov["asked_for"]["by"] == "Bob" and prov["fly"]["date"] == "2024-01-01" and "al_analysis" in readme
+    assert "2 in every recording, as al_analysis takes" in readme and "was found for none" in readme
     # downloaded whole; its log
     z = zipfile.ZipFile(io.BytesIO(b"".join(extract.stream_zip(e["id"], "top"))))
     assert sorted(z.namelist()) == [f"top/{f}" for f in files]
@@ -317,6 +410,62 @@ def test_api_and_worker(main, tensor, monkeypatch):  # noqa: F811
         assert list(pd.read_csv(extract.out_dir(x["id"]) / "recordings/kiwi_1/planes.csv")["pixels"]) == [pixels]
         assert json.loads((extract.out_dir(x["id"]) / "provenance.json").read_text())["rois"]["files"][0]["path"].endswith(
             "_pred-edited_RoiSet.zip" if kind == "edited" else "ann_2024-01-01_1_RoiSet.zip")
+
+    # the response window: as many volumes as each recording's odor pulse can reach, by its raw recording (megamat1's: 3 s
+    # pulses, 1.5 s volumes), al_analysis' two where that is not known: said before it is asked for
+    raw_recording(tensor / RAW / "megamat1")
+    stimuli(tensor / "ann")
+    asked = {**body, "raw_dir": RAW}
+    status, r = call(main.extractions_window, method="POST", body=asked)
+    assert status == 200 and (r["raw_dir"], r["window"], r["al_analysis"]) == (str(tensor / RAW), "pulse", 2)
+    assert {w["recording"]: (w["volumes"], w["reach"]) for w in r["windows"]} == {"kiwi_1": (2, None), "megamat1": (3, 3), "megamat2_redo": (2, None)}
+    how = {w["recording"]: w["how"] for w in r["windows"]}
+    assert "floor(3 / 1.496 + 1/2) + 1 = 3 volumes" in how["megamat1"] and "no Experiment.xml" in how["kiwi_1"]
+    windows = lambda b: [w["volumes"] for w in call(main.extractions_window, method="POST", body=b)[1]["windows"]]  # noqa: E731
+    assert windows({**asked, "window": 1}) == [1, 1, 1] and windows(body) == [2, 2, 2]
+    assert windows({"rois": "predicted", "prediction": p["id"]}) == windows(asked)  # (by the prediction's raw data folder)
+    for bad, why in [({"window": 0}, "window:"), ({"raw_dir": "ann/raw/2030-01-01/1"}, "raw data folder"), ({"dir": ""}, "none given")]:
+        status, r = call(main.extractions_window, method="POST", body={**asked, **bad})
+        assert status == 400 and why in r["error"], r
+    x = call(main.extractions_create, method="POST", body=asked)[1]
+    assert x["raw_dir"] == str(tensor / RAW) and x["options"] == {"mode": "best_plane", "window": "pulse"}
+    fit_worker.run_extraction(main.db, extract.claim(main.db))
+    x = extract.get(main.db, x["id"])
+    assert [(c["name"], c["window"]["volumes"], c["window"]["set"]) for c in x["result"]["recordings"]] == [
+        ("megamat1", 3, False), ("megamat2_redo", 2, False)]
+    d = extract.out_dir(x["id"])
+    _, stats3, best3 = reference(movie, rois, trials, 3)
+    own = pd.read_csv(d / "recordings/megamat1/responses.csv", index_col=[0, 1, 2, 3], header=[0, 1, 2, 3])
+    assert np.array_equal(own.to_numpy(), stats3[:, best3]) and not np.array_equal(stats3, want_stats)
+    log = (d / "log.txt").read_text()
+    assert "megamat1: a response is taken from 3 volumes from the odor's onset. The odor pulse is 3 s" in log
+    assert "megamat2_redo: a response is taken from 2 volumes from the odor's onset, as al_analysis." in log
+    prov = json.loads((d / "provenance.json").read_text())
+    assert prov["computed"]["n_volumes_for_response"] == {"megamat1": 3, "megamat2_redo": 2}
+    assert prov["recordings"][0]["response_window"]["yaml"].endswith(STIMULI) and prov["recordings"][0]["response_window"]["pulse_s"] == 3
+    assert "3 in megamat1, 2 in megamat2_redo, which is as many volumes as" in (d / "README.txt").read_text()
+    # or as many as set, in every recording
+    x = call(main.extractions_create, method="POST", body={**asked, "window": 1})[1]
+    assert x["options"]["window"] == 1
+    fit_worker.run_extraction(main.db, extract.claim(main.db))
+    x = extract.get(main.db, x["id"])
+    assert [(c["window"]["volumes"], c["window"]["set"]) for c in x["result"]["recordings"]] == [(1, True), (1, True)]
+    _, stats1, best1 = reference(movie, rois, trials, 1)
+    own = pd.read_csv(extract.out_dir(x["id"]) / "recordings/megamat1/responses.csv", index_col=[0, 1, 2, 3], header=[0, 1, 2, 3])
+    assert np.array_equal(own.to_numpy(), stats1[:, best1])
+    assert "1 in every recording, as set when this was asked for" in (extract.out_dir(x["id"]) / "README.txt").read_text()
+    # a stimulus file not where hong2p keeps them, but in a folder of odor YAMLs a user set in Settings: found there
+    raw_recording(tensor / RAW / "megamat2_redo", notes="odors2.yaml")
+    (tensor / "ann/configs").mkdir()
+    (tensor / "ann/configs/odors2.yaml").write_text("settings: {timing: {pulse_us: 5000000}}\n")
+    assert windows(asked) == [2, 3, 2]
+    main.db.save_user("Ann", {"odor_dirs": ["ann/configs"]}, "2026-11-13T00:00:00")
+    assert extract.stimulus_folders(main.db, tensor) == [tensor / "ann/configs"] and windows(asked) == [2, 3, 4]
+    # one asked for before there was a choice (no window among its options): al_analysis' two
+    old = call(main.extractions_create, method="POST", body=asked)[1]
+    extract.update(main.db, old["id"], options={"mode": "best_plane"})
+    fit_worker.run_extraction(main.db, extract.claim(main.db))
+    assert [c["window"]["volumes"] for c in extract.get(main.db, old["id"])["result"]["recordings"]] == [2, 2]
 
     # what cannot be extracted is said, in its record and its log; deleted with its files
     (fly / "megamat1" / movies.TRIALS).write_text(json.dumps([{"start_frame": 0, "first_odor_frame": 4, "end_frame": 99, "odors": "va @ -3"}]))

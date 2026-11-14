@@ -21,6 +21,9 @@ class ExperimentXmlError(ValueError):
 
 
 _YAML_NAME = re.compile(r"[^\s\"'<>|*?]+\.ya?ml\b", re.IGNORECASE)
+# notes that name a generated YAML with "" for what its folder's name already says (20210307_193241_stimuli/""_stimuli_0.yaml,
+# which hong2p's stimulus_yaml_from_thorimage reads as 20210307_193241_stimuli/20210307_193241_stimuli_0.yaml)
+_DITTO = re.compile(r"(\d{8}_\d{6})(_stimuli[\\/])\"\"")
 
 
 def _attr(el: Optional[ET.Element], name: str) -> Optional[str]:
@@ -144,11 +147,13 @@ def notes_yaml_names(text: str) -> list[str]:
 
     Returns:
         names without their folders (which may be Windows paths), or [] if the XML
-        cannot be read.
+        cannot be read. A name written with ``""`` for its folder's date and time
+        (`_DITTO`) is given whole, as hong2p reads it.
     """
     try:
         root = ET.fromstring(text)
     except ET.ParseError:
         return []
     notes = " ".join(t for t in (_attr(root.find("ExperimentNotes"), "text"), _attr(root.find("Comments"), "text")) if t)
+    notes = _DITTO.sub(r"\1\2\1", notes)
     return list(dict.fromkeys(m.replace("\\", "/").rsplit("/", 1)[-1] for m in _YAML_NAME.findall(notes)))

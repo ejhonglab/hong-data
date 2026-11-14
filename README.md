@@ -842,14 +842,21 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   Predictions made before these were kept (`<fly>_identity_terms*.json`, in the download)
   say to predict again.
   *Extract signals*, below it, computes the signals of a fly's ROIs from its
-  motion-corrected movies as al_analysis does, with the same numbers (checked against what
-  al_analysis left for 9 recordings of 4 flies: identical to the last digit): for each
+  motion-corrected movies as al_analysis does, with the same numbers for its response
+  window (checked against what al_analysis left for 9 recordings of 4 flies: identical to
+  the last digit): for each
   recording of the fly (a folder with `mocorr.tif`, else `flipped.tif` or `raw.tif`, and
   `trial_frames_and_odors.json`; one done again, `<name>_redo`, in place of the first), each
   ROI's trace (the mean of the movie over its pixels on a plane), its dF/F in each trial
   ((F − F0) / F0, F0 its mean over the trial's time points before the odor), and its
-  response to each trial's odor: the dF/F of largest magnitude, with its sign, in the first
-  two time points from the odor's onset. Choose the fly (one of the site's, one whose ROIs
+  response to each trial's odor: the dF/F of largest magnitude, with its sign, in the
+  response window, the first volumes from the odor's onset. The window is as many volumes
+  as the recording's odor pulse can reach (from the pulse's length in the stimulus YAML its
+  notes name and a volume's in its `Experiment.xml`: 3 for a 3 s pulse at 0.67 volumes/s,
+  2 at 0.44), and never fewer than the 2 al_analysis always takes; the box says how many
+  that is in each of the fly's recordings, and how it was worked out when hovered over (2,
+  saying why, where the pulse's or a volume's length is not found). Enter a number of
+  volumes to use that in every recording instead: 2 for al_analysis' own numbers. Choose the fly (one of the site's, one whose ROIs
   were predicted, or any on tensor by its folder) and its ROIs: those a model predicted,
   as edited in the viewer or as predicted, or the fly's own (the `RoiSet.zip` of each
   recording, as al_analysis reads them; ROIs named `AL` or ending in `+` are left out, as

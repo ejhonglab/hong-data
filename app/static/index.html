@@ -519,13 +519,13 @@ try {
 
     <div class="step" id="extract-step">
       <div class="step-head"><h2>Extract signals</h2></div>
-      <p class="muted small">Computes the signals of a fly's ROIs from its motion-corrected movies, as al_analysis does, with the same
-        numbers: each ROI's trace in every recording (the mean of the movie over its pixels), its dF/F in each trial (against the
-        trial's time points before the odor), and its response to each trial's odor, one number per ROI and trial (the dF/F of
-        largest magnitude, with its sign, in the first two time points from the odor's onset). With the ROIs a model predicted, as
-        they are or as edited in the viewer, or the fly's own. The fit worker computes them, beside fits and predictions, and
-        keeps them on the server to download: tables (CSV) of the traces, dF/F and responses, the latter also as the Upload tab
-        takes them.</p>
+      <p class="muted small">Computes the signals of a fly's ROIs from its motion-corrected movies, as al_analysis does (with the
+        same numbers, for its response window of two volumes): each ROI's trace in every recording (the mean of the movie over its
+        pixels), its dF/F in each trial (against the trial's time points before the odor), and its response to each trial's odor,
+        one number per ROI and trial (the dF/F of largest magnitude, with its sign, in the response window: the first volumes
+        from the odor's onset, as many as below). With the ROIs a model predicted, as they are or as edited in the viewer, or the
+        fly's own. The fit worker computes them, beside fits and predictions, and keeps them on the server to download: tables
+        (CSV) of the traces, dF/F and responses, the latter also as the Upload tab takes them.</p>
       <div class="grid predict-options">
         <label class="field"><span>Fly</span><select id="extract-fly"></select></label>
         <label class="field"><span>ROIs</span><select id="extract-rois"></select></label>
@@ -534,11 +534,19 @@ try {
         <label class="field"><span>Its motion-corrected data folder <span class="muted">(from the top of tensor: its recordings'
           <code>mocorr.tif</code>, <code>trial_frames_and_odors.json</code> and <code>RoiSet.zip</code>, as al_analysis leaves them)</span></span>
           <input id="extract-dir" data-tensor-path spellcheck="false" placeholder="e.g. Ann/analysis/2026-03-31/1"></label>
+        <label class="field"><span>Its raw data folder <span class="muted">(only for the response window, which is worked out from
+          its recordings' <code>Experiment.xml</code>; empty: the same fly under <code>raw_data/</code>, if its movies are under
+          <code>analysis_intermediates/</code>)</span></span>
+          <input id="extract-raw-dir" data-tensor-path spellcheck="false" placeholder="e.g. Ann/raw/2026-03-31/1"></label>
       </div>
       <div class="grid predict-options">
         <label class="field"><span>The signal of an ROI drawn on several planes</span><select id="extract-mode"></select></label>
       </div>
       <p class="small muted" id="extract-mode-note"></p>
+      <label class="field extract-window"><span>Response window <span class="muted">(volumes from the odor's onset a response is taken
+        from; empty: as many as the odor pulse can reach)</span></span>
+        <input id="extract-window" type="number" min="1" step="1" inputmode="numeric" placeholder="those the odor pulse can reach"></label>
+      <p class="small" id="extract-window-note" aria-live="polite"></p>
       <p class="small" id="extract-who"></p>
       <div class="actions">
         <button type="button" class="btn primary" id="extract-start">Extract its signals</button>

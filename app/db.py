@@ -263,9 +263,10 @@ CREATE TABLE IF NOT EXISTS predictions (  -- glomerulus ROIs a fit's model predi
 CREATE TABLE IF NOT EXISTS extractions (  -- signals of a fly's ROIs extracted from its movies, asked for in the AL segmentation tab, by the fit worker (see extract.py)
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     fly_dir TEXT NOT NULL,             -- the fly's motion-corrected data folder, on the server
+    raw_dir TEXT,                      -- its raw data folder, if known: where the response window is worked out from (extract.window)
     fly TEXT NOT NULL,                 -- its name, as a prediction's
     rois_json TEXT NOT NULL,           -- which ROIs: their kind (own, predicted, edited), and the prediction and fit they are of
-    options_json TEXT NOT NULL,        -- extract.options: how one signal is made of an ROI's planes
+    options_json TEXT NOT NULL,        -- extract.options: how one signal is made of an ROI's planes, and the response window
     bytes INTEGER,                     -- of its recordings' movies (what its time is estimated by)
     name TEXT NOT NULL,                -- who asked for it, from Settings
     ip TEXT,
@@ -325,6 +326,7 @@ ADDED_COLUMNS = [("datasets", "mocorr_data_path", "TEXT"), ("datasets", "data_fi
                  ("reference_datasets", "fields", "TEXT"), ("units", "bad", "INTEGER"),
                  ("units", "extra_json", "TEXT"), ("model_sources", "skip", "TEXT NOT NULL DEFAULT ''"),
                  ("model_baselines", "imported_at", "TEXT"), ("model_baselines", "imported_json", "TEXT"),
+                 ("extractions", "raw_dir", "TEXT"),
                  *(c for p, col in PROPERTY_COLUMNS.items()
                    for c in (("pubchem", col, "REAL"), ("pubchem", f"{p}_source", "TEXT"), ("pubchem", f"{p}_at", "TEXT"),
                              ("pubchem", f"{p}_chemutils", "TEXT"), ("pubchem", f"{p}_measured", "INTEGER"),

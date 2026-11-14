@@ -1759,9 +1759,11 @@ async def extractions_list(request: Request) -> Response:
 
 async def extractions_create(request: Request) -> Response:
     """Asks for the signals of a fly's ROIs: {"name" (as for a fit), "rois": "own" (with "dir": the
-    fly's motion-corrected data folder), or "predicted" or "edited" (with "prediction": its id),
-    "mode" (of `extract.MODES`)}. 201 with it, queued. 422 without a name; 400 for what cannot be
-    extracted (`extract.locate` says why)."""
+    fly's motion-corrected data folder, and "raw_dir": its raw data folder, if not beside it as
+    hong2p has them), or "predicted" or "edited" (with "prediction": its id), "mode" (of
+    `extract.MODES`), "window" (the response window: a number of volumes; without it, those the
+    odor pulse can reach)}. 201 with it, queued. 422 without a name; 400 for what cannot be
+    extracted (`extract.locate` and `extract.options` say why)."""
     body = await request.json()
     if not isinstance(body, dict):
         return json_error(400, "expected a JSON object")
@@ -1778,6 +1780,19 @@ async def extractions_create(request: Request) -> Response:
 
     try:
         return JSONResponse(await run_in_threadpool(run), status_code=201)
+    except ValueError as e:
+        return json_error(400, str(e))
+
+
+async def extractions_window(request: Request) -> Response:
+    """The response window an extraction asked for so (as `extractions_create` takes it, less the
+    name) would have in each of the fly's recordings, and how each is arrived at
+    (`extract.preview`). 400 as `extractions_create`."""
+    body = await request.json()
+    if not isinstance(body, dict):
+        return json_error(400, "expected a JSON object")
+    try:
+        return JSONResponse(await run_in_threadpool(extract.preview, db, body, config.TENSOR_ROOT, [Path(p) for p in sandbox.folders()]))
     except ValueError as e:
         return json_error(400, str(e))
 
@@ -3993,6 +4008,7 @@ routes = [
     Route("/api/predictions/{id:int}/download", predictions_download),
     Route("/api/extractions", extractions_list),
     Route("/api/extractions", extractions_create, methods=["POST"]),
+    Route("/api/extractions/window", extractions_window, methods=["POST"]),
     Route("/api/extractions/{id:int}", extractions_delete, methods=["DELETE"]),
     Route("/api/extractions/{id:int}/log", extractions_log),
     Route("/api/extractions/{id:int}/download", extractions_download),

@@ -19,8 +19,9 @@ done here, with the same numbers out:
 - Its trace is the mean of the movie over its mask, at each time point.
 - Its dF/F in a trial is (F - F0) / F0, F0 the mean of its trace over the trial's frames
   before the odor (all of them: al_analysis' ``n_volumes_for_baseline = None``); its response
-  is the dF/F of largest magnitude, with its sign, among the first `N_RESPONSE` time points
-  from the odor's onset (``sign_preserving_maxabs``, ``n_volumes_for_response = 2``).
+  is the dF/F of largest magnitude, with its sign, among the first time points from the
+  odor's onset (``sign_preserving_maxabs``): al_analysis' `N_RESPONSE`
+  (``n_volumes_for_response = 2``) if the response window is set to that.
 - An ROI drawn on several planes (one name, several polygons) is, in each recording, the one
   of them whose largest response over the recording's trials is greatest (`MODES`'
   ``best_plane``). The other `MODES` are other ways to make one signal of its planes.
@@ -44,8 +45,13 @@ Where it differs from al_analysis (notes/trace_extraction_notes.md says more of 
 - nothing after al_analysis' per-recording table (``ij_trial_df``) is done: no merging of ROIs
   across recordings, dropping of uncertain ROIs, blanking of concentrations not final, or means;
   ``responses_glomeruli.csv`` is of the ROIs an upload accepts, not al_analysis' certain ones;
-- its settings are al_analysis' current defaults, fixed (`N_RESPONSE`, the baseline, the
-  statistic); only ImageJ's ROIs, not suite2p's;
+- the response window is by default as many volumes as a recording's odor pulse can reach
+  (`window`: from the pulse's length in its stimulus YAML and a volume's in its
+  Experiment.xml; `N_RESPONSE` at least, and where they are not found), not al_analysis'
+  hardcoded `N_RESPONSE`, which it can be set to (as to any number); a best plane is chosen
+  by responses over the same window;
+- its other settings are al_analysis' current defaults, fixed (the baseline, the statistic);
+  only ImageJ's ROIs, not suite2p's;
 - the other `MODES` are not al_analysis' at all.
 """
 from __future__ import annotations
@@ -53,6 +59,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -63,9 +70,14 @@ from typing import Callable, Optional
 
 import numpy as np
 
-from . import config, movies, predictions, tensor
+from . import config, movies, predictions, sandbox, tensor, thorimage
 
-N_RESPONSE = 2  # time points from the odor's onset a response is taken from (al_analysis' n_volumes_for_response)
+N_RESPONSE = 2  # time points from the odor's onset al_analysis takes a response from (its n_volumes_for_response): the fewest here
+WINDOW = "pulse"  # the response window by default: as many volumes as the odor pulse can reach (`window_volumes`)
+MAX_WINDOW = 100  # the most volumes a response window may be set to
+STIMULI = "stimulus_data_files"  # where hong2p keeps a data folder's stimulus YAMLs (beside its raw data)
+XML = "Experiment.xml"  # ThorImage's, in a raw recording's folder
+RAW, MOCORR = "raw_data", "analysis_intermediates"  # hong2p's folders of a data folder: a fly's are at the same path in each
 OUTLINE = "AL"  # ROIs so named outline the whole antennal lobe on a plane (hong2p's is_ijroi_plane_outline)
 MAXIMAL = "+"  # ROIs whose name ends so may hold several glomeruli: left out (hong2p's drop_maximal_extent_rois)
 DIAGNOSTIC = "glomeruli_diagnostics"  # al_analysis' panel of recordings with "diag" in their name
@@ -351,7 +363,7 @@ def combine(mode: str, rois: list[dict], recordings: list[dict]) -> None:
     names = [r["name"] for r in rois]
     pixels = np.array([r["pixels"] for r in rois], dtype=float)
     for rec in recordings:
-        rec["q"] = quality(responses(rec["traces"], rec["trials"]))
+        rec["q"] = quality(responses(rec["traces"], rec["trials"], rec.get("n_response", N_RESPONSE)))
         rec["noise"] = noise(rec["traces"], rec["trials"])
     if mode == "best_plane_fly":
         stacked = np.stack([rec["q"] for rec in recordings])
@@ -387,6 +399,136 @@ def combine(mode: str, rois: list[dict], recordings: list[dict]) -> None:
 
 def _num(v) -> Optional[float]:
     return None if v is None or not np.isfinite(v) else float(v)
+
+
+# ------------------------------------------------------- the response window
+
+def window_volumes(pulse_s: float, volume_s: float) -> int:
+    """How many volumes, from a trial's first odor volume on, an odor pulse of `pulse_s` seconds
+    can have a part in, the volumes `volume_s` seconds each: floor(pulse / volume + 1/2) + 1.
+
+    The first odor volume is the first whose middle is after the valve opens (hong2p's
+    ``assign_frames_to_odor_presentations``), so the pulse begins at most half a volume before
+    that middle, and ends at most pulse + volume / 2 after the first odor volume began. In the
+    ThorSync data of twelve recordings (0.34 to 3 s volumes, pulses of 1 to 3 s), this was the most
+    volumes any trial's pulse reached, every time; the other trials' reached one fewer.
+    """
+    return int(math.floor(pulse_s / volume_s + 0.5)) + 1
+
+
+def _read_text(p: Path) -> Optional[str]:
+    try:
+        if p.stat().st_size > tensor.MAX_FILE_BYTES:
+            return None
+        return p.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+
+def stimulus_folders(db, tensor_root: Path) -> list[Path]:
+    """Where a recording's stimulus YAML is looked for besides `STIMULI` above it: every user's
+    folders of odor YAMLs (set in Settings), on the server."""
+    with db.connect() as con:
+        rows = [r["odor_dirs"] for r in con.execute("SELECT odor_dirs FROM users ORDER BY id")]
+    out: dict[Path, None] = {}
+    for dirs in rows:
+        try:
+            out.update((tensor_root / str(d), None) for d in json.loads(dirs or "[]"))
+        except (ValueError, TypeError):
+            continue
+    return list(out)
+
+
+def stimulus_yaml(recording: Path, names: list[str], also: list[Path] = ()) -> Optional[Path]:
+    """The stimulus YAML of a raw recording (a ThorImage folder), of those its notes name
+    (`names`: `thorimage.notes_yaml_names`), where hong2p keeps them: `STIMULI`, in a folder
+    above the recording (else in one of `also`: `stimulus_folders`), the file in it or in
+    the folder olf generated it into (``<date>_<time>_stimuli/``). None if it is not found."""
+    for stim in [*(above / STIMULI for above in list(recording.parents)[:5]), *also]:
+        if not stim.is_dir():
+            continue
+        for name in names:
+            made = tensor.GENERATED.fullmatch(name)
+            for p in (stim / name, *([stim / f"{made[1]}_stimuli" / name] if made else [])):
+                if p.is_file():
+                    return p
+    return None
+
+
+def recording_timing(recording: Optional[Path], also: list[Path] = ()) -> dict:
+    """What a response window is worked out from, of a raw recording (its ThorImage folder):
+    ``volume_s`` (a volume's seconds: its planes and flyback frames over its frame rate, by its
+    Experiment.xml, with ``planes``, ``flyback`` and ``fps``) and ``pulse_s`` (its odor pulse's
+    seconds: ``settings: timing: pulse_us`` of the stimulus YAML its notes name, ``yaml``, as
+    olf's generators write it; else that file's own ``pulse_s``, as their configuration has
+    it; ``pulse_key``: which). What is not known is None, ``missing`` saying why."""
+    out: dict = {"volume_s": None, "pulse_s": None, "pulse_key": None, "xml": None, "yaml": None, "missing": None}
+    if recording is None:
+        return {**out, "missing": "the fly's raw data folder is not known"}
+    xml = recording / XML
+    text = _read_text(xml) if xml.is_file() else None
+    if text is None:
+        return {**out, "missing": f"no Experiment.xml in {recording}"}
+    out["xml"] = str(xml)
+    try:
+        layout = thorimage.raw_layout(text)
+    except thorimage.ExperimentXmlError as e:
+        return {**out, "missing": str(e)}
+    if not layout["fps"]:
+        return {**out, "missing": "its Experiment.xml gives no frame rate"}
+    out.update(planes=layout["z"], flyback=layout["flyback"], fps=layout["fps"],
+               volume_s=(layout["z"] + layout["flyback"]) / layout["fps"])
+    names = thorimage.notes_yaml_names(text)
+    if not names:
+        return {**out, "missing": "its Experiment.xml's notes name no stimulus YAML"}
+    path = stimulus_yaml(recording, names, also)
+    if path is None:
+        return {**out, "missing": f"the stimulus YAML its notes name ({', '.join(names)}) is in no {STIMULI}/ above it, nor in a "
+                                  "folder of odor YAMLs set in Settings"}
+    out["yaml"] = str(path)
+    try:
+        import yaml
+
+        data = yaml.safe_load(_read_text(path) or "") or {}
+        # (as olf's generators write it out; else as their own configuration has it, which notes may name instead)
+        timing = (data.get("settings") or {}).get("timing") or {}
+        key, v = next((k, x[k]) for x in (timing, data) for k in ("pulse_us", "pulse_s") if k in x)
+        pulse = float(v) / (1e6 if key == "pulse_us" else 1)
+    except Exception:  # noqa: BLE001 (not a YAML, or with no pulse length where olf writes it)
+        return {**out, "missing": f"{path.name} gives no pulse length (settings: timing: pulse_us, or pulse_s)"}
+    if not pulse > 0:
+        return {**out, "missing": f"{path.name} gives a pulse of {pulse} s"}
+    return {**out, "pulse_s": pulse, "pulse_key": key}
+
+
+def window(recording: Optional[Path], option, also: list[Path] = ()) -> dict:
+    """The response window of a recording: how many volumes, from each trial's first odor
+    volume on, a response is taken from (``volumes``), and how that was arrived at (``how``, in
+    words; ``set``: whether it was given). By default (`option`: `WINDOW`) as many as its odor
+    pulse can reach (`window_volumes`, of `recording_timing`'s pulse and volume: a raw
+    recording's folder), `N_RESPONSE` at least; `N_RESPONSE` where they are not known
+    (``missing``: why). Else the number given, ``reach`` still how many the pulse can (None
+    if not known). `also`: as `stimulus_yaml`'s."""
+    t = recording_timing(recording, also)
+    vols = lambda n: f"{n} volume{'' if n == 1 else 's'}"  # noqa: E731
+    if t["missing"]:
+        reach, basis = None, f"How many the odor pulse can reach could not be worked out ({t['missing']})."
+    else:
+        reach = window_volumes(t["pulse_s"], t["volume_s"])
+        planes = f"{t['planes']} plane{'' if t['planes'] == 1 else 's'}" + (f" and {t['flyback']} flyback" if t["flyback"] else "")
+        basis = (f"The odor pulse is {t['pulse_s']:g} s ({t['pulse_key']} of {Path(t['yaml']).name}, the stimulus file its notes name) and a "
+                 f"volume {t['volume_s']:.4g} s ({planes} at {t['fps']:.4g} frames/s, by its Experiment.xml). The first odor volume is "
+                 f"the first whose middle is after the valve opens, so the pulse can begin up to half a volume before that middle, and "
+                 f"reach floor({t['pulse_s']:g} / {t['volume_s']:.4g} + 1/2) + 1 = {vols(reach)} from it")
+    if option != WINDOW:
+        n = int(option)
+        return {**t, "reach": reach, "volumes": n, "set": True,
+                "how": f"{vols(n)} from the odor's onset, as set. {basis}{'' if reach is None else '.'}"}
+    if reach is None:
+        return {**t, "reach": None, "volumes": N_RESPONSE, "set": False, "how": f"{vols(N_RESPONSE)} from the odor's onset, as al_analysis. {basis}"}
+    least = f"; never fewer than al_analysis' {N_RESPONSE}." if reach < N_RESPONSE else f" (al_analysis takes {N_RESPONSE})."
+    return {**t, "reach": reach, "volumes": max(N_RESPONSE, reach), "set": False,
+            "how": f"{vols(max(N_RESPONSE, reach))} from the odor's onset. {basis}{least}"}
 
 
 def panel(recording: str) -> str:
@@ -484,7 +626,9 @@ def update(db, ext_id: int, **fields) -> None:
 
 
 def options(body: dict) -> dict:
-    """The options of an extraction asked for: ``mode`` (of `MODES`; al_analysis' by default).
+    """The options of an extraction asked for: ``mode`` (of `MODES`; al_analysis' by default) and
+    ``window`` (the response window: `WINDOW`, by default, for as many volumes as the odor pulse
+    can reach, or a number of volumes from 1 to `MAX_WINDOW`).
 
     Raises:
         ValueError: for one that is not.
@@ -492,18 +636,32 @@ def options(body: dict) -> dict:
     mode = body.get("mode") or "best_plane"
     if mode not in MODES:
         raise ValueError(f"mode: one of {', '.join(MODES)}")
-    return {"mode": mode}
+    win = body.get("window")
+    if win in (None, "", WINDOW):
+        win = WINDOW
+    else:
+        try:
+            ok = not isinstance(win, bool) and float(win) == int(float(win)) and 1 <= int(float(win)) <= MAX_WINDOW
+        except (TypeError, ValueError, OverflowError):
+            ok = False
+        if not ok:
+            raise ValueError(f"window: a whole number of volumes from 1 to {MAX_WINDOW}, or none (for those the odor pulse can reach)")
+        win = int(float(win))
+    return {"mode": mode, "window": win}
 
 
 def locate(db, body: dict, tensor_root: Path, bases: list[Path]) -> dict:
     """What an extraction asked for is of: {"rois": "own" | "predicted" | "edited", and "dir" (the
-    fly's motion-corrected data folder, from the top of tensor or absolute: for its own ROIs)
+    fly's motion-corrected data folder, from the top of tensor or absolute: for its own ROIs;
+    with "raw_dir", its raw data folder, if it is not where hong2p would have it)
     or "prediction" (its id: for the ROIs it predicted, as they are or as edited)}.
 
     Returns:
-        ``fly_dir`` (on the server), ``fly`` (its name, as a prediction's), ``bytes`` (of its
-        recordings' movies: what its time is estimated by) and ``rois``: their ``kind``, and of
-        a prediction's its ``prediction`` and ``fit``.
+        ``fly_dir`` (on the server), ``raw_dir`` (its raw data folder: as given, a
+        prediction's, else the same fly in `RAW` beside `MOCORR`; None if not known: what the
+        response window is worked out from), ``fly`` (its name, as a prediction's), ``bytes``
+        (of its recordings' movies: what its time is estimated by) and ``rois``: their
+        ``kind``, and of a prediction's its ``prediction`` and ``fit``.
 
     Raises:
         ValueError: saying what is missing: the folder, a prediction done (or its edited ROIs),
@@ -523,6 +681,15 @@ def locate(db, body: dict, tensor_root: Path, bases: list[Path]) -> dict:
             raise ValueError("the fly's motion-corrected data folder: a file, not a folder")
         fly_dir = Path(os.path.realpath(found["path"]))
         name = predictions.fly_name(found["tensor_path"], fly_dir)
+        raw = None
+        if str(body.get("raw_dir") or "").strip():
+            found = tensor.find_data(body["raw_dir"], tensor_root, bases)
+            if found["status"] != "ok" or not found["is_dir"]:
+                raise ValueError(f"the fly's raw data folder: {found.get('error') or 'a file, not a folder'}")
+            raw = os.path.realpath(found["path"])
+        elif MOCORR in fly_dir.parts:  # (as hong2p lays a data folder out: the same fly in raw_data/)
+            guess = Path(*(RAW if x == MOCORR else x for x in fly_dir.parts))
+            raw = str(guess) if guess.is_dir() and sandbox.can_read(guess) else None
     else:
         try:
             p = predictions.get(db, int(body.get("prediction")))
@@ -533,7 +700,7 @@ def locate(db, body: dict, tensor_root: Path, bases: list[Path]) -> dict:
         if not (predictions.edited_roiset(p) if kind == "edited" else predictions.roiset(p)).is_file():
             raise ValueError("that prediction's ROIs were not edited (or its edits were deleted)" if kind == "edited"
                              else "that prediction's ROIs are not there")
-        fly_dir, name = Path(p["fly_dir"]), p["fly"]
+        fly_dir, name, raw = Path(p["fly_dir"]), p["fly"], p["raw_dir"]
         rois.update(prediction=p["id"], fit=p["fit_id"])
     recs = recordings(fly_dir)
     if not recs:
@@ -541,15 +708,40 @@ def locate(db, body: dict, tensor_root: Path, bases: list[Path]) -> dict:
                          f"({movies.TRIALS}), as al_analysis leaves them")
     if kind == "own" and not any(own_roiset(r["dir"], fly_dir) for r in recs):
         raise ValueError(f"no {movies.ROISET} in the fly's recordings, nor in its folder")
-    return {"fly_dir": str(fly_dir), "fly": name, "rois": rois, "bytes": sum(r["movie"].stat().st_size for r in recs)}
+    return {"fly_dir": str(fly_dir), "raw_dir": raw, "fly": name, "rois": rois, "bytes": sum(r["movie"].stat().st_size for r in recs)}
+
+
+def windows(fly_dir: Path, raw_dir: Optional[str], option, also: list[Path] = ()) -> list[dict]:
+    """The response window of each of a fly's recordings (`recordings`), as `window` gives it
+    (`option`: an extraction's ``window``; `also`: `stimulus_folders`), each with its
+    ``recording``; from its raw recording of the same name in `raw_dir` (the fly's raw data
+    folder, if known)."""
+    return [{"recording": r["name"], **window(Path(raw_dir) / r["name"] if raw_dir else None, option, also)} for r in recordings(fly_dir)]
+
+
+def preview(db, body: dict, tensor_root: Path, bases: list[Path]) -> dict:
+    """What an extraction asked for as `body` (as `locate` and `options` take it) would take
+    its responses from, before it is asked for: each recording's response window (``windows``:
+    `windows`), the ``window`` asked for, and ``raw_dir``: the fly's raw data folder they
+    were worked out from (None if not known).
+
+    Raises:
+        ValueError: as `options` and `locate`.
+    """
+    opts = options(body)
+    of = locate(db, body, tensor_root, bases)
+    return {"window": opts["window"], "raw_dir": of["raw_dir"], "al_analysis": N_RESPONSE,
+            "windows": windows(Path(of["fly_dir"]), of["raw_dir"], opts["window"], stimulus_folders(db, tensor_root))}
 
 
 def create(db, of: dict, opts: dict, name: str, ip: Optional[str]) -> dict:
     """Asks for the signals of a fly's ROIs (`of`: as `locate` gives it; `opts`: `options`)."""
     with db.connect() as con:
         ext_id = con.execute(
-            "INSERT INTO extractions (fly_dir, fly, rois_json, options_json, bytes, name, ip, created_at, status) VALUES (?,?,?,?,?,?,?,?,?)",
-            (of["fly_dir"], of["fly"], json.dumps(of["rois"]), json.dumps(opts), of["bytes"], name, ip, now(), "queued")).lastrowid
+            "INSERT INTO extractions (fly_dir, raw_dir, fly, rois_json, options_json, bytes, name, ip, created_at, status) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (of["fly_dir"], of.get("raw_dir"), of["fly"], json.dumps(of["rois"]), json.dumps(opts), of["bytes"], name, ip, now(),
+             "queued")).lastrowid
     return get(db, ext_id)
 
 
@@ -621,10 +813,12 @@ How they are computed, as al_analysis computes them (with the same numbers, for 
 plane): an ROI's mask on a plane is the pixels (y, x) whose point (x, y) is inside its polygon (hong2p's
 rule: half a pixel down and right of ImageJ's own, which takes a pixel's centre); its trace there, the mean
 of the movie over them. dF/F = (F - F0) / F0, F0 the mean of the trace over the trial's time points before
-the odor. A response is the dF/F of largest magnitude, with its sign, among the first {n_response} time points
-from the odor's onset. ROIs named {outline} (outlines of the whole antennal lobe) or ending in {maximal} are left out.
+the odor. A response is the dF/F of largest magnitude, with its sign, among the first time points from the
+odor's onset (the response window): {window}. ROIs named {outline} (outlines of the whole antennal lobe) or
+ending in {maximal} are left out.
 
-Where these are not al_analysis' own tables: an odor is abbreviated as hong2p's hardcoded table or the
+Where these are not al_analysis' own tables: a response's window is al_analysis' {n_response} time points only where
+that is what it is above; an odor is abbreviated as hong2p's hardcoded table or the
 recording's trials abbreviate it (al_analysis also uses a cache of its own computer's, so a few names differ:
 1-prop for its 1-3ol); a recording done again (<name>_redo) is here in place of the first, whole, where
 al_analysis blanks only the odors given again; every recording with a movie and its trials is here, none
@@ -633,6 +827,23 @@ left out as al_analysis leaves some; and nothing al_analysis does after its per-
 not a panel's final ones blanked, means taken). Another way than its best plane in each recording to make
 one signal of an ROI's planes (above) is not al_analysis' either.
 """
+
+
+def _window_words(recs: list[dict], option) -> str:
+    """In words, for an extraction's README: the response window of its recordings (`recs`: each
+    with its ``n_response`` and the ``window`` it is of), asked for as `option`."""
+    ns = {rec["n_response"] for rec in recs}
+    each = f"{ns.pop()} in every recording" if len(ns) == 1 else ", ".join(f"{rec['n_response']} in {rec['name']}" for rec in recs)
+    if option != WINDOW:
+        return f"{each}, as set when this was asked for (al_analysis takes {N_RESPONSE})"
+    unknown = [rec["name"] for rec in recs if rec["window"].get("missing")]
+    if len(unknown) == len(recs):
+        return (f"{each}, as al_analysis takes: as many volumes as a recording's odor pulse can reach were asked for, but the pulse's "
+                "or a volume's length was found for none (log.txt and provenance.json say why)")
+    return (f"{each}, which is as many volumes as the recording's odor pulse can reach, by the pulse's and a volume's lengths, and "
+            f"never fewer than al_analysis' {N_RESPONSE}"
+            + (f" ({N_RESPONSE} too where those lengths were not found: {', '.join(unknown)})" if unknown else "")
+            + "; log.txt and provenance.json say what each was worked out from")
 
 
 def _trial_index(trials: list[dict], panel_name: str, n_odors: int, seen: dict):
@@ -680,6 +891,9 @@ def run(db, e: dict, say: Callable[[str], None] = print, progress: Optional[Call
         shared = predictions.edited_roiset(pred) if kind == "edited" else predictions.roiset(pred)
         if not shared.is_file():
             raise ExtractError(f"{shared.name} is no longer there")
+    # (one asked for before there was a choice of window was asked for al_analysis')
+    wins = {w["recording"]: w for w in windows(fly_dir, e.get("raw_dir"), e["options"].get("window", N_RESPONSE),
+                                               stimulus_folders(db, config.TENSOR_ROOT))}
     sizes = {r["name"]: r["movie"].stat().st_size for r in recs}
     total, read = sum(sizes.values()), 0
     groups: dict[tuple, dict] = {}  # recordings by the ROIs' file and the movie's planes: one set of masks each
@@ -708,11 +922,16 @@ def run(db, e: dict, say: Callable[[str], None] = print, progress: Optional[Call
         traces = plane_traces(movie, g["rois"], (lambda a, b, base=read, size=sizes[r["name"]], name=r["name"]:
                                                  progress(base + size * a / b, total, name)) if progress else None)
         read += sizes[r["name"]]
+        win = wins[r["name"]]
         rec = {"name": r["name"], "panel": panel(r["name"]), "trials": trials, "traces": traces, "group": g,
                "movie": {**_file(r["movie"]), "shape": dict(s), "dtype": str(movie.volumes(0, 1).dtype), "fps": movie.fps},
-               "trials_file": _file(r["trials"])}
+               "trials_file": _file(r["trials"]), "window": win, "n_response": win["volumes"]}
         say(f"{r['name']} ({rec['panel']}): {s['t']} time points x {s['z']} planes, {len(trials)} trials, {len(g['rois'])} ROI-planes; "
             f"read in {time.time() - t1:.1f} s")
+        say(f"{r['name']}: a response is taken from {win['how']}")
+        short = sum(t["end"] - t["onset"] + 1 < win["volumes"] for t in trials)
+        if short:
+            say(f"{r['name']}: {short} of its trials end{'s' if short == 1 else ''} before that many volumes: theirs is from those they have")
         g["recordings"].append(rec)
         used.append(rec)
     if not used:
@@ -732,7 +951,7 @@ def run(db, e: dict, say: Callable[[str], None] = print, progress: Optional[Call
         pd.DataFrame(rec["roi_traces"], columns=pd.Index(names, name="roi")).rename_axis("frame").to_csv(rd / "traces.csv")
         cols = pd.MultiIndex.from_arrays([[x["name"] for x in rois], [x["z"] for x in rois]], names=["roi", "z"])
         pd.DataFrame(rec["traces"], columns=cols).rename_axis("frame").to_csv(rd / "plane_traces.csv")
-        resp = responses(rec["roi_traces"], rec["trials"])
+        resp = responses(rec["roi_traces"], rec["trials"], rec["n_response"])
         own = _trial_index(rec["trials"], rec["panel"], max(len(t["odors"]) for t in rec["trials"]), {})
         top = pd.MultiIndex.from_tuples([(*date_fly, rec["name"], n) for n in names], names=[*(["date", "fly_num"] if fly else []), "thorimage_id", "roi"])
         pd.DataFrame(resp, index=own, columns=top).to_csv(rd / "responses.csv")
@@ -757,8 +976,11 @@ def run(db, e: dict, say: Callable[[str], None] = print, progress: Optional[Call
     seconds = time.time() - t0
     result = {"mode": mode, "rois": len(names), "roi_planes": max(len(g["rois"]) for g in groups.values()), "glomeruli": len(gloms),
               "recordings": [{"name": rec["name"], "panel": rec["panel"], "trials": len(rec["trials"]), "frames": rec["movie"]["shape"]["t"],
-                              "planes": rec["movie"]["shape"]["z"]} for rec in used],
+                              "planes": rec["movie"]["shape"]["z"],
+                              "window": {k: rec["window"].get(k) for k in ("volumes", "set", "reach", "pulse_s", "volume_s", "missing", "how")}}
+                             for rec in used],
               "bytes": total, "seconds": seconds}
+    keys = ("volumes", "set", "how", "reach", "pulse_s", "volume_s", "planes", "flyback", "fps", "xml", "yaml", "missing")
     what = {"own": "the fly's own", "predicted": "as predicted", "edited": "as predicted, then edited in the viewer"}[kind]
     of = f", of fit #{pred['fit_id']}'s model (prediction {pred['id']})" if pred else ""
     prov = {
@@ -769,13 +991,18 @@ def run(db, e: dict, say: Callable[[str], None] = print, progress: Optional[Call
                                                  "edited": predictions.edited_info(pred) if kind == "edited" else None} if pred else {}),
                  "files": [{**g["file"], "roi_planes": len(g["rois"]), "recordings": [rec["name"] for rec in g["recordings"]]} for g in groups.values()]},
         "recordings": [{"name": rec["name"], "panel": rec["panel"], "movie": rec["movie"], "trials": rec["trials_file"],
-                        "n_trials": len(rec["trials"]), "rois": len(rec["names"])} for rec in used],
+                        "n_trials": len(rec["trials"]), "rois": len(rec["names"]),
+                        "response_window": {k: rec["window"][k] for k in keys if k in rec["window"]}} for rec in used],
         "computed": {"mode": mode, "mode_what": MODES[mode], "as": "al_analysis' ij_traces and compute_trial_stats",
                      "mask": "pixel (y, x) is in an ROI if the point (x, y) is inside its polygon (matplotlib's Path.contains_points, as hong2p's ijroi2mask)",
                      "trace": "the mean of the movie over the mask, at each time point",
                      "baseline": "F0: the mean of the trace over all of the trial's time points before the odor",
-                     "response": f"the dF/F of largest magnitude, with its sign, among the first {N_RESPONSE} time points from the odor's onset",
-                     "n_volumes_for_response": N_RESPONSE, "n_volumes_for_baseline": None, "response_stat_fn": "sign_preserving_maxabs",
+                     "response": "the dF/F of largest magnitude, with its sign, among the first time points from the odor's onset: "
+                                 "as many as each recording's response_window says (its volumes), or as its trial has",
+                     "response_window": e["options"].get("window", N_RESPONSE),
+                     "n_volumes_for_response": {rec["name"]: rec["n_response"] for rec in used},
+                     "al_analysis_n_volumes_for_response": N_RESPONSE, "n_volumes_for_baseline": None,
+                     "response_stat_fn": "sign_preserving_maxabs",
                      "left_out": f"ROIs named {OUTLINE}, or ending in {MAXIMAL}"},
         "software": _software(),
         "outputs": {k: v for k, v in result.items() if k != "seconds"},
@@ -790,7 +1017,7 @@ def run(db, e: dict, say: Callable[[str], None] = print, progress: Optional[Call
                    f"                    takes this file as it is{'' if fly else ', once the fly of its ROIs (date, fly_num) is added: its folder does not say'}\n")
         if gloms else "",
         relative=" (F relative to each plane's mean\n                    over the recording, not F: see above)" if mode == "weighted" else "",
-        n_response=N_RESPONSE, outline=OUTLINE, maximal=MAXIMAL))
+        window=_window_words(used, e["options"].get("window", N_RESPONSE)), n_response=N_RESPONSE, outline=OUTLINE, maximal=MAXIMAL))
     say(f"{len(names)} ROIs ({result['roi_planes']} ROI-planes), {len(gloms)} of them named as glomeruli, in {len(used)} recordings; {seconds:.1f} s")
     return result
 
@@ -865,7 +1092,7 @@ def listing(db, tensor_root: Path) -> dict:
     estimate(exts)
     rate, n = _rate([x for x in exts if x["status"] == "done"])
     return {"extractions": exts, "modes": MODES, "rate": {"seconds_per_gb": rate * 2**30, "from": n}, "worker": fits.worker_status(db),
-            "tensor_root": str(tensor_root)}
+            "tensor_root": str(tensor_root), "window": {"al_analysis": N_RESPONSE, "max": MAX_WINDOW}}
 
 
 def stream_zip(ext_id: int, top: str):

@@ -354,6 +354,9 @@ dialog.confirm .actions { justify-content: flex-end; }
 .fit-options { grid-template-columns: repeat(auto-fill, minmax(200px, 260px)); }
 .predict-options, .predict-paths { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); margin-bottom: 8px; }
 .predict-options select { width: 100%; }
+.extract-window { margin-bottom: 6px; }
+.extract-window input { max-width: 300px; }
+#extract-window-note { margin-top: 0; min-height: 1.4em; }
 .predict-pair { margin-top: 8px; }
 .predictions-table td.acts { white-space: nowrap; }
 .fit-zip { margin: 4px 0 8px; padding-left: 20px; }

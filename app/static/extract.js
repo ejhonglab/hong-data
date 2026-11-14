@@ -1,9 +1,12 @@
 // Signals extracted from a fly's movies for its ROIs, in the AL segmentation tab (extract.py,
 // fit_worker.run_extraction): asking for them (a fly, which ROIs: those a model predicted, as
 // they are or as edited in the viewer, or its own; and how one signal is made of an ROI drawn on
-// several planes), and every extraction made, to download.
+// several planes; and the response window: how many volumes from the odor's onset a response is taken from, by default
+// as many as the odor pulse can reach, which the server works out for each recording: extract.window), and every
+// extraction made, to download.
 
 import { fmtDuration } from './fits.js';
+import { tip } from './tips.js';
 
 const STATUS_NAMES = { queued: 'Queued', running: 'Running', done: 'Done', failed: 'Failed', interrupted: 'Interrupted' };
 const OTHER = 'other'; // the fly menu's entry for a fly's folder entered by hand
@@ -23,6 +26,36 @@ const MODE_NOTES = {
     if the planes hold the same signal. Its traces are then of relative F, not F; dF/F and responses are as for the others.`,
 };
 const ROI_NAMES = { own: "the fly's own", predicted: 'as predicted', edited: 'as edited' };
+const vols = (n) => `${n} volume${n === 1 ? '' : 's'}`;
+// recordings' response windows (each as extract.window gives it, with its `recording`) by how they were worked out:
+// those of the same number of volumes, from a pulse and volumes of the same lengths, together
+const windowGroups = (ws) => {
+  const groups = new Map();
+  for (const w of ws) {
+    const key = JSON.stringify([w.volumes, w.reach, w.pulse_s, w.volume_s, Boolean(w.missing)]);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(w);
+  }
+  return [...groups.values()];
+};
+// what recordings' response windows were worked out from, in words (for a tip): each working out once, as the server
+// says it of the first recording it is of, under the recordings it is of
+const windowHow = (ws) => windowGroups(ws).map((g) => `${g.map((w) => w.recording).join(', ')}: ${g[0].how}${
+  g.length > 1 ? ` (This is ${g[0].recording}'s; the other${g.length > 2 ? 's are' : ' is'} alike, by ${g.length > 2 ? 'their' : 'its'} own files.)` : ''}`)
+  .join('\n\n');
+// an extraction's response window, for the list: of one done, what each recording's was (on hover: how it was worked
+// out); of one waiting, what was asked for; of one asked for before there was a choice, al_analysis' 2
+const windowCell = (x, esc) => {
+  const ws = (x.result?.recordings || []).filter((c) => c.window).map((c) => ({ recording: c.name, ...c.window }));
+  if (ws.length) {
+    const ns = [...new Set(ws.map((w) => w.volumes))].sort((a, b) => a - b);
+    return `${tip(esc(ns.length === 1 ? vols(ns[0]) : `${ns[0]} to ${ns[ns.length - 1]} volumes`), windowHow(ws))}${
+      ws[0].set ? ' <span class="muted">(set)</span>' : ''}`;
+  }
+  const w = x.options.window;
+  if (w === undefined) return vols(2);
+  return w === 'pulse' ? '<span class="muted">those the odor pulse can reach</span>' : `${vols(w)} <span class="muted">(set)</span>`;
+};
 
 export class ExtractPanel {
   // helpers: { $, esc, api, msgBox, askDialog, fmtWhen, getName (the name in Settings, '' if none), flies (the tab's
@@ -34,7 +67,7 @@ export class ExtractPanel {
     const { $ } = h;
     $('#extract-fly').addEventListener('change', () => { this.flyChosen = $('#extract-fly').value; this.roisChosen = null; this.renderRois(); });
     $('#extract-rois').addEventListener('change', () => { this.roisChosen = $('#extract-rois').value; this._renderStart(); });
-    $('#extract-dir').addEventListener('input', () => this._renderStart());
+    for (const id of ['#extract-dir', '#extract-raw-dir', '#extract-window']) $(id).addEventListener('input', () => this._renderStart());
     $('#extract-mode').addEventListener('change', () => this._renderMode());
     $('#extract-start').addEventListener('click', () => this.start());
     $('#extract-list').addEventListener('click', (e) => this._action(e));
@@ -146,18 +179,86 @@ export class ExtractPanel {
     this._renderStart();
   }
 
-  // what to ask for: { rois, prediction } or { rois: 'own', dir }, or null if nothing can be yet
+  // the response window entered: undefined for none (as many volumes as the odor pulse can reach), its number of
+  // volumes, or null for what is not one
+  _window() {
+    const v = this.h.$('#extract-window').value.trim(), max = this.data?.window?.max || 100;
+    if (!v) return this.h.$('#extract-window').validity.badInput ? null : undefined;
+    return /^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= max ? Number(v) : null;
+  }
+
+  // what to ask for: { rois, prediction } or { rois: 'own', dir, raw_dir (if known, or entered) }, with the `window`
+  // entered (if one is), or null if nothing can be yet
   _asked() {
     const { $ } = this.h, fly = $('#extract-fly').value, [kind, id] = ($('#extract-rois').value || '').split(':');
-    if (!kind) return null;
-    if (kind !== 'own') return { rois: kind, prediction: Number(id) };
-    if (fly !== OTHER) return { rois: 'own', dir: fly };
-    const top = trim(this.data?.tensor_root), dir = trim($('#extract-dir').value);
-    return dir ? { rois: 'own', dir: top && dir.startsWith(`${top}/`) ? dir.slice(top.length + 1) : dir } : null;
+    const win = this._window();
+    if (!kind || win === null) return null;
+    const opts = win === undefined ? {} : { window: win };
+    if (kind !== 'own') return { rois: kind, prediction: Number(id), ...opts };
+    if (fly !== OTHER) {
+      const raw = (this.h.flies() || []).find((f) => trim(f.dir) === fly)?.raw_dir;
+      return { rois: 'own', dir: fly, ...(raw ? { raw_dir: raw } : {}), ...opts };
+    }
+    const top = trim(this.data?.tensor_root);
+    const rel = (p) => (top && p.startsWith(`${top}/`) ? p.slice(top.length + 1) : p);
+    const dir = trim($('#extract-dir').value), raw = trim($('#extract-raw-dir').value);
+    return dir ? { rois: 'own', dir: rel(dir), ...(raw ? { raw_dir: rel(raw) } : {}), ...opts } : null;
   }
 
   _renderStart() {
     this.h.$('#extract-start').disabled = !(this._asked() && this.h.getName() && this.data);
+    this._previewWindow();
+  }
+
+  // under the response window's box: how many volumes that is in each of the fly's recordings, for what is chosen
+  // (asked of the server a moment after the last change), with how each was worked out, on hover
+  _previewWindow() {
+    const { $, api, esc } = this.h, note = $('#extract-window-note');
+    const asked = this._asked(), sig = JSON.stringify(asked) + (this._window() === null);
+    if (sig === this.winSig || !this.data) return;
+    this.winSig = sig;
+    clearTimeout(this.winTimer);
+    if (!asked) {
+      note.innerHTML = this._window() === null
+        ? `<span class="muted">A whole number of volumes from 1 to ${this.data.window?.max || 100}, or empty.</span>` : '';
+      return;
+    }
+    this.winTimer = setTimeout(async () => {
+      let html;
+      try { html = this._windowNote(await api('/api/extractions/window', { method: 'POST', json: asked })); } catch (err) {
+        html = `<span class="muted">How many volumes that is, is not known yet: ${esc(err.message)}</span>`;
+      }
+      if (sig === this.winSig) note.innerHTML = html;
+    }, 250);
+  }
+
+  // the response windows an extraction would have (as from /api/extractions/window), in words
+  _windowNote(res) {
+    const { esc } = this.h, ws = res.windows, al = res.al_analysis;
+    const recs = ws.length === 1 ? 'its recording' : `each of its ${ws.length} recordings`;
+    const named = (g) => esc(g.map((w) => w.recording).join(', '));
+    const how = (g, text) => tip(`<b>${text}</b>`, windowHow(g)); // (what to hover over for how it was worked out)
+    const first = 'Responses will be taken from the first';
+    if (res.window !== 'pulse') {
+      const more = ws.filter((w) => w.reach > w.volumes);
+      return `${first} ${how(ws, vols(ws[0].volumes))} from the odor's onset in ${recs}, as set (${ws[0].volumes === al
+        ? 'as many as al_analysis takes' : `al_analysis takes ${al}`}).${more.length
+        ? ` The odor pulse can reach more: ${esc(more.map((w) => `${w.reach} in ${w.recording}`).join(', '))}.` : ''}`;
+    }
+    const unknown = ws.filter((w) => w.missing);
+    if (unknown.length === ws.length) {
+      return `${first} ${how(ws, vols(al))} from the odor's onset in ${recs}, as al_analysis: how many the odor pulse can reach
+        could not be worked out${res.raw_dir ? '' : " (the fly's raw data folder is not known)"}.`;
+    }
+    const versus = ws.some((w) => w.volumes !== al) ? `al_analysis takes ${al}` : 'as many as al_analysis takes';
+    if (!unknown.length && new Set(ws.map((w) => w.volumes)).size === 1) {
+      return `${first} ${how(ws, vols(ws[0].volumes))} from the odor's onset in ${recs}: as many as the odor pulse can reach (${versus}).`;
+    }
+    // (not the same in all: those of as many volumes together, those not worked out apart)
+    const by = new Map();
+    for (const w of ws) by.set(`${w.volumes} ${Boolean(w.missing)}`, [...(by.get(`${w.volumes} ${Boolean(w.missing)}`) || []), w]);
+    return `${first} volumes from the odor's onset, as many as the odor pulse can reach: ${[...by.values()]
+      .map((g) => `${how(g, g[0].volumes)} in ${named(g)}${g[0].missing ? ' (not worked out: as al_analysis)' : ''}`).join('; ')} (${versus}).`;
   }
 
   // when an extraction queued or running should end (its `eta`), and what that is estimated from
@@ -177,7 +278,7 @@ export class ExtractPanel {
     const { $, esc, fmtWhen } = this.h, xs = this.data.extractions, alive = this.data.worker?.alive;
     const modes = this.data.modes;
     $('#extract-list').innerHTML = !xs.length ? '' : `<h3>Signals extracted</h3><table class="odor-table predictions-table"><thead><tr>
-      <th>Fly</th><th>ROIs</th><th>Of several planes</th><th>Asked for by</th><th>When</th><th>Status</th><th>Signals</th><th></th></tr></thead><tbody>${xs.map((x) => {
+      <th>Fly</th><th>ROIs</th><th>Of several planes</th><th>Response window</th><th>Asked for by</th><th>When</th><th>Status</th><th>Signals</th><th></th></tr></thead><tbody>${xs.map((x) => {
       const r = x.result, pr = x.progress || {};
       const left = x.eta && alive ? ` <span class="muted" title="${esc(this._from(x.eta))}">· ${x.eta.until >= 1
         ? `about ${fmtDuration(x.eta.until)} left` : 'ending any moment'}</span>` : '';
@@ -193,7 +294,7 @@ export class ExtractPanel {
       return `<tr data-id="${x.id}"><td title="${esc(x.tensor_dir || x.fly_dir)}">${esc(x.fly)}</td><td>${esc(this._rois(x))}</td>
         <td title="${esc(modes[x.options.mode] || '')}">${esc({ best_plane: 'best plane, per recording', best_plane_fly: 'best plane, per fly',
         all_planes: 'all voxels', weighted: 'weighted by noise' }[x.options.mode] || x.options.mode)}</td>
-        <td>${esc(x.name)}</td><td>${esc(fmtWhen(x.finished_at || x.created_at))}</td><td>${status}</td><td>${got}</td>
+        <td>${windowCell(x, esc)}</td><td>${esc(x.name)}</td><td>${esc(fmtWhen(x.finished_at || x.created_at))}</td><td>${status}</td><td>${got}</td>
         <td class="acts">${x.status === 'done' ? `<a class="btn small" href="/api/extractions/${x.id}/download" download>Download</a>` : ''}
           ${x.status !== 'queued' ? `<a class="btn small" href="/api/extractions/${x.id}/log" target="_blank" rel="noopener">Log</a>` : ''}
           ${x.status !== 'running' ? '<button type="button" class="btn small danger" data-act="delete">Delete</button>' : ''}</td></tr>`;

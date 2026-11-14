@@ -1447,7 +1447,8 @@ in each recording, and its response in each trial.
   `+`), masks, means (of the movie's own number type, over a mask's pixels in the same
   order, so the same to the last bit), baseline (the mean over all of a trial's time
   points before the odor: `n_volumes_for_baseline = None`), statistic
-  (`sign_preserving_maxabs` over `n_volumes_for_response = 2` time points) and best plane
+  (`sign_preserving_maxabs` over `n_volumes_for_response = 2` time points, with the
+  response window set to 2: by default it is as long as the odor pulse, below) and best plane
   (the greatest of each plane's largest response over the recording's trials; the first,
   of planes alike). Checked against al_analysis' own `full_traces`, `best_plane_traces` and
   `ij_trial_df_cache` of 9 recordings of 4 of Tom's flies (2023-05-08/1, 2023-11-21/2 and
@@ -1478,6 +1479,37 @@ in each recording, and its response in each trial.
   the response itself (a matched filter) would count such planes less, but chooses by the
   responses it then reports, the fault of the best plane (below), so it is not offered.
   Not by the planes' pixels alone either: that is `all_planes`.
+- **The response window covers the odor pulse, by default.** al_analysis takes a response
+  from a hardcoded two volumes from the odor's onset, which is right for one pulse length
+  and volume rate at a time: at 0.67 volumes/s a 3 s pulse reaches a third volume in four
+  of ten trials, and a 5 s pulse (Sam's ramps, at 0.57) a fourth. Here the window is, in each
+  recording, as many volumes as its pulse can reach: floor(pulse / volume + 1/2) + 1
+  (`extract.window_volumes`), since the first odor volume is the first whose middle is
+  after the valve opens (hong2p's `assign_frames_to_odor_presentations`), so the pulse
+  begins at most half a volume before that middle. The pulse's length is `settings:
+  timing: pulse_us` of the stimulus YAML the recording's notes name (found as hong2p
+  finds it, in `stimulus_data_files/` above the raw recording, or in a folder of odor
+  YAMLs a user set in Settings; a generator's own configuration, with `pulse_s`, is read
+  too); a volume's is its planes and flyback frames over its frame rate, by its
+  `Experiment.xml`. So it needs the fly's raw data folder: a prediction's, the site's
+  for its own flies, `raw_data/` beside `analysis_intermediates/` for a folder entered by
+  hand, or one entered with it. Never fewer than al_analysis' two, and two where either
+  length is not found, saying why (the box says how many volumes it will be in each
+  recording before anything is asked for, with the working on hover; the log, README and
+  `provenance.json` of an extraction say it again). A number can be set instead, for
+  every recording: 2 gives al_analysis' numbers. The best plane is chosen by responses
+  over the same window, as al_analysis would with its setting changed.
+  *One window per recording, from the nominal lengths, not each trial's own from
+  ThorSync.* Looked at in the ThorSync data of twelve recordings of 2021 to 2026 (Tom's,
+  Sam's, one of Remy's; `notes/trace_extraction_odor_frames.py`): the valve's line
+  (`olfDispPin`, analog, 0 to 4.9 V) gives each pulse to 0.03 ms whether thresholded at
+  hong2p's 4.5 V or at the middle of its two levels, hong2p's assignment of frames
+  reproduces al_analysis' trial files exactly, and the pulse reaches the nominal count of
+  volumes in some trials and one fewer in the rest (by when in a volume the valve
+  opened), never more. A window of each trial's own count would make the statistic, the
+  largest of the window, of more volumes in some trials than others of the same odor, and
+  needs 1 to 2 GB of ThorSync data read per recording (9 to 142 s each); the most any
+  trial reaches, for all, is the same from two small files.
 - **Run by the fit worker, in a thread of its own** (`fit_worker.extract_loop`), like
   predictions: the web server is one process, and reading a fly's movies (1.5 GB for a
   fly of five recordings: 23 s the first time, from tensor, 2 to 3 s once the server has
@@ -1525,8 +1557,15 @@ length.
   taken. `responses_glomeruli.csv` is of the ROIs an upload accepts, not al_analysis'
   certain ones, and the fly's `responses.csv` (every recording's trials, repeats counted
   through a panel's recordings) is a table al_analysis does not make.
-- **Its settings are al_analysis' current defaults, fixed**: not `-R`'s mean, z-scored
-  traces, or another baseline. Only ImageJ's ROIs, not suite2p's.
+- **The response window** is by default as many volumes as the recording's odor pulse
+  can reach (above), not al_analysis' hardcoded two: the same where a pulse reaches two
+  (3 s pulses at 0.33 to 0.44 volumes/s, as in Tom's flies since late 2023 and Sam's of 2024),
+  longer where it reaches more (three at 0.67
+  volumes/s: in the 2023-05-08 fly, 9 to 21% of a recording's responses then differ from
+  al_analysis', 2 to 9% of those over 0.3, r = 0.97 to 0.99 between the two; one ROI's
+  best plane changes in one recording). Set to 2, the numbers are al_analysis'.
+- **Its other settings are al_analysis' current defaults, fixed**: not `-R`'s mean,
+  z-scored traces, or another baseline. Only ImageJ's ROIs, not suite2p's.
 - **The three other ways to make one signal of an ROI's planes** are not al_analysis' at
   all (and the weighted one's traces are of relative F).
 - **Not checked**: recordings with 8 or more time points before the odor, where numpy and
@@ -1605,8 +1644,10 @@ the ways to combine planes avoid the second.
    the 2023-05-08 fly (0.67 volumes/s) and 4.5 s in the later two (0.44), by their
    `Experiment.xml` (the motion-corrected movies do not say). The odor pulse is 3.0 s
    (the stimulus' `pulse_us`; the valve's signal in ThorSync), so at 0.67 volumes/s it
-   reaches into a third volume whenever it begins after the first odor volume has, and
-   the window leaves that volume out; at 0.44 two volumes always hold it.
+   reaches into a third volume whenever it begins after the first odor volume has (11 and
+   13 of 30 trials, in two recordings' ThorSync data), and al_analysis' window leaves
+   that volume out; at 0.44 two volumes always hold it. The site's default window is as
+   many volumes as the pulse can reach (above), so three there.
 8. **No background is subtracted before dF/F** (al_analysis has a TODO for it), so F0
    holds the detector's offset and out-of-focus light, and dF/F is smaller by that share,
    differently in dim and bright glomeruli. Nor is F0 kept from being near zero.
@@ -1847,7 +1888,11 @@ GET    /api/extractions                     every extraction of a fly's ROIs' si
                                             with when they should end), the ways to make one signal of an ROI's
                                             planes, and the seconds one takes per GB of movies (extract.py)
 POST   /api/extractions                     ask for one: {name, rois: "own" (with dir: the fly's motion-corrected
-                                            data folder) | "predicted" | "edited" (with prediction: its id), mode}
+                                            data folder, and raw_dir: its raw data folder, if not beside it) |
+                                            "predicted" | "edited" (with prediction: its id), mode, window (the
+                                            response window, in volumes; without it, those the odor pulse can reach)}
+POST   /api/extractions/window              the response window one asked for so would have in each of the fly's
+                                            recordings, and how each is worked out (extract.preview)
 DELETE /api/extractions/{id}                delete one and its files (409 while it runs)
 GET    /api/extractions/{id}/log            its log
 GET    /api/extractions/{id}/download       its folder (its tables, README.txt, provenance.json), as a zip
