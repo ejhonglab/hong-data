@@ -30,6 +30,7 @@ import json
 import logging
 import os
 import shutil
+import signal
 import socket
 import stat
 import sys
@@ -520,6 +521,10 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     # (after logging's own handler, which keeps writing to the process's stderr)
     sys.stdout, sys.stderr = _Streams(sys.stdout), _Streams(sys.stderr)
+    # As the container's PID 1, it would ignore SIGTERM, so `docker stop` waited out its timeout
+    # and killed it, which left its network endpoint behind (2026-11-13): the next container of
+    # that name then could not start. A fit or prediction it stops is marked interrupted on start.
+    signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(SystemExit(0)))
     db = Database(config.DB_PATH)
     filelog.start(db)  # first, to see what it reads as it starts
     # CUDA opens the GPU's device files, and its threads' /proc entries, to write to them

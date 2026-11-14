@@ -373,7 +373,8 @@ docker inspect -f '{{.State.Status}} {{.State.Error}}' olfdb-worker
 # created failed to set up container networking: endpoint with name olfdb-worker already exists in network olfdb_default
 ```
 
-A stale network endpoint from its last run is still registered. `olfdb.service` now
+A stale network endpoint from its last run is still registered. It was left when Docker
+killed the worker, which ignored SIGTERM until it handled it (2026-11-13). `olfdb.service` now
 removes any such endpoints before it starts the stack (`ExecStartPre`), so a restart fixes
 it. Without the unit, remove the endpoint, then start the container:
 
