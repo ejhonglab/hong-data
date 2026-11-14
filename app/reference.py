@@ -992,7 +992,8 @@ def unresolved(chem: dict, record: dict, values: Optional[np.ndarray]) -> list[d
     """The odors of a reference dataset's chemicals (`chemicals`) whose values may be wrong in
     ways not resolved, each once: ``odor_id``; ``overlap`` (where two of its items that
     `may_overlap` both have a value, not 0 or missing: how many ``cells`` of its other axis,
-    and which items, by their ``labels``; of `values`, the dataset's, if given); ``maybe``
+    and which items, by their ``labels``; of `values`, the dataset's, if given; not of odors
+    as datasets write them at different concentrations, which are not one substance twice); ``maybe``
     (the labels of chemicals not identified that may be it by their names, `OdorIndex.maybe`:
     not counted as it); ``ambiguous`` (those of chemicals that could be it or another:
     counted as neither). Of those with any."""
@@ -1020,7 +1021,8 @@ def unresolved(chem: dict, record: dict, values: Optional[np.ndarray]) -> list[d
             involved = set()
             for x, a in enumerate(ks):
                 for b in ks[x + 1:]:
-                    if may_overlap(items[a]["inchi"], items[b]["inchi"]):
+                    # (an odor as datasets write them, at two concentrations, is two stimuli, each with its own values)
+                    if items[a]["conc"] == items[b]["conc"] and may_overlap(items[a]["inchi"], items[b]["inchi"]):
                         cells = held[a] & held[b]
                         if cells.any():
                             both |= cells

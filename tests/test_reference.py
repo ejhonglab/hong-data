@@ -363,7 +363,12 @@ def test_odor_strings(env, tmp_path):
     assert chem["matched"] == 4 and chem["unidentified"] == ["hex @ -1.5", "pa @ -3"]
     assert reference.warning(chem, gl) == ("1 of its 5 odors is not one odor in the Odors table (by abbreviation, as a dataset's are): "
                                            "add it to the odor sheet and sync it")
-    # too few odor strings, or under half of an axis's labels, are none; a name is not an abbreviation
+    # one odor at several concentrations is not one substance twice (a dilution series); at one concentration twice, it may be
+    series = reference.parse(write(tmp_path / "refs" / "series.csv", "glomerulus,ea @ -2,ea @ -4,2h @ -3,lin @ -3\nDM2,1,2,3,4\nVA2,5,6,7,8\nDL5,1,1,1,1\n"))
+    assert reference.unresolved(reference.chemicals(series[0], index(env)), series[0], series[1]) == []
+    twice = reference.parse(write(tmp_path / "refs" / "twice.csv", "glomerulus,ea @ -2,EA @ -2,2h @ -3,lin @ -3\nDM2,1,2,3,4\nVA2,5,6,7,8\nDL5,1,1,1,1\n"))
+    found = reference.unresolved(reference.chemicals(twice[0], index(env)), twice[0], twice[1])
+    assert [u["overlap"] for u in found] == [{"cells": 3, "labels": ["ea @ -2", "EA @ -2"]}]
     for t in ("x,ea @ -2,2h @ -3,y\na,1,2,3\n", "x,ea @ -2,2h @ -3,lin @ -3,p,q,r,s\nt,1,2,3,4,5,6,7\n"):
         assert reference.odor_axis(reference.parse(write(tmp_path / "o.csv", t))[0]) is None
     names = reference.parse(write(tmp_path / "n.csv", "glomerulus,ethyl acetate @ -2,2h @ -3,lin @ -3\nDM2,1,2,3\n"))[0]
