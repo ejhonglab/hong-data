@@ -1041,3 +1041,18 @@ dialog.player::backdrop { background: rgba(29,31,34,.55); }
 .lt-papers { margin: 0; padding-left: 1.4em; font-size: 13px; }
 .lt-papers li { margin: 2px 0; }
 .lt-stereo-detail { margin: 4px 0 0; max-width: 100ch; }
+
+/* terms explained on hover (kept open by a click), and lists to search (tips.js) */
+.tip { text-decoration: underline dotted; text-underline-offset: 2px; cursor: help; }
+.tip-box { position: absolute; z-index: 1000; max-width: min(380px, calc(100vw - 16px)); padding: 8px 10px; background: var(--panel); color: var(--ink);
+  border: 1px solid var(--rule-strong); border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,.18); font-size: 13px; line-height: 1.4; }
+.tip-box[hidden] { display: none; }
+.tip-box p { margin: 0 0 6px; }
+.tip-box p:last-child { margin-bottom: 0; }
+.tip-box.pinned { padding-right: 26px; }
+.tip-close { position: absolute; top: 2px; right: 4px; border: 0; background: none; color: var(--ink-muted); font-size: 16px; line-height: 1; cursor: pointer; padding: 2px 4px; }
+.tip-title { font-weight: 600; }
+.tip-search { width: 100%; box-sizing: border-box; padding: 3px 6px; font-size: 13px; }
+.tip-count { font-size: 12px; margin: 4px 0; }
+.tip-items { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow-y: auto; columns: 3 70px; column-gap: 12px; }
+.tip-items li { break-inside: avoid; }

@@ -5,12 +5,29 @@
 // Also fills in the example, under Fit a model, of running a downloaded model yourself.
 
 import { both, fmtDuration, scoringNote } from './fits.js';
+import { listLink, tip } from './tips.js';
 
 const STATUS_NAMES = { queued: 'Queued', running: 'Running', done: 'Done', failed: 'Failed', interrupted: 'Interrupted' };
 const STAGE_NAMES = { load: 'loading the fly', predict: 'predicting its ROIs' };
 const OTHER = 'other'; // the fly menu's entry for a fly's folders entered by hand
 const ACTIVE = new Set(['queued', 'running']);
 const num2 = (v) => (v == null ? '—' : v.toFixed(2));
+const pct = (v) => (v == null ? '—' : `${Math.round(v * 100)}%`);
+
+// what the scores of predicted ROIs against the fly's own mean (al-diag-seg's Model.evaluate)
+const SCORE_TIPS = {
+  found: `Of the fly's own ROIs, the share the predicted ones match. Each of the fly's ROIs is paired with at most one predicted ROI (the pairing that overlaps most overall), and a pair matches if they overlap by an IoU of at least 0.5: the area they share over the area of the two together.
+
+Per plane, each glomerulus's outline on each plane is an ROI, as ROIs are drawn; as 3D objects, its outlines on all its planes are one.`,
+  right: `Of the predicted ROIs, the share that match one of the fly's own: the same one-to-one pairing as found (an IoU of at least 0.5), but out of the predicted ROIs instead of the fly's. An ROI is right by its outline alone, whatever it is named.
+
+So a low found means glomeruli missed; a low right, ROIs where the fly has none, or outlines too far off. (Unless scored strictly, predicted ROIs lying mostly outside all of the fly's, where a glomerulus may be but is not drawn, are left out.)`,
+  dice: `How closely the outlines of the matched (found) pairs agree, on average: twice the area they share over the sum of their two areas, 1 if they are the same and 0 if they do not touch.`,
+  named: `Of the predicted ROIs that overlap one of the fly's own enough, those given its name. Each predicted ROI is compared with the one of the fly's ROIs it overlaps most (by IoU, as 3D objects), and counts if that IoU is over 0.3. E.g. 12/20: 20 predicted ROIs overlap one of the fly's by that much, and 12 of them are named as it is (one left unnamed counts as wrong).
+
+Unlike right, this is only about names: the outline need not match as well (IoU over 0.3, not 0.5), and the pairing is not one to one.`,
+};
+const scoreTip = (key, label) => tip(label, SCORE_TIPS[key]);
 const trim = (s) => (s || '').trim().replace(/\/+$/, '');
 
 export class PredictPanel {
@@ -135,10 +152,10 @@ export class PredictPanel {
     }
     const s = r.scores;
     return `Predicted ${esc(fmtWhen(p.finished_at))}, asked for by <b>${esc(p.name)}</b>, on the ${esc(r.device)} in ${fmtDuration(r.seconds)}:
-      ${r.n} ROIs, ${r.named.length} of them named${r.named.length ? ` <span class="muted">(${esc(r.named.join(', '))})</span>` : ''}.${s
-      ? ` Against the fly's own ${s.manual} ROIs${s.recall_2d == null ? '' : ` (${s.manual_2d} outlines on their planes)`}: found ${both(s, 'recall')},
-        right ${both(s, 'precision')}, Dice ${both(s, 'dice', num2)} <span class="muted">(${s.recall_2d == null ? '' : 'per plane · as 3D objects; '}${scoringNote(s)})</span>;
-        named ${s.named}/${s.named_of} as the one they overlap.` : ''}`;
+      ${r.n} ROIs, ${r.named.length ? listLink(`${r.named.length} of them named`, `Named (${r.named.length})`, r.named) : 'none of them named'}.${s
+      ? `<br>Against the fly's own ${s.manual} ROIs${s.recall_2d == null ? '' : ` (${s.manual_2d} outlines on their planes)`}:<br>${scoreTip('found', 'found')} ${both(s, 'recall')},
+        ${scoreTip('right', 'right')} ${both(s, 'precision')}, ${scoreTip('dice', 'Dice')} ${both(s, 'dice', num2)} <span class="muted">(${s.recall_2d == null ? '' : 'per plane · as 3D objects; '}${scoringNote(s)})</span>;
+        ${scoreTip('named', 'name correct')} ${s.named}/${s.named_of}.` : ''}`;
   }
 
   _renderPair() {
@@ -156,10 +173,11 @@ export class PredictPanel {
   _renderList() {
     const { $, esc, fmtWhen } = this.h, ps = this.data.predictions;
     $('#predict-list').innerHTML = !ps.length ? '' : `<h3>Predictions</h3><table class="odor-table predictions-table"><thead><tr>
-      <th>Fly</th><th>Model</th><th>Asked for by</th><th>When</th><th>Status</th><th title="The ROIs predicted (named, of them); and against the fly's own, if it has them: found, and right (per plane · as 3D objects)">ROIs</th>
+      <th>Fly</th><th>Model</th><th>Asked for by</th><th>When</th><th>Status</th><th>ROIs <span class="muted">(named; ${scoreTip('found', 'found')}, ${scoreTip('right', 'right')}, ${scoreTip('dice', 'Dice')}, ${scoreTip('named', 'name correct')})</span></th>
       <th></th></tr></thead><tbody>${ps.map((p) => {
       const r = p.result, s = r?.scores;
-      const rois = r ? `${r.n} <span class="muted">(${r.named.length} named)</span>${s ? ` <span class="muted">· ${both(s, 'recall')}, ${both(s, 'precision')}</span>` : ''}` : '—';
+      const rois = r ? `${r.n} <span class="muted">(${r.named.length} named)</span>${s ? ` <span class="muted">· ${both(s, 'recall')}, ${both(s, 'precision')},
+        ${both(s, 'dice', num2)}, ${s.named_of ? pct(s.named / s.named_of) : '—'}</span>` : ''}` : '—';
       const status = `${STATUS_NAMES[p.status] || esc(p.status)}${p.status === 'running' && p.progress?.device ? ` <span class="muted">(${esc(p.progress.device)})</span>` : ''}${
         p.error ? ` <span class="muted" title="${esc(p.error)}">(${esc(p.error.slice(0, 60))}${p.error.length > 60 ? '…' : ''})</span>` : ''}`;
       return `<tr data-id="${p.id}"><td title="${esc(p.tensor_dir || p.fly_dir)}">${esc(p.fly)}</td>
