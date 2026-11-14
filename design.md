@@ -1844,6 +1844,8 @@ GET    /api/movie/planes?path=&t=&n=&z=&c=  n planes from time t (z: a plane, or
                                             their type in X-Dtype, their shape (n, y, x) in X-Shape
 GET    /api/movie/rois?path=[&dataset=]     the ImageJ ROIs of a RoiSet.zip (or .roi), with their planes and
                                             kinds (glomerulus, tentative, other; also by the dataset's ROIs)
+GET    /api/movie/rois/download?path=       that file as it is, to save under its own name (the viewer's
+                                            Download the ROIs: a prediction's as edited, else as predicted)
 GET    /api/movie/trials?path=              the trials of an al_analysis trial_frames_and_odors.json: frames, odor
 GET    /api/download?ids=1,2&format=files|wide|long
                                             a zip, or a CSV for the matrix of a single dataset;

@@ -1418,6 +1418,13 @@ async def movie_rois(request: Request) -> Response:
     return JSONResponse({"rois": rois})
 
 
+async def movie_rois_download(request: Request) -> Response:
+    """A RoiSet.zip (or .roi) on the server (``?path=``, as `movie_rois` takes it), as it is, to save
+    under its own name (a prediction's as in its download: ``<fly>_RoiSet.zip``, ``<fly>_pred-edited_RoiSet.zip``)."""
+    path = _server_file(request.query_params.get("path"), (".zip", ".roi"))
+    return FileResponse(path, filename=path.name, media_type="application/zip" if path.suffix.lower() == ".zip" else "application/octet-stream")
+
+
 async def movie_trials(request: Request) -> Response:
     """The trials of a movie, from an al_analysis trial_frames_and_odors.json on the server
     (``?path=``): see `movies.read_trials`."""
@@ -4009,6 +4016,7 @@ routes = [
     Route("/api/movie", movie_info),
     Route("/api/movie/planes", movie_planes),
     Route("/api/movie/rois", movie_rois),
+    Route("/api/movie/rois/download", movie_rois_download),
     Route("/api/movie/trials", movie_trials),
     Route("/api/download", download),
     Route("/api/roi_training", roi_training_flies),

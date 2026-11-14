@@ -6,7 +6,7 @@
 // and their points moved, added and deleted as ImageJ's are, saved at each change
 // (predictions.save_edited); those predicted, and the fly's own, are only ever shown.
 
-import { History, area, deletePoint, inside, nearestPoint, simplify, splitPoint } from './roi_edit.js';
+import { History, area, deletePoint, inside, movePoints, nearestPoint, simplify, splitPoint } from './roi_edit.js';
 import { showIdentity, showNoIdentity } from './identity.js';
 
 const TYPED = { uint8: Uint8Array, int8: Int8Array, uint16: Uint16Array, int16: Int16Array, uint32: Uint32Array, int32: Int32Array, float32: Float32Array };
@@ -103,19 +103,15 @@ export class MoviePlayer {
     this.$('.player-roi-list').addEventListener('click', (e) => {
       const b = e.target.closest('[data-roi]');
       if (!b) return;
-      const i = +b.dataset.roi;
-      if (!e.target.closest('.player-roi-name')) this._selectRoi(i);
-      else { // (its name: the ROI chosen, if it is not, and what the name cost)
-        if (i !== this.selectedRoi) this._selectRoi(i);
-        this._showIdentity(i);
-      }
+      this._selectRoi(+b.dataset.roi);
     });
     this.edit = null; // a prediction's ROIs as edited here: { id, revision, hist, name, ... } (`openPrediction`)
     this.base = null; // the ROIs read for the movie shown: { predicted, manual }
     this.$('.player-simplify').addEventListener('click', () => this._simplifyAll());
     this.$('.player-simplify-tol').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); this._simplifyAll(); } });
     this.$('.player-edit-copy').addEventListener('click', () => { if (this.edit?.hist && !this.edit.hist.current) this._commit(this._copyPredicted(null)); });
-    this.$('.player-edit-discard').addEventListener('click', () => { if (this.edit?.hist?.current) this._commit(null); });
+    this.$('.player-edit-discard').addEventListener('click', () => this._discard());
+    this.$('.player-roi-download').addEventListener('click', () => this._downloadRois());
     this.$('.player-undo').addEventListener('click', () => this._undo());
     this.$('.player-redo').addEventListener('click', () => this._undo(true));
     el.addEventListener('keydown', (e) => this._key(e));
@@ -172,7 +168,8 @@ export class MoviePlayer {
   // `name()` (who: the name set in Settings, if any), `onSaved` called after each save.
   openPrediction(view, title, { name, onSaved } = {}) {
     this._setMode('prediction');
-    this.edit = { id: view.id, revision: view.revision || 0, saved: view.edited || null, hist: null, name, onSaved, drag: null };
+    this.edit = { id: view.id, revision: view.revision || 0, saved: view.edited || null, hist: null, name, onSaved, drag: null,
+      editedPath: view.edited?.path || null };
     this.datasetId = null;
     this.$('.player-title').textContent = title;
     this._clearMovie('Choose an image on the left.');
@@ -309,6 +306,7 @@ export class MoviePlayer {
     this._composeRois();
     this.roiPath = movie.rois || movie.predicted;
     this._renderRoiList(this.roiPath);
+    this._renderDownload();
     this._renderEdit();
     this._roiLegend();
     this._paint();
@@ -369,9 +367,7 @@ export class MoviePlayer {
       + this.rois.map((r, i) => {
         if (!listed(r)) return '';
         const plane = this._roiPlane(r);
-        // (a predicted ROI's name, or its copy's: a click on it opens what the name cost, `_showIdentity`)
-        const name = pred && r.source !== 'manual' ? `<span class="player-roi-name" title="Click: what this name cost (each term's value for the glomeruli that fit best)">${this.esc(r.name)}</span>`
-          : this.esc(r.name);
+        const name = this.esc(r.name);
         return `<button type="button" class="player-roi${i === this.selectedRoi ? ' active' : ''}" data-roi="${i}">
           <span class="swatch-roi" style="background:${this.esc(this._roiColor(r))}"></span>${name}
           <span class="muted">${plane == null ? 'all planes' : `plane ${plane + 1}`}</span></button>`;
@@ -459,6 +455,54 @@ export class MoviePlayer {
     return { ...s, pointsEdited: true, rois: s.rois.map((r, i) => (i === k ? { ...r, points } : r)) };
   }
 
+  // Discards the edited ROIs, once that is confirmed: they are deleted on the server at once, for
+  // everyone, and only this viewer's Undo (while it stays open) brings them back.
+  async _discard() {
+    const ed = this.edit;
+    if (!ed?.hist?.current || ed.stale) return;
+    const dialog = document.getElementById('roi-discard-confirm');
+    const answer = await new Promise((resolve) => {
+      dialog.returnValue = '';
+      dialog.addEventListener('close', () => resolve(dialog.returnValue), { once: true });
+      dialog.showModal();
+    });
+    if (answer === 'discard' && ed === this.edit && ed.hist.current && !ed.stale) {
+      this._commit(null);
+      this.$('.player-undo').focus(); // (the button pressed is gone: Ctrl+Z still reaches the viewer)
+    }
+  }
+
+  // The ROIs the download button gives: a prediction's as edited here, if they are, else as predicted;
+  // else the movie's own (the fly's, drawn by hand). { path (on the server), what }, or null if none.
+  _roisToDownload() {
+    const m = this.movie, ed = this.mode === 'prediction' ? this.edit : null;
+    if (!m) return null;
+    if (ed?.hist?.current && ed.editedPath) return { path: ed.editedPath, what: 'the ROIs as edited here' };
+    if (m.predicted && !ed?.hist?.current) return { path: m.predicted, what: 'the ROIs as predicted' };
+    if (m.predicted) return null; // (edited, but not saved yet)
+    return m.rois ? { path: m.rois, what: this.mode === 'prediction' ? "the fly's own ROIs" : 'these ROIs' } : null;
+  }
+
+  _renderDownload() {
+    const b = this.$('.player-roi-download'), d = this._roisToDownload();
+    b.hidden = !d && !(this.mode === 'prediction' && this.edit?.hist?.current);
+    if (d) b.title = `Download ${d.what}, for ImageJ: ${d.path.split('/').pop()}`;
+  }
+
+  // saves the ROIs' file under its own name, once the last change to them is saved
+  async _downloadRois() {
+    const ed = this.edit;
+    if (this.mode === 'prediction' && ed?.saving) await ed.saving;
+    const d = this._roisToDownload();
+    if (!d) { this._renderEdit({ text: 'Nothing to download: the edited ROIs are not saved.', error: true }); return; }
+    const a = document.createElement('a');
+    a.href = `/api/movie/rois/download?path=${encodeURIComponent(d.path)}`;
+    a.download = '';
+    this.el.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
   _commit(state) {
     const prev = this.edit.hist.current;
     this.edit.hist.push(state);
@@ -490,6 +534,7 @@ export class MoviePlayer {
     this._renderEdit();
     this._paint();
     this._save();
+    this._renderDownload();
   }
 
   // the editing box: only for a prediction's ROIs, what can be done now, and how many points there are
@@ -532,11 +577,13 @@ export class MoviePlayer {
           const info = await this.api(`/api/predictions/${ed.id}/edited`, { method: 'PUT', json: { base: ed.revision, name,
             simplified: s.simplified, points_edited: s.pointsEdited, rois: s.rois.map((r) => ({ name: r.name, z: r.z, points: r.points })) } });
           ed.revision = info.revision;
+          ed.editedPath = info.path || ed.editedPath;
         } else {
           const q = new URLSearchParams({ base: ed.revision, name });
           ed.revision = (await this.api(`/api/predictions/${ed.id}/edited?${q}`, { method: 'DELETE' })).revision;
         }
         say(`${s ? 'Saved' : 'Edited ROIs deleted'} ${new Date().toLocaleTimeString()}.`);
+        if (ed === this.edit) this._renderDownload();
         ed.onSaved?.();
       } catch (e) {
         if (e.status === 409) {
@@ -577,8 +624,9 @@ export class MoviePlayer {
         longer as predicted (${s.simplified ? `the copy was simplified within ${s.simplified} px${s.pointsEdited ? ', and points of it edited' : ''}`
     : 'a point of it was moved, added or deleted'}). The values were computed for the predicted outlines, on all the ROI's planes;
         computing them for the outlines as they are now needs the fly's odor responses and the atlas registered to the fly, which only
-        predicting its ROIs again reads. The copy keeps the name the predicted ROI was given: tick “predicted” above the list and click
-        that ROI's name for the values it was named by.`);
+        predicting its ROIs again reads. The copy keeps the name the predicted ROI was given: tick “predicted” above the list and double-click
+        that ROI's name
+        on the image for the values it was named by.`);
       return;
     }
     ed.identity ??= this.api(`/api/predictions/${ed.id}/identity`);
@@ -631,11 +679,24 @@ export class MoviePlayer {
     return best;
   }
 
+  // whether the pointer is in the edited ROI chosen (which a drag from there moves)
+  _inChosen(e) {
+    const roi = this.edit?.hist && !this.edit.stale ? this._chosenEdited() : null;
+    return Boolean(roi) && inside(roi.paths[0], ...this._imagePoint(e));
+  }
+
   // A press on a point of the edited ROI chosen, as on a point of an ImageJ polygon: with Shift it
   // becomes two, with Alt (or Ctrl: window managers take Alt-click) it is deleted, else it is
-  // dragged. Returns whether the press was on one.
+  // dragged. A press inside that ROI, not on a point, takes hold of all of it, to move it as ImageJ
+  // moves a selection (`whole`). Returns whether the press was on either.
   _pressHandle(e) {
     const hit = this._handleAt(e);
+    if (!hit && this._inChosen(e)) {
+      const roi = this._chosenEdited();
+      this.edit.drag = { roi, whole: true, from: roi.paths[0], at: this._imagePoint(e), x: e.clientX, y: e.clientY, moved: false };
+      this.canvas.setPointerCapture(e.pointerId);
+      return true;
+    }
     if (!hit) return false;
     const { roi, i } = hit, points = roi.paths[0];
     if (e.altKey || e.ctrlKey || e.metaKey) {
@@ -649,12 +710,18 @@ export class MoviePlayer {
     return true;
   }
 
-  // the point held follows the pointer (within the image), the ROI redrawn as it goes
+  // the point held (or the whole ROI) follows the pointer (within the image), the ROI redrawn as it goes
   _dragHandle(e) {
     const d = this.edit.drag, info = this.movie.info;
     if (!d.moved && Math.hypot(e.clientX - d.x, e.clientY - d.y) < CLICK) return;
     d.moved = true;
-    const [x, y] = this._imagePoint(e), points = d.roi.paths[0].slice();
+    const [x, y] = this._imagePoint(e);
+    if (d.whole) {
+      d.roi.paths = [movePoints(d.from, x - d.at[0], y - d.at[1], info.x, info.y)];
+      this._paint();
+      return;
+    }
+    const points = d.roi.paths[0].slice();
     points[d.i] = [+Math.max(0, Math.min(info.x, x)).toFixed(2), +Math.max(0, Math.min(info.y, y)).toFixed(2)];
     d.roi.paths = [points];
     this._paint();
@@ -1091,6 +1158,7 @@ export class MoviePlayer {
     this.$('.player-roi-tentative-row').hidden = true;
     this.$('.player-roi-unnamed-row').hidden = true;
     this.$('.player-roi-search').hidden = true;
+    this.$('.player-roi-download').hidden = true;
     this.$('.player-pixel').textContent = '';
     this.trials = null;
     this.range = null;
@@ -1121,8 +1189,9 @@ export class MoviePlayer {
       this.fitted = this.view.scale <= this._minScale();
       this._paint();
     }, { passive: false });
-    // a press on a point of the edited ROI chosen edits it (`_pressHandle`); elsewhere, dragging moves
-    // the view, and a click chooses the edited ROI it is in (or none)
+    // a press on a point of the edited ROI chosen edits it, and one inside it moves it (`_pressHandle`);
+    // elsewhere, dragging moves the view. A click chooses the edited ROI it is in (or none), or the ROI
+    // whose name it is on; a double click on a name opens what the name cost (`_showIdentity`).
     let drag = null;
     c.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 || !this.movie) return;
@@ -1140,18 +1209,19 @@ export class MoviePlayer {
         this._paint();
       } else if (this.movie) { // (over a point that can be dragged, or an edited ROI that can be chosen)
         const hit = this._handleAt(e), at = hit ? hit.i : -1;
-        c.style.cursor = hit ? 'crosshair' : this._nameAt(e) != null || this._editedAt(e) != null ? 'pointer' : '';
+        c.style.cursor = hit ? 'crosshair' : this._nameAt(e) != null ? 'pointer' : this._inChosen(e) ? 'move' : this._editedAt(e) != null ? 'pointer' : '';
         if (at !== this.hoverHandle) { this.hoverHandle = at; this._paint(); }
       }
       this._readout(e);
     });
     c.addEventListener('pointerup', (e) => {
-      const named = drag && !drag.moved && this.movie ? this._nameAt(e) : null;
-      if (this.edit?.drag) this._dropHandle();
-      else if (named != null) { // (a click on an ROI's name: the ROI chosen, if it is not, and what the name cost)
+      // (a press inside the ROI chosen that did not move it is a click too)
+      const held = this.edit?.drag, click = Boolean(this.movie) && (held ? held.whole && !held.moved : drag && !drag.moved);
+      const named = click ? this._nameAt(e) : null;
+      if (held) this._dropHandle();
+      if (named != null) { // (a click on an ROI's name: the ROI chosen, if it is not)
         if (named !== this.selectedRoi) this._selectRoi(named);
-        this._showIdentity(named);
-      } else if (drag && !drag.moved && this.movie && this.edit?.hist?.current) {
+      } else if (click && this.edit?.hist?.current) {
         const i = this._editedAt(e), chosen = this.selectedRoi != null && this.rois[this.selectedRoi]?.source === 'edited';
         if (i != null ? i !== this.selectedRoi : chosen) this._selectRoi(i ?? this.selectedRoi);
       }
@@ -1159,7 +1229,13 @@ export class MoviePlayer {
     });
     c.addEventListener('pointercancel', () => { drag = null; if (this.edit?.drag) this._dropHandle(); });
     c.addEventListener('pointerleave', () => { this.$('.player-pixel').textContent = ''; });
-    c.addEventListener('dblclick', (e) => { if (this._handleAt(e) || this._nameAt(e) != null || this._editedAt(e) != null) return; this._fit(); this._paint(); });
+    c.addEventListener('dblclick', (e) => {
+      const named = this.movie ? this._nameAt(e) : null;
+      if (named != null) { this._showIdentity(named); return; }
+      if (this._handleAt(e) || this._editedAt(e) != null) return;
+      this._fit();
+      this._paint();
+    });
   }
 
   // the wheel over a slider steps it: a step a notch (a trackpad's scrolling added up), up

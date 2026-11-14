@@ -1290,6 +1290,19 @@ try {
   </form>
 </dialog>
 
+<dialog id="roi-discard-confirm" class="confirm" aria-labelledby="roi-discard-q">
+  <form method="dialog">
+    <p id="roi-discard-q">Discard the edited ROIs?</p>
+    <p class="muted small">They are deleted from the server at once, for everyone, and the ROIs as predicted are shown again.
+      Undo (Ctrl+Z) brings them back, but only in this viewer and only while it stays open: once it is closed, or the page
+      reloaded, they cannot be brought back by anyone.</p>
+    <div class="actions">
+      <button type="submit" value="discard" class="btn danger">Discard</button>
+      <button type="submit" value="cancel" class="btn" autofocus>Cancel</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="predict-again" class="confirm" aria-labelledby="predict-again-q">
   <form method="dialog">
     <p id="predict-again-q">This model has predicted this fly's ROIs already.</p>
@@ -1382,14 +1395,16 @@ try {
           <button type="button" class="btn small player-edit-copy" title="A copy of the predicted ROIs as they are, every point of them, to edit">Edit as predicted</button>
           <button type="button" class="btn small player-undo" title="Undo the last change (Ctrl+Z)" disabled>Undo</button>
           <button type="button" class="btn small player-redo" title="Redo the change undone (Ctrl+Shift+Z or Ctrl+Y)" disabled>Redo</button>
-          <button type="button" class="btn small player-edit-discard" title="Delete the edited ROIs: those predicted are shown again (Undo brings the edited ones back)" hidden>Discard</button>
+          <button type="button" class="btn small player-edit-discard" title="Delete the edited ROIs, once confirmed: those predicted are shown again (Undo brings the edited ones back, while this viewer stays open)" hidden>Discard…</button>
         </div>
         <p class="player-edit-status small" aria-live="polite"></p>
-        <p class="player-edit-help muted small">Click an edited ROI to choose it, and drag its points. Shift-click a point to add one beside it,
-          Alt-click (or Ctrl-click) one to delete it, as in ImageJ. Each change is saved at once, beside the ROIs as predicted, which
+        <p class="player-edit-help muted small">Click an edited ROI to choose it; then drag its points, or drag from inside it to move all of it. Shift-click a point
+          to add one beside it, Alt-click (or Ctrl-click) one to delete it, as in ImageJ. Double-click a predicted ROI's name on the image
+          for what naming it cost.<br>Each change is saved at once, beside the ROIs as predicted, which
           stay as they are.</p>
       </section>
       <div class="player-roi-legend muted small"></div>
+      <button type="button" class="btn small player-roi-download" hidden>Download the ROIs</button>
       <input type="search" class="player-roi-search" placeholder="Search the ROIs" aria-label="Search the ROIs by name">
       <div class="player-roi-list"></div>
     </aside>

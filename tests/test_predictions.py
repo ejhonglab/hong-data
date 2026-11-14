@@ -4,6 +4,7 @@ installed (the worker image), its stand-in segmenter in place of Cellpose. Run w
 OLFDB_DATA_DIR=<a scratch folder> python -m pytest tests/."""
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import shutil
@@ -11,6 +12,7 @@ import sys
 import threading
 import time
 import zipfile
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -154,6 +156,9 @@ def test_edited(main, tensor):  # noqa: F811
                                                                  ("VA1d/VA1v", 1, roifile.ROI_TYPE.POLYGON)]
     assert np.allclose(back[0].coordinates(), rois[0]["points"]) and np.allclose(back[1].coordinates(), rois[1]["points"])
     assert zipfile.ZipFile(path).namelist() == ["DM2.roi", "DM2-1.roi", "VA1d_VA1v.roi"]
+    # the file as it is, to save under its own name (the viewer's download)
+    got = asyncio.run(main.movie_rois_download(request(query={"path": str(path)})))
+    assert Path(got.path) == path and f'filename="{path.name}"' in got.headers["content-disposition"]
     read = call(main.movie_rois, query={"path": str(path)})[1]["rois"]
     assert [(r["name"], r["z"], r["paths"]) for r in read] == [(r["name"], r["z"], [r["points"]]) for r in rois]
     v = call(main.predictions_view, path_params={"id": p["id"]})[1]

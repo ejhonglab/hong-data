@@ -1,7 +1,7 @@
 // Tests of what the movie player edits a prediction's ROIs with (app/static/roi_edit.js).
 // Run with: node tests/roi_edit.test.mjs (tests/test_roi_edit.py does, where there is a node).
 import assert from 'node:assert/strict';
-import { History, area, deletePoint, inside, nearestPoint, simplify, splitPoint } from '../app/static/roi_edit.js';
+import { History, area, deletePoint, inside, movePoints, nearestPoint, simplify, splitPoint } from '../app/static/roi_edit.js';
 
 const close = (a, b, eps = 1e-9) => Math.abs(a - b) <= eps;
 // the distance from p to the outline
@@ -59,6 +59,12 @@ assert.equal(nearestPoint(tri, 5, 5, 1), -1);
 assert.equal(nearestPoint([[0, 0], [1, 0], [0.4, 0]], 0.45, 0, 1), 2); // the nearest of those in reach
 assert.ok(inside(tri, 2, 2) && !inside(tri, 7, 7) && !inside(tri, -1, 2));
 assert.ok(close(area(tri), 40.5) && close(area([...tri].reverse()), 40.5));
+
+// an outline moved: all of it by as much, and no further than the image's edges
+const wedge = [[2, 2], [6, 2], [4, 5]];
+assert.deepEqual(movePoints(wedge, 1.5, -1, 20, 10), [[3.5, 1], [7.5, 1], [5.5, 4]]);
+assert.deepEqual(movePoints(wedge, 100, -100, 20, 10), [[16, 0], [20, 0], [18, 3]]);
+assert.deepEqual(movePoints(wedge, -100, 100, 20, 10), [[0, 7], [4, 7], [2, 10]]);
 
 const h = new History('a', 3);
 assert.ok(!h.canUndo && !h.canRedo && h.undo() === undefined && h.current === 'a');

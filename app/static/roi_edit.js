@@ -56,6 +56,15 @@ export function deletePoint(points, i) {
   return points.length > 3 ? [...points.slice(0, i), ...points.slice(i + 1)] : null;
 }
 
+// The outline moved by (dx, dy), as far as it can go without any of it leaving the image (w by h
+// pixels), as ImageJ moves a selection dragged from inside it: its shape is kept.
+export function movePoints(points, dx, dy, w, h) {
+  const xs = points.map((p) => p[0]), ys = points.map((p) => p[1]);
+  const mx = Math.max(Math.min(0, -Math.min(...xs)), Math.min(dx, Math.max(0, w - Math.max(...xs))));
+  const my = Math.max(Math.min(0, -Math.min(...ys)), Math.min(dy, Math.max(0, h - Math.max(...ys))));
+  return points.map(([x, y]) => [+(x + mx).toFixed(2), +(y + my).toFixed(2)]);
+}
+
 // the point of the outline nearest (x, y), if within `reach` of it: its index, else -1
 export function nearestPoint(points, x, y, reach) {
   let at = -1, least = reach * reach;

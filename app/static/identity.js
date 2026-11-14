@@ -1,6 +1,6 @@
 // What naming a predicted ROI as a glomerulus cost (al-diag-seg's identity.assign_identities, as
-// /api/predictions/<id>/identity gives it), in a box opened from the ROI's name in the movie
-// player's list and kept open until closed (its ×, Escape, or a click outside it): the terms of
+// /api/predictions/<id>/identity gives it), in a box opened by a double click on the ROI's name
+// drawn on the movie player's image, and kept open until closed (its ×, Escape, or a click outside it): the terms of
 // the cost, their weights, and each term's value for the glomeruli that cost least.
 
 // the terms, in the order they are added; `value`: what each one's value is (0: a perfect fit)

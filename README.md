@@ -822,11 +822,17 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   *Edit as predicted* copies them with every point. The copy is drawn in a colour of its
   own, with its own box to show it, ticked, and the predicted ROIs' box is unticked. Click
   an edited ROI (or its name in the list) to choose it; its points can then be dragged,
-  and, as in ImageJ, Shift-clicking a point adds one beside it (the point becomes two) and
+  and all of it moved by dragging from inside it (never past the image's edges), and, as in ImageJ, Shift-clicking a point adds one beside it (the point becomes two) and
   Alt-clicking one deletes it (Ctrl-click does too, as some desktops keep Alt-click for
   moving windows). *Undo* and *Redo* (Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y) step through the
   changes made since the viewer was opened, simplifying and *Discard* (which deletes the
-  copy, so that the predicted ROIs are shown again) among them. Each change is saved at
+  copy, so that the predicted ROIs are shown again; it asks first, as the copy is deleted on
+  the server for everyone, and only that viewer's Undo, while it stays open, brings it
+  back) among them. Double-clicking a predicted ROI's name on the image opens what naming
+  it cost. *Download the ROIs*, above the list, saves the ROIs shown as a file for ImageJ,
+  named as in the prediction's download: the edited ones if there are any
+  (`<fly>_pred-edited_RoiSet.zip`), else those predicted (`<fly>_RoiSet.zip`); in a
+  dataset's movies, the movie's own `RoiSet.zip`. Each change is saved at
   once, as `<fly>_pred-edited_RoiSet.zip` beside the prediction's other files (with
   `<fly>_pred-edited.json`: when, by whom, how simplified), so it is in its download; if
   someone else changed them meanwhile, it says so instead of overwriting theirs. The ROIs
