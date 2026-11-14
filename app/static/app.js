@@ -3644,6 +3644,10 @@ const ODOR_FIELDS = {
   name: 'name', abbrev: 'abbreviation', aliases: 'aliases', cid: 'CID', cas: 'CAS', solvent: 'solvent', supplier: 'supplier',
   catalog_no: 'catalog no.', catalog_url: 'catalog URL', metacyc: 'MetaCyc', lotus: 'LOTUS', inventory: 'inventory', notes: 'notes',
 };
+// whether a change of the odor sheet's to an odor only adds to it (aliases, or a value where it had none): nothing unlinked, nothing lost
+const isBlank = (v) => v == null || v === '' || (Array.isArray(v) && !v.length);
+const onlyAdds = (c) => !c.rename && !c.unlinked && c.fields.every((f) => isBlank(f.old)
+  || (f.field === 'aliases' && Array.isArray(f.new) && f.old.every((a) => f.new.includes(a))));
 const extLink = (url, text) => (url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(text)}</a>` : esc(text ?? ''));
 const structureImg = (o) => (o.links?.structure
   ? `<img class="structure" src="${esc(o.links.structure)}" alt="structure of ${esc(o.name)}" loading="lazy" onerror="this.remove()">` : '');
@@ -3950,11 +3954,12 @@ class OdorsPage {
     }
     if (p.changed.length) {
       parts.push(`<h4>Changes to odors already in the table (${p.changed.length})</h4>
-        <div class="msg warn">Only the changes you tick are applied. Renaming an odor or changing its abbreviation can unlink datasets that refer to it
-        by the old name or abbreviation; keeping the old one in its aliases keeps them linked.</div>
-        <label class="check"><input type="checkbox" data-all-changes> tick all</label>`);
+        <div class="msg warn">Only the changes you tick are applied. Those that only add (aliases, or a value where there was none) are ticked already.
+        Renaming an odor or changing its abbreviation can unlink datasets that refer to it by the old name or abbreviation;
+        keeping the old one in its aliases keeps them linked.</div>
+        <label class="check"><input type="checkbox" data-all-changes${p.changed.every(onlyAdds) ? ' checked' : ''}> tick all</label>`);
       parts.push(p.changed.map((c) => `<div class="change">
-        <label class="check"><input type="checkbox" data-change="${c.id}"> <b>${esc(c.rename ? `${c.old_name} → ${c.name}` : c.name)}</b></label>
+        <label class="check"><input type="checkbox" data-change="${c.id}"${onlyAdds(c) ? ' checked' : ''}> <b>${esc(c.rename ? `${c.old_name} → ${c.name}` : c.name)}</b></label>
         <span class="muted">${usedBy(c.datasets)}</span>${c.unlinked ? ` <span class="pill warn">${c.unlinked} would no longer be linked to it</span>` : ''}
         <table class="diff">${c.fields.map((f) => `<tr><td>${esc(ODOR_FIELDS[f.field] || f.field)}</td><td class="old">${esc(fmtValue(f.old)) || empty}</td>
           <td>→</td><td class="new">${esc(fmtValue(f.new)) || empty}</td></tr>`).join('')}</table></div>`).join(''));
