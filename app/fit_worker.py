@@ -324,7 +324,11 @@ AL segmentation tab, asked for by {name} on {created}, on the {device}.
 {fly}_identities*.csv
                     the name given each ROI (by its label in the .tif), with its cost and confidence{manual_ids}
 average.tif         the fly's average image, as the model saw it
-{scores}provenance.json     the model (its fit, its flies, the al-diag-seg that made it), the fly's files read (with
+{fly}_pred-edited_RoiSet.zip and {fly}_pred-edited.json
+                    (only once they were edited in the tab's viewer) {fly}_RoiSet.zip's ROIs as edited there: their
+                    outlines simplified, and points of them moved, added or deleted; and when, by whom, by how many
+                    pixels simplified. {fly}_RoiSet.zip stays as predicted
+{scores}provenance.json    the model (its fit, its flies, the al-diag-seg that made it), the fly's files read (with
                     their sizes and when they were modified), the software that predicted, and who asked
 log.txt             what it printed
 
@@ -432,7 +436,7 @@ def run_prediction(db, p: dict, on_gpu: bool, why_cpu: Optional[str] = None) -> 
         try:
             print(f"prediction {p['id']}: fit {p['fit_id']}'s model, on fly {p['fly']} ({p['fly_dir']}; raw data "
                   f"{p['raw_dir']}), asked for by {p['name']} ({p['ip']}) at {p['created_at']}; on the {device}")
-            predictions.update(db, p["id"], progress={"stage": "load", "device": "GPU" if on_gpu else "CPU"})
+            predictions.update(db, p["id"], progress={"stage": "load", "device": "GPU" if on_gpu else "CPU", "stage_started": t0})
             fit = fits.get(db, p["fit_id"])
             mdir = fits.fit_dir(p["fit_id"]) / "model"
             if fit is None or not (mdir / "model.json").is_file():
@@ -452,7 +456,10 @@ def run_prediction(db, p: dict, on_gpu: bool, why_cpu: Optional[str] = None) -> 
                   f"{f['average'].shape} of {np.round(f['spacing'], 3).tolist()} um"
                   + (f", its own ROIs from {inputs['roiset']}" if f.get("labels") is not None else ", no ROIs of its own")
                   + (", its anatomical stack" if f.get("hires") else ""))
-            predictions.update(db, p["id"], progress={"stage": "predict", "device": "GPU" if on_gpu else "CPU"})
+            # (what its time depends on, for when it should end: predictions.estimate)
+            t1, stack = time.time(), bool(inputs["anatomical_stack"])
+            predictions.update(db, p["id"], progress={"stage": "predict", "device": "GPU" if on_gpu else "CPU", "stage_started": t1,
+                                                      "stack": stack, "scored": f.get("labels") is not None})
             name, scores = p["fly"], None
             if f.get("labels") is not None:
                 res = model.evaluate([f], d)
@@ -485,11 +492,11 @@ def run_prediction(db, p: dict, on_gpu: bool, why_cpu: Optional[str] = None) -> 
             am.write_volume(d / predictions.AVERAGE, f["average"].astype(np.float32))
             seconds = time.time() - t0
             result = {"final": final, "n": int(n), "named": named, "scores": scores, "device": "GPU" if on_gpu else "CPU",
-                      "seconds": seconds}
+                      "seconds": seconds, "stages": {"load": t1 - t0, "predict": t0 + seconds - t1}, "stack": stack}
             v = versions()
             prov = {
                 "prediction": p["id"], "asked_for": {"by": p["name"], "from": p["ip"], "at": p["created_at"]},
-                "started": p["started_at"], "finished": predictions.now(), "seconds": seconds, "device": device,
+                "started": p["started_at"], "finished": predictions.now(), "seconds": seconds, "stages": result["stages"], "device": device,
                 "fly": {"name": name, "dir": p["fly_dir"], "raw_dir": p["raw_dir"], "spacing_um": list(f["spacing"]),
                         "planes": list(f["average"].shape), **inputs},
                 "model": {"fit": p["fit_id"], "folder": str(mdir), "fit_by": fit["name"], "fit_asked_for": fit["created_at"],

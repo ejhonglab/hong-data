@@ -137,14 +137,38 @@ export class PredictPanel {
     return this.data.predictions.find((p) => p.fit_id === m.id && trim(p.tensor_dir) === fly.dir) || null;
   }
 
+  // what an estimate of a prediction's time is made from (predictions.estimate)
+  _from(e) {
+    return e.from ? `estimated from how long the last ${e.from === 1 ? 'one' : e.from} like it took on the ${e.device}`
+      : `a rough guess: none has finished on the ${e.device} yet to estimate from`;
+  }
+
+  // when a prediction queued or running should end (its `eta`)
+  _eta(p) {
+    const { esc, fmtWhen } = this.h, e = p.eta;
+    if (!e) return '';
+    if (p.status === 'running' && !e.seconds) return ` It should end any moment: it has taken longer than expected (${this._from(e)}).`;
+    return ` It should end about ${esc(fmtWhen(e.ends_at))} (in ${fmtDuration(e.until)}${p.status === 'queued' && e.until - e.seconds > 1
+      ? `, after those before it: it takes about ${fmtDuration(e.seconds)}` : ''}; ${this._from(e)}).`;
+  }
+
+  // a prediction's ROIs as edited in the viewer: when they were last saved, and by whom
+  _edited(p) {
+    const e = p.edited;
+    return `last ${this.h.fmtWhen(e.saved_at)}${e.by ? ` by ${e.by}` : ''}`;
+  }
+
   // what is known of a prediction: when, by whom, on what, its ROIs, and their scores against the fly's own
   _about(p) {
     const { esc, fmtWhen } = this.h, r = p.result;
-    if (p.status === 'queued') return `Queued, asked for by <b>${esc(p.name)}</b> ${esc(fmtWhen(p.created_at))}: waiting for the fit worker.`;
+    if (p.status === 'queued') {
+      return `Queued, asked for by <b>${esc(p.name)}</b> ${esc(fmtWhen(p.created_at))}: waiting for the fit worker.${
+        this.data.worker?.alive ? this._eta(p) : ''}`;
+    }
     if (p.status === 'running') {
       const pr = p.progress || {};
       return `Running: ${esc(STAGE_NAMES[pr.stage] || 'starting')}${pr.device ? `, on the ${esc(pr.device)}` : ''}, since ${esc(fmtWhen(p.started_at))}
-        (asked for by <b>${esc(p.name)}</b>).`;
+        (asked for by <b>${esc(p.name)}</b>).${this._eta(p)}`;
     }
     if (p.status !== 'done') {
       return `${STATUS_NAMES[p.status] || esc(p.status)} ${esc(fmtWhen(p.finished_at))} (asked for by <b>${esc(p.name)}</b>)${p.error
@@ -155,7 +179,18 @@ export class PredictPanel {
       ${r.n} ROIs, ${r.named.length ? listLink(`${r.named.length} of them named`, `Named (${r.named.length})`, r.named) : 'none of them named'}.${s
       ? `<br>Against the fly's own ${s.manual} ROIs${s.recall_2d == null ? '' : ` (${s.manual_2d} outlines on their planes)`}:<br>${scoreTip('found', 'found')} ${both(s, 'recall')},
         ${scoreTip('right', 'right')} ${both(s, 'precision')}, ${scoreTip('dice', 'Dice')} ${both(s, 'dice', num2)} <span class="muted">(${s.recall_2d == null ? '' : 'per plane · as 3D objects; '}${scoringNote(s)})</span>;
-        ${scoreTip('named', 'name correct')} ${s.named}/${s.named_of}.` : ''}`;
+        ${scoreTip('named', 'name correct')} ${s.named}/${s.named_of}.` : ''}${p.edited ? ` Edited in the viewer (${esc(this._edited(p))}:
+        ${p.edited.rois} ROIs${p.edited.simplified == null ? '' : `, simplified within ${p.edited.simplified} px`}): its download has those
+        too, as <code>${esc(p.fly)}_pred-edited_RoiSet.zip</code>.` : ''}`;
+  }
+
+  // how long a prediction asked for now should take (the server's `expected`), while the worker is there
+  _expected() {
+    const e = this.data?.expected;
+    if (!e || !this.data.worker?.alive) return '';
+    const wait = e.until - e.seconds;
+    return ` Predicting them should take about ${fmtDuration(e.seconds)} on the ${e.device}${wait > 1
+      ? `, after the ${fmtDuration(wait)} those asked for before have left` : ''} (${this._from(e)}).`;
   }
 
   _renderPair() {
@@ -166,7 +201,7 @@ export class PredictPanel {
     $('#predict-start').disabled = !(m && fly && this.h.getName()) || (p && ACTIVE.has(p.status));
     $('#predict-status').replaceChildren(...(!m || !fly ? [] : p
       ? [msgBox(p.status === 'done' ? 'ok' : ACTIVE.has(p.status) ? 'info' : 'error', this._about(p))]
-      : [msgBox('info', 'This model has not predicted this fly\'s ROIs yet.')]));
+      : [msgBox('info', `This model has not predicted this fly's ROIs yet.${this._expected()}`)]));
   }
 
   // every prediction, newest first
@@ -177,8 +212,11 @@ export class PredictPanel {
       <th></th></tr></thead><tbody>${ps.map((p) => {
       const r = p.result, s = r?.scores;
       const rois = r ? `${r.n} <span class="muted">(${r.named.length} named)</span>${s ? ` <span class="muted">· ${both(s, 'recall')}, ${both(s, 'precision')},
-        ${both(s, 'dice', num2)}, ${s.named_of ? pct(s.named / s.named_of) : '—'}</span>` : ''}` : '—';
-      const status = `${STATUS_NAMES[p.status] || esc(p.status)}${p.status === 'running' && p.progress?.device ? ` <span class="muted">(${esc(p.progress.device)})</span>` : ''}${
+        ${both(s, 'dice', num2)}, ${s.named_of ? pct(s.named / s.named_of) : '—'}</span>` : ''}${
+        p.edited ? ` <span class="muted" title="Edited in the viewer, ${esc(this._edited(p))}">· edited</span>` : ''}` : '—';
+      const left = p.eta && this.data.worker?.alive ? ` <span class="muted" title="${esc(this._from(p.eta))}">· ${p.eta.until
+        ? `about ${fmtDuration(p.eta.until)} left` : 'ending any moment'}</span>` : '';
+      const status = `${STATUS_NAMES[p.status] || esc(p.status)}${p.status === 'running' && p.progress?.device ? ` <span class="muted">(${esc(p.progress.device)})</span>` : ''}${left}${
         p.error ? ` <span class="muted" title="${esc(p.error)}">(${esc(p.error.slice(0, 60))}${p.error.length > 60 ? '…' : ''})</span>` : ''}`;
       return `<tr data-id="${p.id}"><td title="${esc(p.tensor_dir || p.fly_dir)}">${esc(p.fly)}</td>
         <td>#${p.fit_id}${p.fit_deleted ? ' <span class="muted">(deleted)</span>' : ''}</td><td>${esc(p.name)}</td>
@@ -212,14 +250,16 @@ alseg-predict ${fit}/model --fly /local/tensor/Ann/analysis/2026-03-31/1 \\
       $('#predict-status').replaceChildren(msgBox('error', `Could not open it: ${esc(e.message)}`));
       return;
     }
-    this.h.player().openPrediction(v, `Glomerulus ROIs of ${p.fly}, predicted by fit #${p.fit_id}'s model`);
+    // (its ROIs can be edited there: saved as whoever is named in Settings, and said here once they are)
+    this.h.player().openPrediction(v, `Glomerulus ROIs of ${p.fly}, predicted by fit #${p.fit_id}'s model`,
+      { name: () => this.h.getName(), onSaved: () => this.refresh() });
   }
 
   // asks whether to view a prediction there is already of the model and fly, or make it again: 'view', 'rerun' or ''
   _askAgain(p) {
     const { $, fmtWhen, askDialog } = this.h;
     $('#predict-again-detail').textContent = `Fit #${p.fit_id}'s model predicted ${p.fly}'s ROIs ${fmtWhen(p.finished_at)}, as ${p.name} asked.
-      Predicting them again replaces those.`;
+      Predicting them again replaces those${p.edited ? `, and deletes them as edited in the viewer (${this._edited(p)})` : ''}.`;
     return askDialog($('#predict-again'));
   }
 

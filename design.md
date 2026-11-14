@@ -402,7 +402,18 @@ between the frontend and the server. Using the app is described in
   from how long each took per unit of work in the last ten fits that finished (per fly
   loaded, per epoch and training fly, per fly or reference atlas in the atlas, per held-out fly), and for the
   stage it is in, from how far it has got; a fit waiting starts when those before it end.
-  Before any fit has finished, the estimate is a guess, and says so.
+  Before any fit has finished, the estimate is a guess, and says so. The tab also says how
+  long a fit asked for now would take, with the form's options (the same sizes and rates,
+  worked out in the browser, for as many flies as the last fit had).
+- **A prediction's time is estimated from the last ten done like it** (`predictions.estimate`):
+  on its device (the GPU or the CPU), and, once its fly is loaded, with an anatomical stack
+  to register or not and ROIs of its own to score against or not, which the first three
+  predictions differed twelvefold by (297 s with both, 51 s scored without a stack, 24 s
+  with neither, all on the GPU); those not like it are used only when none is. A prediction keeps how long it took, and each of its stages (loading the fly,
+  predicting), in its result, and what it is like, so one running has left what its stage
+  and the next take, less its time in it; those from before stages were kept count by when
+  they started and finished. One waiting starts when those before it end (one runs at a
+  time), on the device it would get now. With none done on a device, a guess, said to be.
 - **Predictions of a fly's ROIs run in the fit worker, beside fits** (`predictions.py`,
   `fit_worker.run_prediction`): only its image has al-diag-seg and PyTorch. A thread of
   their own takes them one at a time, on the GPU when no fit holds it (a lock: a fit
@@ -443,6 +454,32 @@ between the frontend and the server. Using the app is described in
   predictions folder (only it, of the data folder). Odors are matched to the model's as
   for a fit's flies, through the odor table, so a fly's odors named otherwise than the
   training flies' still count.
+- **A prediction's ROIs are edited as one copy of them, saved whole at each change**
+  (`roi_edit.js`, `player.js`, `predictions.save_edited`). What a model predicted is a
+  result, to compare an edit or another model with, so it is never changed: the viewer
+  only draws those ROIs, and the fly's own. Editing is of a copy, one per prediction (not
+  per image: every image of the fly shows the same ROIs), kept in the prediction's folder
+  as `<fly>_pred-edited_RoiSet.zip`, as ImageJ would save it, so it is in the download and
+  al_analysis reads it. The predicted outlines are marching-squares contours, a point per
+  pixel edge (118 a ROI on average in prediction 2), too many to drag, so the copy is
+  usually made simplified: Ramer–Douglas–Peucker on the closed outline, between its
+  leftmost point and the one farthest from it each way round, its tolerance the distance in
+  pixels a point left out may be from the outline kept. It was chosen over smoothing or
+  area-based thinning because its one number means something in the image, and the points
+  kept are the outline's own, so nothing moves but corners cut. At 1 px, the default, 13
+  points a ROI were left of 118, covering the same pixels as before but for 3% of them
+  (median IoU 0.97, least 0.91); at 2 px 8, and 7% (0.93, 0.78). Simplifying is always of
+  the ROIs as predicted, never of the copy, so its result does not depend on what was
+  tried before. Points are edited as ImageJ's polygon selections are (drag; Shift-click:
+  the point becomes two, a third of the way to each neighbour; Alt-click: deleted, down to
+  three), with Ctrl-click also deleting, as GNOME keeps Alt-click for moving windows. The
+  history to undo through is the browser's, of whole states (the copy is a few thousand
+  points), and every state reached, by an edit or by undoing one, is sent whole and
+  written in place of the last (a new zip, then renamed), so the server needs no notion of
+  an edit. Each save says which revision it was made from, and one made from an older
+  revision is refused (409) rather than written over someone else's; deleting the copy
+  keeps the `.json` beside it, so that revisions never repeat. No login, so who saved is
+  the name set in Settings, if any, and the IP address, as for fits.
 - **Model data is read where it is, never imported** (`model_data.py`): the Admin tab keeps
   only a folder's path on tensor, its lists of parameters and its patterns of spike count
   files that are not models (`model_sources`), and the
@@ -1388,8 +1425,8 @@ app/thorimage.py   Experiment.xml summary, and a .raw file's layout (with hong2p
 app/fits.py        fits of al-diag-seg models: records, options, held-out flies, their manifest, time estimates
 app/fit_worker.py  the fit worker (python -m app.fit_worker): runs fits one at a time, with al-diag-seg,
                    and predictions beside them (GPU or CPU)
-app/predictions.py predictions of flies' glomerulus ROIs by fits' models: records, the fly's folders, the viewer's
-                   images, downloads
+app/predictions.py predictions of flies' glomerulus ROIs by fits' models: records, the fly's folders, time
+                   estimates, the viewer's images, their ROIs as edited there, downloads
 app/model_data.py  model data for the Models tab: folders of model outputs on tensor, scanned into a table of
                    models (params.csv rows, provenance.json keys), their spike count files matched, a run read
 app/metadata.py    form model (pydantic) and README.md generation
@@ -1428,7 +1465,8 @@ app/movies.py      a dataset's movies on tensor: finding them, reading their pla
 config/odor_sheet_template.csv   odor sheet columns, with the odors from the thesis tables
 app/static/        frontend: index.html, app.js, heatmap.js, colormaps.js (+ mpl_luts.js),
                    app.css, cluster.js (+ cluster-worker.js), figure.js (SVG/PDF/PNG export),
-                   player.js (movie player), similarity.js (odor similarities, and between them;
+                   player.js (movie player; roi_edit.js: a prediction's ROIs edited in it),
+                   similarity.js (odor similarities, and between them;
                    pvalue-worker.js their p-values), metacyc.js (MetaCyc below its matrices: pathways
                    drawn, compounds, LCA paths, search), lotus.js (LOTUS with its matrices: how
                    made, a cell's organisms and papers), imports.js (MetaCyc and LOTUS imported
@@ -1582,6 +1620,23 @@ POST   /api/fits/{id}/cancel                stop a fit (one waiting now, one run
 DELETE /api/fits/{id}                       delete a fit and its files (409 while it runs)
 GET    /api/fits/{id}/log                   its log
 GET    /api/fits/{id}/download              its model and results, as a zip sent as it is written
+GET    /api/predictions                     every prediction of a fly's glomerulus ROIs (those waiting and running
+                                            with when they should end; those done with their ROIs as edited, if
+                                            they were), the models to predict with, the fit worker's status, and
+                                            how long one asked for now should take (predictions.py)
+POST   /api/predictions                     ask for one: {name, fit, dir, raw_dir (the fly's folders), overwrite};
+                                            409 with the one there is of that model and fly, unless overwrite
+DELETE /api/predictions/{id}                delete one and its files (409 while it runs)
+GET    /api/predictions/{id}/log            its log
+GET    /api/predictions/{id}/view           what the movie player shows of one done: the fly's images, each with
+                                            the ROIs predicted and the fly's own; and the predicted ROIs as edited
+                                            ("edited": their file, when and by whom saved, how simplified;
+                                            "revision")
+PUT    /api/predictions/{id}/edited         save its ROIs as edited in the player: {rois: [{name, z, points}],
+                                            base (the revision edited from), name, simplified, points_edited};
+                                            409 if they were changed elsewhere since base
+DELETE /api/predictions/{id}/edited?base=   delete its edited ROIs (those predicted are left as they are)
+GET    /api/predictions/{id}/download       its folder, as a zip sent as it is written
 GET    /api/models                          every model of the folders of model data added (model_data.listing):
                                             the folders (whether they can be read), the table's columns,
                                             experiments (params.csv's columns, provenance.json as

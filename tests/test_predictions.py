@@ -106,6 +106,73 @@ def test_view(main, tensor):  # noqa: F811
     assert sorted(z.namelist()) == ["top/ann_2024-01-01_1_RoiSet.zip", "top/average.tif", "top/provenance.json"]
 
 
+def test_edited(main, tensor):  # noqa: F811
+    """A prediction's ROIs as edited in the viewer: saved beside those predicted, which stay as they are."""
+    f = done_fit(main.db)
+    p, _ = predictions.create(main.db, f["id"], predictions.locate(FLY, RAW, config.TENSOR_ROOT, []), "Ann", None)
+    d = predictions.pred_dir(p["id"])
+    d.mkdir(parents=True)
+    pred = d / "ann_2024-01-01_1_RoiSet.zip"
+    roifile.ImagejRoi.frompoints(np.array([[0, 0], [2, 0], [2, 2]], "f4"), name="DM2", z=1).tofile(pred)
+    was = pred.read_bytes()
+    rois = [{"name": "DM2", "z": 1, "points": [[0.5, 0], [2, 0.25], [2, 2]]}, {"name": "DM2", "z": 2, "points": [[0, 0], [3, 0], [3, 3], [0, 3]]},
+            {"name": "VA1d/VA1v", "z": 0, "points": [[1, 1], [4, 1], [4, 4]]}]
+    save = lambda **body: call(main.predictions_edited_save, method="PUT", path_params={"id": p["id"]},  # noqa: E731
+                               body={"rois": rois, "base": 0, "name": "Bob", "simplified": 1, **body})
+    assert save()[0] == 404  # (not done)
+    predictions.update(main.db, p["id"], status="done")
+    v = call(main.predictions_view, path_params={"id": p["id"]})[1]
+    assert v["edited"] is None and v["revision"] == 0 and call(main.predictions_list)[1]["predictions"][0]["edited"] is None
+
+    # what is wrong with ROIs is said, and nothing saved
+    for bad, why in [({"rois": []}, "a list of ROIs"), ({"rois": [{"name": "", "z": 0, "points": rois[0]["points"]}]}, "its name"),
+                     ({"rois": [{"name": "a", "z": -1, "points": rois[0]["points"]}]}, "its plane"),
+                     ({"rois": [{"name": "a", "z": 0, "points": [[0, 0], [1, 1]]}]}, "three or more"),
+                     ({"rois": [{"name": "a", "z": 0, "points": [[0, 0], [1, 1], [2, "x"]]}]}, "three or more"),
+                     ({"simplified": -1}, "simplified")]:
+        status, r = save(**bad)
+        assert status == 400 and why in r["error"], r
+    assert not predictions.edited_roiset(predictions.get(main.db, p["id"])).exists()
+
+    status, e = save()
+    assert status == 200 and (e["revision"], e["by"], e["ip"], e["simplified"], e["points_edited"], e["rois"], e["points"]) == (
+        1, "Bob", "10.1.2.3", 1, False, 3, 10)
+    assert e["of"] == pred.name and pred.read_bytes() == was  # those predicted: as they were
+    path = d / "ann_2024-01-01_1_pred-edited_RoiSet.zip"
+    assert e["path"] == str(path) and main._server_file(e["path"], (".zip",)) == path
+    # as ImageJ would save them: polygons on their planes (a hyperstack's Z), each file named by its ROI
+    back = roifile.ImagejRoi.fromfile(path)
+    assert [(r.name, r.z_position, r.roitype) for r in back] == [("DM2", 2, roifile.ROI_TYPE.POLYGON), ("DM2", 3, roifile.ROI_TYPE.POLYGON),
+                                                                 ("VA1d/VA1v", 1, roifile.ROI_TYPE.POLYGON)]
+    assert np.allclose(back[0].coordinates(), rois[0]["points"]) and np.allclose(back[1].coordinates(), rois[1]["points"])
+    assert zipfile.ZipFile(path).namelist() == ["DM2.roi", "DM2-1.roi", "VA1d_VA1v.roi"]
+    read = call(main.movie_rois, query={"path": str(path)})[1]["rois"]
+    assert [(r["name"], r["z"], r["paths"]) for r in read] == [(r["name"], r["z"], [r["points"]]) for r in rois]
+    v = call(main.predictions_view, path_params={"id": p["id"]})[1]
+    assert v["edited"] == e and v["revision"] == 1 and call(main.predictions_list)[1]["predictions"][0]["edited"] == e
+
+    # each save from the one before: one from an older one is refused, saying where they are now
+    status, r = save(points_edited=True)
+    assert status == 409 and r["revision"] == 1 and r["edited"] == e
+    status, e2 = save(base=1, points_edited=True, name="", simplified=None, rois=rois[:1])
+    assert status == 200 and (e2["revision"], e2["by"], e2["simplified"], e2["points_edited"], e2["rois"]) == (2, None, None, True, 1)
+    assert len(roifile.ImagejRoi.fromfile(path)) == 1
+
+    # in its download; deleted, those predicted are what there is (and that they were is still said)
+    names = zipfile.ZipFile(io.BytesIO(b"".join(predictions.stream_zip(p["id"], "top")))).namelist()
+    assert "top/ann_2024-01-01_1_pred-edited_RoiSet.zip" in names and "top/ann_2024-01-01_1_pred-edited.json" in names
+    delete = lambda base: call(main.predictions_edited_delete, method="DELETE", path_params={"id": p["id"]},  # noqa: E731
+                               query={"base": str(base), "name": "Cy"})
+    assert delete(1)[0] == 409 and delete("x")[0] == 400
+    assert delete(2) == (200, {"deleted": True, "revision": 3})
+    assert not path.exists() and pred.read_bytes() == was
+    assert json.loads((d / "ann_2024-01-01_1_pred-edited.json").read_text())["deleted"] is True
+    v = call(main.predictions_view, path_params={"id": p["id"]})[1]
+    assert v["edited"] is None and v["revision"] == 3
+    assert save(base=2)[0] == 409  # (an older one, again)
+    assert save(base=3)[1]["revision"] == 4
+
+
 def test_streams(tmp_path):
     """Each worker thread's printing to its own log, as a fit and a prediction run at once."""
     saved = sys.stdout, sys.stderr
@@ -156,6 +223,8 @@ def test_worker_prediction(main, tensor, monkeypatch):  # noqa: F811
     assert p["status"] == "done", (d / "log.txt").read_text()[-3000:]
     r = p["result"]
     assert r["final"] == "pred" and r["n"] >= 1 and r["device"] == "CPU" and set(r["named"]) <= set(GLOMS)
+    # how long it took, and each stage of it, and what that depends on: what later ones are estimated from
+    assert r["stack"] is False and abs(r["stages"]["load"] + r["stages"]["predict"] - r["seconds"]) < 1e-6 and min(r["stages"].values()) > 0
     # (its own ROIs grown, as the stand-in segmenter predicts: found as 3D objects and plane by plane)
     assert r["scores"]["manual"] == len(GLOMS) and r["scores"]["recall"] > 0 and r["scores"]["recall_2d"] > 0
     assert r["scores"]["manual_2d"] == len(GLOMS) * 3 and r["scores"]["scoring"] == "partly drawn"

@@ -2,6 +2,11 @@
 // ROIs drawn on them; or for a prediction of a fly's glomerulus ROIs (the AL segmentation tab),
 // its images with the ROIs predicted and the fly's own. Planes are read on the server a few at a
 // time (app/movies.py), and kept here while there is room, so only what is shown is ever read.
+// A prediction's ROIs can be edited there (roi_edit.js): a copy of them, their outlines simplified
+// and their points moved, added and deleted as ImageJ's are, saved at each change
+// (predictions.save_edited); those predicted, and the fly's own, are only ever shown.
+
+import { History, area, deletePoint, inside, nearestPoint, simplify, splitPoint } from './roi_edit.js';
 
 const TYPED = { uint8: Uint8Array, int8: Int8Array, uint16: Uint16Array, int16: Int16Array, uint32: Uint32Array, int32: Int32Array, float32: Float32Array };
 const CACHE_BYTES = 256 * 1024 * 1024;
@@ -13,7 +18,10 @@ const SELECTED_COLOR = '#00e5ff';
 const ABOVE_COLOR = '#ff5050';
 const BELOW_COLOR = '#4aa3ff';
 // a prediction's ROIs, by where they are from (`openPrediction`)
-const SOURCES = { predicted: { label: 'predicted', color: '#ff4fd8' }, manual: { label: "the fly's own (drawn by hand)", color: ROI_COLOR } };
+const SOURCES = { predicted: { label: 'predicted', color: '#ff4fd8' }, manual: { label: "the fly's own (drawn by hand)", color: ROI_COLOR },
+  edited: { label: 'predicted, as edited here', color: '#a394ff' } };
+const HANDLE = 6; // the side of an edited ROI's points' handles, and how near one the pointer takes hold of it (CSS pixels)
+const CLICK = 3; // how far the pointer may move between press and release for it to be a click, not a drag
 const WHEEL_STEP = 40; // pixels of wheel scrolling (a trackpad's, added up) for one step of a slider
 // the movies of recordings with none in the other folder, listed apart in each
 const ONLY = { raw: 'Not in the motion-corrected data', mocorr: 'Not in the raw data' };
@@ -48,6 +56,7 @@ export class MoviePlayer {
     this.glomOnly = true; // only ROIs named as glomeruli (and tentative ones, if shown)
     this.showTentative = true;
     this.selectedRoi = null;
+    this.hoverHandle = -1; // the point of the edited ROI chosen that the pointer is on
     this.mode = null; // 'prediction': a prediction's ROIs (`openPrediction`), else a dataset's movies
     this.showSource = { predicted: true, manual: true };
     this.canvas = this.$('.player-canvas');
@@ -90,6 +99,14 @@ export class MoviePlayer {
       const b = e.target.closest('[data-roi]');
       if (b) this._selectRoi(+b.dataset.roi);
     });
+    this.edit = null; // a prediction's ROIs as edited here: { id, revision, hist, name, ... } (`openPrediction`)
+    this.base = null; // the ROIs read for the movie shown: { predicted, manual }
+    this.$('.player-simplify').addEventListener('click', () => this._simplifyAll());
+    this.$('.player-simplify-tol').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); this._simplifyAll(); } });
+    this.$('.player-edit-copy').addEventListener('click', () => { if (this.edit?.hist && !this.edit.hist.current) this._commit(this._copyPredicted(null)); });
+    this.$('.player-edit-discard').addEventListener('click', () => { if (this.edit?.hist?.current) this._commit(null); });
+    this.$('.player-undo').addEventListener('click', () => this._undo());
+    this.$('.player-redo').addEventListener('click', () => this._undo(true));
     el.addEventListener('keydown', (e) => this._key(e));
     el.addEventListener('wheel', (e) => this._wheelSlider(e), { passive: false });
     this._wireView();
@@ -140,8 +157,11 @@ export class MoviePlayer {
   // Opens the player on a prediction of a fly's glomerulus ROIs (as from /api/predictions/<id>/view):
   // its images (the fly's average image, as the model saw it, and its motion-corrected movies), each
   // with the ROIs predicted and the fly's own, in colours of their own, only those of the plane shown.
-  openPrediction(view, title) {
+  // The predicted ROIs can be edited (a copy of them: see "editing a prediction's ROIs" below), as
+  // `name()` (who: the name set in Settings, if any), `onSaved` called after each save.
+  openPrediction(view, title, { name, onSaved } = {}) {
     this._setMode('prediction');
+    this.edit = { id: view.id, revision: view.revision || 0, saved: view.edited || null, hist: null, name, onSaved, drag: null };
     this.datasetId = null;
     this.$('.player-title').textContent = title;
     this._clearMovie('Choose an image on the left.');
@@ -164,7 +184,10 @@ export class MoviePlayer {
     this.roiPlanes = pred ? 'current' : this.$('.player-roi-planes').value;
     this.glomOnly = !pred;
     this.$('.player-roi-glom').checked = this.glomOnly;
-    this.showSource = { predicted: true, manual: true };
+    this.showSource = { predicted: true, manual: true, edited: true };
+    if (!pred) this.edit = null;
+    this.base = null;
+    this.hoverHandle = -1;
   }
 
   // the recordings in a fly's movie of them registered together, as said in the list
@@ -188,10 +211,15 @@ export class MoviePlayer {
     if (id !== this.loadId) return;
     this.movie = { ...movie, info };
     Object.assign(this, { t: 0, z: 0, c: 0, maxProj: false, rois: [], roiPath: null, selectedRoi: null, current: null, lo: null, hi: null,
-      range: null, autoThreshold: 0, trials: null });
+      range: null, autoThreshold: 0, trials: null, base: null, hoverHandle: -1 });
+    if (this.edit) this.edit.drag = null;
+    this._renderEdit();
     this.fps = info.fps ? Math.round(info.fps * 10) / 10 : 10;
     const s = this.$('.player-t'), zs = this.$('.player-z');
     s.max = info.t - 1; s.value = 0;
+    // (one time point, e.g. a mean over time: nothing to play, nor a time to choose)
+    this.$('.player-trow').hidden = info.t < 2;
+    this.$('.player-speed').hidden = info.t < 2;
     zs.max = info.z - 1; zs.value = 0;
     this.$('.player-zrow').hidden = info.z < 2;
     this.$('.player-max').checked = false;
@@ -251,15 +279,25 @@ export class MoviePlayer {
       const q = new URLSearchParams({ path, ...(this.datasetId != null ? { dataset: this.datasetId } : {}) });
       return (await this.api(`/api/movie/rois?${q}`)).rois;
     };
-    let manual, predicted;
-    try { [manual, predicted] = await Promise.all([read(movie.rois), read(movie.predicted)]); } catch (e) {
+    // (a prediction's ROIs as edited: read once, when it is opened; then as they are here)
+    const ed = this.mode === 'prediction' ? this.edit : null, first = ed && !ed.hist;
+    let manual, predicted, edited;
+    try { [manual, predicted, edited] = await Promise.all([read(movie.rois), read(movie.predicted), read(first && ed.saved?.path)]); } catch (e) {
       if (id === this.loadId) this.$('.player-roi-list').innerHTML = `<p class="player-error small">${this.esc(e.message)}</p>`;
       return;
     }
     if (id !== this.loadId) return;
-    this.rois = [...predicted.map((r) => ({ ...r, source: 'predicted' })), ...manual.map((r) => ({ ...r, source: 'manual' }))];
+    this.base = { predicted: predicted.map((r) => ({ ...r, source: 'predicted' })), manual: manual.map((r) => ({ ...r, source: 'manual' })) };
+    if (first && !ed.hist) {
+      const state = ed.saved && edited.length ? { simplified: ed.saved.simplified ?? null, pointsEdited: Boolean(ed.saved.points_edited),
+        rois: edited.filter((r) => r.paths[0]?.length >= 3).map((r) => ({ name: r.name, z: r.z ?? r.position ?? null, kind: r.kind, points: r.paths[0] })) } : null;
+      ed.hist = new History(state);
+      if (state) this.showSource.predicted = false; // (the edited ones are shown in their place)
+    }
+    this._composeRois();
     this.roiPath = movie.rois || movie.predicted;
     this._renderRoiList(this.roiPath);
+    this._renderEdit();
     this._roiLegend();
     this._paint();
   }
@@ -277,9 +315,10 @@ export class MoviePlayer {
     box.hidden = !pred;
     if (!pred) { box.innerHTML = ''; return; }
     const n = (s) => this.rois.filter((r) => r.source === s).length;
-    box.innerHTML = Object.entries(SOURCES).map(([s, { label, color }]) => `<label class="check"><input type="checkbox"
+    // (the edited ones: only once there are any)
+    box.innerHTML = Object.entries(SOURCES).map(([s, { label, color }]) => (s === 'edited' && !n(s) ? '' : `<label class="check"><input type="checkbox"
       data-source="${s}"${this.showSource[s] ? ' checked' : ''}><span class="swatch-roi" style="background:${color}"></span>
-      ${this.esc(label)} <span class="muted">(${n(s)})</span></label>`).join('');
+      ${this.esc(label)} <span class="muted">(${n(s)})</span></label>`)).join('');
   }
 
   _roisFiltered() {
@@ -342,6 +381,224 @@ export class MoviePlayer {
       this._planeChanged();
     } else this._paint();
     this.el.querySelectorAll('.player-roi').forEach((b) => b.classList.toggle('active', +b.dataset.roi === this.selectedRoi));
+  }
+
+  // ------------------------------------------- editing a prediction's ROIs
+  // What is edited is a copy of the predicted ROIs, made when they are first simplified (or copied
+  // as they are): `this.edit.hist` keeps its states to undo and redo through, each null (no copy:
+  // those predicted are the ones shown) or { rois: [{ name, z, points, kind }], simplified (by
+  // how many pixels, null if not), pointsEdited }. Each change is saved at once (`_save`).
+
+  // the ROIs listed and drawn: those predicted, the fly's own, and the edited ones as they are now
+  _composeRois() {
+    const state = this.edit?.hist?.current, b = this.base || { predicted: [], manual: [] };
+    const edited = (state?.rois || []).map((r, k) => ({ name: r.name, z: r.z, position: null, color: null, closed: true, type: 'polygon',
+      kind: r.kind, paths: [r.points], source: 'edited', k }));
+    this.rois = [...b.predicted, ...b.manual, ...edited];
+    this.editedFrom = this.rois.length - edited.length; // (where the edited ones start)
+  }
+
+  // the edited ROI chosen (its handles shown, its points to drag), if it is on the plane shown: { roi, state }
+  _chosenEdited() {
+    const r = this.selectedRoi == null ? null : this.rois[this.selectedRoi];
+    if (!r || r.source !== 'edited' || !this.showRois || !this._visible(r) || this.maxProj) return null;
+    return this._roiPlane(r) == null || this._roiPlane(r) === this.z ? r : null;
+  }
+
+  // a copy of the predicted ROIs to edit, each outline simplified to within `tolerance` pixels
+  // (null: as it is); a composite ROI's outlines become ROIs of their own
+  _copyPredicted(tolerance) {
+    const rois = [];
+    for (const r of this.base.predicted) {
+      for (const path of r.paths) {
+        const points = tolerance == null ? path.map((p) => [p[0], p[1]]) : simplify(path, tolerance);
+        if (points.length >= 3) rois.push({ name: r.name, z: this._roiPlane(r), kind: r.kind, points });
+      }
+    }
+    return { rois, simplified: tolerance, pointsEdited: false };
+  }
+
+  _simplifyAll() {
+    if (!this.edit?.hist || !this.base?.predicted.length) return;
+    const box = this.$('.player-simplify-tol'), tol = Math.max(0, Math.min(20, Number.isFinite(+box.value) ? +box.value : 1));
+    box.value = tol;
+    this._commit(this._copyPredicted(tol));
+  }
+
+  // edited ROI k with `points` in place of its own, as a new state
+  _withPoints(k, points) {
+    const s = this.edit.hist.current;
+    return { ...s, pointsEdited: true, rois: s.rois.map((r, i) => (i === k ? { ...r, points } : r)) };
+  }
+
+  _commit(state) {
+    const prev = this.edit.hist.current;
+    this.edit.hist.push(state);
+    this._stateChanged(prev, state);
+  }
+
+  _undo(redo = false) {
+    const h = this.edit?.hist;
+    if (!h || this.edit.drag || this.edit.stale || this.mode !== 'prediction' || !(redo ? h.canRedo : h.canUndo)) return;
+    const prev = h.current;
+    this._stateChanged(prev, redo ? h.redo() : h.undo());
+  }
+
+  // the edited ROIs changed (to `next`, from `prev`): shown, listed and saved. Those predicted are
+  // hidden when the copy is made, and shown again when it is discarded; the ROI chosen stays so
+  // (a predicted one's copy in its place).
+  _stateChanged(prev, next) {
+    const was = this.selectedRoi == null ? null : this.rois[this.selectedRoi];
+    if (!prev !== !next) this.showSource.predicted = !next;
+    this._composeRois();
+    this.selectedRoi = null;
+    if (was && next && (was.source === 'edited' || (was.source === 'predicted' && !prev))) {
+      const k = was.source === 'edited' ? was.k : this.base.predicted.indexOf(was);
+      // (a predicted ROI and its copy are in the same place, unless one of several outlines)
+      if (k >= 0 && k < next.rois.length && next.rois[k].name === was.name) this.selectedRoi = this.editedFrom + k;
+    } else if (was && was.source !== 'edited' && this._visible(was)) this.selectedRoi = this.rois.indexOf(was);
+    if (this.selectedRoi === -1) this.selectedRoi = null;
+    this._renderRoiList(this.roiPath);
+    this._renderEdit();
+    this._paint();
+    this._save();
+  }
+
+  // the editing box: only for a prediction's ROIs, what can be done now, and how many points there are
+  _renderEdit(status) {
+    const box = this.$('.player-edit'), ed = this.edit, on = Boolean(this.mode === 'prediction' && ed?.hist && this.base?.predicted.length);
+    box.hidden = !on;
+    if (!on) return;
+    const s = ed.hist.current, busy = Boolean(ed.stale);
+    this.$('.player-edit-copy').hidden = Boolean(s);
+    this.$('.player-edit-discard').hidden = !s;
+    this.$('.player-undo').disabled = busy || !ed.hist.canUndo;
+    this.$('.player-redo').disabled = busy || !ed.hist.canRedo;
+    for (const c of ['.player-simplify', '.player-edit-copy', '.player-edit-discard']) this.$(c).disabled = busy;
+    if (status !== undefined) ed.status = status;
+    const points = (rois) => rois.reduce((n, r) => n + r.paths.reduce((m, p) => m + p.length, 0), 0);
+    const of = s ? `${points(this.rois.slice(this.editedFrom)).toLocaleString()} points in ${s.rois.length} ROIs (${
+      points(this.base.predicted).toLocaleString()} as predicted)${s.simplified == null ? '' : `, simplified within ${s.simplified} px`}${
+      s.pointsEdited ? ', points edited' : ''}. ` : '';
+    const el = this.$('.player-edit-status');
+    el.textContent = `${of}${ed.status?.text || ''}`;
+    el.classList.toggle('player-error', Boolean(ed.status?.error));
+  }
+
+  // Saves the edited ROIs as they are now (or deletes them, if there are none), one save at a time, the
+  // last state winning; stops for good if they were changed elsewhere meanwhile (the server says).
+  _save() {
+    const ed = this.edit;
+    ed.dirty = true;
+    if (!ed.saving) ed.saving = this._saveLoop(ed).finally(() => { ed.saving = null; });
+  }
+
+  async _saveLoop(ed) {
+    const say = (text, error = false) => { ed.status = { text, error }; if (ed === this.edit) this._renderEdit(); };
+    while (ed.dirty && !ed.stale) {
+      ed.dirty = false;
+      const s = ed.hist.current, name = ed.name?.() || '';
+      say('Saving…');
+      try {
+        if (s) {
+          const info = await this.api(`/api/predictions/${ed.id}/edited`, { method: 'PUT', json: { base: ed.revision, name,
+            simplified: s.simplified, points_edited: s.pointsEdited, rois: s.rois.map((r) => ({ name: r.name, z: r.z, points: r.points })) } });
+          ed.revision = info.revision;
+        } else {
+          const q = new URLSearchParams({ base: ed.revision, name });
+          ed.revision = (await this.api(`/api/predictions/${ed.id}/edited?${q}`, { method: 'DELETE' })).revision;
+        }
+        say(`${s ? 'Saved' : 'Edited ROIs deleted'} ${new Date().toLocaleTimeString()}.`);
+        ed.onSaved?.();
+      } catch (e) {
+        if (e.status === 409) {
+          ed.stale = true;
+          const by = e.body?.edited;
+          say(`Not saved: these ROIs were changed elsewhere since they were opened here${by?.by ? ` (by ${by.by})` : ''}. Close this and view them again to edit those.`, true);
+        } else {
+          say(`Not saved (${e.message}): the next change is saved with this one.`, true);
+          return;
+        }
+      }
+    }
+  }
+
+  // the pointer's place in the image, in pixels (as ROIs' points are)
+  _imagePoint(e) {
+    const r = this.canvas.getBoundingClientRect(), { scale, ox, oy } = this.view;
+    return [(e.clientX - r.left - ox) / scale, (e.clientY - r.top - oy) / scale];
+  }
+
+  // the point of the edited ROI chosen that the pointer is on (within a handle of it): { roi, i }, or null
+  _handleAt(e) {
+    const roi = this.edit?.hist && !this.edit.stale ? this._chosenEdited() : null;
+    if (!roi) return null;
+    const [x, y] = this._imagePoint(e), i = nearestPoint(roi.paths[0], x, y, HANDLE / this.view.scale);
+    return i < 0 ? null : { roi, i };
+  }
+
+  // the edited ROI of the plane shown that the pointer is in (the smallest, if in several): its index, or null
+  _editedAt(e) {
+    if (!this.edit?.hist?.current || !this.showRois || this.maxProj) return null;
+    const [x, y] = this._imagePoint(e);
+    let best = null, least = Infinity;
+    this.rois.forEach((r, i) => {
+      if (r.source !== 'edited' || !this._visible(r) || (this._roiPlane(r) != null && this._roiPlane(r) !== this.z)) return;
+      if (inside(r.paths[0], x, y) && area(r.paths[0]) < least) { least = area(r.paths[0]); best = i; }
+    });
+    return best;
+  }
+
+  // A press on a point of the edited ROI chosen, as on a point of an ImageJ polygon: with Shift it
+  // becomes two, with Alt (or Ctrl: window managers take Alt-click) it is deleted, else it is
+  // dragged. Returns whether the press was on one.
+  _pressHandle(e) {
+    const hit = this._handleAt(e);
+    if (!hit) return false;
+    const { roi, i } = hit, points = roi.paths[0];
+    if (e.altKey || e.ctrlKey || e.metaKey) {
+      const fewer = deletePoint(points, i);
+      if (fewer) this._commit(this._withPoints(roi.k, fewer));
+    } else if (e.shiftKey) this._commit(this._withPoints(roi.k, splitPoint(points, i).map(([x, y]) => [+x.toFixed(2), +y.toFixed(2)])));
+    else {
+      this.edit.drag = { roi, i, from: points[i], x: e.clientX, y: e.clientY, moved: false };
+      this.canvas.setPointerCapture(e.pointerId);
+    }
+    return true;
+  }
+
+  // the point held follows the pointer (within the image), the ROI redrawn as it goes
+  _dragHandle(e) {
+    const d = this.edit.drag, info = this.movie.info;
+    if (!d.moved && Math.hypot(e.clientX - d.x, e.clientY - d.y) < CLICK) return;
+    d.moved = true;
+    const [x, y] = this._imagePoint(e), points = d.roi.paths[0].slice();
+    points[d.i] = [+Math.max(0, Math.min(info.x, x)).toFixed(2), +Math.max(0, Math.min(info.y, y)).toFixed(2)];
+    d.roi.paths = [points];
+    this._paint();
+  }
+
+  // the point let go: where it is now is a change (to undo, and saved), if it was moved at all
+  _dropHandle() {
+    const d = this.edit.drag;
+    this.edit.drag = null;
+    if (d.moved) this._commit(this._withPoints(d.roi.k, d.roi.paths[0]));
+  }
+
+  // the handles of the edited ROI chosen: a square on each of its points
+  _paintHandles(ctx) {
+    const roi = this.edit?.hist ? this._chosenEdited() : null;
+    if (!roi) return;
+    const { scale, ox, oy } = this.view, held = this.edit.drag?.roi === roi ? this.edit.drag.i : this.hoverHandle;
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = 1;
+    roi.paths[0].forEach(([x, y], i) => {
+      ctx.fillStyle = i === held ? SELECTED_COLOR : '#fff';
+      ctx.strokeStyle = '#000';
+      ctx.fillRect(ox + x * scale - HANDLE / 2, oy + y * scale - HANDLE / 2, HANDLE, HANDLE);
+      ctx.strokeRect(ox + x * scale - HANDLE / 2 + 0.5, oy + y * scale - HANDLE / 2 + 0.5, HANDLE - 1, HANDLE - 1);
+    });
   }
 
   // --------------------------------------------------------------- planes
@@ -431,7 +688,7 @@ export class MoviePlayer {
   toggle() { if (this.playing) this.stop(); else this.play(); }
 
   async play() {
-    if (!this.movie || this.playing) return;
+    if (!this.movie || this.playing || this.movie.info.t < 2) return;
     this.playing = true;
     this.$('.player-play').textContent = '❚❚';
     this.$('.player-play').title = 'Pause (space)';
@@ -674,6 +931,7 @@ export class MoviePlayer {
     });
     ctx.globalAlpha = 1;
     ctx.setLineDash([]);
+    this._paintHandles(ctx);
   }
 
   // how an ROI is drawn over the plane shown (null: not): those of the plane, or of every
@@ -734,6 +992,8 @@ export class MoviePlayer {
     this.movie = null;
     this.current = null;
     this.rois = [];
+    this.base = null;
+    this._renderEdit();
     this.$('.player-sub').textContent = '';
     this.$('.player-warnings').textContent = '';
     this.$('.player-msg').textContent = msg;
@@ -773,24 +1033,41 @@ export class MoviePlayer {
       this.fitted = this.view.scale <= this._minScale();
       this._paint();
     }, { passive: false });
+    // a press on a point of the edited ROI chosen edits it (`_pressHandle`); elsewhere, dragging moves
+    // the view, and a click chooses the edited ROI it is in (or none)
     let drag = null;
     c.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0) return;
-      drag = { x: e.clientX, y: e.clientY, ox: this.view.ox, oy: this.view.oy };
+      if (e.button !== 0 || !this.movie) return;
+      if (this._pressHandle(e)) { e.preventDefault(); return; }
+      drag = { x: e.clientX, y: e.clientY, ox: this.view.ox, oy: this.view.oy, moved: false };
       c.setPointerCapture(e.pointerId);
     });
     c.addEventListener('pointermove', (e) => {
-      if (drag) {
+      if (this.edit?.drag) this._dragHandle(e);
+      else if (drag) {
+        if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) >= CLICK) drag.moved = true;
         this.view.ox = drag.ox + e.clientX - drag.x;
         this.view.oy = drag.oy + e.clientY - drag.y;
         this._clampView();
         this._paint();
+      } else if (this.movie) { // (over a point that can be dragged, or an edited ROI that can be chosen)
+        const hit = this._handleAt(e), at = hit ? hit.i : -1;
+        c.style.cursor = hit ? 'crosshair' : this._editedAt(e) != null ? 'pointer' : '';
+        if (at !== this.hoverHandle) { this.hoverHandle = at; this._paint(); }
       }
       this._readout(e);
     });
-    c.addEventListener('pointerup', () => { drag = null; });
+    c.addEventListener('pointerup', (e) => {
+      if (this.edit?.drag) this._dropHandle();
+      else if (drag && !drag.moved && this.movie && this.edit?.hist?.current) {
+        const i = this._editedAt(e), chosen = this.selectedRoi != null && this.rois[this.selectedRoi]?.source === 'edited';
+        if (i != null ? i !== this.selectedRoi : chosen) this._selectRoi(i ?? this.selectedRoi);
+      }
+      drag = null;
+    });
+    c.addEventListener('pointercancel', () => { drag = null; if (this.edit?.drag) this._dropHandle(); });
     c.addEventListener('pointerleave', () => { this.$('.player-pixel').textContent = ''; });
-    c.addEventListener('dblclick', () => { this._fit(); this._paint(); });
+    c.addEventListener('dblclick', (e) => { if (this._handleAt(e) || this._editedAt(e) != null) return; this._fit(); this._paint(); });
   }
 
   // the wheel over a slider steps it: a step a notch (a trackpad's scrolling added up), up
@@ -823,6 +1100,11 @@ export class MoviePlayer {
 
   _key(e) {
     if (!this.movie || e.target.matches('input, select, textarea')) return;
+    if (e.ctrlKey || e.metaKey) { // undo and redo of the edited ROIs
+      const k = e.key.toLowerCase(), redo = k === 'y' || (k === 'z' && e.shiftKey);
+      if (redo || k === 'z') { e.preventDefault(); this._undo(redo); }
+      return;
+    }
     const keys = {
       ' ': () => this.toggle(), '\\': () => this.toggle(),
       ArrowRight: () => this.goTo(this.t + (e.shiftKey ? 10 : 1)), ArrowLeft: () => this.goTo(this.t - (e.shiftKey ? 10 : 1)),

@@ -1691,6 +1691,46 @@ async def predictions_view(request: Request) -> Response:
     return JSONResponse(v) if v else json_error(404, "no such prediction done")
 
 
+async def predictions_edited_save(request: Request) -> Response:
+    """Saves a prediction's ROIs as edited in the viewer (`predictions.save_edited`): {"rois": [{"name",
+    "z", "points"}], "base": the revision they were edited from, "name" (who, as set in Settings, if
+    set), "simplified", "points_edited"}. Returns what the viewer's ``edited`` then is. 409 (with the
+    ``revision`` they are at, and ``edited``) if they were changed elsewhere since ``base``; 400 for
+    ROIs not as they must be; 404 for no such prediction done."""
+    body = await request.json()
+    if not isinstance(body, dict):
+        return json_error(400, "expected a JSON object")
+    try:
+        info = await run_in_threadpool(
+            predictions.save_edited, db, request.path_params["id"], body.get("rois"), body.get("base"),
+            _user_name(body.get("name")) or None, _client_ip(request), body.get("simplified"), bool(body.get("points_edited")))
+    except LookupError as e:
+        return json_error(404, str(e))
+    except predictions.Stale as e:
+        return json_error(409, str(e), revision=e.revision, edited=e.edited)
+    except ValueError as e:
+        return json_error(400, str(e))
+    return JSONResponse(info)
+
+
+async def predictions_edited_delete(request: Request) -> Response:
+    """Deletes a prediction's edited ROIs (`predictions.delete_edited`): ``?base=`` the revision they
+    are at here, ``&name=`` who. Returns the ``revision`` this makes. 409 and 404 as saving them."""
+    q = request.query_params
+    try:
+        base = int(q.get("base", ""))
+    except ValueError:
+        return json_error(400, "base: the revision they are at")
+    try:
+        revision = await run_in_threadpool(predictions.delete_edited, db, request.path_params["id"], base,
+                                           _user_name(q.get("name")) or None, _client_ip(request))
+    except LookupError as e:
+        return json_error(404, str(e))
+    except predictions.Stale as e:
+        return json_error(409, str(e), revision=e.revision, edited=e.edited)
+    return JSONResponse({"deleted": True, "revision": revision})
+
+
 async def predictions_download(request: Request) -> Response:
     """A prediction's folder, as a zip sent as it is written (`predictions.stream_zip`)."""
     pred_id = request.path_params["id"]
@@ -3872,6 +3912,8 @@ routes = [
     Route("/api/predictions/{id:int}", predictions_delete, methods=["DELETE"]),
     Route("/api/predictions/{id:int}/log", predictions_log),
     Route("/api/predictions/{id:int}/view", predictions_view),
+    Route("/api/predictions/{id:int}/edited", predictions_edited_save, methods=["PUT"]),
+    Route("/api/predictions/{id:int}/edited", predictions_edited_delete, methods=["DELETE"]),
     Route("/api/predictions/{id:int}/download", predictions_download),
     Route("/api/models", models_list),
     Route("/api/models/baselines", models_baselines),

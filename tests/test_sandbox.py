@@ -214,18 +214,53 @@ def test_admin_restart_jobs(main, monkeypatch):  # noqa: F811
     assert call(main.admin_restart, body={"stop_jobs": True})[0] == 200
 
 
-def test_prediction_ends_at(main):  # noqa: F811
+def test_prediction_estimate(main):  # noqa: F811
     t = dt.datetime(2026, 1, 2, 12, 0).astimezone()
     at = lambda minutes: (t + dt.timedelta(minutes=minutes)).isoformat()  # noqa: E731
-    for i, (device, start, end) in enumerate([("GPU", 0, 4), ("GPU", 10, 16), ("GPU", 20, 25), ("CPU", 0, 30)]):
+    ts = lambda minutes: (t + dt.timedelta(minutes=minutes)).timestamp()  # noqa: E731
+
+    def add(i, status="queued", **fields):
         p, _ = predictions.create(main.db, 1, {"dir": f"/f{i}", "raw_dir": None, "name": f"f{i}"}, "Ann", None)
-        predictions.update(main.db, p["id"], status="done", started_at=at(start), finished_at=at(end),
-                           progress={"stage": "done", "device": device})
-    running = {"started_at": at(60), "progress": {"stage": "predict", "device": "GPU"}}
-    assert predictions.ends_at(main.db, running, t=(t + dt.timedelta(minutes=61)).timestamp()) == at(65)
-    assert predictions.ends_at(main.db, {**running, "progress": {"device": "CPU"}}, t=t.timestamp()) == at(90)
-    assert predictions.ends_at(main.db, running, t=(t + dt.timedelta(minutes=70)).timestamp()) is None  # past
-    assert predictions.ends_at(main.db, {**running, "progress": None}, t=t.timestamp()) is None
+        predictions.update(main.db, p["id"], status=status, **fields)
+        return p["id"]
+
+    def estimated(gpu=True, fit_running=False, now=61):
+        preds = predictions.all_predictions(main.db)
+        new = predictions.estimate(preds, gpu, fit_running, t=ts(now))
+        return {p["id"]: p.get("eta") for p in preds}, new
+
+    # none done yet: a guess, said to be one
+    _, new = estimated()
+    assert new["seconds"] == predictions.GUESSES["GPU"] and new["from"] == 0 and new["device"] == "GPU"
+    assert estimated(fit_running=True)[1]["device"] == estimated(gpu=False)[1]["device"] == "CPU"
+
+    # those done before their stages were kept: by when they started and finished, on their device
+    for i, (device, start, end) in enumerate([("GPU", 0, 4), ("GPU", 10, 16), ("GPU", 20, 25), ("CPU", 0, 30)]):
+        add(i, "done", started_at=at(start), finished_at=at(end), progress={"stage": "done", "device": device})
+    run = add(9, "running", started_at=at(60), progress={"stage": "predict", "device": "GPU"})
+    queued = add(10)
+    eta, new = estimated()
+    assert eta[run]["ends_at"] == at(65) and eta[run]["from"] == 3 and eta[run]["seconds"] == 4 * 60
+    assert eta[queued]["ends_at"] == at(70) and eta[queued]["seconds"] == 5 * 60 and eta[queued]["until"] == 9 * 60
+    assert new["ends_at"] == at(75)
+    assert estimated(now=70)[0][run]["seconds"] == 0  # past: any moment
+    assert estimated(fit_running=True)[0][queued]["seconds"] == 30 * 60  # it would be given the CPU
+    predictions.update(main.db, run, progress={"stage": "predict", "device": "CPU"})
+    assert estimated(now=60)[0][run]["ends_at"] == at(90)
+
+    # those done since: by stage, and of those like it (an anatomical stack to register, ROIs of its own to score)
+    for i, (stack, scores, load, predict) in enumerate([(True, {}, 60, 240), (False, None, 30, 30), (False, None, 20, 20)]):
+        add(20 + i, "done", started_at=at(30), finished_at=at(31 + i),
+            result={"device": "GPU", "seconds": load + predict, "stages": {"load": load, "predict": predict}, "stack": stack, "scores": scores})
+    predictions.update(main.db, run, progress={"stage": "load", "device": "GPU", "stage_started": ts(60)})
+    e = estimated(now=60.5)[0][run]  # (what its fly is like not known yet: of every one on the GPU)
+    assert e["from"] == 6
+    predictions.update(main.db, run, progress={"stage": "predict", "device": "GPU", "stage_started": ts(61), "stack": True, "scored": True})
+    e = estimated(now=62)[0][run]
+    assert e["from"] == 1 and e["seconds"] == 240 - 60
+    predictions.update(main.db, run, progress={"stage": "load", "device": "GPU", "stage_started": ts(60), "stack": False, "scored": False})
+    e = estimated(now=60.25)[0][run]
+    assert e["from"] == 2 and e["seconds"] == (25 - 15) + 25
 
 
 SHEET = "https://docs.google.com/spreadsheets/d/abc123/edit#gid=7"

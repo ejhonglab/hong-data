@@ -587,6 +587,7 @@ try {
         </div>
       </details>
       <p class="small" id="fit-who"></p>
+      <p class="small muted" id="fit-expected"></p>
       <div class="actions"><button type="button" class="btn primary" id="fit-start">Start a fit</button></div>
       <div id="fit-status" aria-live="polite"></div>
       <div id="fit-worker"></div>
@@ -1272,7 +1273,7 @@ try {
       </div>
       <p class="player-warnings"></p>
       <div class="player-controls">
-        <div class="player-row">
+        <div class="player-row player-trow">
           <button type="button" class="btn player-play" title="Play (space)">▶</button>
           <input type="range" class="player-t" min="0" max="0" value="0" aria-label="Time point">
           <span class="player-t-out"></span>
@@ -1285,7 +1286,7 @@ try {
         </div>
         <div class="player-row">
           <label class="player-crow">Channel <select class="player-c"></select></label>
-          <label>Speed <input type="number" class="player-fps" min="0.1" max="200" step="any"> per s</label>
+          <label class="player-speed">Speed <input type="number" class="player-fps" min="0.1" max="200" step="any"> per s</label>
           <label class="check player-odors-row" hidden><input type="checkbox" class="player-odors" checked> odor names</label>
           <button type="button" class="btn small player-fit" title="Fit the image to the window (or double-click it)">Fit</button>
           <span class="player-pixel muted"></span>
@@ -1325,6 +1326,23 @@ try {
           <input type="checkbox" class="player-roi-tentative" checked> tentative (_t0, _t1, …) <span class="player-roi-tentative-n muted"></span></label>
       </div>
       <div class="player-roi-sources" hidden></div>
+      <section class="player-edit" aria-label="Editing the predicted ROIs" hidden>
+        <div class="player-edit-row">
+          <label title="How far, in pixels, an outline may move from the predicted one when points are left out of it (Ramer–Douglas–Peucker: the points kept are the predicted outline's own). 1 leaves about a tenth of the points; 0 leaves them all.">Simplify
+            within <input type="number" class="player-simplify-tol" min="0" max="20" step="0.25" value="1"> px</label>
+          <button type="button" class="btn small player-simplify" title="A copy of the predicted ROIs with fewer points, to edit: made again from those predicted, so points moved since are lost (Undo brings them back)">Simplify</button>
+        </div>
+        <div class="player-edit-row">
+          <button type="button" class="btn small player-edit-copy" title="A copy of the predicted ROIs as they are, every point of them, to edit">Edit as predicted</button>
+          <button type="button" class="btn small player-undo" title="Undo the last change (Ctrl+Z)" disabled>Undo</button>
+          <button type="button" class="btn small player-redo" title="Redo the change undone (Ctrl+Shift+Z or Ctrl+Y)" disabled>Redo</button>
+          <button type="button" class="btn small player-edit-discard" title="Delete the edited ROIs: those predicted are shown again (Undo brings the edited ones back)" hidden>Discard</button>
+        </div>
+        <p class="player-edit-status small" aria-live="polite"></p>
+        <p class="player-edit-help muted small">Click an edited ROI to choose it, and drag its points. Shift-click a point to add one beside it,
+          Alt-click (or Ctrl-click) one to delete it, as in ImageJ. Each change is saved at once, beside the ROIs as predicted, which
+          stay as they are.</p>
+      </section>
       <div class="player-roi-legend muted small"></div>
       <div class="player-roi-list"></div>
     </aside>

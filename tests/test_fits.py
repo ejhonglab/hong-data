@@ -13,6 +13,7 @@ import os
 import sys
 import types
 import zipfile
+from urllib.parse import urlencode
 
 import numpy as np
 import pytest
@@ -45,10 +46,10 @@ def trials(*odors):
                         "abbrev": a, "log10_conc": c} for a, c in odors for _ in range(2)])
 
 
-def request(method="GET", body=None, path_params=None, client=("10.1.2.3", 4321), headers=()):
+def request(method="GET", body=None, path_params=None, client=("10.1.2.3", 4321), headers=(), query=None):
     raw = json.dumps(body).encode() if body is not None else b""
     scope = {"type": "http", "method": method, "path": "/", "headers": [(b"content-type", b"application/json"), *headers],
-             "query_string": b"", "path_params": path_params or {}, "client": client}
+             "query_string": urlencode(query or {}).encode(), "path_params": path_params or {}, "client": client}
 
     async def receive():
         return {"type": "http.request", "body": raw, "more_body": False}

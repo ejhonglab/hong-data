@@ -377,7 +377,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   white with a red dot after), from al_analysis' `trial_frames_and_odors.json` next to
   it (for a raw movie, its recording's in the motion-corrected data), unless *odor
   names* is unticked. Play / pause, time and Z sliders (the wheel over a slider steps
-  it, ten with Shift), max projection over Z, channel, speed, zoom (wheel; out no
+  it, ten with Shift; a movie of one time point, such as an average over time, has no
+  play button, time slider or speed), max projection over Z, channel, speed, zoom (wheel; out no
   further than the movie fits the window) and move (drag; never past its edges), with
   the value of the pixel under the pointer.
   Brightness and contrast are set as in ImageJ's B&C window: the plane's histogram with
@@ -797,7 +798,29 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   fly's average image (as the model saw it) and its motion-corrected movies: only the ROIs
   of the plane shown, those predicted and the fly's own (if it has them) in two colours,
   each shown or not. Where the fly has ROIs of its own, the predicted ones are scored
-  against them. Every prediction is listed below, to view, download or delete.
+  against them. Every prediction is listed below, to view, download or delete. One waiting
+  or running says when it should end, and the box how long one asked for now should take:
+  the median of the last ten done like it (on the GPU or the CPU; with an anatomical stack
+  to register or not, ROIs of its own to score against or not), a guess, said to be one,
+  until one has finished. How long each took, and each of its stages, is kept with it.
+  The predicted ROIs can be edited in that viewer, as a copy of them (a prediction has
+  one): *Simplify* makes it with fewer points, each outline moving no more than the pixels
+  in the box beside it from the predicted one (1 by default, which leaves about a tenth of
+  the points; Ramer–Douglas–Peucker, so the points kept are the predicted outline's own),
+  always from the ROIs as predicted, so simplifying again at another number starts over;
+  *Edit as predicted* copies them with every point. The copy is drawn in a colour of its
+  own, with its own box to show it, ticked, and the predicted ROIs' box is unticked. Click
+  an edited ROI (or its name in the list) to choose it; its points can then be dragged,
+  and, as in ImageJ, Shift-clicking a point adds one beside it (the point becomes two) and
+  Alt-clicking one deletes it (Ctrl-click does too, as some desktops keep Alt-click for
+  moving windows). *Undo* and *Redo* (Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y) step through the
+  changes made since the viewer was opened, simplifying and *Discard* (which deletes the
+  copy, so that the predicted ROIs are shown again) among them. Each change is saved at
+  once, as `<fly>_pred-edited_RoiSet.zip` beside the prediction's other files (with
+  `<fly>_pred-edited.json`: when, by whom, how simplified), so it is in its download; if
+  someone else changed them meanwhile, it says so instead of overwriting theirs. The ROIs
+  as predicted, and the fly's own, are only ever shown: nothing changes them. Predicting a
+  fly's ROIs again deletes its edited ones with the rest (it says so when asking).
   *Download training data*: of every glomeruli dataset with a diagnostic panel, each fly whose
   folder in the dataset's motion-corrected data (as al_analysis lays it out) has
   diagnostic recordings (folders with `trialmean_dff.tif`, the mean dF/F of each odor, and
@@ -837,7 +860,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   defaults scored best on fit 6's flies). Anyone may start one, once their first name is set in
   Settings (the box links to it). One runs at a time; those running and waiting say who
   asked for them, from which IP address, when, how far they have got, and when they should
-  end (estimated from how long earlier fits took, stage by stage). *Past fits*, above it,
+  end (estimated from how long earlier fits took, stage by stage, which is kept with each);
+  under the options, how long a fit asked for now with them should take. *Past fits*, above it,
   has every fit's scores, plane by plane (each glomerulus's outline on a plane, as ROIs
   are drawn) and as 3D objects (each held-out fly's, and the glomeruli not found, when
   clicked; nothing counts against an ROI where no glomerulus is drawn, as glomeruli are often drawn

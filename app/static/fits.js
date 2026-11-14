@@ -56,6 +56,7 @@ export class FitsPanel {
     const sync = () => { grabe.disabled = !atlas.checked; grabe.closest('label').classList.toggle('disabled', !atlas.checked); };
     atlas.addEventListener('change', sync);
     sync();
+    for (const id of ['#fit-held-out', '#fit-epochs', '#fit-atlas', '#fit-grabe']) $(id).addEventListener('input', () => this._renderExpected());
     $('#fits-list').addEventListener('click', (e) => this._action(e));
     $('#fits-past').addEventListener('click', (e) => this._action(e));
   }
@@ -88,6 +89,7 @@ export class FitsPanel {
       ? `Fits say who asked for them: this one will be <b>${esc(name)}</b>'s (as set in <a href="#settings/name">Settings</a>).`
       : 'Enter your first name in <a href="#settings/name">Settings</a> first: fits say who asked for them.';
     $('#fit-start').disabled = !name;
+    this._renderExpected();
     const w = this.data?.worker;
     $('#fit-worker').replaceChildren(!w ? '' : w.alive
       ? msgBox('ok', `The fit worker is running on ${esc(w.host || '?')}: ${w.gpu ? `GPU ${esc(w.gpu)}` : 'no GPU (training would be very slow)'}${
@@ -102,6 +104,23 @@ export class FitsPanel {
     $('#fits-past').innerHTML = past.length ? `<table class="odor-table fits-table"><thead><tr><th>Fit</th><th>Asked for by</th>
       <th>From</th><th>Started</th><th>Took</th><th>Status</th><th title="Of the held-out flies, the final ROIs: found (IoU ≥ 0.5) of their own ROIs, and of the ROIs predicted; mean Dice of those found (each plane by plane: a glomerulus's outline on each plane, as ROIs are drawn; then as 3D objects: its outlines on all its planes as one); and ROIs named as the ROI of theirs they overlap">Held-out flies:
       found, right, Dice <span class="muted">(per plane · 3D)</span>, named</th><th></th></tr></thead><tbody>${past.map((f) => this._pastHtml(f)).join('')}</tbody></table>` : '';
+  }
+
+  // how long a fit asked for now, with the form's options, should take: each stage's size (as fits.sizes: of as many
+  // flies as the last fit that listed its own had) times what a unit of it took in the last fits done (the server's
+  // `rates`); and when it would end, after those queued and running
+  _renderExpected() {
+    const { $ } = this.h, r = this.data?.rates, box = $('#fit-expected');
+    if (!r) { box.textContent = ''; return; }
+    const last = this.data.fits.find((f) => f.flies);
+    const n = last ? last.flies.train.length + last.flies.held_out.length : 80; // (fits.DEFAULT_FLIES)
+    const held = Math.max(0, Math.min(+$('#fit-held-out').value || 0, n - 1)), train = n - held, epochs = +$('#fit-epochs').value || 0;
+    const atlas = $('#fit-atlas').checked, refs = atlas && $('#fit-grabe').checked ? 1 : 0, s = r.seconds;
+    const secs = s.load * n + s.train * epochs * train + (atlas ? s.atlas * (train + (last?.flies.stacks || 0) + refs) : 0) + s.evaluate * held;
+    const wait = Math.max(0, ...this.data.fits.filter((f) => f.eta).map((f) => f.eta.until));
+    box.textContent = `A fit asked for now should take about ${fmtDuration(secs)}${wait ? `, after the ${fmtDuration(wait)} those before it have left` : ''}
+      (${r.from ? `estimated from how long the last ${r.from === 1 ? 'fit' : `${r.from} fits`} took, for ${n} flies`
+    : 'a rough guess: no fit has finished yet to estimate from'}).`;
   }
 
   _who(f) {
