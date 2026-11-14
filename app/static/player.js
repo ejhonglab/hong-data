@@ -56,6 +56,8 @@ export class MoviePlayer {
     this.roiPlanes = 'adjacent'; // the ROIs of other planes drawn: 'current' (none), 'adjacent' or 'all'
     this.glomOnly = true; // only ROIs named as glomeruli (and tentative ones, if shown)
     this.showTentative = true;
+    this.showUnnamed = true; // a prediction's ROIs the model could not name (numbered), which glomOnly leaves alone
+    this.roiQuery = ''; // what the ROI list is searched for
     this.selectedRoi = null;
     this.hoverHandle = -1; // the point of the edited ROI chosen that the pointer is on
     this.mode = null; // 'prediction': a prediction's ROIs (`openPrediction`), else a dataset's movies
@@ -89,6 +91,8 @@ export class MoviePlayer {
     this.$('.player-roi-planes').addEventListener('change', (e) => { this.roiPlanes = e.target.value; this._roiLegend(); this._paint(); });
     this.$('.player-roi-glom').addEventListener('change', (e) => { this.glomOnly = e.target.checked; this._roisFiltered(); });
     this.$('.player-roi-tentative').addEventListener('change', (e) => { this.showTentative = e.target.checked; this._roisFiltered(); });
+    this.$('.player-roi-unnamed').addEventListener('change', (e) => { this.showUnnamed = e.target.checked; this._roisFiltered(); });
+    this.$('.player-roi-search').addEventListener('input', (e) => { this.roiQuery = e.target.value.trim().toLowerCase(); this._renderRoiList(this.roiPath); });
     this.$('.player-roi-names').addEventListener('change', (e) => { this.showNames = e.target.checked; this._paint(); });
     this.$('.player-roi-sources').addEventListener('change', (e) => {
       const s = e.target.dataset.source;
@@ -183,14 +187,15 @@ export class MoviePlayer {
   }
 
   // a dataset's movies (null), or a prediction's ('prediction': only the ROIs of the plane shown,
-  // none on a max projection, not only glomeruli, as the model numbers those it cannot name)
+  // none on a max projection; those the model could not name, numbered, under a box of their own)
   _setMode(mode) {
     this.mode = mode;
     const pred = mode === 'prediction';
     this.el.classList.toggle('player-prediction', pred);
     this.roiPlanes = pred ? 'current' : this.$('.player-roi-planes').value;
-    this.glomOnly = !pred;
-    this.$('.player-roi-glom').checked = this.glomOnly;
+    this.glomOnly = this.showTentative = this.showUnnamed = true;
+    for (const c of ['glom', 'tentative', 'unnamed']) this.$(`.player-roi-${c}`).checked = true;
+    this.roiQuery = this.$('.player-roi-search').value = '';
     this.showSource = { predicted: true, manual: true, edited: true };
     if (!pred) this.edit = null;
     this.base = null;
@@ -310,11 +315,16 @@ export class MoviePlayer {
   }
 
   // whether an ROI is listed and drawn: those not named as glomeruli only if asked for (by
-  // the server: tentative ones, a glomerulus with _t0, _t1…, apart)
+  // the server: tentative ones, a glomerulus with _t0, _t1…, apart; and a prediction's unnamed ones)
   _visible(r) {
     if (this.mode === 'prediction' && !this.showSource[r.source]) return false;
-    return r.kind === 'tentative' ? this.showTentative : !(this.glomOnly && r.kind === 'other');
+    if (r.kind === 'tentative') return this.showTentative;
+    if (r.kind !== 'other') return true;
+    return this._predicted(r) ? this.showUnnamed : !this.glomOnly;
   }
+
+  // whether an ROI is predicted (or a copy of one, edited), not one drawn by hand
+  _predicted(r) { return r.source === 'predicted' || r.source === 'edited'; }
 
   // a prediction's legend: the colour of each source of ROIs, how many there are, and whether shown
   _renderSources() {
@@ -336,17 +346,25 @@ export class MoviePlayer {
 
   _renderRoiList(path) {
     this._renderSources();
-    const box = this.$('.player-roi-list'), n = (kind) => this.rois.filter((r) => r.kind === kind).length;
-    const others = n('other'), tentative = n('tentative');
+    // (counting only the sources of ROIs shown, so not both those predicted and their edited copies)
+    const box = this.$('.player-roi-list'), pred = this.mode === 'prediction';
+    const n = (f) => this.rois.filter((r) => (!pred || this.showSource[r.source]) && f(r)).length;
+    const others = n((r) => r.kind === 'other' && !this._predicted(r)), tentative = n((r) => r.kind === 'tentative');
+    const unnamed = n((r) => r.kind === 'other' && this._predicted(r));
     this.$('.player-roi-glom-n').textContent = path && others ? `(${others} ${this.glomOnly ? 'hidden' : 'not'})` : '';
     this.$('.player-roi-tentative-row').hidden = !(path && tentative);
     this.$('.player-roi-tentative-n').textContent = tentative ? `(${tentative}${this.showTentative ? '' : ' hidden'})` : '';
+    this.$('.player-roi-unnamed-row').hidden = !(path && pred);
+    this.$('.player-roi-unnamed-n').textContent = `(${unnamed}${unnamed && !this.showUnnamed ? ' hidden' : ''})`;
+    this.$('.player-roi-search').hidden = !path;
     if (!path) { box.innerHTML = '<p class="muted small">No ImageJ ROIs (RoiSet.zip) next to this movie, or in a folder above it.</p>'; return; }
     // (a prediction's: those of the plane shown only, as drawn)
-    const pred = this.mode === 'prediction', listed = (r) => this._visible(r) && !(pred && this._roiPlane(r) != null && this._roiPlane(r) !== this.z);
-    const from = path.split('/').slice(-2).join('/'), shown = this.rois.filter(listed).length;
-    const head = pred ? `${shown} ROI${shown === 1 ? '' : 's'} on plane ${this.z + 1}`
-      : `${shown === this.rois.length ? this.rois.length : `${shown} of ${this.rois.length}`} from …/${this.esc(from)}`;
+    const q = this.roiQuery, onPlane = (r) => this._visible(r) && !(pred && this._roiPlane(r) != null && this._roiPlane(r) !== this.z);
+    const listed = (r) => onPlane(r) && (!q || String(r.name).toLowerCase().includes(q));
+    const from = path.split('/').slice(-2).join('/'), shown = this.rois.filter(listed).length, all = this.rois.filter(onPlane).length;
+    const found = q ? `${shown} of ${all} ROI${all === 1 ? '' : 's'} matching “${this.esc(q)}”` : '';
+    const head = pred ? `${found || `${shown} ROI${shown === 1 ? '' : 's'}`} on plane ${this.z + 1}`
+      : `${found || (shown === this.rois.length ? this.rois.length : `${shown} of ${this.rois.length}`)} from …/${this.esc(from)}`;
     box.innerHTML = `<p class="muted small" title="${this.esc(path)}">${head}</p>`
       + this.rois.map((r, i) => {
         if (!listed(r)) return '';
@@ -1071,6 +1089,8 @@ export class MoviePlayer {
     this.$('.player-roi-legend').textContent = '';
     this.$('.player-roi-glom-n').textContent = '';
     this.$('.player-roi-tentative-row').hidden = true;
+    this.$('.player-roi-unnamed-row').hidden = true;
+    this.$('.player-roi-search').hidden = true;
     this.$('.player-pixel').textContent = '';
     this.trials = null;
     this.range = null;

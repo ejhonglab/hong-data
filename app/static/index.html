@@ -1360,6 +1360,8 @@ try {
           <input type="checkbox" class="player-roi-glom" checked> glomeruli only <span class="player-roi-glom-n muted"></span></label>
         <label class="check player-roi-tentative-row" hidden title="ROIs named as a glomerulus with _t0, _t1, … after it (a name not certain)">
           <input type="checkbox" class="player-roi-tentative" checked> tentative (_t0, _t1, …) <span class="player-roi-tentative-n muted"></span></label>
+        <label class="check player-roi-unnamed-row" hidden title="Predicted ROIs the model could not name as a glomerulus (numbered instead), and their copies as edited here">
+          <input type="checkbox" class="player-roi-unnamed" checked> unnamed predicted ROIs <span class="player-roi-unnamed-n muted"></span></label>
       </div>
       <div class="player-roi-sources" hidden></div>
       <section class="player-edit" aria-label="Editing the predicted ROIs" hidden>
@@ -1380,6 +1382,7 @@ try {
           stay as they are.</p>
       </section>
       <div class="player-roi-legend muted small"></div>
+      <input type="search" class="player-roi-search" placeholder="Search the ROIs" aria-label="Search the ROIs by name">
       <div class="player-roi-list"></div>
     </aside>
   </div>
