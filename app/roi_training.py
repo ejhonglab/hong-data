@@ -527,3 +527,29 @@ def summary(found: dict, root: Path, bases: list[Path]) -> dict:
         })
     return {"flies": flies, "skipped": found["skipped"], "bytes": sum(f["bytes"] for f in flies),
             "stack_bytes": sum(s["bytes"] for f in flies for s in f["stacks"])}
+
+
+SUMMARY_KEPT = "summary.json"
+
+
+def keep_summary(s: dict) -> None:
+    """Keeps a `summary` (of every dataset's flies) in `config.ROI_TRAINING_DIR`, with when it was
+    made, for `kept_summary`: making one reads each fly's files on tensor, which takes a while."""
+    try:
+        config.ROI_TRAINING_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = config.ROI_TRAINING_DIR / f"{SUMMARY_KEPT}.{os.getpid()}.tmp"
+        tmp.write_text(json.dumps({"made_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"), "summary": s}),
+                       encoding="utf-8")
+        tmp.replace(config.ROI_TRAINING_DIR / SUMMARY_KEPT)
+    except OSError:
+        pass
+
+
+def kept_summary() -> Optional[dict]:
+    """The last `summary` kept (`keep_summary`), with ``kept``: when it was made; None if there is none.
+    It may no longer be what is on tensor, or what the datasets are."""
+    try:
+        kept = json.loads((config.ROI_TRAINING_DIR / SUMMARY_KEPT).read_text(encoding="utf-8"))
+        return {**kept["summary"], "kept": kept["made_at"]}
+    except (OSError, ValueError, KeyError, TypeError):
+        return None

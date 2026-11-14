@@ -36,6 +36,8 @@ export class PredictPanel {
   constructor(h) {
     this.h = h;
     this.data = null; // as from /api/predictions
+    this.mine = { name: '', flies: [] }; // the flies in the folders of whoever is named in Settings (/api/user/flies)
+    this.listed = []; // the flies of the menu
     this.timer = null;
     const { $ } = h;
     $('#predict-model').addEventListener('change', () => this.renderFlies());
@@ -48,6 +50,7 @@ export class PredictPanel {
 
   // while the tab is shown: every 3 s while one is queued or running, else every 30 s
   async load() {
+    this._loadMine();
     await this.refresh();
     if (this.timer) return;
     let n = 0;
@@ -87,16 +90,31 @@ export class PredictPanel {
     this.h.onData?.(); // (what else lists the predictions: Extract signals' ROIs)
   }
 
+  // the flies on tensor of whoever is named in Settings, in the folders saved there: asked for when the tab is shown
+  async _loadMine() {
+    const name = this.h.getName();
+    let flies = [];
+    try { if (name) flies = (await this.h.api(`/api/user/flies?name=${encodeURIComponent(name)}`)).flies; } catch { return; }
+    if (name !== this.h.getName()) return;
+    const changed = JSON.stringify(flies) !== JSON.stringify(this.mine.flies) || name !== this.mine.name;
+    this.mine = { name, flies };
+    if (changed && this.data) this.renderFlies();
+  }
+
   _model() { return this.data?.models.find((m) => String(m.id) === this.h.$('#predict-model').value) || null; }
 
   // a fly's name, as a fit's (fits.fly_names): its top folder on tensor, its date and number
   _name(f) { return `${f.dir.split('/')[0]}_${f.date}_${f.fly_num}`; }
 
   // the fly menu: the flies of the site's datasets (by uploader; with what the model chosen did
-  // with each, and whether it has predicted it), then any other on tensor
+  // with each, and whether it has predicted it) and, with them, the others in the folders of whoever
+  // is named in Settings (with whether each has ROIs), then any other on tensor. That person's
+  // flies first; of each person's, those without ROIs, then those with ROIs the model was not fit
+  // with, those held out of it, and those it was trained on.
   renderFlies() {
     const { $, esc } = this.h;
     const sel = $('#predict-fly'), flies = this.h.flies(), m = this._model();
+    const same = (a, b) => a.trim().toLowerCase() === b.trim().toLowerCase();
     const preds = new Map((this.data?.predictions || []).filter((p) => m && p.fit_id === m.id).map((p) => [trim(p.tensor_dir), p.status]));
     const made = (f) => ({ done: ' · predicted', queued: ' · queued', running: ' · being predicted' }[preds.get(trim(f.dir))] || '');
     const groups = new Map();
@@ -105,9 +123,18 @@ export class PredictPanel {
       if (!groups.has(who)) groups.set(who, []);
       groups.get(who).push(f);
     }
-    const role = (f) => (!m ? '' : m.held_out.includes(this._name(f)) ? ' · held out of it' : m.train.includes(this._name(f)) ? ' · trained on' : '');
-    const opts = [...groups].sort(([a], [b]) => a.localeCompare(b)).map(([who, fs]) => `<optgroup label="${esc(who)}'s flies">${fs
-      .sort((a, b) => a.date.localeCompare(b.date) || a.fly_num - b.fly_num)
+    const known = new Set((flies || []).map((f) => trim(f.dir)));
+    const more = this.mine.flies.filter((f) => !known.has(trim(f.dir)));
+    if (more.length) {
+      const who = [...groups.keys()].find((w) => same(w, this.mine.name)) || this.mine.name;
+      groups.set(who, [...(groups.get(who) || []), ...more]);
+    }
+    this.listed = [...groups.values()].flat();
+    const isMine = (who) => who.split(' + ').some((w) => same(w, this.mine.name || this.h.getName()));
+    const rank = (f) => (m?.train.includes(this._name(f)) ? 3 : m?.held_out.includes(this._name(f)) ? 2 : f.datasets || f.rois ? 1 : 0);
+    const role = (f) => [' · no ROIs', f.datasets ? '' : ' · has ROIs', ' · held out of it', ' · trained on'][rank(f)];
+    const opts = [...groups].sort(([a], [b]) => isMine(b) - isMine(a) || a.localeCompare(b)).map(([who, fs]) => `<optgroup label="${esc(who)}'s flies">${fs
+      .sort((a, b) => rank(a) - rank(b) || a.date.localeCompare(b.date) || a.fly_num - b.fly_num)
       .map((f) => `<option value="${esc(f.dir)}">${esc(f.date)} fly ${f.fly_num}${role(f)}${made(f)}</option>`).join('')}</optgroup>`);
     sel.innerHTML = `${opts.join('')}${flies ? '' : '<option value="" disabled>(the site\'s flies: looking on tensor…)</option>'}
       <option value="${OTHER}">Another fly on tensor: its folders…</option>`;
@@ -126,7 +153,7 @@ export class PredictPanel {
       const dir = rel(trim($('#predict-dir').value));
       return dir ? { dir, raw_dir: rel(trim($('#predict-raw').value)) } : null;
     }
-    const f = (this.h.flies() || []).find((x) => x.dir === v);
+    const f = this.listed.find((x) => x.dir === v);
     return f ? { dir: f.dir, raw_dir: f.raw_dir } : null;
   }
 

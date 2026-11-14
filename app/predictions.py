@@ -36,6 +36,7 @@ import shutil
 import statistics
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
 
@@ -343,6 +344,51 @@ def locate(dir_: str, raw_dir: str, root: Path, bases: list[Path]) -> dict:
                          f"({roi_training.TRIALMEAN} and {roi_training.TRIALS}, as al_analysis writes them)")
     out["name"] = fly_name(out["tensor_dir"], d)
     return out
+
+
+def _dated_flies(base: Path) -> dict[tuple[str, int], Path]:
+    """The flies' folders in `base` (``<base>/<date>/<fly>``), by date and number: the first of each."""
+    out: dict[tuple[str, int], Path] = {}
+    for d in tensor._subdirs(base):
+        for f in tensor._subdirs(d):
+            fly, _ = movies._path_fly(f / "x")
+            if fly and f.parent == d:
+                out.setdefault((fly["date"], fly["fly_num"]), f)
+    return out
+
+
+def user_flies(dirs: dict, root: Path) -> list[dict]:
+    """The flies in a user's folders on tensor (`db.get_user`'s, from the top of tensor) that can
+    be predicted: those in a motion-corrected data folder, with a recording with its odors' mean
+    dF/F (as `locate` asks), that are in a raw data folder too.
+
+    Returns:
+        Of each, by date and number: ``date``, ``fly_num``, ``dir`` and ``raw_dir`` (from the top
+        of tensor) and ``rois``: whether it has ROIs (a RoiSet.zip, as `roi_training` finds it).
+    """
+    raw: dict[tuple[str, int], Path] = {}
+    for base in dirs.get("raw_dirs") or []:
+        for k, d in _dated_flies(root / base).items():
+            raw.setdefault(k, d)
+    mocorr: dict[tuple[str, int], Path] = {}
+    for base in dirs.get("mocorr_dirs") or []:
+        for k, d in _dated_flies(root / base).items():
+            if k in raw:
+                mocorr.setdefault(k, d)
+
+    def look(d: Path) -> Optional[bool]:
+        recs = [r for r in tensor._subdirs(d)
+                if roi_training._is_file(r / roi_training.TRIALMEAN) and roi_training._is_file(r / roi_training.TRIALS)]
+        if not recs:
+            return None
+        return roi_training._roiset(d, recs, [r for r in tensor._subdirs(d) if r not in recs]) is not None
+
+    keys = sorted(mocorr)
+    with ThreadPoolExecutor(roi_training.PREFETCH) as pool:  # (each file on tensor takes a while to look at)
+        rois = list(pool.map(lambda k: look(mocorr[k]), keys))
+    rel = lambda p: p.relative_to(root).as_posix()  # noqa: E731
+    return [{"date": k[0], "fly_num": k[1], "dir": rel(mocorr[k]), "raw_dir": rel(raw[k]), "rois": r}
+            for k, r in zip(keys, rois) if r is not None]
 
 
 # ------------------------------------------------------------------- listing

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import shutil
 import zipfile
 
 import numpy as np
@@ -194,3 +195,27 @@ def test_download_endpoint(main, root, export):  # noqa: F811
     # with the anatomical stacks, unless asked not to
     stack = lambda ns: any(n.endswith("/anat/ChanA_0001_0001_0001_0001.tif") for n in ns)  # noqa: E731
     assert stack(names(b"")) and not stack(names(b"stacks=0"))
+
+
+def test_kept_summary(main, root, export):  # noqa: F811
+    # none kept yet: made, and kept; then the one kept, though the fly's folder is gone, until asked for anew
+    made = call(main.roi_training_flies, params={"kept": "1"})[1]
+    assert len(made["flies"]) == 1 and "kept" not in made
+    shutil.rmtree(export["fly"])
+    kept = call(main.roi_training_flies, params={"kept": "1"})[1]
+    assert kept.pop("kept") and kept == made
+    assert call(main.roi_training_flies, params={})[1]["flies"] == []
+    assert call(main.roi_training_flies, params={"kept": "1"})[1]["flies"] == []
+    # one of some datasets only is not kept, nor answered from the one kept
+    assert len(call(main.roi_training_flies, params={"datasets": str(export["ids"][0]), "kept": "1"})[1]["skipped"]) == 3
+    assert len(call(main.roi_training_flies, params={"kept": "1"})[1]["skipped"]) == 6
+
+
+def test_user_flies(main, root, export):  # noqa: F811
+    assert call(main.user_flies, params={"name": "Ann"})[1] == {"flies": []}
+    main.db.save_user("Ann", {"raw_dirs": ["tom/raw"], "mocorr_dirs": ["tom/analysis", "tom/mocorr"]}, "2026-01-01T00:00:00")
+    # the flies with a recording's mean dF/F that are in the raw data too, with whether each has ROIs
+    (root / "tom/raw/2024-01-02/1").mkdir(parents=True)
+    recording(root / "tom/analysis/2024-01-03/1", "diagnostics1", ("va", -3))
+    fly = lambda d, rois: {"date": d, "fly_num": 1, "dir": f"tom/analysis/{d}/1", "raw_dir": f"tom/raw/{d}/1", "rois": rois}  # noqa: E731
+    assert call(main.user_flies, params={"name": "ann"})[1]["flies"] == [fly("2024-01-01", True), fly("2024-01-02", False)]

@@ -1766,6 +1766,9 @@ POST   /api/metadata/check                  {"metadata": {...}} → problems wit
 GET    /api/user?name=                      a user's folders on tensor ("user": null if none saved)
 POST   /api/user                            {"name", "raw_dirs", "mocorr_dirs", "odor_dirs"} → each
                                             folder checked on tensor; saved if all are there
+GET    /api/user/flies?name=                the flies in a user's folders on tensor whose ROIs can be predicted
+                                            (in both the raw and the motion-corrected data, with a recording's
+                                            mean dF/F), each with its folders and whether it has ROIs
 POST   /api/tensor/check                    {"path"} → a dataset's data folder checked on tensor
 GET    /api/tensor/list?path=[&archives=1]  what is in a folder on tensor ('' its top), to complete a path
                                             typed: its folders (and archives; or with &files=reference,
@@ -1856,10 +1859,15 @@ GET    /api/merge/download?coding_unit=&format=wide|long&mode=&by=a,b&target=&to
                                             recordings), scaled, as a zip (&lower=1 too)
 GET    /api/merge/scales?(the same, without format)
                                             each dataset's group and scale factor (scaling.csv)
-GET    /api/roi_training[?datasets=1,2]     the flies of glomeruli datasets with a diagnostic panel to
+GET    /api/roi_training[?datasets=1,2][&kept=1]
+                                            the flies of glomeruli datasets with a diagnostic panel to
                                             export for ROI training (each its files' total size, its
                                             glomeruli and its panels but diagnostic ones), and those
-                                            left out, with why (roi_training.py)
+                                            left out, with why (roi_training.py). Looking on tensor takes
+                                            seconds, so the answer for all datasets is kept
+                                            (data/roi_training/summary.json): kept=1 gives the last one at
+                                            once (with "kept": when it was made), and the tab shows that
+                                            first, then asks again without it
 GET    /api/fits                            every fit (those running and waiting with when they should end), and
                                             the fit worker's status (fits.py)
 POST   /api/fits                            ask for a fit: {name (a first name), options}; who and from where are kept

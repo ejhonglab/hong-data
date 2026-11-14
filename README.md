@@ -795,7 +795,11 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
 - **AL segmentation**: *Predict glomerulus ROIs*, at the top, draws a fly's glomerulus ROIs
   with a fit's model (by default the last fit done; each says how many flies it was fit
   to): a fly of the site's datasets (saying which the model was trained on or held out),
-  or any on tensor, by its motion-corrected and raw data folders. The fit worker makes them,
+  one of your own flies on tensor (those in both the raw and the motion-corrected data
+  folders saved under your name in Settings, with a recording's `trialmean_dff.tif`), or
+  any other on tensor, by its motion-corrected and raw data folders. Your flies are listed
+  first; of each person's, those without ROIs, then those with ROIs the model was not fit
+  with, those held out of it, and those it was trained on. The fit worker makes them,
   on the GPU, or on the CPU while a fit is using the GPU (slower, but not hours later), and
   keeps them on the server (`data/predictions/<id>/`): its ROIs as a `RoiSet.zip` named by
   glomerulus, each kind al-diag-seg makes, the fly's average image, and `provenance.json`

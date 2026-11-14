@@ -1530,10 +1530,19 @@ def _roi_training_found(request: Request) -> tuple[dict, list[Path]]:
 
 async def roi_training_flies(request: Request) -> Response:
     """The flies of glomeruli datasets with a diagnostic panel to export for ROI training, and
-    those left out, with why (`roi_training.summary`)."""
+    those left out, with why (`roi_training.summary`). With ``?kept=1``, the last one made, if one
+    is kept (then with ``kept``: when it was made): at once, but maybe no longer so."""
+    whole = not request.query_params.get("datasets")
+
     def run() -> dict:
+        kept = roi_training.kept_summary() if whole and request.query_params.get("kept") == "1" else None
+        if kept:
+            return kept
         found, bases = _roi_training_found(request)
-        return roi_training.summary(found, config.TENSOR_ROOT, bases)
+        s = roi_training.summary(found, config.TENSOR_ROOT, bases)
+        if whole:
+            roi_training.keep_summary(s)
+        return s
 
     return JSONResponse(await run_in_threadpool(run))
 
@@ -2056,6 +2065,18 @@ async def user_get(request: Request) -> Response:
     """A user's data folders on tensor (``?name=``); ``user`` is null for a name with none saved."""
     name = _user_name(request.query_params.get("name"))
     return JSONResponse({"user": await run_in_threadpool(db.get_user, name) if name else None})
+
+
+async def user_flies(request: Request) -> Response:
+    """The flies in a user's folders on tensor (``?name=``) whose ROIs can be predicted
+    (`predictions.user_flies`); none for a name with no folders saved."""
+    name = _user_name(request.query_params.get("name"))
+
+    def run() -> list[dict]:
+        user = db.get_user(name) if name else None
+        return predictions.user_flies(user, config.TENSOR_ROOT) if user else []
+
+    return JSONResponse({"flies": await run_in_threadpool(run)})
 
 
 async def user_save(request: Request) -> Response:
@@ -3953,6 +3974,7 @@ routes = [
     Route("/api/metadata/check", metadata_check, methods=["POST"]),
     Route("/api/user", user_get),
     Route("/api/user", user_save, methods=["POST"]),
+    Route("/api/user/flies", user_flies),
     Route("/api/stage", stage_create, methods=["POST"]),
     Route("/api/stage/{stage_id}", stage_get),
     Route("/api/stage/{stage_id}/odors", stage_odors),

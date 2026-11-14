@@ -8563,16 +8563,25 @@ class RoiTrainingPage {
     const seq = ++this._seq;
     $('#rt-download').hidden = true;
     $('#rt-status').replaceChildren(msgBox('info', 'Looking on tensor for each fly (half a minute, the first time)…'));
-    let r;
-    try { r = await api('/api/roi_training'); } catch (e) {
-      if (seq === this._seq) $('#rt-status').replaceChildren(msgBox('error', `Could not look on tensor: ${esc(e.message)}`));
-      return;
+    // (first what the server found the last time, which it has at once, if it kept it: then what is there now)
+    let shown = '';
+    for (const kept of again ? [false] : [true, false]) {
+      let r;
+      try { r = await api(`/api/roi_training${kept ? '?kept=1' : ''}`); } catch (e) {
+        if (seq === this._seq && !this.data) $('#rt-status').replaceChildren(msgBox('error', `Could not look on tensor: ${esc(e.message)}`));
+        return;
+      }
+      if (seq !== this._seq) return;
+      const { kept: when, ...found } = r, text = JSON.stringify(found);
+      if (text !== shown) {
+        shown = text;
+        this.data = found;
+        this._render();
+        this.predict.renderFlies();
+        if (this.extract.data) this.extract.renderFlies();
+      }
+      if (!when) return;
     }
-    if (seq !== this._seq) return;
-    this.data = r;
-    this._render();
-    this.predict.renderFlies();
-    if (this.extract.data) this.extract.renderFlies();
   }
 
   // whose a fly's ROIs are: its datasets' uploaders
