@@ -25,6 +25,7 @@ H_NAMES = {"ea": "ethyl acetate", "eb": "ethyl butyrate", "pa": "pentyl acetate"
            "ms": "methyl salicylate", "1-6ol": "1-hexanol"}  # (as Hallem's table names them)
 REFERENCE_DIR = Path(__file__).resolve().parents[1] / "reference_data"  # (the repository's: the built-in reference data)
 H = pd.read_csv(REFERENCE_DIR / orn_input.HALLEM_FILE, index_col=0)
+H_IDS, H = H.loc[["cid", "inchi"]], H.drop(["cid", "inchi"]).astype(float)  # (its chemicals' identifiers, then its numbers)
 BOUTON = {"one_row_per_claw": True, "prat_claws": True, "n_spikes_for_response": 2}
 ROW = {"source_table": "s.csv", "tag": "bouton_base", "variant": "bouton_base", "base": "bouton", "target_rate": 0.05,
        "fixed_thr_mean": 254.4, "wAPLKC": 0.13, "wAPLKC_scale": 0.13, "wKCAPL_scale": 7.7e-05, "n_kcs": 1732, "rate_on": 0.0516,
@@ -96,7 +97,9 @@ def env(main, root, tmp_path, monkeypatch):  # noqa: F811
     monkeypatch.setenv("PYTHONPATH", str(fake))
     monkeypatch.setenv("OLFDB_MODEL_PYTHON", sys.executable)
     monkeypatch.setattr(model_worker, "POLL", 0.05)
-    rows, _, _ = odormeta.parse_sheet("name,abbrev\n" + "".join(f"{n},{a}\n" for a, n in H_NAMES.items()))
+    # (and one under another name than theirs, but its CID: their 3-methylbutanol)
+    sheet = "name,abbrev,cid\n" + "".join(f"{n},{a},\n" for a, n in H_NAMES.items()) + "isoamyl alcohol,IAol,31260\n"
+    rows, _, _ = odormeta.parse_sheet(sheet)
     main.db.apply_odor_sync(added=odormeta.diff(rows, [])["added"], changed=[], deleted=[], source="test",
                             fingerprint="0" * 64, details={}, when="2026-11-04T00:00:00")
     return main
@@ -134,6 +137,10 @@ def test_hallem_reference(env):
     ea = (("odor", i.match("ea")[0]), -4.0)  # (the odor table's, by its name there)
     assert hal[ea]["DM2"] == H.loc["DM2", "ethyl acetate @ -4"] and hal[ea][None] == "ethyl acetate @ -4"
     assert hal[(("name", "apple"), 0.0)][None] == "apple @ 0"
+    # each chemical identified (the fruits not), so found by its CID whatever the odor table calls it
+    assert H_IDS.loc["cid", "3-methylbutanol @ -2"] == "31260" and H_IDS.loc["inchi", "1-octen-3-ol @ -4"].startswith("InChI=1S/C8H16O/")
+    assert H_IDS.loc["cid"].iloc[:110].notna().all() and H_IDS.loc["cid"].iloc[:110].is_unique and pd.isna(H_IDS.loc["cid", "apple @ 0"])
+    assert hal[(("odor", i.match("IAol")[0]), -2.0)][None] == "3-methylbutanol @ -2"
     # shown as a reference dataset, its columns odors as datasets write them
     listed = next(r for r in call(env.reference_list)[1]["datasets"] if r["id"] == "hallem-carlson-2006")
     assert listed["state"] == "ok" and listed["shape"] == [23, 176] and listed["glomeruli"]["axis"] == "rows"

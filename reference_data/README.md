@@ -170,6 +170,8 @@ or added in the Admin tab.
 
 `hallem_carlson_2006.csv` (Hallem & Carlson 2006: ORN responses, glomeruli x odors, every
 response they tabulate) is made by `make_hallem.py` from the tables of an
-[olfsysm](https://github.com/ejhonglab/olfsysm) checkout. It is also what ORN data is scaled
-to before a baseline model is run on it in the Models tab (`app/orn_input.py`), so keep its
-file name and layout.
+[olfsysm](https://github.com/ejhonglab/olfsysm) checkout, run in the olfdb image (it looks up
+each odor's CID and InChI, the `cid` and `inchi` rows, through chemutils and PubChem). Its odors
+are named as in the paper, and found in the odor table by those identifiers, so no aliases are
+needed for them. It is also what ORN data is scaled to before a baseline model is run on it in
+the Models tab (`app/orn_input.py`), so keep its file name and layout.

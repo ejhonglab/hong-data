@@ -835,7 +835,8 @@ def chemicals(record: dict, index: odormeta.OdorIndex) -> dict:
         it may be by its name, if not identified, `OdorIndex.maybe`), ``n``, ``matched`` (to the odor table), ``identified`` (with a
         CID or InChI, or a bundle's ID), ``unidentified`` and ``ambiguous`` (labels), and
         ``unrecognized`` (looked for but none found: no identifiers, and no labels the odor
-        table knows), and ``odors`` (its labels odors as datasets write them).
+        table knows), ``odors`` (its labels odors as datasets write them), and ``ids_given``
+        (whether the file identifies them, by identifier columns or rows).
     """
     out = {"axis": None, "items": [], "n": 0, "matched": 0, "identified": 0, "unidentified": [], "ambiguous": [],
            "unrecognized": False, "odors": False}
@@ -888,7 +889,7 @@ def chemicals(record: dict, index: odormeta.OdorIndex) -> dict:
         if not identified:
             out["unidentified"].append(it["label"])
     return {**out, "axis": axis, "items": items, "n": len(items), "matched": sum(i["odor_id"] is not None for i in items),
-            "identified": sum(i["identified"] for i in items), "odors": axis == odors_on}
+            "identified": sum(i["identified"] for i in items), "odors": axis == odors_on, "ids_given": bool(given[axis])}
 
 
 def glomeruli(record: dict) -> dict:
@@ -919,7 +920,8 @@ def warning(chem: dict, glomeruli: Optional[dict] = None) -> Optional[str]:
                 "table knows (if it has none, say so when adding it)")
     if chem.get("odors") and chem["matched"] < chem["n"]:
         k = chem["n"] - chem["matched"]
-        return (f"{k} of its {chem['n']} odors {'is' if k == 1 else 'are'} not one odor in the Odors table (by abbreviation, "
+        how = "by CID or InChI where it gives them, else by abbreviation" if chem.get("ids_given") else "by abbreviation"
+        return (f"{k} of its {chem['n']} odors {'is' if k == 1 else 'are'} not one odor in the Odors table ({how}, "
                 f"as a dataset's are): add {'it' if k == 1 else 'them'} to the odor sheet and sync it")
     n = len(chem["unidentified"])
     if n:

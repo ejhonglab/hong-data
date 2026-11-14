@@ -5,8 +5,8 @@ spike rate, which the models take.
 The factor is the one that best matches (least squares, through zero, as the Merge tab's)
 the responses to what Hallem & Carlson (2006) measured: the built-in reference dataset of
 all they tabulate (`HALLEM_FILE`, with their lower concentrations and fruits), per odor and
-glomerulus. An odor stands for theirs when it is the same odor of the odor table (else of
-the same name) and their dilution is `HALLEM_SHIFT` above its concentration (their 10^-2
+glomerulus. An odor stands for theirs when it is the same odor of the odor table (theirs
+found by CID and InChI, as the Reference data tab finds them; else of the same name) and their dilution is `HALLEM_SHIFT` above its concentration (their 10^-2
 our 10^-3, as pyolfsysm takes them), else the nearest less than `tolerance` from that.
 With too few in common (`MIN_ODORS`, `MIN_POINTS`), the datasets are first scaled to the
 combination of all datasets of their coding unit, made as the Merge tab merges them (each
@@ -26,7 +26,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from . import config, glomeruli as glom, merge
+from . import config, glomeruli as glom, merge, reference
 from .odormeta import OdorIndex
 from .odors import OdorFormatError, format_conc, parse_odor
 
@@ -49,12 +49,16 @@ def _ident(name: str, index: OdorIndex) -> tuple:
 
 def hallem(index: OdorIndex) -> dict[tuple, dict[str, float]]:
     """Hallem & Carlson's responses: (what the odor is, log10 dilution) -> glomerulus -> Δ spikes/s,
-    with ``label`` under the key ``None`` of each (the odor as their dataset writes it)."""
-    df = pd.read_csv(config.REFERENCE_DIR / HALLEM_FILE, index_col=0)
+    with ``label`` under the key ``None`` of each (the odor as their dataset writes it). Their
+    odors are the odor table's as the Reference data tab finds them (`reference.chemicals`): by
+    their CIDs and InChIs (their fruits by name)."""
+    record, values = reference._parsed(config.REFERENCE_DIR / HALLEM_FILE, "detect", "diverging")
+    items = reference.chemicals(record, index)["items"]
     out = {}
-    for col in df.columns:
-        o = parse_odor(str(col), strict=False)
-        out[(_ident(o.name, index), float(o.log10_conc))] = {None: str(col), **{str(g): float(v) for g, v in df[col].items() if np.isfinite(v)}}
+    for j, (col, it) in enumerate(zip(record["cols"], items)):
+        o = parse_odor(col["label"], strict=False)
+        ident = ("odor", it["odor_id"]) if it["odor_id"] is not None else ("name", o.name.casefold())
+        out[(ident, float(o.log10_conc))] = {None: col["label"], **{r["label"]: float(v) for r, v in zip(record["rows"], values[:, j]) if np.isfinite(v)}}
     return out
 
 

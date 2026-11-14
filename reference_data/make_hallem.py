@@ -10,10 +10,19 @@ glomeruli x odors (written as datasets write them, ``<odor> @ <log10 dilution>``
   and 10^-8 (their 10^-2 there is Table S1's), and 9 fruits, pure (``@ 0``) and at 10^-2,
   10^-4 and 10^-6.
 
-Usage: make_hallem.py <an olfsysm checkout>
+Each of the 110 chemicals is identified too, by rows ``cid`` and ``inchi`` above the
+glomeruli's (the fruits' left blank), so the odor table's odors are found by what they are,
+whatever they are named there: its PubChem CID, looked up by its name through chemutils
+(as `query` spells it, but `CIDS`, which it got wrong), and that CID's InChI, from PubChem.
+
+Usage (in the olfdb image, which has chemutils; it looks them up online, the first time):
+make_hallem.py <an olfsysm checkout>
 """
 import csv
+import json
+import re
 import sys
+import urllib.request
 from pathlib import Path
 
 OUT = Path(__file__).with_name("hallem_carlson_2006.csv")
@@ -24,7 +33,31 @@ FIXED = {
     "nonionic acid": "nonanoic acid", "linoleum acid": "linoleic acid", "pyretic acid": "pyruvic acid",
     "2 3-butanedione": "2,3-butanedione", "ethylcinnamate": "ethyl cinnamate", "2 3-butanediol": "2,3-butanediol",
 }
+# chemicals whose names chemutils looks up as another's: (E)-3-hexenol as (Z)-3-hexenol
+CIDS = {"E3-hexenol": 5284503}
+GREEK = {"a": "alpha", "b": "beta", "g": "gamma", "d": "delta"}
+PUBCHEM_INCHI = "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{}/property/InChI/JSON"
 DROPPED = "33b"  # the second receptor of DM3 (Or47a's is kept, as in the preprocessed table)
+
+
+def query(name: str) -> str:
+    """`name` as PubChem knows it: 'a-pinene' as alpha-pinene, 'E2-hexenal' as (E)-2-hexenal."""
+    name = re.sub(r"^([abgd])-", lambda m: GREEK[m[1]] + "-", name)
+    return re.sub(r"^([EZ])(\d)-", r"(\1)-\2-", name)
+
+
+def identify(names: list[str]) -> tuple[dict[str, int], dict[int, str]]:
+    """Each of `names`' CID and each CID's InChI (asserting none is missing, and no two alike)."""
+    import chemutils
+
+    cids = {n: CIDS.get(n) or chemutils.name2cid(query(n)) for n in names}
+    missing = [n for n, c in cids.items() if not isinstance(c, int)]
+    assert not missing, f"no CID found for {missing}"
+    assert len(set(cids.values())) == len(cids), "two chemicals with one CID"
+    with urllib.request.urlopen(PUBCHEM_INCHI.format(",".join(map(str, cids.values()))), timeout=60) as r:
+        inchis = {int(p["CID"]): p["InChI"] for p in json.load(r)["PropertyTable"]["Properties"]}
+    assert set(inchis) == set(cids.values()), "InChIs missing"
+    return cids, inchis
 
 
 def main(olfsysm: Path) -> None:
@@ -57,9 +90,13 @@ def main(olfsysm: Path) -> None:
             continue
         columns[key] = values
     glomeruli = sorted(table)
+    cids, inchis = identify([o.rsplit(" @ ", 1)[0] for o in odors])
+    cid_of = {o: cids.get(o.rsplit(" @ ", 1)[0]) for o in columns}
     with open(OUT, "w", newline="") as f:
         w = csv.writer(f, lineterminator="\n")
         w.writerow(["glomerulus", *columns])
+        w.writerow(["cid", *(cid_of[o] or "" for o in columns)])
+        w.writerow(["inchi", *(inchis[cid_of[o]] if cid_of[o] else "" for o in columns)])
         for g in glomeruli:
             w.writerow([g, *(f"{columns[o][g]:g}" for o in columns)])
     print(f"{OUT.name}: {len(glomeruli)} glomeruli x {len(columns)} odors")

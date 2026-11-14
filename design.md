@@ -573,7 +573,9 @@ between the frontend and the server. Using the app is described in
   change, as pyolfsysm's own dF/F fit has it) over every odor and glomerulus the datasets
   share with the built-in reference dataset of all Hallem & Carlson tabulate
   (`reference_data/hallem_carlson_2006.csv`, made by `make_hallem.py` from olfsysm's
-  tables), odors matched through the odor table (else by name), their dilution one log₁₀
+  tables; each chemical's CID and InChI looked up once, there, and kept in the file), odors
+  matched through the odor table (theirs by those identifiers, as the Reference data tab
+  matches any file's; else by name), their dilution one log₁₀
   unit above ours (`HALLEM_SHIFT`: their 10⁻² our 10⁻³, pyolfsysm's convention), else the
   nearest within the Merge tab's tolerance. Unlike pyolfsysm's own pipeline, flies are
   not each scaled first (the datasets are means over flies already, as merges take
