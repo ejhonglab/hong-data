@@ -20,7 +20,9 @@ from tests.test_ingest import make_wide, write_csv
 from tests.test_tensor import call, main, root  # noqa: F401 (fixtures)
 
 GLOMS = ["DA3", "DA4l", "DA4m", "DC1", "DL1", "DL3", "DL4", "DL5", "DM2"]
-H_ODORS = ["ea", "eb", "pa", "2h", "ms", "1-6ol"]  # (as Hallem's table names them: the lab's abbreviations)
+H_ODORS = ["ea", "eb", "pa", "2h", "ms", "1-6ol"]  # (the lab's abbreviations: the odor table's, in `env`)
+H_NAMES = {"ea": "ethyl acetate", "eb": "ethyl butyrate", "pa": "pentyl acetate", "2h": "2-heptanone",
+           "ms": "methyl salicylate", "1-6ol": "1-hexanol"}  # (as Hallem's table names them)
 REFERENCE_DIR = Path(__file__).resolve().parents[1] / "reference_data"  # (the repository's: the built-in reference data)
 H = pd.read_csv(REFERENCE_DIR / orn_input.HALLEM_FILE, index_col=0)
 BOUTON = {"one_row_per_claw": True, "prat_claws": True, "n_spikes_for_response": 2}
@@ -94,6 +96,9 @@ def env(main, root, tmp_path, monkeypatch):  # noqa: F811
     monkeypatch.setenv("PYTHONPATH", str(fake))
     monkeypatch.setenv("OLFDB_MODEL_PYTHON", sys.executable)
     monkeypatch.setattr(model_worker, "POLL", 0.05)
+    rows, _, _ = odormeta.parse_sheet("name,abbrev\n" + "".join(f"{n},{a}\n" for a, n in H_NAMES.items()))
+    main.db.apply_odor_sync(added=odormeta.diff(rows, [])["added"], changed=[], deleted=[], source="test",
+                            fingerprint="0" * 64, details={}, when="2026-11-04T00:00:00")
     return main
 
 
@@ -103,7 +108,7 @@ def add(db, tmp_path, name, odors, factor=0.01, gloms=GLOMS, panel="p1", extra=(
     rows = [(panel, False, f"{o} @ -3", "solvent", rep) for o in odors for rep in (0, 1)]
     rows += [(p, False, o, "solvent", 0) for p, o in extra] + [(panel, False, f"{odors[0]} @ -3", f"{odors[1]} @ -3", 0)]
     cols = [(date, 1, g) for date in ("2024-01-01", "2024-01-02") for g in gloms]
-    values = np.array([[factor * H.loc[g, f"{r[2].split(' @ ')[0]} @ -2"] if r[2].split(" @ ")[0] in H_ODORS and r[3] == "solvent" and g in H.index
+    values = np.array([[factor * H.loc[g, f"{H_NAMES[r[2].split(' @ ')[0]]} @ -2"] if r[2].split(" @ ")[0] in H_ODORS and r[3] == "solvent" and g in H.index
                         else factor * 100 * (1.0 + gloms.index(g)) for _, _, g in cols] for r in rows])
     parsed = load_file(write_csv(make_wide(rows, cols, values=values), tmp_path, f"{name}.csv"))
     metadata = {"uploader_name": "Ann", "indicator": "GCaMP6f", "driver": "pebbled", "coding_unit": "glomeruli", **md}
@@ -121,9 +126,14 @@ def index(db):
 def test_hallem_reference(env):
     # all they tabulate: 110 odors at 10^-2, 10 of them lower, and the fruits; DM3 once (Or47a's)
     assert H.shape == (23, 176) and list(H.index).count("DM3") == 1
-    assert {"ea @ -2", "ea @ -4", "ea @ -8", "apple @ 0", "apple @ -6", "ammonium hydroxide @ -2"} <= set(H.columns)
-    hal = orn_input.hallem(index(env.db))
-    assert hal[(("name", "ea"), -4.0)]["DM2"] == H.loc["DM2", "ea @ -4"] and hal[(("name", "ea"), -4.0)][None] == "ea @ -4"
+    # by the paper's names (drosolf's: not hc_data.csv's typos)
+    assert {"ethyl acetate @ -2", "ethyl acetate @ -4", "ethyl acetate @ -8", "apple @ 0", "apple @ -6", "ammonium hydroxide @ -2",
+            "2,3-butanedione @ -4", "pyruvic acid @ -2", "1-octen-3-ol @ -2"} <= set(H.columns)
+    i = index(env.db)
+    hal = orn_input.hallem(i)
+    ea = (("odor", i.match("ea")[0]), -4.0)  # (the odor table's, by its name there)
+    assert hal[ea]["DM2"] == H.loc["DM2", "ethyl acetate @ -4"] and hal[ea][None] == "ethyl acetate @ -4"
+    assert hal[(("name", "apple"), 0.0)][None] == "apple @ 0"
     # shown as a reference dataset, its columns odors as datasets write them
     listed = next(r for r in call(env.reference_list)[1]["datasets"] if r["id"] == "hallem-carlson-2006")
     assert listed["state"] == "ok" and listed["shape"] == [23, 176] and listed["glomeruli"]["axis"] == "rows"
@@ -138,7 +148,7 @@ def test_scale_by_hallem(env, tmp_path):
     assert s["method"] == "hallem" and s["factor"] == pytest.approx(100) and s["hallem"]["r"] == pytest.approx(1)
     assert (s["hallem"]["n_odors"], s["hallem"]["n_points"], s["hallem"]["enough"]) == (6, 54, True)
     assert s["odors"] == [f"{o} @ -3" for o in H_ODORS] and s["glomeruli"] == sorted(GLOMS) and s["mixtures"] == ["ea @ -3 + eb @ -3"]
-    assert np.allclose(s["orn_deltas"].to_numpy(), H.loc[sorted(GLOMS), [f"{o} @ -2" for o in H_ODORS]].to_numpy(), atol=1e-3)
+    assert np.allclose(s["orn_deltas"].to_numpy(), H.loc[sorted(GLOMS), [f"{H_NAMES[o]} @ -2" for o in H_ODORS]].to_numpy(), atol=1e-3)
     frame = orn_input.model_frame(s)
     assert frame.columns.names == ["panel", "odor"] and frame.index.name == "glomerulus" and set(frame.columns.get_level_values(0)) == {"p1"}
     # every panel's odors, if not said (and the factor from them all, whichever are the model's)
