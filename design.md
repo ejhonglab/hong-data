@@ -1522,8 +1522,12 @@ length.
 - **The three other ways to make one signal of an ROI's planes** are not al_analysis' at
   all (and the weighted one's traces are of relative F).
 - **Not checked**: recordings with 8 or more time points before the odor, where numpy and
-  pandas may not add F0 in the same order (a last digit); and movies that are not 16-bit
-  integers, checked against al_analysis' steps written out, not its own outputs.
+  pandas may not add F0 in the same order (a last digit); movies that are not 16-bit
+  integers, checked against al_analysis' steps written out, not its own outputs; and
+  recordings acquired in several blocks, imaging stopped between them. Nothing here
+  assumes one continuous acquisition (each trial's frames are as al_analysis' trial file
+  gives them, and no time point outside a trial is used), but every recording checked was
+  one: all of Tom's are, and two of Sam's looked at.
 
 ### What is questionable in the calculation
 
@@ -1568,9 +1572,10 @@ the ways to combine planes avoid the second.
    of all of a trial's time points before the odor: 4 or 5 volumes in the 2023-05-08 fly
    and 2 or 3 in the later two. A trial starts as long before its odor as the recording ran
    before its first (7 s), so every trial has the baseline the first one has, which has
-   nothing before it; imaging runs on through a recording, so the time points before a
-   trial's start are the end of the trial before, and using none of them assumes nothing
-   of how responses decay. Its cost is noise: the
+   nothing before it; imaging runs on through these recordings (not through everyone's:
+   some may be acquired in blocks), so the time points before a trial's start are the end
+   of the trial before, and using none of them assumes nothing of how responses decay, nor
+   that there is anything before a trial at all. Its cost is noise: the
    variance of a response R of one time point is about σ²(1 + (1 + R)² / n), σ one time
    point's noise (4 to 5.5% of F0). Measured, a baseline with less noise (the median of
    five neighbouring trials' F0) cuts the s.d. of a response between an odor's repeats by
