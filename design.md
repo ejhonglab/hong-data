@@ -1566,10 +1566,11 @@ the ways to combine planes avoid the second.
    choosing. Small beside 2.
 5. **F0 is of very few time points, which is a choice and costs little.** It is the mean
    of all of a trial's time points before the odor: 4 or 5 volumes in the 2023-05-08 fly
-   and 2 or 3 in the later two. Imaging is triggered by the stimulus, a block per trial, so
-   nothing else is next to the odor (the time points before a trial's start are the end of
-   the block before, across the unimaged time between trials), and using them alone is the
-   same for every trial and assumes nothing of how responses decay. Its cost is noise: the
+   and 2 or 3 in the later two. A trial starts as long before its odor as the recording ran
+   before its first (7 s), so every trial has the baseline the first one has, which has
+   nothing before it; imaging runs on through a recording, so the time points before a
+   trial's start are the end of the trial before, and using none of them assumes nothing
+   of how responses decay. Its cost is noise: the
    variance of a response R of one time point is about σ²(1 + (1 + R)² / n), σ one time
    point's noise (4 to 5.5% of F0). Measured, a baseline with less noise (the median of
    five neighbouring trials' F0) cuts the s.d. of a response between an odor's repeats by
@@ -1589,7 +1590,10 @@ the ways to combine planes avoid the second.
    later than the third, and for 4 to 10% the first two hold under 80% of the peak. The
    comment at `n_volumes_for_response` asks for it in seconds: two volumes are 3.0 s in
    the 2023-05-08 fly (0.67 volumes/s) and 4.5 s in the later two (0.44), by their
-   `Experiment.xml` (the motion-corrected movies do not say).
+   `Experiment.xml` (the motion-corrected movies do not say). The odor pulse is 3.0 s
+   (the stimulus' `pulse_us`; the valve's signal in ThorSync), so at 0.67 volumes/s it
+   reaches into a third volume whenever it begins after the first odor volume has, and
+   the window leaves that volume out; at 0.44 two volumes always hold it.
 8. **No background is subtracted before dF/F** (al_analysis has a TODO for it), so F0
    holds the detector's offset and out-of-focus light, and dF/F is smaller by that share,
    differently in dim and bright glomeruli. Nor is F0 kept from being near zero.

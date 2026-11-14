@@ -43,7 +43,7 @@ for arg in sys.argv[1:]:
         f0_ratio += list((f0 / scale).var(axis=0, ddof=1) / expected)
         f0_ratio_diff += list((np.diff(f0 / scale, axis=0) ** 2).mean(axis=0) / 2 / expected)
         drift.append(np.median(f0[-3:].mean(axis=0) / f0[:3].mean(axis=0)))
-        # the end of the block before (its last two time points) against this trial's F0
+        # the end of the trial before (its last two time points: imaging runs on through a recording) against this trial's F0
         resp = extract.responses(tr, trials)
         for i, t in enumerate(trials):
             if i == 0:
@@ -85,7 +85,7 @@ for arg in sys.argv[1:]:
           f"{np.median(f0_ratio_diff):.1f} x ({np.percentile(f0_ratio_diff, 10):.1f} to {np.percentile(f0_ratio_diff, 90):.1f}); F0 of a recording's last three "
           f"trials over its first three: {np.min(drift):.2f} to {np.max(drift):.2f}")
     tail, tail_strong = np.array(tail), np.array(tail_strong)
-    print(f"the last two time points of the block before, against this trial's F0: {100 * np.median(tail):+.1f}% (median; s.d. {100 * tail.std():.1f}%, "
+    print(f"the last two time points before a trial's start, against its F0: {100 * np.median(tail):+.1f}% (median; s.d. {100 * tail.std():.1f}%, "
           f"where noise alone would give {100 * np.median(tail_sd):.1f}%); after a response over 0.5: {100 * np.median(tail_strong):+.1f}% "
           f"(10th to 90th percentile {100 * np.percentile(tail_strong, 10):+.1f}% to {100 * np.percentile(tail_strong, 90):+.1f}%; n = {len(tail_strong)})")
     own = np.array(resp_sd["own"])
