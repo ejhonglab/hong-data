@@ -26,9 +26,27 @@ done here, with the same numbers out:
   ``best_plane``). The other `MODES` are other ways to make one signal of its planes.
 
 Faster than al_analysis in that masks are only made over each polygon's bounding box, a
-movie's planes are read one at a time (only those with ROIs), and responses are computed for
-all ROIs at once. An extraction is a row of the ``extractions`` table and a folder,
-`out_dir`, which `OUTPUTS` describes.
+movie is read once, in pieces, and responses are computed for all ROIs at once. An extraction
+is a row of the ``extractions`` table and a folder, `out_dir`, which `README` describes.
+
+Where it differs from al_analysis (notes/trace_extraction_notes.md says more of each):
+
+- labels: an odor's abbreviation is hong2p's hardcoded one, else its own in the recording's
+  trials (al_analysis also has hong2p's cache of every YAML loaded on its computer); a
+  recording's panel, where al_analysis knows none, is its folder's name less a number at its
+  end (`panel`); ``is_pair`` is always False;
+- recordings: one done again (``<name>_redo``) is in place of the first, whole, where
+  al_analysis blanks only the odors given again, whatever the folders are called; every folder
+  with a movie and its trials is taken (also of one plane), none of al_analysis' own choices of
+  what to analyze applied;
+- ROIs: a recording's ``RoiSet.zip``, else the fly's folder's (which al_analysis does not
+  read); rectangles, ovals and composite ROIs are read, which its reader refuses;
+- nothing after al_analysis' per-recording table (``ij_trial_df``) is done: no merging of ROIs
+  across recordings, dropping of uncertain ROIs, blanking of concentrations not final, or means;
+  ``responses_glomeruli.csv`` is of the ROIs an upload accepts, not al_analysis' certain ones;
+- its settings are al_analysis' current defaults, fixed (`N_RESPONSE`, the baseline, the
+  statistic); only ImageJ's ROIs, not suite2p's;
+- the other `MODES` are not al_analysis' at all.
 """
 from __future__ import annotations
 
@@ -605,6 +623,15 @@ rule: half a pixel down and right of ImageJ's own, which takes a pixel's centre)
 of the movie over them. dF/F = (F - F0) / F0, F0 the mean of the trace over the trial's time points before
 the odor. A response is the dF/F of largest magnitude, with its sign, among the first {n_response} time points
 from the odor's onset. ROIs named {outline} (outlines of the whole antennal lobe) or ending in {maximal} are left out.
+
+Where these are not al_analysis' own tables: an odor is abbreviated as hong2p's hardcoded table or the
+recording's trials abbreviate it (al_analysis also uses a cache of its own computer's, so a few names differ:
+1-prop for its 1-3ol); a recording done again (<name>_redo) is here in place of the first, whole, where
+al_analysis blanks only the odors given again; every recording with a movie and its trials is here, none
+left out as al_analysis leaves some; and nothing al_analysis does after its per-recording table is done
+(ROIs merged across recordings, uncertain ROIs dropped where there is a certain one, concentrations that are
+not a panel's final ones blanked, means taken). Another way than its best plane in each recording to make
+one signal of an ROI's planes (above) is not al_analysis' either.
 """
 
 

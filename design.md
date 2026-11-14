@@ -1489,6 +1489,42 @@ in each recording, and its response in each trial.
 - **Not kept in backups**: an extraction is made again from the movies and the ROIs. The
   ROIs edited by hand are (`backup.ALSO_KEPT`), as nothing makes those again.
 
+### Where it deviates from al_analysis
+
+The numbers of the default way are al_analysis'; what is around them is not all its own.
+`notes/trace_extraction_notes.md` (al_analysis' `BUGS.md`) has each of these at more
+length.
+
+- **Labels.** Odor abbreviations are hong2p's hardcoded ones, else the recording's trials'
+  own, without the cache of its computer's YAMLs that al_analysis also has (above). A
+  recording's panel, where `get_panel` knows none, is its folder's name less a number at
+  its end, not None. `is_pair` is always False (al_analysis: `is_pairgrid`).
+- **Recordings.** A `<name>_redo` folder is in place of `<name>`, whole, as in the site's
+  lists of movies. al_analysis processes both and later blanks, odor by odor, all but the
+  last recording of each of a panel's odors (`drop_redone_odors`), whatever the folders
+  are called: so a redo of some odors only loses the first recording's others here, and
+  odors given again in a folder not named so are both kept here, as further repeats. Every
+  folder with a movie and its trials is taken, of one plane too: al_analysis' own choices
+  of what to analyze (flies, dates, recordings with no stimulus YAML or whose frames could
+  not be assigned) are not applied.
+- **ROIs.** A recording's `RoiSet.zip`, else the fly's folder's, which al_analysis does
+  not read (it links each recording's to its first diagnostic recording's). Rectangles,
+  ovals and composite ROIs are read, which al_analysis' reader refuses; an ROI on no plane
+  is left out, where it tries the ROI's name for one.
+- **It stops at al_analysis' per-recording table** (`ij_trial_df`). ROIs are not merged
+  across recordings, uncertain ROIs are not dropped where there is a certain one,
+  concentrations that are not a panel's final ones are not blanked, and no means are
+  taken. `responses_glomeruli.csv` is of the ROIs an upload accepts, not al_analysis'
+  certain ones, and the fly's `responses.csv` (every recording's trials, repeats counted
+  through a panel's recordings) is a table al_analysis does not make.
+- **Its settings are al_analysis' current defaults, fixed**: not `-R`'s mean, z-scored
+  traces, or another baseline. Only ImageJ's ROIs, not suite2p's.
+- **The three other ways to make one signal of an ROI's planes** are not al_analysis' at
+  all (and the weighted one's traces are of relative F).
+- **Not checked**: recordings with 8 or more time points before the odor, where numpy and
+  pandas may not add F0 in the same order (a last digit); and movies that are not 16-bit
+  integers, checked against al_analysis' steps written out, not its own outputs.
+
 ### What is questionable in the calculation
 
 Looked for in the code, then measured on three of Tom's flies (2023-05-08/1, 2023-11-21/2,

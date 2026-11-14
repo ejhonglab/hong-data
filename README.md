@@ -862,9 +862,14 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   plane of every ROI), `dff.csv`, `responses.csv` (as al_analysis' own table of it) and
   `planes.csv` (each plane's pixels, largest response, noise, weight, and whether it is
   al_analysis' best), with `provenance.json` (the files read, how it was computed, the
-  software, who asked), a `README.txt` and its log. What is questionable in this
-  calculation, and by how much it matters, is in
-  [design.md](design.md#signals-extracted-as-al_analysis-does).
+  software, who asked), a `README.txt` and its log. The numbers are al_analysis', but not
+  all that is around them: a few odor abbreviations differ (it also uses a cache of its own
+  computer's), a `_redo` recording replaces the first whole (al_analysis blanks only the
+  odors given again), every recording with a movie and its trials is taken, and nothing
+  al_analysis does after its per-recording table is done (ROIs merged across recordings,
+  uncertain ROIs dropped, concentrations that are not a panel's final ones blanked, means).
+  These, and what is questionable in the calculation itself with by how much it matters,
+  are in [design.md](design.md#signals-extracted-as-al_analysis-does).
   *Download training data*: of every glomeruli dataset with a diagnostic panel, each fly whose
   folder in the dataset's motion-corrected data (as al_analysis lays it out) has
   diagnostic recordings (folders with `trialmean_dff.tif`, the mean dF/F of each odor, and
