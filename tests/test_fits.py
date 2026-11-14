@@ -131,9 +131,12 @@ def test_options():
     # how its ROIs are made (as the form sends them, strings)
     o = fits.options({"cellprob_threshold": "-1.5", "flow_threshold": "0", "dilate": "2", "join_overlap": "", "join_corr": -1})
     assert o == {**fits.DEFAULTS, "cellprob_threshold": -1.5, "flow_threshold": 0.0, "dilate": 2, "join_corr": -1.0}
+    # and the most a name may cost
+    assert fits.DEFAULTS["max_cost"] == 0.6 and fits.options({"max_cost": "0.75"})["max_cost"] == 0.75
     for bad in ({"epochs": 0}, {"held_out": "x"}, {"held_out": 31}, {"refs": ["hemibrain"]}, {"refs": "grabe2016"},
                 {"refs": [{}]}, {"refs": ["grabe2016"], "atlas": False}, {"cellprob_threshold": "x"}, {"cellprob_threshold": 7},
-                {"flow_threshold": -0.1}, {"dilate": "0.5"}, {"dilate": 11}, {"join_overlap": 1.5}, {"join_corr": "nan"}):
+                {"flow_threshold": -0.1}, {"dilate": "0.5"}, {"dilate": 11}, {"join_overlap": 1.5}, {"join_corr": "nan"},
+                {"max_cost": -0.1}, {"max_cost": 2.5}, {"max_cost": "x"}):
         with pytest.raises(ValueError):
             fits.options(bad)
 

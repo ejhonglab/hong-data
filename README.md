@@ -822,6 +822,19 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   someone else changed them meanwhile, it says so instead of overwriting theirs. The ROIs
   as predicted, and the fly's own, are only ever shown: nothing changes them. Predicting a
   fly's ROIs again deletes its edited ones with the rest (it says so when asking).
+  Clicking a predicted ROI's name in the viewer's list opens a table of what that name
+  cost, which stays until closed (its ×, Escape, or a click outside it): a column for each
+  term of the cost (odor tuning, position, shape, atlas overlap, layout; hover over one
+  for what its value is), their weights, then a row for each of the 5 glomeruli that cost
+  least for the ROI, with each term's value (0: a perfect fit) and the cost, their
+  weighted mean; the one the ROI was named is marked, and a glomerulus that names another
+  ROI says so. An ROI is named only where that cost is no more than the most a name may
+  cost (0.6 by default, set when the model is fit), else numbered. The values are of the
+  ROI as predicted, a 3D object, so a copy's name shows them only while its outlines are
+  all as predicted; once simplified or edited, it says why it cannot (computing them
+  again needs the fly's responses and the atlas registered to it, as predicting does).
+  Predictions made before these were kept (`<fly>_identity_terms*.json`, in the download)
+  say to predict again.
   *Extract signals*, below it, computes the signals of a fly's ROIs from its
   motion-corrected movies as al_analysis does, with the same numbers (checked against what
   al_analysis left for 9 recordings of 4 flies: identical to the last digit): for each
@@ -886,9 +899,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   and each one's odor tuning), holding out a few flies (from each dataset in turn) to score
   its predicted ROIs (Cellpose's own, named) against theirs; with how many to hold out, Cellpose's epochs (15 by default), whether to build the atlas
   (and add the [Grabe et al. 2016](https://doi.org/10.1016/j.celrep.2016.08.063) atlas to
-  it, as by default), whether to train on tentative ROIs, and (under *How its ROIs are made*) Cellpose's mask thresholds, how much
+  it, as by default), whether to train on tentative ROIs, and (under *How its ROIs are made and named*) Cellpose's mask thresholds, how much
   to grow its ROIs, and how much each plane's must overlap and be tuned alike to be joined into 3D objects (the
-  defaults scored best on fit 6's flies). Anyone may start one, once their first name is set in
+  defaults scored best on fit 6's flies), and the most a name may cost (0.6: an ROI no glomerulus costs
+  less for is numbered, not named). Anyone may start one, once their first name is set in
   Settings (the box links to it). One runs at a time; those running and waiting say who
   asked for them, from which IP address, when, how far they have got, and when they should
   end (estimated from how long earlier fits took, stage by stage, which is kept with each);

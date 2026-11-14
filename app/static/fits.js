@@ -15,7 +15,7 @@ const refNames = (o) => (o.refs || []).map((r) => REF_NAMES[r] || r);
 const minus = (v) => String(v).replace('-', '−');
 const roiSettings = (o) => (o.cellprob_threshold == null ? '' : ` Its ROIs: cell probability threshold ${minus(o.cellprob_threshold)},
   flow threshold ${o.flow_threshold}, grown by ${o.dilate} px; planes joined at overlap ${o.join_overlap} and tuning correlation
-  ${minus(o.join_corr)}.`);
+  ${minus(o.join_corr)}${o.max_cost == null ? '' : '; named where a name costs ' + o.max_cost + ' or less'}.`);
 
 // a duration in seconds as '1 h 5 min', '12 min', '40 s'
 export function fmtDuration(s) {
@@ -224,7 +224,7 @@ export class FitsPanel {
     const options = { held_out: $('#fit-held-out').value, epochs: $('#fit-epochs').value, atlas,
       tentative: $('#fit-tentative').checked, refs: atlas && $('#fit-grabe').checked ? ['grabe2016'] : [],
       cellprob_threshold: $('#fit-cellprob').value, flow_threshold: $('#fit-flow').value, dilate: $('#fit-dilate').value,
-      join_overlap: $('#fit-join-overlap').value, join_corr: $('#fit-join-corr').value };
+      join_overlap: $('#fit-join-overlap').value, join_corr: $('#fit-join-corr').value, max_cost: $('#fit-max-cost').value };
     $('#fit-start').disabled = true;
     try {
       const f = await api('/api/fits', { method: 'POST', json: { name, options } });

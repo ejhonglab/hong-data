@@ -7,6 +7,7 @@
 // (predictions.save_edited); those predicted, and the fly's own, are only ever shown.
 
 import { History, area, deletePoint, inside, nearestPoint, simplify, splitPoint } from './roi_edit.js';
+import { showIdentity, showNoIdentity } from './identity.js';
 
 const TYPED = { uint8: Uint8Array, int8: Int8Array, uint16: Uint16Array, int16: Int16Array, uint32: Uint32Array, int32: Int32Array, float32: Float32Array };
 const CACHE_BYTES = 256 * 1024 * 1024;
@@ -97,7 +98,13 @@ export class MoviePlayer {
     });
     this.$('.player-roi-list').addEventListener('click', (e) => {
       const b = e.target.closest('[data-roi]');
-      if (b) this._selectRoi(+b.dataset.roi);
+      if (!b) return;
+      const i = +b.dataset.roi;
+      if (!e.target.closest('.player-roi-name')) this._selectRoi(i);
+      else { // (its name: the ROI chosen, if it is not, and what the name cost)
+        if (i !== this.selectedRoi) this._selectRoi(i);
+        this._showIdentity(i);
+      }
     });
     this.edit = null; // a prediction's ROIs as edited here: { id, revision, hist, name, ... } (`openPrediction`)
     this.base = null; // the ROIs read for the movie shown: { predicted, manual }
@@ -344,8 +351,11 @@ export class MoviePlayer {
       + this.rois.map((r, i) => {
         if (!listed(r)) return '';
         const plane = this._roiPlane(r);
+        // (a predicted ROI's name, or its copy's: a click on it opens what the name cost, `_showIdentity`)
+        const name = pred && r.source !== 'manual' ? `<span class="player-roi-name" title="Click: what this name cost (each term's value for the glomeruli that fit best)">${this.esc(r.name)}</span>`
+          : this.esc(r.name);
         return `<button type="button" class="player-roi${i === this.selectedRoi ? ' active' : ''}" data-roi="${i}">
-          <span class="swatch-roi" style="background:${this.esc(this._roiColor(r))}"></span>${this.esc(r.name)}
+          <span class="swatch-roi" style="background:${this.esc(this._roiColor(r))}"></span>${name}
           <span class="muted">${plane == null ? 'all planes' : `plane ${plane + 1}`}</span></button>`;
       }).join('');
   }
@@ -521,6 +531,52 @@ export class MoviePlayer {
         }
       }
     }
+  }
+
+  // --------------------------------------- what a predicted ROI's name cost
+  // Whether the edited ROIs named as `r` are still the predicted ROI's outlines, point for point, on
+  // every plane it has one (what a name cost is of the ROI as a 3D object, as predicted).
+  _asPredicted(r) {
+    const same = (a, b) => a.length === b.length && a.every((p, i) => Math.abs(p[0] - b[i][0]) < 0.011 && Math.abs(p[1] - b[i][1]) < 0.011);
+    const mine = this.rois.filter((x) => x.source === 'edited' && x.name === r.name);
+    const theirs = this.base.predicted.filter((x) => x.name === r.name)
+      .flatMap((x) => x.paths.filter((p) => p.length >= 3).map((p) => ({ z: this._roiPlane(x) ?? null, p })));
+    return mine.length === theirs.length && mine.every((m) => theirs.some((t) => t.z === (m.z ?? null) && same(m.paths[0], t.p)));
+  }
+
+  // Opens the box of what the name of ROI i (a predicted one, or its edited copy) cost (identity.js):
+  // each term's value for the glomeruli that cost least, read once per prediction opened; or why
+  // not: a copy no longer as predicted (the values are of the predicted outlines), or a prediction
+  // made before they were kept.
+  async _showIdentity(i) {
+    const r = this.rois[i], ed = this.edit, dialog = document.getElementById('roi-identity');
+    if (!ed || !r || r.source === 'manual' || !this.base) return;
+    const copy = r.source === 'edited';
+    const title = `${/^\d+$/.test(r.name) ? `Predicted ROI ${r.name}: not named` : `Predicted ROI named ${r.name}`}${copy ? ' (its copy to edit)' : ''}`;
+    if (copy && !this._asPredicted(r)) {
+      const s = ed.hist.current;
+      showNoIdentity(dialog, title, `What this name cost cannot be shown for this ROI: it is a copy of the predicted ROI whose outline is no
+        longer as predicted (${s.simplified ? `the copy was simplified within ${s.simplified} px${s.pointsEdited ? ', and points of it edited' : ''}`
+    : 'a point of it was moved, added or deleted'}). The values were computed for the predicted outlines, on all the ROI's planes;
+        computing them for the outlines as they are now needs the fly's odor responses and the atlas registered to the fly, which only
+        predicting its ROIs again reads. The copy keeps the name the predicted ROI was given: tick “predicted” above the list and click
+        that ROI's name for the values it was named by.`);
+      return;
+    }
+    ed.identity ??= this.api(`/api/predictions/${ed.id}/identity`);
+    let terms;
+    try { terms = await ed.identity; } catch (e) {
+      ed.identity = null;
+      if (ed === this.edit) showNoIdentity(dialog, title, `Could not read what this name cost: ${this.esc(e.message)}`);
+      return;
+    }
+    if (ed !== this.edit || !this.el.open) return;
+    const label = terms.rois ? terms.by_name[r.name] : null;
+    if (!terms.rois) {
+      showNoIdentity(dialog, title, `This prediction was made before what each name cost was kept with it. Predict this fly's ROIs again
+        (<i>Predict its ROIs</i>, in the tab) to see it.`);
+    } else if (label == null || !terms.rois[label]) showNoIdentity(dialog, title, 'This ROI is not among those the model named.');
+    else showIdentity(dialog, `${title}${copy ? ', unchanged' : ''}`, terms, label, this.esc);
   }
 
   // the pointer's place in the image, in pixels (as ROIs' points are)

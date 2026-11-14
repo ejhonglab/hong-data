@@ -96,6 +96,14 @@ def test_view(main, tensor):  # noqa: F811
     assert status == 200 and v["fly"] == "ann_2024-01-01_1" and len(v["movies"]) == 1
     m = v["movies"][0]
     assert (m["path"], m["rois"], m["predicted"]) == (str(d / predictions.AVERAGE), manual, str(d / "ann_2024-01-01_1_RoiSet.zip"))
+    # what its ROIs' names cost: not kept by predictions made before it was; then as al-diag-seg wrote it, each ROI found by its name
+    assert call(main.predictions_identity, path_params={"id": p["id"] + 1})[0] == 404
+    assert call(main.predictions_identity, path_params={"id": p["id"]}) == (200, {"rois": None})
+    terms = {"weights": {"tuning": 1.0, "atlas": None}, "weight_sum": 1.5, "max_cost": 0.6,
+             "rois": {"3": {"assigned": "DM2", "candidates": [{"name": "DM2", "cost": 0.2}]}, "7": {"assigned": None, "candidates": []}}}
+    (d / "ann_2024-01-01_1_identity_terms.json").write_text(json.dumps(terms))
+    assert call(main.predictions_identity, path_params={"id": p["id"]})[1] == {**terms, "by_name": {"DM2": "3", "7": "7"}}
+    (d / "ann_2024-01-01_1_identity_terms.json").unlink()
     # which the movie player may read, as it may tensor's; not the rest of the data folder
     assert main._server_file(m["predicted"], (".zip",)) == d / "ann_2024-01-01_1_RoiSet.zip"
     (fits.fit_dir(f["id"]) / "model" / "x.zip").write_bytes(b"")
@@ -237,6 +245,16 @@ def test_worker_prediction(main, tensor, monkeypatch):  # noqa: F811
     assert o["segmenter"] == "stand-in" and o["cellprob_threshold"] == am.Options().cellprob_threshold
     assert tifffile.imread(d / "average.tif").shape == tuple(prov["fly"]["planes"])
     assert "summary.csv" in (d / "README.txt").read_text() and (d / "summary.csv").is_file()
+    # what each name cost (of its final ROIs, scored: al-diag-seg's file of that kind): every ROI of the RoiSet by its name,
+    # those named at no more than the model's max_cost (the fit's, the default)
+    assert o["max_cost"] == fits.ROI_DEFAULTS["max_cost"]
+    t = predictions.identity_terms(main.db, p["id"])
+    assert t["max_cost"] == o["max_cost"] and set(t["by_name"]) == names and t["weights"]["atlas"] is None
+    for name, label in t["by_name"].items():
+        roi = t["rois"][label]
+        assert (roi["assigned"] or label) == name and 1 <= len(roi["candidates"]) <= 6
+        if roi["assigned"]:
+            assert next(c for c in roi["candidates"] if c["name"] == name)["cost"] <= t["max_cost"]
 
     # a fly with no ROIs of its own (the stand-in segmenter then needs some: boxes)
     new, raw = tensor / "ann/analysis/2024-02-02/1", tensor / "ann/raw/2024-02-02/1"
@@ -258,6 +276,7 @@ def test_worker_prediction(main, tensor, monkeypatch):  # noqa: F811
     assert q["status"] == "done", (d / "log.txt").read_text()[-3000:]
     assert q["result"]["scores"] is None and q["result"]["n"] >= 1 and q["result"]["device"] == "CPU"
     assert (d / "ann_2024-02-02_1_identities.csv").is_file() and (d / "ann_2024-02-02_1_RoiSet.zip").is_file()
+    assert (d / "ann_2024-02-02_1_identity_terms.json").is_file() and len(predictions.identity_terms(main.db, q["id"])["by_name"]) == 2
     assert json.loads((d / "provenance.json").read_text())["fly"]["roiset"] is None
     # (the viewer: its average image, with only the ROIs predicted)
     v = predictions.view(main.db, q["id"])

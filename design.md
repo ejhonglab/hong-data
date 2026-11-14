@@ -366,7 +366,10 @@ between the frontend and the server. Using the app is described in
   them (−1 and 0.4, grown back by the 1 px training ROIs are eroded by, joined at 0.3 and 0.5:
   the best when scored strictly) 51%, 94%, 46% and 66%. So more glomeruli are found, but more
   ROIs are wrong where that can be checked, and more lie where nothing is drawn, where it can't.
-  The fit form has them under "How its ROIs are made", and they are saved with the model.
+  The fit form has them under "How its ROIs are made and named", and they are saved with the model.
+  So is the most a name may cost (`max_cost`, 0.6: al-diag-seg's default, not tuned on the
+  database's flies), an option of a fit rather than of a prediction, so that every prediction
+  of a model names by the same rule as its held-out scores.
   Models saved before they were options take al-diag-seg's defaults, so predictions with fits 2
   and 6 use them, though those fits' scores on the tab are as their fits made them; a
   prediction's provenance.json has the options its model ran with (`alseg_options`).
@@ -456,6 +459,15 @@ between the frontend and the server. Using the app is described in
   predictions folder (only it, of the data folder). Odors are matched to the model's as
   for a fit's flies, through the odor table, so a fly's odors named otherwise than the
   training flies' still count.
+- **What a name cost is shown as al-diag-seg computed it, never computed again**
+  (`identity.js`, `predictions.identity_terms`). al-diag-seg writes, with a prediction, each
+  term's value for every ROI's 5 best glomeruli (`<fly>_identity_terms*.json`), and the
+  viewer's table is that file's row for the ROI, found by its name (a glomerulus names one
+  ROI; one not named is its own label). The terms are of an ROI as a 3D object, and need
+  the fly's responses and the atlas registered to it (minutes of ANTs), which only the
+  worker reads: so an edited copy shows them only while every outline of its name is the
+  predicted one, point for point, and otherwise says why not, rather than show values of
+  outlines that are no longer there.
 - **A prediction's ROIs are edited as one copy of them, saved whole at each change**
   (`roi_edit.js`, `player.js`, `predictions.save_edited`). What a model predicted is a
   result, to compare an edit or another model with, so it is never changed: the viewer
@@ -1595,7 +1607,8 @@ app/movies.py      a dataset's movies on tensor: finding them, reading their pla
 config/odor_sheet_template.csv   odor sheet columns, with the odors from the thesis tables
 app/static/        frontend: index.html, app.js, heatmap.js, colormaps.js (+ mpl_luts.js),
                    app.css, cluster.js (+ cluster-worker.js), figure.js (SVG/PDF/PNG export),
-                   player.js (movie player; roi_edit.js: a prediction's ROIs edited in it),
+                   player.js (movie player; roi_edit.js: a prediction's ROIs edited in it;
+                   identity.js: what a predicted ROI's name cost),
                    similarity.js (odor similarities, and between them;
                    pvalue-worker.js their p-values), metacyc.js (MetaCyc below its matrices: pathways
                    drawn, compounds, LCA paths, search), lotus.js (LOTUS with its matrices: how

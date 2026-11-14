@@ -597,7 +597,7 @@ try {
       <label class="check"><input type="checkbox" id="fit-tentative" checked><span>Tentative ROIs (<code>DA1_t0</code>) trained on as
         that glomerulus</span></label>
       <details class="fit-roi">
-        <summary>How its ROIs are made</summary>
+        <summary>How its ROIs are made and named</summary>
         <div class="fit-roi-body">
           <p class="small muted">Cellpose's masks on each plane, and how they are joined into 3D objects. Saved with the model, so
             its predictions use them too. The defaults scored best on fit 6's flies, with nothing counted against an ROI where
@@ -613,7 +613,13 @@ try {
               <input type="number" id="fit-join-overlap" min="0" max="1" step="0.05" value="0.2"></label>
             <label class="field"><span>… and tuning correlation <span class="muted">(of their odor responses, −1–1)</span></span>
               <input type="number" id="fit-join-corr" min="-1" max="1" step="0.05" value="0.7"></label>
+            <label class="field"><span>Most a name may cost <span class="muted">(0–2; higher names more ROIs, less surely)</span></span>
+              <input type="number" id="fit-max-cost" min="0" max="2" step="0.05" value="0.6"></label>
           </div>
+          <p class="small muted">An ROI is named as the glomerulus that costs least for it (each glomerulus names one ROI), if that
+            costs no more than this; else it is numbered. The cost is the weighted mean of how far the ROI is from the glomerulus
+            in odor tuning, position, shape, overlap with the atlas and layout among its neighbours (each 0 for a perfect fit):
+            click a predicted ROI's name in a prediction's viewer for its values.</p>
         </div>
       </details>
       <p class="small" id="fit-who"></p>
@@ -1376,6 +1382,16 @@ try {
       <div class="player-roi-legend muted small"></div>
       <div class="player-roi-list"></div>
     </aside>
+  </div>
+</dialog>
+
+<dialog id="roi-identity" class="roi-identity" aria-labelledby="roi-identity-title">
+  <div class="roi-identity-box">
+    <div class="roi-identity-head">
+      <h2 class="roi-identity-title" id="roi-identity-title"></h2>
+      <button type="button" class="btn small roi-identity-close" title="Close (Esc)" aria-label="Close">×</button>
+    </div>
+    <div class="roi-identity-body"></div>
   </div>
 </dialog>
 

@@ -10,7 +10,8 @@ data folder, on tensor): asked for again, it is run again, its files replaced. I
   one fits (numbered where none does), per plane, for ImageJ and al_analysis;
 - ``<fly>_<kind>.tif`` and ``<fly>_<kind>_RoiSet.zip``: each kind of ROIs al-diag-seg makes
   (``pred``: Cellpose's; ``refined_tuning``; ``refined_prior``, with the atlas), as labels and
-  RoiSets, and the names given (``<fly>_identities*.csv``);
+  RoiSets, the names given (``<fly>_identities*.csv``) and what each cost
+  (``<fly>_identity_terms*.json``: `identity_terms`);
 - ``average.tif``: the fly's average image, as the model saw it (for the tab's viewer);
 - where the fly has ROIs of its own, the scores of each kind against them (``summary.csv``,
   ``glomeruli.csv``);
@@ -412,6 +413,30 @@ def view(db, pred_id: int) -> Optional[dict]:
         m["predicted"] = pred
     return {"id": p["id"], "fit_id": p["fit_id"], "fly": p["fly"], "movies": out, "edited": edited_info(p),
             "revision": edited_revision(p)}
+
+
+def identity_terms(db, pred_id: int) -> Optional[dict]:
+    """What naming a prediction's ROIs cost, as al-diag-seg wrote it (``<fly>_identity_terms*.json``,
+    of its final ROIs: `alseg.identity.assign_identities`): the ``weights`` of the cost's terms
+    (None: a term that is off), their ``weight_sum``, ``max_cost`` and, per ROI (``rois``, by its
+    label), the glomeruli that cost least for it, each with its terms' values; with ``by_name``:
+    the label of the ROI of each name in its RoiSet (a glomerulus, or its own label where it got
+    none). ``rois`` is None for a prediction made before these were kept.
+
+    Returns:
+        None if there is no such prediction done.
+    """
+    p = get(db, pred_id)
+    if p is None or p["status"] != "done":
+        return None
+    d, final = pred_dir(pred_id), (p.get("result") or {}).get("final")
+    for path in (d / f"{p['fly']}_identity_terms_{final}.json", d / f"{p['fly']}_identity_terms.json"):
+        try:
+            terms = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        return {**terms, "by_name": {r["assigned"] or label: label for label, r in terms["rois"].items()}}
+    return {"rois": None}
 
 
 # ---------------------------------------------------------- ROIs as edited

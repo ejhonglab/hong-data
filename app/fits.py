@@ -29,15 +29,17 @@ from .glomeruli import load_glomeruli
 STATUSES = ("queued", "running", "done", "failed", "cancelled", "interrupted")
 ACTIVE = ("queued", "running")
 STAGES = ("load", "train", "atlas", "evaluate")
-# how a fit's model makes its ROIs and joins them into 3D objects (al-diag-seg's Options of these
-# names, saved with the model): al-diag-seg's defaults (tests/test_fits.py checks), picked on fit 6's
-# flies (design.md)
-ROI_DEFAULTS = {"cellprob_threshold": -2.0, "flow_threshold": 0.8, "dilate": 0, "join_overlap": 0.2, "join_corr": 0.7}
+# how a fit's model makes its ROIs and joins them into 3D objects, and the most naming one as a
+# glomerulus may cost (``max_cost``: an ROI none costs less for is numbered; `predictions.identity_terms`
+# has what the cost is made of): al-diag-seg's Options of these names, saved with the model, and its
+# defaults (tests/test_fits.py checks), the first five picked on fit 6's flies (design.md)
+ROI_DEFAULTS = {"cellprob_threshold": -2.0, "flow_threshold": 0.8, "dilate": 0, "join_overlap": 0.2, "join_corr": 0.7,
+                "max_cost": 0.6}
 # 15 epochs: the held-out flies' loss had stopped improving by epoch 10 in fits 2 and 6 (design.md)
 DEFAULTS = {"held_out": 4, "epochs": 15, "atlas": True, "tentative": True, "refs": ["grabe2016"], **ROI_DEFAULTS}
 LIMITS = {"held_out": (1, 30), "epochs": (1, 5000), "dilate": (0, 10)}  # (whole numbers)
 FLOAT_LIMITS = {"cellprob_threshold": (-6.0, 6.0), "flow_threshold": (0.0, 3.0), "join_overlap": (0.0, 1.0),
-                "join_corr": (-1.0, 1.0)}
+                "join_corr": (-1.0, 1.0), "max_cost": (0.0, 2.0)}
 # the fixed reference atlases a fit may add to its flies' atlas (``refs``, al-diag-seg's): folders of config.AL_ATLAS_DIR.
 # (Not al_atlas' hemibrain export: some of its glomeruli are fragments of them.)
 REFERENCES = {"grabe2016": "Grabe et al. 2016"}

@@ -323,6 +323,10 @@ AL segmentation tab, asked for by {name} on {created}, on the {device}.
                     with the atlas, if the model has one)
 {fly}_identities*.csv
                     the name given each ROI (by its label in the .tif), with its cost and confidence{manual_ids}
+{fly}_identity_terms*.json
+                    what each name cost: for each ROI (by its label) and its 5 best glomeruli, the value of each
+                    term of the cost (odor tuning, position, shape, atlas overlap, layout: 0 for a perfect fit),
+                    their weights, and the most a name may cost (max_cost: an ROI none costs less for is numbered)
 average.tif         the fly's average image, as the model saw it
 {fly}_pred-edited_RoiSet.zip and {fly}_pred-edited.json
                     (only once they were edited in the tab's viewer) {fly}_RoiSet.zip's ROIs as edited there: their
@@ -486,6 +490,7 @@ def run_prediction(db, p: dict, on_gpu: bool, why_cpu: Optional[str] = None) -> 
                     w = csv.writer(fh)
                     w.writerow(["label", "assigned", "cost", "confidence"])
                     w.writerows([l, nm or "", f"{cost:.3f}", f"{conf:.3f}"] for l, (nm, cost, conf) in sorted(ids.items()))
+                am.write_identity_terms(d / f"{name}_identity_terms.json", pr["identity_terms"][final])
                 n = len(np.unique(pr["labels"][final])) - 1
                 named = sorted({v[0] for v in ids.values() if v[0]})
             shutil.copyfile(d / f"{name}_{final}_RoiSet.zip", d / f"{name}_RoiSet.zip")

@@ -1691,6 +1691,13 @@ async def predictions_view(request: Request) -> Response:
     return JSONResponse(v) if v else json_error(404, "no such prediction done")
 
 
+async def predictions_identity(request: Request) -> Response:
+    """What naming a prediction's ROIs cost (`predictions.identity_terms`): each term's value for
+    every ROI's best glomeruli, and their weights, for the viewer to show of an ROI."""
+    v = await run_in_threadpool(predictions.identity_terms, db, request.path_params["id"])
+    return JSONResponse(v) if v else json_error(404, "no such prediction done")
+
+
 async def predictions_edited_save(request: Request) -> Response:
     """Saves a prediction's ROIs as edited in the viewer (`predictions.save_edited`): {"rois": [{"name",
     "z", "points"}], "base": the revision they were edited from, "name" (who, as set in Settings, if
@@ -3976,6 +3983,7 @@ routes = [
     Route("/api/predictions/{id:int}", predictions_delete, methods=["DELETE"]),
     Route("/api/predictions/{id:int}/log", predictions_log),
     Route("/api/predictions/{id:int}/view", predictions_view),
+    Route("/api/predictions/{id:int}/identity", predictions_identity),
     Route("/api/predictions/{id:int}/edited", predictions_edited_save, methods=["PUT"]),
     Route("/api/predictions/{id:int}/edited", predictions_edited_delete, methods=["DELETE"]),
     Route("/api/predictions/{id:int}/download", predictions_download),
