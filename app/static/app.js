@@ -3754,22 +3754,32 @@ async function syncOdorSheet(btn) {
   } catch (e) { setStatus(out, `Not synced: ${e.message}`, 'error'); return null; } finally { btn.disabled = false; }
 }
 
-const MISSING_FOLD_AT = 6;
-const missingFoldOpen = new Set(['upload']); // the `fold`s of `odorSheetHelp` open (an upload's at first, as it is what to do next)
+// Long lists in a message box (more than FOLD_AT) are folded away under a summary, `foldHtml`
+const FOLD_AT = 6;
+const foldOpen = new Set(['upload']); // the folds (by where they are) open: an upload's odor check at first, as it is what to do next
 document.addEventListener('toggle', (e) => { // (toggle does not bubble: caught on the way down)
   const d = e.target;
-  if (d.matches?.('details.missing-fold')) missingFoldOpen[d.open ? 'add' : 'delete'](d.dataset.fold);
+  if (d.matches?.('details.msg-fold')) foldOpen[d.open ? 'add' : 'delete'](d.dataset.fold);
 }, true);
+const foldHtml = (fold, summary, body) => `<details class="msg-fold" data-fold="${esc(fold)}"${foldOpen.has(fold) ? ' open' : ''}>
+  <summary>${summary}</summary>${body}</details>`;
+
+// a reference dataset's `unresolved_warning`, its odors folded away (`foldHtml`) when many
+function unresolvedBox(w) {
+  const at = w.indexOf(': '), n = parseInt(w, 10);
+  if (at < 0 || !(n > FOLD_AT)) return msgBox('warn', `<b>${esc(w)}</b>`);
+  return msgBox('warn', `<b>${esc(w.slice(0, at))}.</b>${foldHtml('unresolved', `Which they are (${n} odors), and what may be wrong with each`,
+    `<p>${esc(w.slice(at + 2))}</p>`)}`);
+}
 
 // What a matrix's odors not each one odor in the odor table need, as an upload's check says
 // it (`c`: the server's _odor_matches of them): those not in it as rows for the odor sheet (a
 // button copying them: data-copy-sheet), those more than one odor in it goes by (`ambiguousFix`:
 // what to do), and a button syncing it (data-sync-sheet, `note` after it: how the last went).
 // head: what is said first (and anything after it); after: said under the sync button.
-// With more than MISSING_FOLD_AT not in it, all but `head` is folded away (`fold`: where, so that
-// it stays open there once opened).
+// With more than FOLD_AT not in it, all but `head` is folded away (`fold`: where, as `foldHtml` takes it).
 function odorSheetHelp(c, head, { note = '', ambiguousFix = '', after = '', fold = '' } = {}) {
-  const rest = [], k = c.missing.length, folded = k > MISSING_FOLD_AT;
+  const rest = [], k = c.missing.length, folded = k > FOLD_AT;
   if (k) rest.push(`${folded ? '' : '<p>Not in it:</p>'}${missingRowsHtml(c.missing, c.sheet, 'sync it here (below)')}`);
   const ambiguous = ambiguousOdors(c.rows);
   if (ambiguous.length) rest.push(`<p>More than one odor in it goes by ${odorLabels(ambiguous)}: ${ambiguousFix}</p>`);
@@ -3777,8 +3787,8 @@ function odorSheetHelp(c, head, { note = '', ambiguousFix = '', after = '', fold
     <p class="small">Adds the odors new in the sheet to the odor table, then checks these again (changes to odors already in it are
     left for the <a href="#odors">Odors tab</a>).${after}</p>`);
   if (!folded) return `<div class="msg error">${head}${rest.join('')}</div>`;
-  return `<div class="msg error">${head}<details class="missing-fold" data-fold="${esc(fold)}"${missingFoldOpen.has(fold) ? ' open' : ''}>
-    <summary>Which they are (${k} odor names), and how to add them${note ? ` <span class="muted">(${esc(note)})</span>` : ''}</summary>${rest.join('')}</details></div>`;
+  return `<div class="msg error">${head}${foldHtml(fold, `Which they are (${k} odor names), and how to add them${note ? ` <span class="muted">(${esc(note)})</span>` : ''}`,
+    rest.join(''))}</div>`;
 }
 
 // A reference dataset's odors (as datasets write them: `chem`, its chemicals) not each one
@@ -4226,7 +4236,8 @@ class Reference {
       }
       msgs.push(box);
     }
-    for (const w of [ref.stereo_warning, ref.unresolved_warning]) if (w) msgs.push(msgBox('warn', `<b>${esc(w)}</b>`));
+    if (ref.stereo_warning) msgs.push(msgBox('warn', `<b>${esc(ref.stereo_warning)}</b>`));
+    if (ref.unresolved_warning) msgs.push(unresolvedBox(ref.unresolved_warning));
     const notes = [];
     if (c.axis && c.odors) {
       notes.push(`Its ${c.axis === 'rows' ? 'rows' : 'columns'} are odors as datasets write them (<code>&lt;abbreviation&gt; @ &lt;log10 conc&gt;</code>):
