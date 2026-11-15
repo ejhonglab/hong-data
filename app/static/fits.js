@@ -39,6 +39,20 @@ export function both(x, key, fmt = pct) {
 
 // how a fit's or a prediction's ROIs were scored (al-diag-seg's): as glomeruli drawn on some of their
 // planes only (often their clearest), so not counted wrong where none is drawn; or strictly (before)
+// a score of the predicted ROIs with the fly's own ROIs' in brackets ('0.30 (0.15)'); '' for fits scored before it was
+const withManual = (x, key, fmt = num2, manual = `manual_${key}`) => (x[key] == null ? '—'
+  : `${fmt(x[key])} <span class="muted">(${fmt(x[manual])})</span>`);
+const um = (v) => (v == null ? '—' : `${v.toFixed(1)} µm`);
+// how far ROIs keep from each other and how much of a neighbour they carry (al-diag-seg's purity scores): the
+// table's columns after Leak, each [heading, what it is, a fly's cell]
+export const PURITY_COLUMNS = [
+  ['Gap', "Distance from an ROI to the nearest other ROI on its plane: the median over ROIs' outlines on their planes", (x) => withManual(x, 'gap_um', um)],
+  ['Touching', 'Outlines on a plane that touch another ROI there', (x) => withManual(x, 'touching', pct)],
+  ['Neighbor at edge', `Of the signal of an ROI's edge facing its nearest neighbor (the outer 1 µm, within 3 µm of it), the share that is the neighbor's: the edge's odor tuning as a sum of its own core's and the neighbor's core's (cores: 1.5 µm from the edge). Median over outlines with a core and such a neighbor. 0: all its own`, (x) => withManual(x, 'edge_share')],
+  ['Neighbor in ROI', "The same of the whole ROI's mean signal: what reaches its responses", (x) => withManual(x, 'whole_share')],
+  ['Responding', "Of ROIs matching one of the fly's own on a plane (IoU at least 0.5) and the odors, the pairs with a mean response over 0.3 dF/F; in brackets the same of the fly's own ROIs they match. Higher than them: tuned more broadly", (x) => withManual(x, 'breadth', pct, 'breadth_manual')],
+];
+
 export const partlyDrawn = (x) => x.scoring === 'partly drawn';
 export const scoringNote = (x) => (partlyDrawn(x) ? 'not counted wrong where no glomerulus is drawn'
   : 'scored strictly: also counted wrong where no glomerulus is drawn');
@@ -169,7 +183,7 @@ export class FitsPanel {
     const { esc } = this.h;
     const r = f.result, o = f.options || {};
     const flies = r.flies.map((x) => `<tr><td>${esc(x.fly)}</td><td>${x.n}</td><td>${both(x, 'recall')}</td><td>${both(x, 'precision')}</td>
-      <td>${both(x, 'dice', num2)}</td><td>${num2(x.leak)} <span class="muted">(${num2(x.manual_leak)})</span></td><td>${x.named}/${x.named_of}</td></tr>`).join('');
+      <td>${both(x, 'dice', num2)}</td><td>${num2(x.leak)} <span class="muted">(${num2(x.manual_leak)})</span></td>${PURITY_COLUMNS.map((c) => `<td>${c[2](x)}</td>`).join('')}<td>${x.named}/${x.named_of}</td></tr>`).join('');
     const missed = r.glomeruli.filter((g) => g.detected < g.flies);
     const refs = refNames(o).map(esc);
     return `<p class="small">${f.flies ? `Fit to ${f.flies.train.length} flies, ${o.held_out} held out, ${o.epochs} epochs${o.atlas
@@ -183,7 +197,7 @@ export class FitsPanel {
         fit's would be.`}</p>
       <table class="odor-table"><thead><tr><th>Held-out fly</th><th>ROIs</th>${['Found', 'Right', 'Dice'].map((h) => `<th>${h}${r.mean.recall_2d == null
         ? '' : ' <span class="muted">(per plane · 3D)</span>'}</th>`).join('')}
-      <th title="Signal from neighbors in an ROI's border (its manual ROIs' in brackets)">Leak <span class="muted">(manual)</span></th><th>Named</th></tr></thead><tbody>${flies}</tbody></table>
+      <th title="Signal from neighbors in an ROI's border (its manual ROIs' in brackets)">Leak <span class="muted">(manual)</span></th>${PURITY_COLUMNS.map((c) => `<th title="${esc(c[1])}">${c[0]} <span class="muted">(manual)</span></th>`).join('')}<th>Named</th></tr></thead><tbody>${flies}</tbody></table>
       ${missed.length ? `<p class="small">Glomeruli not found (as 3D objects) in every held-out fly with one: ${missed.map((g) => `${esc(g.glomerulus)}
         <span class="muted">${g.detected}/${g.flies}</span>`).join(', ')}.</p>` : '<p class="small">Every glomerulus of the held-out flies was found.</p>'}`;
   }

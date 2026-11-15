@@ -183,12 +183,25 @@ class Progress:
 
 
 SCORES = ("recall", "precision", "dice", "recall_2d", "precision_2d", "dice_2d", "leak")
+# how far ROIs keep from each other and how much of a neighbour they carry (al-diag-seg's `refine.purity_report`,
+# per in-plane mask: medians, and the fraction touching another), of the final ROIs and (``manual_<score>``) of the
+# fly's own; and of those matching one of its own, the fraction of ROI-odor pairs responding (``breadth``; the
+# manual ones' ``breadth_manual``). None for fits scored before al-diag-seg had them.
+PURITY = ("gap_um", "touching", "edge_share", "whole_share")
+MANUAL = ("leak", *PURITY)  # the scores the fly's own ROIs have too
+
+
+def _scores(row: dict, manual: dict) -> dict:
+    """A fly's scores of `SCORES`, `PURITY` and breadth, from its rows of al-diag-seg's summary."""
+    num = lambda v: v if isinstance(v, (int, float)) else None  # noqa: E731
+    return {**{k: num(row.get(k)) for k in (*SCORES, *PURITY, "breadth", "breadth_manual")},
+            **{f"manual_{k}": num(manual.get(k)) for k in MANUAL}}
 
 
 def summary(res: dict) -> dict:
     """What the tab shows of a fit's scores (al-diag-seg's ``Model.evaluate``): per held-out fly,
     its final ROIs' recall, precision and Dice, matched to its own as 3D objects and (``*_2d``,
-    where al-diag-seg scores them so) plane by plane, their leak (and its manual ROIs'), and how
+    where al-diag-seg scores them so) plane by plane, their leak and purity (and its manual ROIs': `_scores`), and how
     many were named as the manual ROI they overlap; their means; per glomerulus; and how they were
     scored (``scoring``: "partly drawn", as glomeruli are often drawn on some of their planes only,
     or "strict"; None before al-diag-seg said: strict)."""
@@ -196,11 +209,10 @@ def summary(res: dict) -> dict:
     rows = {r["fly"]: r for r in res["summary"] if r["rois"] == final}
     manual = {r["fly"]: r for r in res["summary"] if r["rois"] == "manual"}
     named = {r["fly"]: r for r in res["identity"] if r["rois"] == final}
-    num = lambda v: v if isinstance(v, (int, float)) else None  # noqa: E731
-    flies = [{"fly": f, "n": r["n"], **{k: num(r.get(k)) for k in SCORES}, "manual_leak": num(manual.get(f, {}).get("leak")),
+    flies = [{"fly": f, "n": r["n"], **_scores(r, manual.get(f, {})),
               "named": named.get(f, {}).get("correct", 0), "named_of": named.get(f, {}).get("total", 0)} for f, r in rows.items()]
     mean = {}
-    for k in (*SCORES, "manual_leak"):
+    for k in _scores({}, {}):
         vs = [f[k] for f in flies if f[k] is not None]
         mean[k] = sum(vs) / len(vs) if vs else None
     return {"final": final, "flies": flies, "mean": mean, "named": sum(f["named"] for f in flies),
@@ -472,7 +484,7 @@ def run_prediction(db, p: dict, on_gpu: bool, why_cpu: Optional[str] = None) -> 
                 num = lambda v: v if isinstance(v, (int, float)) else None  # noqa: E731
                 ident = next((r for r in res["identity"] if r["rois"] == final), {})
                 scores = {"manual": row("manual")["n"], "manual_2d": row("manual").get("n_2d"),
-                          **{k: num(row(final).get(k)) for k in SCORES}, "manual_leak": num(row("manual")["leak"]),
+                          **_scores(row(final), row("manual")),
                           "named": ident.get("correct", 0), "named_of": ident.get("total", 0), "scoring": res.get("scoring")}
                 n = row(final)["n"]
                 with open(d / f"{name}_identities_{final}.csv", newline="") as fh:

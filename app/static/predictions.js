@@ -4,7 +4,7 @@
 // one in the movie player (player.js: the ROIs predicted and the fly's own, of the plane shown).
 // Also fills in the example, under Fit a model, of running a downloaded model yourself.
 
-import { both, fmtDuration, scoringNote } from './fits.js';
+import { both, fmtDuration, PURITY_COLUMNS, scoringNote } from './fits.js';
 import { listLink, tip } from './tips.js';
 
 const STATUS_NAMES = { queued: 'Queued', running: 'Running', done: 'Done', failed: 'Failed', interrupted: 'Interrupted' };
@@ -208,7 +208,8 @@ export class PredictPanel {
       ${r.n} ROIs, ${r.named.length ? listLink(`${r.named.length} of them named`, `Named (${r.named.length})`, r.named) : 'none of them named'}.${s
       ? `<br>Against the fly's own ${s.manual} ROIs${s.recall_2d == null ? '' : ` (${s.manual_2d} outlines on their planes)`}:<br>${scoreTip('found', 'found')} ${both(s, 'recall')},
         ${scoreTip('right', 'right')} ${both(s, 'precision')}, ${scoreTip('dice', 'Dice')} ${both(s, 'dice', num2)} <span class="muted">(${s.recall_2d == null ? '' : 'per plane · as 3D objects; '}${scoringNote(s)})</span>;
-        ${scoreTip('named', 'name correct')} ${s.named}/${s.named_of}.` : ''}${p.edited ? ` Edited in the viewer (${esc(this._edited(p))}:
+        ${scoreTip('named', 'name correct')} ${s.named}/${s.named_of}.${s.edge_share == null && s.gap_um == null ? '' : `<br>Kept from neighbors
+        <span class="muted">(the fly's own ROIs' in brackets)</span>: ${PURITY_COLUMNS.map((c) => `${tip(c[0].toLowerCase(), c[1])} ${c[2](s)}`).join(', ')}.`}` : ''}${p.edited ? ` Edited in the viewer (${esc(this._edited(p))}:
         ${p.edited.rois} ROIs${p.edited.simplified == null ? '' : `, simplified within ${p.edited.simplified} px`}): its download has those
         too, as <code>${esc(p.fly)}_pred-edited_RoiSet.zip</code>.` : ''}`;
   }
