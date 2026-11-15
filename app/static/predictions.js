@@ -29,6 +29,20 @@ Unlike right, this is only about names: the outline need not match as well (IoU 
 };
 const scoreTip = (key, label) => tip(label, SCORE_TIPS[key]);
 const KIND_NAMES = { pred: "the model's own", clean: 'cleaned as asked', clean_trim: 'trim alone', clean_margin: 'margin alone', clean_core: 'core alone' };
+// the look for glomeruli a prediction's ROIs miss (nmf_check.py), if one was asked for: how it is, in a sentence
+function nmfNote(p, esc, fmtWhen) {
+  const n = p.nmf;
+  if (!n) return '';
+  const by = n.name ? `, asked for by ${esc(n.name)}` : '';
+  if (n.status === 'queued') return ` Glomeruli its ROIs miss are to be looked for in its movies (waiting for the fit worker${by}).`;
+  if (n.status === 'running') return ` Glomeruli its ROIs miss are being looked for in its movies (${Math.round((n.fraction || 0) * 100)}%${by}).`;
+  if (n.status === 'done') {
+    const k = n.result?.candidates ?? 0, merged = p.edited?.nmf?.merged.length || 0;
+    return ` Glomeruli its ROIs miss were looked for in its movies ${esc(fmtWhen(n.finished_at))}${by}: ${k ? `${k} found${merged ? `, ${merged} of them merged into its edited ROIs`
+      : ''} (view the ROIs to see them, and merge them or not)` : 'none found'}.`;
+  }
+  return ` Looking for glomeruli its ROIs miss ${n.status === 'failed' ? 'failed' : 'was interrupted'}${n.error ? ` (${esc(n.error)})` : ''}: view the ROIs to ask again.`;
+}
 // how a prediction's ROIs were cleaned, if they were (its options)
 function cleanedNote(p) {
   const o = p.options || {}, on = [...(o.split ? ['outlines over two glomeruli split'] : []), ...(o.clean || []).map((st) => {
@@ -80,7 +94,7 @@ export class PredictPanel {
     this.timer = setInterval(() => {
       if (this.h.$('#tab-al-segmentation').hidden) return;
       n += 1;
-      const busy = this.data?.predictions.some((p) => ACTIVE.has(p.status));
+      const busy = this.data?.predictions.some((p) => ACTIVE.has(p.status) || ACTIVE.has(p.nmf?.status));
       if (busy || n % 10 === 0) this.refresh();
     }, 3000);
   }
@@ -234,7 +248,7 @@ export class PredictPanel {
         ${scoreTip('named', 'name correct')} ${s.named}/${s.named_of}.${s.edge_share == null && s.gap_um == null ? '' : `<br>Kept from neighbors
         <span class="muted">(the fly's own ROIs' in brackets)</span>: ${PURITY_COLUMNS.map((c) => `${tip(c[0].toLowerCase(), c[1])} ${c[2](s)}`).join(', ')}.`}` : ''}${cleanedNote(p)}${kindsTable(s)}${p.edited ? ` Edited in the viewer (${esc(this._edited(p))}:
         ${p.edited.rois} ROIs${p.edited.simplified == null ? '' : `, simplified within ${p.edited.simplified} px`}): its download has those
-        too, as <code>${esc(p.fly)}_pred-edited_RoiSet.zip</code>.` : ''}`;
+        too, as <code>${esc(p.fly)}_pred-edited_RoiSet.zip</code>.` : ''}${nmfNote(p, esc, fmtWhen)}`;
   }
 
   // how long a prediction asked for now should take (the server's `expected`), while the worker is there
@@ -266,7 +280,9 @@ export class PredictPanel {
       const r = p.result, s = r?.scores;
       const rois = r ? `${r.n} <span class="muted">(${r.named.length} named)</span>${s ? ` <span class="muted">· ${both(s, 'recall')}, ${both(s, 'precision')},
         ${both(s, 'dice', num2)}, ${s.named_of ? pct(s.named / s.named_of) : '—'}</span>` : ''}${
-        p.edited ? ` <span class="muted" title="Edited in the viewer, ${esc(this._edited(p))}">· edited</span>` : ''}` : '—';
+        p.edited ? ` <span class="muted" title="Edited in the viewer, ${esc(this._edited(p))}">· edited</span>` : ''}${
+        p.nmf ? ` <span class="muted" title="${esc(nmfNote(p, (x) => x, fmtWhen).trim())}">· NMF${p.nmf.status === 'done' ? `: ${p.nmf.result?.candidates ?? 0} found`
+          : p.nmf.status === 'running' ? ` ${Math.round((p.nmf.fraction || 0) * 100)}%` : p.nmf.status === 'queued' ? ' queued' : ' failed'}</span>` : ''}` : '—';
       const left = p.eta && this.data.worker?.alive ? ` <span class="muted" title="${esc(this._from(p.eta))}">· ${p.eta.until
         ? `about ${fmtDuration(p.eta.until)} left` : 'ending any moment'}</span>` : '';
       const status = `${STATUS_NAMES[p.status] || esc(p.status)}${p.status === 'running' && p.progress?.device ? ` <span class="muted">(${esc(p.progress.device)})</span>` : ''}${left}${

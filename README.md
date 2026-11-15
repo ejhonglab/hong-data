@@ -857,6 +857,30 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   again needs the fly's responses and the atlas registered to it, as predicting does).
   Predictions made before these were kept (`<fly>_identity_terms*.json`, in the download)
   say to predict again.
+  *Look for missed glomeruli*, under the editing buttons, looks in the fly's movies (every
+  recording's, every time point of every trial) for glomeruli the predicted ROIs miss: the
+  fit worker factorizes each plane's movie (non-negative matrix factorization, on the GPU
+  when no fit has it) as the light of each ROI and of places they leave out, and proposes
+  such a place if it is big and round enough, inside the lobe, answers odors reliably and
+  not as a mixture of the ROIs next to it; a bar says how far it is (about half a minute;
+  longer the first time for a prediction made before the atlas on the fly's planes was
+  kept with it, and a few minutes on the CPU, while a fit has the GPU). What it finds is listed first, marked `NMF`, whatever
+  plane is shown (choosing one shows its plane), and drawn dashed: new ROIs, more of an
+  ROI on a plane it had no outline on, and parts cut off ROIs that may hold two glomeruli
+  (by how their pixels are tuned over the trials). They are cleaned as the prediction's
+  ROIs were (its trim and margin steps), simplified as the edited ROIs are, and named as
+  the model names ROIs, among the glomeruli the predicted ROIs left. Nothing changes until
+  those ticked are merged (*Merge the … ticked*; parts cut off ROIs are not ticked to
+  begin with): a box then lists the change, each ROI marked as from NMF or predicted, with
+  the names all ROIs get when named again together (the default: the names that change
+  are listed), or with the predicted ROIs' names kept, and merging makes it part of the
+  edited ROIs (those predicted stay as they are), where it is undone like any other
+  change and its ROIs stay marked. On 4 flies with ROIs drawn by hand, 8 of the 25 new
+  and extended ROIs it proposed were on a glomerulus drawn but not predicted, the rest
+  where nothing is drawn (which may still be glomeruli: not every plane is drawn), and 4
+  of the 27 parts cut off were of an ROI over two drawn glomeruli: look at each before
+  merging it ([design.md](design.md) has more). Its files are in the prediction's download
+  (`<fly>_nmf.json` and beside it).
   *Extract signals*, below it, computes the signals of a fly's ROIs from its
   motion-corrected movies as al_analysis does, with the same numbers for its response
   window (checked against what al_analysis left for 9 recordings of 4 flies: identical to

@@ -41,7 +41,7 @@ from importlib import metadata
 from pathlib import Path
 from typing import Optional
 
-from . import config, extract, filelog, fits, odormeta, predictions, roi_training, sandbox, version
+from . import config, extract, filelog, fits, nmf_check, odormeta, predictions, roi_training, sandbox, version
 from .db import Database
 from .glomeruli import load_glomeruli
 
@@ -339,7 +339,17 @@ AL segmentation tab, asked for by {name} on {created}, on the {device}.
                     what each name cost: for each ROI (by its label) and its 5 best glomeruli, the value of each
                     term of the cost (odor tuning, position, shape, atlas overlap, layout: 0 for a perfect fit),
                     their weights, and the most a name may cost (max_cost: an ROI none costs less for is numbered)
+{fly}_atlas_prior.npz
+                    (if the model has an atlas) the atlas on the fly's planes: each glomerulus' probability at each
+                    voxel (prior: glomeruli, Z, Y, X; names: the glomeruli), which the ROIs were named by
 average.tif         the fly's average image, as the model saw it
+{fly}_nmf.json, {fly}_nmf.tif, {fly}_nmf_candidates.tif and {fly}_nmf_RoiSet.zip
+                    (only once glomeruli its ROIs miss were looked for, in the tab's viewer) what that found in the
+                    fly's movies: candidates (glomeruli with no ROI, more of an ROI on a plane it has no outline on,
+                    parts of ROIs that hold two), to merge into the edited ROIs there or not. The .json says how they
+                    were found, each one's outlines and name, and every ROI's name with all of them merged in; the
+                    .tif files are the ROIs with all of them in (labels) and the candidate each voxel is of; the
+                    RoiSet the candidates alone
 {fly}_pred-edited_RoiSet.zip and {fly}_pred-edited.json
                     (only once they were edited in the tab's viewer) {fly}_RoiSet.zip's ROIs as edited there: their
                     outlines simplified, and points of them moved, added or deleted; and when, by whom, by how many
@@ -486,7 +496,7 @@ def run_prediction(db, p: dict, on_gpu: bool, why_cpu: Optional[str] = None) -> 
                                                       "stack": stack, "scored": f.get("labels") is not None})
             name, scores = p["fly"], None
             if f.get("labels") is not None:
-                res = model.evaluate([f], d)
+                res = model.evaluate([f], d, priors=True)
                 final = res["final"]
                 row = lambda kind: next(r for r in res["summary"] if r["rois"] == kind)  # noqa: E731
                 num = lambda v: v if isinstance(v, (int, float)) else None  # noqa: E731
@@ -508,6 +518,7 @@ def run_prediction(db, p: dict, on_gpu: bool, why_cpu: Optional[str] = None) -> 
                     roi_io.write_roiset(lab, {l: v[0] for l, v in pr["identities"][kind].items()}, d / f"{name}_{kind}_RoiSet.zip")
                 if pr["atlas_maxprob"] is not None:
                     am.write_volume(d / f"{name}_atlas_maxprob.tif", pr["atlas_maxprob"])
+                    am.write_prior(d / f"{name}_atlas_prior.npz", pr["prior"], model.atlas.names)
                 ids = pr["identities"][final]
                 with open(d / f"{name}_identities.csv", "w", newline="") as fh:
                     w = csv.writer(fh)
@@ -550,6 +561,62 @@ def run_prediction(db, p: dict, on_gpu: bool, why_cpu: Optional[str] = None) -> 
     predictions.update(db, p["id"], status=status, finished_at=predictions.now(), error=error, result=result,
                        progress={"stage": status, "device": "GPU" if on_gpu else "CPU"})
     log.info("prediction %s: %s%s", p["id"], status, f" ({error})" if error else "")
+
+
+def run_nmf(db, p: dict, on_gpu: bool, why_cpu: Optional[str] = None) -> None:
+    """Runs one look for glomeruli a prediction's ROIs miss (claimed: `nmf_check.claim`) to the
+    end, on the GPU or the CPU: done or failed. Its files go in the prediction's folder
+    (`nmf_check` says which), and what it prints after what the prediction did, in its log."""
+    d = predictions.pred_dir(p["id"])
+    t0, dev = time.time(), "GPU" if on_gpu else "CPU"
+    device = f"GPU ({gpu()['gpu']})" if on_gpu else f"CPU{f' ({why_cpu})' if why_cpu else ''}"
+    status, error, result = "failed", None, None
+    stages, at, plan = {}, [None, t0, 0.0], list(nmf_check.STAGES)
+
+    def progress(stage: str, done=None, total=None) -> None:
+        now, new = time.time(), stage != at[0]
+        if new:
+            if at[0]:
+                stages[at[0]] = stages.get(at[0], 0.0) + now - at[1]
+            at[0], at[1] = stage, now
+        if new or now - at[2] >= SAVE_S:
+            at[2] = now
+            nmf_check.update(db, p["id"], progress={"stage": stage, "done": done, "total": total, "device": dev, "stage_started": at[1],
+                                                    "stages": plan})
+
+    with open(d / "log.txt", "a", buffering=1) as out, _output_to(out):
+        try:
+            asked = p.get("nmf") or {}
+            print(f"\nglomeruli its ROIs miss, looked for in its movies: asked for by {asked.get('name')} ({asked.get('ip')}) at "
+                  f"{asked.get('asked_at')}; on the {device}")
+            mdir = fits.fit_dir(p["fit_id"]) / "model"
+            if fits.get(db, p["fit_id"]) is None or not (mdir / "model.json").is_file():
+                raise FileNotFoundError(f"fit #{p['fit_id']}'s model is not there (the fit was deleted)")
+            from alseg import model as am
+            from alseg.fly import load_fly
+
+            model = am.Model.load(mdir)
+            model.options.gpu = on_gpu
+            # (the atlas on the fly's planes: kept by the prediction, unless made before it was)
+            kept = model.atlas is None or nmf_check.files(p)["prior"].is_file()
+            if kept:
+                plan.remove("register")
+            progress("load")
+            fly_dir, raw_dir = Path(p["fly_dir"]), Path(p["raw_dir"]) if p["raw_dir"] else None
+            _fly_inputs(fly_dir, raw_dir, model, odormeta.OdorIndex(db.list_odors()))
+            f = load_fly(fly_dir, model, raw_dir=raw_dir, name=p["fly"], glomeruli=load_glomeruli(), tentative=model.options.tentative,
+                         stack=not kept)
+            result = nmf_check.run(db, p, model, f, on_gpu, print, progress)
+            progress("done")
+            seconds = time.time() - t0
+            result.update(device=dev, seconds=seconds, stages={k: v for k, v in stages.items() if k in nmf_check.STAGES})
+            print(f"{seconds:.0f} s")
+            status = "done"
+        except Exception as e:  # noqa: BLE001 (any failure is the look's, said in the prediction's log and its record)
+            error = f"{type(e).__name__}: {e}"
+            traceback.print_exc()
+    nmf_check.update(db, p["id"], status, finished_at=predictions.now(), error=error, result=result, progress=None)
+    log.info("prediction %s, glomeruli its ROIs miss: %s%s", p["id"], status, f" ({error})" if error else "")
 
 
 # ---------------------------------------------------------------- extractions
@@ -622,6 +689,8 @@ def main() -> None:
         log.info("fits' work/ folders removed: %.1f GB freed", freed / 1e9)
     for i in predictions.interrupt_running(db):
         log.warning("prediction %s was left running by a worker before this one: marked interrupted", i)
+    for i in nmf_check.interrupt_running(db):
+        log.warning("prediction %s's look for missed glomeruli was left running by a worker before this one: marked interrupted", i)
     for i in extract.interrupt_running(db):
         log.warning("extraction %s was left running by a worker before this one: marked interrupted", i)
     info = {"host": host_name(), "pid": os.getpid(), "started": fits.now(), **gpu(), **versions(),
@@ -648,6 +717,7 @@ def main() -> None:
     predictor.start()
     extractor = threading.Thread(target=extract_loop, args=(db, state, stop), daemon=True)
     extractor.start()
+    threading.Thread(target=call_loop, args=(db,), daemon=True).start()
     fit_loop(db, state, gpu_lock, bool(info["gpu"]), stop)
     predictor.join()  # (a prediction on the CPU ends first)
     extractor.join()  # (and an extraction under way)
@@ -692,14 +762,30 @@ def fit_loop(db, state: dict, gpu_lock: threading.Lock, has_gpu: bool = False, s
             state["fit"] = None
 
 
+def call_loop(db) -> None:
+    """Does the quick things the web server asks of the worker (`nmf_check.call`: naming a
+    prediction's ROIs again), as they come, beside all else."""
+    while True:
+        try:
+            if nmf_check.answer(db):
+                continue
+        except Exception:  # noqa: BLE001
+            log.exception("could not do what the web server asked")
+        time.sleep(nmf_check.CALL_POLL_S)
+
+
 def predict_loop(db, state: dict, gpu_lock: threading.Lock, has_gpu: bool, stop: Optional[threading.Event] = None) -> None:
-    """Runs the predictions asked for, one at a time: on the GPU (holding `gpu_lock`) if there is
-    one and no fit holds it, else on the CPU; until `stop` is set, if given. ``state["prediction"]``:
-    the one running. If there is a GPU it can no longer use (`gpu_lost`), puts the prediction back
-    in the queue, sets `stop` and returns."""
+    """Runs the predictions asked for, and then the looks for glomeruli a prediction's ROIs miss
+    (`run_nmf`), one at a time: on the GPU (holding `gpu_lock`) if there is one and no fit holds
+    it, else on the CPU; until `stop` is set, if given. ``state["prediction"]``: the prediction
+    being made, or looked at. If there is a GPU it can no longer use (`gpu_lost`), puts what it
+    took back in the queue, sets `stop` and returns."""
     while not (stop and stop.is_set()):
+        look = False
         try:
             p = predictions.claim(db)
+            if p is None:
+                p, look = nmf_check.claim(db), True
         except Exception:  # noqa: BLE001
             log.exception("could not look for predictions to make")
             p = None
@@ -708,14 +794,18 @@ def predict_loop(db, state: dict, gpu_lock: threading.Lock, has_gpu: bool, stop:
             continue
         on_gpu = has_gpu and gpu_lock.acquire(blocking=False)
         if on_gpu and (why := gpu_lost()):
-            predictions.update(db, p["id"], status="queued", started_at=None)
+            if look:
+                nmf_check.update(db, p["id"], "queued", started_at=None)
+            else:
+                predictions.update(db, p["id"], status="queued", started_at=None)
             gpu_lock.release()
             _gpu_lost(why, stop)
             return
         state["prediction"] = p["id"]
-        log.info("prediction %s: started, on the %s (asked for by %s)", p["id"], "GPU" if on_gpu else "CPU", p["name"])
+        log.info("prediction %s%s: started, on the %s (asked for by %s)", p["id"], ", glomeruli its ROIs miss" if look else "",
+                 "GPU" if on_gpu else "CPU", (p["nmf"] or {}).get("name") if look else p["name"])
         try:
-            run_prediction(db, p, on_gpu, None if on_gpu or not has_gpu else "a fit is using the GPU")
+            (run_nmf if look else run_prediction)(db, p, on_gpu, None if on_gpu or not has_gpu else "a fit is using the GPU")
         except Exception:  # noqa: BLE001 (said in its record; the thread goes on)
             log.exception("prediction %s", p["id"])
         finally:

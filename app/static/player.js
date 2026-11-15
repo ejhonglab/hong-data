@@ -4,10 +4,13 @@
 // time (app/movies.py), and kept here while there is room, so only what is shown is ever read.
 // A prediction's ROIs can be edited there (roi_edit.js): a copy of them, their outlines simplified
 // and their points moved, added and deleted as ImageJ's are, saved at each change
-// (predictions.save_edited); those predicted, and the fly's own, are only ever shown.
+// (predictions.save_edited); those predicted, and the fly's own, are only ever shown. Glomeruli the
+// predicted ROIs miss can be looked for in the fly's movies there (nmf_check.py): what that finds is
+// listed first, and merged into the edited ROIs or not (nmf_merge.js).
 
 import { History, area, deletePoint, inside, movePoints, nearestPoint, simplify, splitPoint } from './roi_edit.js';
 import { showIdentity, showNoIdentity } from './identity.js';
+import { changes, copyPredicted, merge, mergedIds, mergedOf, provisional } from './nmf_merge.js';
 
 const TYPED = { uint8: Uint8Array, int8: Int8Array, uint16: Uint16Array, int16: Int16Array, uint32: Uint32Array, int32: Int32Array, float32: Float32Array };
 const CACHE_BYTES = 256 * 1024 * 1024;
@@ -20,7 +23,11 @@ const ABOVE_COLOR = '#ff5050';
 const BELOW_COLOR = '#4aa3ff';
 // a prediction's ROIs, by where they are from (`openPrediction`)
 const SOURCES = { predicted: { label: 'predicted', color: '#ff4fd8' }, manual: { label: "the fly's own (drawn by hand)", color: ROI_COLOR },
-  edited: { label: 'predicted, as edited here', color: '#a394ff' } };
+  edited: { label: 'predicted, as edited here', color: '#a394ff' }, nmf: { label: 'found by NMF, not merged', color: '#39b8ff' } };
+// a look for glomeruli the predicted ROIs miss (nmf_check.py): what its stages are called, and how often it is asked how far it is
+const NMF_STAGES = { load: 'reading the fly', register: 'registering the atlas to the fly', read: 'reading its movies', factorize: 'factorizing its planes',
+  name: 'naming what it found' };
+const NMF_POLL_MS = 2000;
 const HANDLE = 6; // the side of an edited ROI's points' handles, and how near one the pointer takes hold of it (CSS pixels)
 const CLICK = 3; // how far the pointer may move between press and release for it to be a click, not a drag
 const WHEEL_STEP = 40; // pixels of wheel scrolling (a trackpad's, added up) for one step of a slider
@@ -106,6 +113,15 @@ export class MoviePlayer {
       this._selectRoi(+b.dataset.roi);
     });
     this.edit = null; // a prediction's ROIs as edited here: { id, revision, hist, name, ... } (`openPrediction`)
+    this.nmf = null; // the look for glomeruli its ROIs miss: { state, found, pick (candidates ticked to merge) } (`openPrediction`)
+    this.$('.player-nmf-find').addEventListener('click', () => this._nmfAsk());
+    this.$('.player-nmf-merge').addEventListener('click', () => this._nmfMerge());
+    this.$('.player-roi-list').addEventListener('change', (e) => {
+      const c = e.target.closest('.player-nmf-pick');
+      if (!c || !this.nmf) return;
+      if (c.checked) this.nmf.pick.add(+c.dataset.cand); else this.nmf.pick.delete(+c.dataset.cand);
+      this._renderNmf();
+    });
     this.base = null; // the ROIs read for the movie shown: { predicted, manual }
     this.$('.player-simplify').addEventListener('click', () => this._simplifyAll());
     this.$('.player-simplify-tol').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); this._simplifyAll(); } });
@@ -170,6 +186,8 @@ export class MoviePlayer {
     this._setMode('prediction');
     this.edit = { id: view.id, revision: view.revision || 0, saved: view.edited || null, hist: null, name, onSaved, drag: null,
       editedPath: view.edited?.path || null };
+    this.nmf = { state: view.nmf || null, found: null, pick: new Set(), run: null };
+    if (view.nmf) this._nmfRefresh(this.edit);
     this.datasetId = null;
     this.$('.player-title').textContent = title;
     this._clearMovie('Choose an image on the left.');
@@ -193,8 +211,8 @@ export class MoviePlayer {
     this.glomOnly = this.showTentative = this.showUnnamed = true;
     for (const c of ['glom', 'tentative', 'unnamed']) this.$(`.player-roi-${c}`).checked = true;
     this.roiQuery = this.$('.player-roi-search').value = '';
-    this.showSource = { predicted: true, manual: true, edited: true };
-    if (!pred) this.edit = null;
+    this.showSource = { predicted: true, manual: true, edited: true, nmf: true };
+    if (!pred) { this.edit = null; this.nmf = null; }
     this.base = null;
     this.hoverHandle = -1;
   }
@@ -298,8 +316,10 @@ export class MoviePlayer {
     if (id !== this.loadId) return;
     this.base = { predicted: predicted.map((r) => ({ ...r, source: 'predicted' })), manual: manual.map((r) => ({ ...r, source: 'manual' })) };
     if (first && !ed.hist) {
+      // (with what was merged into them of a look for missed glomeruli, and which of them are of it)
       const state = ed.saved && edited.length ? { simplified: ed.saved.simplified ?? null, pointsEdited: Boolean(ed.saved.points_edited),
-        rois: edited.filter((r) => r.paths[0]?.length >= 3).map((r) => ({ name: r.name, z: r.z ?? r.position ?? null, kind: r.kind, points: r.paths[0] })) } : null;
+        nmf: ed.saved.nmf || null, rois: edited.map((r, i) => ({ name: r.name, z: r.z ?? r.position ?? null, kind: r.kind, points: r.paths[0],
+          nmf: ed.saved.from_nmf?.[i] ?? null })).filter((r) => r.points?.length >= 3) } : null;
       ed.hist = new History(state);
       if (state) this.showSource.predicted = false; // (the edited ones are shown in their place)
     }
@@ -308,6 +328,7 @@ export class MoviePlayer {
     this._renderRoiList(this.roiPath);
     this._renderDownload();
     this._renderEdit();
+    this._renderNmf();
     this._roiLegend();
     this._paint();
   }
@@ -321,8 +342,8 @@ export class MoviePlayer {
     return this._predicted(r) ? this.showUnnamed : !this.glomOnly;
   }
 
-  // whether an ROI is predicted (or a copy of one, edited), not one drawn by hand
-  _predicted(r) { return r.source === 'predicted' || r.source === 'edited'; }
+  // whether an ROI is predicted (or a copy of one, edited, or one found for them by NMF), not one drawn by hand
+  _predicted(r) { return ['predicted', 'edited', 'nmf'].includes(r.source); }
 
   // a prediction's legend: the colour of each source of ROIs, how many there are, and whether shown
   _renderSources() {
@@ -330,8 +351,8 @@ export class MoviePlayer {
     box.hidden = !pred;
     if (!pred) { box.innerHTML = ''; return; }
     const n = (s) => this.rois.filter((r) => r.source === s).length;
-    // (the edited ones: only once there are any)
-    box.innerHTML = Object.entries(SOURCES).map(([s, { label, color }]) => (s === 'edited' && !n(s) ? '' : `<label class="check"><input type="checkbox"
+    // (the edited ones, and those found by NMF: only once there are any)
+    box.innerHTML = Object.entries(SOURCES).map(([s, { label, color }]) => ((s === 'edited' || s === 'nmf') && !n(s) ? '' : `<label class="check"><input type="checkbox"
       data-source="${s}"${this.showSource[s] ? ' checked' : ''}><span class="swatch-roi" style="background:${color}"></span>
       ${this.esc(label)} <span class="muted">(${n(s)})</span></label>`)).join('');
   }
@@ -356,21 +377,30 @@ export class MoviePlayer {
     this.$('.player-roi-unnamed-n').textContent = `(${unnamed}${unnamed && !this.showUnnamed ? ' hidden' : ''})`;
     this.$('.player-roi-search').hidden = !path;
     if (!path) { box.innerHTML = '<p class="muted small">No ImageJ ROIs (RoiSet.zip) next to this movie, or in a folder above it.</p>'; return; }
-    // (a prediction's: those of the plane shown only, as drawn)
-    const q = this.roiQuery, onPlane = (r) => this._visible(r) && !(pred && this._roiPlane(r) != null && this._roiPlane(r) !== this.z);
+    // (a prediction's: those of the plane shown only, as drawn; but those found by NMF and not merged, of every
+    // plane, first: each is to be looked at, and choosing one shows its plane)
+    const cand = (r) => r.source === 'nmf';
+    const q = this.roiQuery, onPlane = (r) => this._visible(r) && (cand(r) || !(pred && this._roiPlane(r) != null && this._roiPlane(r) !== this.z));
     const listed = (r) => onPlane(r) && (!q || String(r.name).toLowerCase().includes(q));
     const from = path.split('/').slice(-2).join('/'), shown = this.rois.filter(listed).length, all = this.rois.filter(onPlane).length;
+    const cands = this.rois.filter((r) => cand(r) && listed(r)).length;
     const found = q ? `${shown} of ${all} ROI${all === 1 ? '' : 's'} matching “${this.esc(q)}”` : '';
-    const head = pred ? `${found || `${shown} ROI${shown === 1 ? '' : 's'}`} on plane ${this.z + 1}`
+    const head = pred ? `${found || `${shown - cands} ROI${shown - cands === 1 ? '' : 's'}`} on plane ${this.z + 1}${cands
+      ? `${found ? ', or' : ' ·'} ${found ? '' : `${cands} `}found by NMF on any plane` : ''}`
       : `${found || (shown === this.rois.length ? this.rois.length : `${shown} of ${this.rois.length}`)} from …/${this.esc(from)}`;
+    const tag = '<span class="tag-nmf" title="Found by NMF in the fly\'s movies (a look for glomeruli the predicted ROIs miss), not predicted by the model">NMF</span>';
     box.innerHTML = `<p class="muted small" title="${this.esc(path)}">${head}</p>`
       + this.rois.map((r, i) => {
         if (!listed(r)) return '';
         const plane = this._roiPlane(r);
         const name = this.esc(r.name);
-        return `<button type="button" class="player-roi${i === this.selectedRoi ? ' active' : ''}" data-roi="${i}">
-          <span class="swatch-roi" style="background:${this.esc(this._roiColor(r))}"></span>${name}
-          <span class="muted">${plane == null ? 'all planes' : `plane ${plane + 1}`}</span></button>`;
+        const row = `<button type="button" class="player-roi${i === this.selectedRoi ? ' active' : ''}" data-roi="${i}">
+          <span class="swatch-roi" style="background:${this.esc(this._roiColor(r))}"></span>${name}${cand(r) || r.nmf != null ? tag : ''}
+          <span class="muted">${cand(r) ? `${this.esc(r.what)} · ` : ''}${plane == null ? 'all planes' : `plane ${plane + 1}`}</span></button>`;
+        // (one found by NMF: ticked if it is to be merged, at its first outline)
+        return cand(r) ? `<div class="player-roi-cand"><input type="checkbox" class="player-nmf-pick" data-cand="${r.cand}"${
+          this.nmf?.pick.has(r.cand) ? ' checked' : ''}${r.first ? '' : ' style="visibility:hidden"'} aria-label="Merge ${name}"
+          title="Ticked: merged into the ROIs with the others ticked, by Merge">${row}</div>` : row;
       }).join('');
   }
 
@@ -380,7 +410,12 @@ export class MoviePlayer {
   // which planes' ROIs are drawn, and how, when they are not all of the plane shown
   _roiLegend() {
     const box = this.$('.player-roi-legend'), info = this.movie?.info;
-    if (this.mode === 'prediction') { box.textContent = info?.z > 1 && this.showRois ? 'The ROIs of the plane shown.' : ''; return; }
+    if (this.mode === 'prediction') {
+      const nmf = this.rois.some((r) => r.source === 'nmf' || r.nmf != null);
+      box.textContent = `${info?.z > 1 && this.showRois ? 'The ROIs of the plane shown.' : ''}${nmf && this.showRois
+        ? ' Dashed: found by NMF (in the fly\'s movies), in short strokes until merged.' : ''}`;
+      return;
+    }
     if (!info || info.z < 2 || !this.showRois || !this.rois.some((r) => this._roiPlane(r) != null)) { box.textContent = ''; return; }
     if (this.maxProj) box.textContent = 'On the max projection: the ROIs of every plane.';
     else if (this.roiPlanes === 'adjacent') {
@@ -413,12 +448,15 @@ export class MoviePlayer {
   // those predicted are the ones shown) or { rois: [{ name, z, points, kind }], simplified (by
   // how many pixels, null if not), pointsEdited }. Each change is saved at once (`_save`).
 
-  // the ROIs listed and drawn: those predicted, the fly's own, and the edited ones as they are now
+  // the ROIs listed and drawn: those found by NMF and not merged (first: they are to be looked at), those
+  // predicted, the fly's own, and the edited ones as they are now
   _composeRois() {
     const state = this.edit?.hist?.current, b = this.base || { predicted: [], manual: [] };
-    const edited = (state?.rois || []).map((r, k) => ({ name: r.name, z: r.z, position: null, color: null, closed: true, type: 'polygon',
-      kind: r.kind, paths: [r.points], source: 'edited', k }));
-    this.rois = [...b.predicted, ...b.manual, ...edited];
+    const roi = (r, more) => ({ name: r.name, z: r.z, position: null, color: null, closed: true, type: 'polygon', kind: r.kind, paths: [r.points], ...more });
+    const edited = (state?.rois || []).map((r, k) => roi(r, { source: 'edited', k, nmf: r.nmf ?? null }));
+    const found = this.base && this.mode === 'prediction' ? provisional(this.nmf?.found, state).map((r) => roi(r, { source: 'nmf', cand: r.cand,
+      what: r.what, first: r.first })) : [];
+    this.rois = [...found, ...b.predicted, ...b.manual, ...edited];
     this.editedFrom = this.rois.length - edited.length; // (where the edited ones start)
   }
 
@@ -430,23 +468,22 @@ export class MoviePlayer {
   }
 
   // a copy of the predicted ROIs to edit, each outline simplified to within `tolerance` pixels
-  // (null: as it is); a composite ROI's outlines become ROIs of their own
+  // (null: as it is); a composite ROI's outlines become ROIs of their own. What the edited ROIs have
+  // merged in of the look for missed glomeruli is merged into the copy again, as detailed (nmf_merge.js).
   _copyPredicted(tolerance) {
-    const rois = [];
-    for (const r of this.base.predicted) {
-      for (const path of r.paths) {
-        const points = tolerance == null ? path.map((p) => [p[0], p[1]]) : simplify(path, tolerance);
-        if (points.length >= 3) rois.push({ name: r.name, z: this._roiPlane(r), kind: r.kind, points });
-      }
-    }
-    return { rois, simplified: tolerance, pointsEdited: false };
+    const found = this.nmf?.found, nmf = mergedOf(found, this.edit?.hist?.current);
+    const predicted = this.base.predicted.map((r) => ({ name: r.name, z: this._roiPlane(r), kind: r.kind, paths: r.paths }));
+    return { rois: copyPredicted(predicted, found, nmf, tolerance), simplified: tolerance, pointsEdited: false, nmf };
   }
 
   _simplifyAll() {
     if (!this.edit?.hist || !this.base?.predicted.length) return;
     const box = this.$('.player-simplify-tol'), tol = Math.max(0, Math.min(20, Number.isFinite(+box.value) ? +box.value : 1));
     box.value = tol;
-    this._commit(this._copyPredicted(tol));
+    const s = this.edit.hist.current;
+    // (ROIs merged from a look that is no longer there cannot be made again from it: the outlines as they are, with fewer points)
+    if (s?.nmf && !mergedOf(this.nmf?.found, s)) this._commit({ ...s, simplified: tol, rois: s.rois.map((r) => ({ ...r, points: simplify(r.points, tol) })) });
+    else this._commit(this._copyPredicted(tol));
   }
 
   // edited ROI k with `points` in place of its own, as a new state
@@ -532,6 +569,8 @@ export class MoviePlayer {
     if (this.selectedRoi === -1) this.selectedRoi = null;
     this._renderRoiList(this.roiPath);
     this._renderEdit();
+    this._renderNmf();
+    this._roiLegend();
     this._paint();
     this._save();
     this._renderDownload();
@@ -552,7 +591,8 @@ export class MoviePlayer {
     const points = (rois) => rois.reduce((n, r) => n + r.paths.reduce((m, p) => m + p.length, 0), 0);
     const of = s ? `${points(this.rois.slice(this.editedFrom)).toLocaleString()} points in ${s.rois.length} ROIs (${
       points(this.base.predicted).toLocaleString()} as predicted)${s.simplified == null ? '' : `, simplified within ${s.simplified} px`}${
-      s.pointsEdited ? ', points edited' : ''}. ` : '';
+      s.pointsEdited ? ', points edited' : ''}${s.nmf?.merged.length ? `, ${s.nmf.merged.length} found by NMF merged in${
+      s.nmf.joint ? ' (all named again)' : ''}` : ''}. ` : '';
     const el = this.$('.player-edit-status');
     el.textContent = `${of}${ed.status?.text || ''}`;
     el.classList.toggle('player-error', Boolean(ed.status?.error));
@@ -575,7 +615,8 @@ export class MoviePlayer {
       try {
         if (s) {
           const info = await this.api(`/api/predictions/${ed.id}/edited`, { method: 'PUT', json: { base: ed.revision, name,
-            simplified: s.simplified, points_edited: s.pointsEdited, rois: s.rois.map((r) => ({ name: r.name, z: r.z, points: r.points })) } });
+            simplified: s.simplified, points_edited: s.pointsEdited, nmf: s.nmf ?? null,
+            rois: s.rois.map((r) => ({ name: r.name, z: r.z, points: r.points, nmf: r.nmf ?? null })) } });
           ed.revision = info.revision;
           ed.editedPath = info.path || ed.editedPath;
         } else {
@@ -598,6 +639,156 @@ export class MoviePlayer {
     }
   }
 
+  // --------------------------------- glomeruli the predicted ROIs miss (NMF)
+  // A look for them in the fly's movies is asked of the server (nmf_check.py: the fit worker makes it),
+  // and followed while it is waiting and running (`this.nmf.state`, with how far it is). What it finds
+  // (`this.nmf.found`) is listed and drawn with the ROIs, each candidate ticked (`this.nmf.pick`) or not;
+  // those ticked are merged into the edited ROIs once the change, with the names it gives, is agreed to.
+
+  // asks the server how the look is (and what it found, once), then again while it is not over
+  async _nmfRefresh(ed) {
+    const n = this.nmf;
+    if (!n || n.asking) return;
+    n.asking = true;
+    let res = null;
+    try { res = await this.api(`/api/predictions/${ed.id}/nmf`); } catch (e) { n.error = e.message; }
+    n.asking = false;
+    if (ed !== this.edit || n !== this.nmf || !this.el.open) return;
+    if (res) {
+      const was = n.state?.status;
+      n.state = res.nmf;
+      n.error = null;
+      if (res.found && res.found.run !== n.run) { // (a look just read: what it found, the parts of ROIs not ticked to begin with)
+        n.found = res.found;
+        n.run = res.found.run;
+        n.pick = new Set(res.found.candidates.filter((c) => c.kind !== 'split').map((c) => c.id));
+        if (this.base) { this._composeRois(); this._renderRoiList(this.roiPath); this._roiLegend(); this._paint(); }
+      }
+      if (was && was !== n.state?.status) ed.onSaved?.(); // (said in the tab too)
+    }
+    this._renderNmf();
+    if (!res || ['queued', 'running'].includes(n.state?.status)) setTimeout(() => { if (ed === this.edit && n === this.nmf && this.el.open) this._nmfRefresh(ed); }, NMF_POLL_MS);
+  }
+
+  // asks for a look (again, if one was made), as whoever is named in Settings
+  async _nmfAsk() {
+    const ed = this.edit, n = this.nmf;
+    if (!ed || !n || ed.stale) return;
+    const name = ed.name?.() || '';
+    if (!name) { n.error = 'Enter your first name in Settings first: a look says who asked for it.'; this._renderNmf(); return; }
+    try {
+      n.state = (await this.api(`/api/predictions/${ed.id}/nmf`, { method: 'POST', json: { name } })).nmf;
+      n.error = null;
+    } catch (e) { n.error = `Could not ask for it: ${e.message}`; }
+    if (ed !== this.edit || n !== this.nmf) return;
+    ed.onSaved?.();
+    this._renderNmf();
+    this._nmfRefresh(ed);
+  }
+
+  // the look's box: what can be asked for now, how far a look is, what one found
+  _renderNmf() {
+    const box = this.$('.player-nmf'), ed = this.edit, n = this.nmf;
+    const on = Boolean(this.mode === 'prediction' && ed?.hist && n && this.base?.predicted.length);
+    box.hidden = !on;
+    if (!on) return;
+    const st = n.state, status = st?.status || null, active = status === 'queued' || status === 'running';
+    const found = status === 'done' ? n.found : null, merged = mergedIds(found, ed.hist.current);
+    const left = found ? found.candidates.filter((c) => !merged.has(c.id)) : [], picked = left.filter((c) => n.pick.has(c.id)).length;
+    const find = this.$('.player-nmf-find'), go = this.$('.player-nmf-merge'), bar = this.$('.player-nmf-bar');
+    // (not again while ROIs of the last look are merged in: they are known by it)
+    find.hidden = active || merged.size > 0;
+    find.disabled = Boolean(ed.stale);
+    find.textContent = status ? 'Look again' : 'Look for missed glomeruli';
+    go.hidden = !left.length;
+    go.disabled = !picked || Boolean(ed.stale);
+    go.textContent = picked ? `Merge the ${picked} ticked…` : 'Merge…';
+    bar.hidden = !active;
+    if (status === 'running' && st.fraction != null) bar.value = st.fraction; else bar.removeAttribute('value');
+    const count = (k) => (found ? found.candidates.filter((c) => c.kind === k).length : 0), by = st?.name ? `, asked for by ${st.name}` : '';
+    const pr = st?.progress || {}, of = pr.total ? ` (${pr.done || 0} of ${pr.total})` : '';
+    const text = n.error ? n.error
+      : status === 'queued' ? `Waiting for the fit worker${by}.`
+      : status === 'running' ? `${NMF_STAGES[pr.stage] || 'starting'}${of}${pr.device ? `, on the ${pr.device}` : ''}: ${Math.round((st.fraction || 0) * 100)}%${by}.`
+      : status === 'done' && !found ? 'Reading what it found…'
+      : status === 'done' ? (found.candidates.length ? `Found ${found.candidates.length} in the fly's movies: ${[[count('added'), 'new'], [count('extended'), 'more of an ROI on a plane it had no outline on'],
+        [count('split'), `part${count('split') === 1 ? '' : 's'} of ROIs that may hold two glomeruli (not ticked to begin with: of those found so on flies with ROIs drawn by hand, few were)`]]
+        .filter(([k]) => k).map(([k, w]) => `${k} ${w}`).join(', ')}${merged.size ? `; ${merged.size} merged in` : ''}. Those not merged are listed first, dashed on the image: look at each, and tick those to merge.`
+        : 'Found none: no place in the fly\'s movies that the predicted ROIs leave out passed for a glomerulus.')
+      : status ? `${status === 'failed' ? 'Failed' : 'Interrupted'}${st.error ? `: ${st.error}` : ''}. Its log is the prediction's.`
+      : 'Looks in the fly\'s movies for glomeruli the predicted ROIs miss (by NMF: on the GPU when no fit has it), about a minute. What it finds is listed here, to merge into the ROIs or not.';
+    const out = this.$('.player-nmf-status');
+    out.textContent = text;
+    out.classList.toggle('player-error', Boolean(n.error) || status === 'failed' || status === 'interrupted');
+  }
+
+  // Merges the candidates ticked into the edited ROIs (a copy of those predicted, if there is none yet), once
+  // the change is agreed to in a box that says what it is: the ROIs added, which are from NMF, and the
+  // names: all ROIs named again together (asked of the server: names that change are listed), or the
+  // predicted ROIs' kept.
+  async _nmfMerge() {
+    const ed = this.edit, n = this.nmf, found = n?.found;
+    if (!ed?.hist || ed.stale || !found || this.nmfMerging) return;
+    const state = ed.hist.current || this._copyPredicted(null), had = mergedIds(found, state);
+    const more = found.candidates.filter((c) => n.pick.has(c.id) && !had.has(c.id)).map((c) => c.id);
+    if (!more.length) return;
+    const chosen = [...had, ...more], dialog = document.getElementById('nmf-merge');
+    const body = dialog.querySelector('.nmf-merge-body'), msg = dialog.querySelector('.nmf-merge-msg'), ok = dialog.querySelector('.nmf-merge-ok');
+    let plan = null, asked = 0;
+    const show = async () => {
+      const joint = dialog.querySelector('[name=nmf-names]:checked').value === 'joint', id = (asked += 1);
+      plan = null;
+      ok.disabled = true;
+      body.innerHTML = '';
+      msg.classList.remove('player-error');
+      msg.textContent = joint ? 'Naming the ROIs…' : '';
+      let p;
+      try { p = await this.api(`/api/predictions/${ed.id}/nmf/plan`, { method: 'POST', json: { chosen, joint } }); } catch (e) {
+        if (id !== asked) return;
+        msg.textContent = `${e.message}.${joint ? ' The predicted ROIs\' names can be kept instead (below).' : ''}`;
+        msg.classList.add('player-error');
+        return;
+      }
+      if (id !== asked) return;
+      plan = { ...p, joint };
+      msg.textContent = '';
+      body.innerHTML = this._nmfChanges(changes(found, state, p, chosen), joint, state);
+      ok.disabled = false;
+    };
+    dialog.querySelector('.nmf-merge-names').onchange = show;
+    dialog.querySelector('[name=nmf-names][value=joint]').checked = true;
+    this.nmfMerging = true;
+    const answer = await new Promise((resolve) => {
+      dialog.returnValue = '';
+      dialog.addEventListener('close', () => resolve(dialog.returnValue), { once: true });
+      dialog.showModal();
+      show();
+    });
+    this.nmfMerging = false;
+    asked += 1;
+    if (answer !== 'merge' || !plan || ed !== this.edit || ed.stale) return;
+    this._commit(merge(state, found, plan, chosen, plan.joint));
+  }
+
+  // what a merge changes, as the box shows it (nmf_merge.js's `changes`): the ROIs added, each marked as from NMF,
+  // and the ROIs whose names change, each marked as predicted or from NMF
+  _nmfChanges(c, joint, state) {
+    const esc = this.esc, plural = (k, w) => `${k} ${w}${k === 1 ? '' : 's'}`;
+    const nmf = '<span class="tag-nmf">NMF</span>', pred = '<span class="tag-pred">predicted</span>';
+    const name = (r) => (r.named ? `<b>${esc(r.name)}</b>` : `<b>${esc(r.name)}</b> <span class="muted">(not named: numbered)</span>`);
+    const planes = (r) => `plane${r.planes.length === 1 ? '' : 's'} ${r.planes.map((z) => z + 1).join(', ')}`;
+    const kinds = { added: (r) => `a new ROI, ${name(r)}`, extended: (r) => `more of ${name(r)}`,
+      split: (r) => `cut off ${esc(r.of)}, as ${name(r)}; what is left of ${esc(r.of)} there replaces its outline${state.pointsEdited ? ' (as edited, if it was)' : ''}` };
+    const added = c.added.map((r) => `<tr><td>${nmf}</td><td>${kinds[r.kind](r)}</td><td class="muted">${planes(r)}</td></tr>`).join('');
+    const renamed = c.renamed.map((r) => `<tr><td>${r.nmf ? nmf : pred}</td><td>${esc(r.from)} → <b>${esc(r.to)}</b>${
+      /^\d+$/.test(r.to) ? ' <span class="muted">(no longer named: numbered)</span>' : /^\d+$/.test(r.from) ? ' <span class="muted">(was not named)</span>' : ''}</td></tr>`).join('');
+    return `<h3>Added from NMF (${c.added.length})</h3><table class="nmf-merge-table"><tbody>${added}</tbody></table>
+      <h3>Names that change (${c.renamed.length})</h3>${c.renamed.length ? `<table class="nmf-merge-table"><tbody>${renamed}</tbody></table>` : ''}
+      <p class="muted small">${c.renamed.length ? `The other ${plural(c.kept, 'ROI')} keep${c.kept === 1 ? 's its name' : ' their names'}.` : `No ROI's name changes${
+      joint ? ': named again together, they get the names they have' : ''}.`} ROIs' outlines stay as they are${state.simplified == null ? ''
+      : `, those from NMF simplified within ${state.simplified} px as they are`}. Undo takes all of it back.</p>`;
+  }
+
   // --------------------------------------- what a predicted ROI's name cost
   // Whether the edited ROIs named as `r` are still the predicted ROI's outlines, point for point, on
   // every plane it has one (what a name cost is of the ROI as a 3D object, as predicted).
@@ -617,6 +808,15 @@ export class MoviePlayer {
     const r = this.rois[i], ed = this.edit, dialog = document.getElementById('roi-identity');
     if (!ed || !r || r.source === 'manual' || !this.base) return;
     const copy = r.source === 'edited';
+    if (r.source === 'nmf' || r.nmf != null || (copy && ed.hist.current.nmf)) { // (named when what NMF found was, or was merged: not what the prediction kept)
+      showNoIdentity(dialog, `ROI ${/^\d+$/.test(r.name) ? `${r.name}: not named` : `named ${r.name}`}`, r.source === 'nmf' || r.nmf != null
+        ? `This ROI was found by NMF in the fly's movies, not predicted by the model. It was named as the model names a fly's ROIs (by its odor
+          tuning, position, shape and the atlas), ${r.source === 'nmf' ? 'among the glomeruli the predicted ROIs left' : 'with the others, when it was merged'}; what
+          that name cost is not kept.`
+        : `ROIs found by NMF were merged into these, and ${ed.hist.current.nmf.joint ? 'all of them named again together' : 'named with them'}: what
+          a name cost then is not kept. Tick “predicted” above the list and double-click that ROI's name on the image for the values the model named it by.`);
+      return;
+    }
     const title = `${/^\d+$/.test(r.name) ? `Predicted ROI ${r.name}: not named` : `Predicted ROI named ${r.name}`}${copy ? ' (its copy to edit)' : ''}`;
     if (copy && !this._asPredicted(r)) {
       const s = ed.hist.current;
@@ -1095,8 +1295,9 @@ export class MoviePlayer {
     const plane = this._roiPlane(r), z = this.maxProj ? null : this.z, here = z == null || plane == null || plane === z;
     if (this.mode === 'prediction') { // (only those of the plane shown)
       if (this.maxProj || (plane != null && plane !== this.z)) return null;
-      return i === this.selectedRoi ? { color: SELECTED_COLOR, width: 2.5, dash: [], alpha: 1, named: true }
-        : { color: this._roiColor(r), width: 1.5, dash: [], alpha: 1, named: true };
+      const dash = r.source === 'nmf' ? [5, 3] : r.nmf != null ? [10, 3] : []; // (found by NMF: dashed, in longer strokes once merged)
+      return i === this.selectedRoi ? { color: SELECTED_COLOR, width: 2.5, dash, alpha: 1, named: true }
+        : { color: this._roiColor(r), width: 1.5, dash, alpha: 1, named: true };
     }
     if (i === this.selectedRoi) return { color: SELECTED_COLOR, width: 2.5, dash: here ? [] : [4, 4], alpha: 1, named: true };
     if (here) return { color: r.color || ROI_COLOR, width: 1.5, dash: [], alpha: 1, named: true };
@@ -1147,6 +1348,7 @@ export class MoviePlayer {
     this.rois = [];
     this.base = null;
     this._renderEdit();
+    this._renderNmf();
     this.$('.player-sub').textContent = '';
     this.$('.player-warnings').textContent = '';
     this.$('.player-msg').textContent = msg;

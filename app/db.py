@@ -259,7 +259,18 @@ CREATE TABLE IF NOT EXISTS predictions (  -- glomerulus ROIs a fit's model predi
     result_json TEXT,                  -- its ROIs, and their scores against the fly's own
     error TEXT,
     options_json TEXT,                 -- how its ROIs are cleaned (predictions.options), where not as the model does
+    nmf_status TEXT,                   -- of the look for glomeruli its ROIs miss (nmf_check.py): none (never asked for), queued, running, done, failed, interrupted
+    nmf_json TEXT,                     -- who asked for that and when, how far it is, what it found
     UNIQUE (fit_id, fly_dir)
+);
+CREATE TABLE IF NOT EXISTS worker_calls (  -- quick things the web server asks of the fit worker, which has al-diag-seg, and waits for (nmf_check.call)
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    args_json TEXT NOT NULL,
+    created REAL NOT NULL,             -- when it was asked (seconds)
+    status TEXT NOT NULL,              -- queued, running, done, failed
+    result_json TEXT,
+    error TEXT
 );
 CREATE TABLE IF NOT EXISTS extractions (  -- signals of a fly's ROIs extracted from its movies, asked for in the AL segmentation tab, by the fit worker (see extract.py)
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -328,6 +339,7 @@ ADDED_COLUMNS = [("datasets", "mocorr_data_path", "TEXT"), ("datasets", "data_fi
                  ("units", "extra_json", "TEXT"), ("model_sources", "skip", "TEXT NOT NULL DEFAULT ''"),
                  ("model_baselines", "imported_at", "TEXT"), ("model_baselines", "imported_json", "TEXT"),
                  ("extractions", "raw_dir", "TEXT"), ("predictions", "options_json", "TEXT"),
+                 ("predictions", "nmf_status", "TEXT"), ("predictions", "nmf_json", "TEXT"),
                  *(c for p, col in PROPERTY_COLUMNS.items()
                    for c in (("pubchem", col, "REAL"), ("pubchem", f"{p}_source", "TEXT"), ("pubchem", f"{p}_at", "TEXT"),
                              ("pubchem", f"{p}_chemutils", "TEXT"), ("pubchem", f"{p}_measured", "INTEGER"),

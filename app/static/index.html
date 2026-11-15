@@ -1339,6 +1339,27 @@ try {
   </form>
 </dialog>
 
+<dialog id="nmf-merge" class="confirm nmf-merge" aria-labelledby="nmf-merge-q">
+  <form method="dialog">
+    <p id="nmf-merge-q">Merge the ROIs found by NMF into the ROIs?</p>
+    <p class="muted small">They become part of the edited ROIs (those predicted stay as they are), saved at once, for everyone. Each is
+      marked by where it is from: <span class="tag-nmf">NMF</span> found in the fly's movies, <span class="tag-pred">predicted</span> by the model.</p>
+    <fieldset class="nmf-merge-names">
+      <legend>Names</legend>
+      <label class="check"><input type="radio" name="nmf-names" value="joint" checked> all ROIs named again, together (as the model names a fly's ROIs:
+        by odor tuning, position, shape, the atlas and their neighbors), so a name can go to the ROI it fits best</label>
+      <label class="check"><input type="radio" name="nmf-names" value="kept"> the predicted ROIs keep their names, and those from NMF are named
+        among the glomeruli left</label>
+    </fieldset>
+    <p class="nmf-merge-msg small" aria-live="polite"></p>
+    <div class="nmf-merge-body"></div>
+    <div class="actions">
+      <button type="submit" value="merge" class="btn primary nmf-merge-ok" disabled>Merge</button>
+      <button type="submit" value="cancel" class="btn" autofocus>Cancel</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="predict-again" class="confirm" aria-labelledby="predict-again-q">
   <form method="dialog">
     <p id="predict-again-q">This model has predicted this fly's ROIs already.</p>
@@ -1438,6 +1459,14 @@ try {
           to add one beside it, Alt-click (or Ctrl-click) one to delete it, as in ImageJ. Double-click a predicted ROI's name on the image
           for what naming it cost.<br>Each change is saved at once, beside the ROIs as predicted, which
           stay as they are.</p>
+      </section>
+      <section class="player-nmf" aria-label="Glomeruli the predicted ROIs miss" hidden>
+        <div class="player-edit-row">
+          <button type="button" class="btn small player-nmf-find" title="Looks in the fly's movies (every recording's, every time point of every trial) for glomeruli the predicted ROIs miss: each plane's movie is factorized (non-negative matrix factorization) as the light of each ROI and of places they leave out, and such a place is proposed if it is round, inside the lobe, answers odors reliably and not as a mixture of the ROIs next to it. Also proposes cutting ROIs whose pixels are tuned in two ways. Nothing is changed until what it finds is merged.">Look for missed glomeruli</button>
+          <button type="button" class="btn small player-nmf-merge" title="Merges the ROIs ticked in the list into the edited ROIs (a copy of those predicted, if there is none yet), after showing what changes, names among it" hidden>Merge…</button>
+        </div>
+        <progress class="player-nmf-bar" max="1" hidden></progress>
+        <p class="player-nmf-status small" aria-live="polite"></p>
       </section>
       <div class="player-roi-legend muted small"></div>
       <button type="button" class="btn small player-roi-download" hidden>Download the ROIs</button>

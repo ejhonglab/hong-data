@@ -134,6 +134,9 @@ def _row(r) -> dict:
     for k in ("progress", "result"):
         v = d.pop(f"{k}_json")
         d[k] = json.loads(v) if v else None
+    # the look for glomeruli its ROIs miss (nmf_check.py), if one was asked for
+    status, more = d.pop("nmf_status", None), d.pop("nmf_json", None)
+    d["nmf"] = {**(json.loads(more) if more else {}), "status": status} if status else None
     return d
 
 
@@ -188,18 +191,18 @@ def create(db, fit_id: int, fly: dict, name: str, ip: Optional[str], overwrite: 
         else:
             pred_id = r["id"]
             con.execute("UPDATE predictions SET raw_dir = ?, fly = ?, name = ?, ip = ?, created_at = ?, status = 'queued', "
-                        "started_at = NULL, finished_at = NULL, progress_json = NULL, result_json = NULL, error = NULL, options_json = ? "
-                        "WHERE id = ?", (fly["raw_dir"], fly["name"], name, ip, now(), oj, pred_id))
+                        "started_at = NULL, finished_at = NULL, progress_json = NULL, result_json = NULL, error = NULL, options_json = ?, "
+                        "nmf_status = NULL, nmf_json = NULL WHERE id = ?", (fly["raw_dir"], fly["name"], name, ip, now(), oj, pred_id))
     return get(db, pred_id), True
 
 
 def delete(db, pred_id: int) -> Optional[bool]:
     """Deletes a prediction and its folder. None if there is no such prediction; False if it
-    is running."""
+    is running, or glomeruli its ROIs miss are being looked for (`nmf_check`)."""
     p = get(db, pred_id)
     if p is None:
         return None
-    if p["status"] == "running":
+    if p["status"] == "running" or (p["nmf"] or {}).get("status") == "running":
         return False
     with db.connect() as con:
         con.execute("DELETE FROM predictions WHERE id = ? AND status != 'running'", (pred_id,))
@@ -309,7 +312,8 @@ def estimate(preds: list[dict], gpu: bool, fit_running: bool, t: Optional[float]
 
 
 def worker_jobs(db) -> dict:
-    """What restarting the fit worker would stop: the fits, predictions and extractions of
+    """What restarting the fit worker would stop: the fits, predictions, looks for glomeruli a
+    prediction's ROIs miss (`nmf_check`) and extractions of
     signals (`extract`) running, as the web server's `_running_jobs` gives its own (``jobs``,
     each its ``what``, ``started_at``, ``ends_at`` and ``then``), and ``queued``: how many are
     waiting (left to start after).
@@ -329,6 +333,10 @@ def worker_jobs(db) -> dict:
                          # (not a guess, nor a time already past)
                          "started_at": p["started_at"], "ends_at": p["eta"]["ends_at"] if p["eta"]["from"] and p["eta"]["seconds"] else None,
                          "then": "It would be stopped and marked interrupted, to be asked for again."})
+        if (p["nmf"] or {}).get("status") == "running":
+            jobs.append({"what": f"Glomeruli that fit #{p['fit_id']}'s ROIs of {p['fly']} miss being looked for, asked for by {p['nmf'].get('name')}",
+                         "started_at": p["nmf"].get("started_at"), "ends_at": None,
+                         "then": "It would be stopped and marked interrupted, to be asked for again."})
     from . import extract  # (it imports this module)
 
     exts = extract.all_extractions(db)
@@ -339,7 +347,7 @@ def worker_jobs(db) -> dict:
                          "started_at": x["started_at"], "ends_at": x["eta"]["ends_at"] if x["eta"]["seconds"] else None,
                          "then": "It would be stopped and marked interrupted, to be asked for again."})
     queued = (sum(f["status"] == "queued" for f in all_fits) + sum(p["status"] == "queued" for p in preds)
-              + sum(x["status"] == "queued" for x in exts))
+              + sum((p["nmf"] or {}).get("status") == "queued" for p in preds) + sum(x["status"] == "queued" for x in exts))
     return {"jobs": jobs, "queued": queued}
 
 
@@ -448,16 +456,20 @@ def models(all_fits: list[dict]) -> list[dict]:
 
 def listing(db, root_: Path) -> dict:
     """Every prediction (newest first: each with ``tensor_dir`` and ``tensor_raw_dir``, its fly's
-    folders from the top of tensor, ``fit_deleted``, and those queued or running with ``eta``:
+    folders from the top of tensor, ``fit_deleted``, ``nmf`` (the look for glomeruli its ROIs
+    miss, if one was asked for: `nmf_check.state`), and those queued or running with ``eta``:
     when it should end, see `estimate`), the models to predict with (`models`), the fit worker,
     where tensor is on the server, and ``expected``: the same of a prediction asked for now."""
+    from . import nmf_check  # (it imports this module)
+
     all_fits = fits.all_fits(db)
     have = {f["id"] for f in all_fits}
     preds = []
     for p in all_predictions(db):
         rel = lambda s: roi_training._arcname(Path(s), root_, []) if s else None  # noqa: E731
         preds.append({**p, "tensor_dir": rel(p["fly_dir"]), "tensor_raw_dir": rel(p["raw_dir"]),
-                      "fit_deleted": p["fit_id"] not in have, "edited": edited_info(p) if p["status"] == "done" else None})
+                      "fit_deleted": p["fit_id"] not in have, "edited": edited_info(p) if p["status"] == "done" else None,
+                      "nmf": nmf_check.state(db, p)})
     worker = fits.worker_status(db)
     new = estimate(preds, bool(worker.get("gpu")), any(f["status"] == "running" for f in all_fits))
     return {"predictions": preds, "models": models(all_fits), "worker": worker, "tensor_root": str(root_), "expected": new}
@@ -467,8 +479,9 @@ def view(db, pred_id: int) -> Optional[dict]:
     """What the tab's viewer shows of a prediction done: its fly's average image (as the model saw
     it) and motion-corrected movies (`movies._fly_movies`), each with ``predicted`` (the
     prediction's ROIs) and ``rois`` (the fly's own, next to the movie or above it; for the
-    average image, those the prediction was scored against); and the predicted ROIs as edited
-    there (``edited``: `edited_info`, None if they were not; ``revision``: `edited_revision`).
+    average image, those the prediction was scored against); the predicted ROIs as edited
+    there (``edited``: `edited_info`, None if they were not; ``revision``: `edited_revision`);
+    and the look for glomeruli they miss, if one was asked for (``nmf``: `nmf_check.state`).
     None if there is no such prediction done."""
     p = get(db, pred_id)
     if p is None or p["status"] != "done":
@@ -496,8 +509,10 @@ def view(db, pred_id: int) -> Optional[dict]:
         out.append(m)
     for m in out:
         m["predicted"] = pred
+    from . import nmf_check  # (it imports this module)
+
     return {"id": p["id"], "fit_id": p["fit_id"], "fly": p["fly"], "movies": out, "edited": edited_info(p),
-            "revision": edited_revision(p)}
+            "revision": edited_revision(p), "nmf": nmf_check.state(db, p)}
 
 
 def identity_terms(db, pred_id: int) -> Optional[dict]:
@@ -558,7 +573,9 @@ def edited_info(p: dict) -> Optional[dict]:
 
 def _edited_rois(rois) -> list[dict]:
     """The ROIs the viewer sends to save, checked: each its ``name``, ``z`` (its plane, from 0;
-    None: all) and ``points`` ([x, y] in pixels, as ImageJ's: three or more).
+    None: all), ``points`` ([x, y] in pixels, as ImageJ's: three or more) and ``nmf`` (the
+    candidate it is of, if it was merged in from the look for glomeruli the ROIs miss,
+    `nmf_check`; else None).
 
     Raises:
         ValueError: saying what is wrong with them.
@@ -582,8 +599,11 @@ def _edited_rois(rois) -> list[dict]:
                                                          and math.isfinite(v) and abs(v) <= 100_000 for v in q) for q in pts)
         if not ok:
             raise ValueError(f"{what} ({name}): its points must be three or more [x, y], in pixels")
+        cand = r.get("nmf")
+        if cand is not None and (isinstance(cand, bool) or not isinstance(cand, int) or not 0 < cand < 100_000):
+            raise ValueError(f"{what} ({name}): nmf must be the number of the candidate it is of, or null")
         total += len(pts)
-        out.append({"name": name.strip(), "z": z, "points": [[round(float(x), 2), round(float(y), 2)] for x, y in pts]})
+        out.append({"name": name.strip(), "z": z, "points": [[round(float(x), 2), round(float(y), 2)] for x, y in pts], "nmf": cand})
     if total > MAX_EDITED_POINTS:
         raise ValueError(f"more than {MAX_EDITED_POINTS} points in all")
     return out
@@ -608,19 +628,45 @@ def _write_roiset(rois: list[dict], path: Path) -> None:
     os.replace(tmp, path)
 
 
+def _merged(nmf) -> Optional[dict]:
+    """What the viewer says it merged into the edited ROIs of the look for glomeruli the ROIs miss
+    (`nmf_check`), checked: None, or ``run`` (the look: when it finished), ``merged`` (the
+    candidates' ids), ``joint`` (whether all ROIs were named again together) and ``names``
+    ({label: name or None}, of every ROI then).
+
+    Raises:
+        ValueError: if it is not that.
+    """
+    if nmf is None:
+        return None
+    ok = (isinstance(nmf, dict) and isinstance(nmf.get("run"), str) and len(nmf["run"]) <= 40
+          and isinstance(nmf.get("merged"), list) and len(nmf["merged"]) <= 10_000
+          and all(isinstance(i, int) and not isinstance(i, bool) for i in nmf["merged"])
+          and isinstance(nmf.get("names"), dict) and len(nmf["names"]) <= MAX_EDITED_ROIS
+          and all(isinstance(k, str) and k.isdigit() and (v is None or (isinstance(v, str) and 0 < len(v) <= 100 and v.isprintable()))
+                  for k, v in nmf["names"].items()))
+    if not ok:
+        raise ValueError("nmf: what was merged of the look for missed glomeruli (run, merged, joint, names), or null")
+    return {"run": nmf["run"], "merged": sorted(set(nmf["merged"])), "joint": bool(nmf.get("joint")), "names": nmf["names"]}
+
+
 def save_edited(db, pred_id: int, rois, base, by: Optional[str], ip: Optional[str], simplified=None,
-                points_edited: bool = False) -> dict:
+                points_edited: bool = False, nmf=None) -> dict:
     """Saves a prediction's ROIs as edited in the viewer, beside those predicted (left as they
     are): ``<fly>_pred-edited_RoiSet.zip``, and ``<fly>_pred-edited.json`` saying of them
     ``revision`` (1 more at each save), ``saved_at``, ``by`` and ``ip`` (who saved them last),
     ``simplified`` (by how many pixels their outlines were let move when simplified; None if
     they were not), ``points_edited`` (whether points were moved, added or deleted since),
-    ``rois`` and ``points`` (how many) and ``of`` (the predicted ROIs they are a copy of).
+    ``rois`` and ``points`` (how many), ``of`` (the predicted ROIs they are a copy of) and,
+    once candidates of the look for glomeruli the ROIs miss were merged in (`nmf_check`),
+    ``nmf`` (which, and every ROI's name then: `_merged`) and ``from_nmf`` (per ROI, in the
+    RoiSet's order: the candidate it is of, else None).
 
     Args:
         rois: as `_edited_rois` takes them.
         base: the revision they were edited from (0: none yet), so that two people's edits do
             not overwrite each other unseen.
+        nmf: as `_merged` takes it.
 
     Returns:
         what `edited_info` then gives.
@@ -634,6 +680,7 @@ def save_edited(db, pred_id: int, rois, base, by: Optional[str], ip: Optional[st
     if simplified is not None and (isinstance(simplified, bool) or not isinstance(simplified, (int, float))
                                    or not 0 <= simplified <= 100):
         raise ValueError("simplified: by how many pixels (0 to 100), or null")
+    nmf = _merged(nmf)
     with _edit_lock:
         p = get(db, pred_id)
         if p is None or p["status"] != "done":
@@ -644,7 +691,8 @@ def save_edited(db, pred_id: int, rois, base, by: Optional[str], ip: Optional[st
         _write_roiset(rois, edited_roiset(p))
         _write_meta(p, {"revision": revision + 1, "saved_at": now(), "by": by, "ip": ip,
                         "simplified": simplified, "points_edited": bool(points_edited), "rois": len(rois),
-                        "points": sum(len(r["points"]) for r in rois), "of": roiset(p).name})
+                        "points": sum(len(r["points"]) for r in rois), "of": roiset(p).name,
+                        **({"nmf": nmf, "from_nmf": [r["nmf"] for r in rois]} if nmf or any(r["nmf"] for r in rois) else {})})
     return edited_info(p)
 
 

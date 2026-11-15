@@ -508,6 +508,69 @@ between the frontend and the server. Using the app is described in
   revision is refused (409) rather than written over someone else's; deleting the copy
   keeps the `.json` beside it, so that revisions never repeat. No login, so who saved is
   the name set in Settings, if any, and the IP address, as for fits.
+- **Glomeruli a prediction's ROIs miss are looked for in the fly's movies, and only ever
+  proposed** (`nmf_check.py`, `fit_worker.run_nmf`, al-diag-seg's `alseg.nmf`; the viewer's
+  *Look for missed glomeruli*). Cellpose outlines what the average image and the odors'
+  mean responses show; on fit 7's 4 held-out flies its ROIs match 183 of the 325 manual
+  in-plane outlines (IoU ≥ 0.5) and leave 57 nearly bare (IoU < 0.2). The look goes by the
+  movies instead (every recording's `mocorr.tif`: each trial's time points less its
+  baseline, 840 to 2,460 a fly), plane by plane: a non-negative factorization with a
+  footprint per ROI (started at its mask, kept within 2 µm of it) and free footprints for
+  what those leave unexplained, started inside the hull of the ROIs and off them. On the
+  GPU when no fit has it (14 to 22 s a fly once its movies are read; the worker's
+  prediction thread runs it, after the predictions waiting), else on the CPU (2 to 6
+  minutes on 8 threads: the one step here the GPU is worth having for).
+  - *The tests are what make a candidate, not the factorization.* A free footprint is
+    mostly the light round the lobe and between ROIs: of 901 free footprints' places on
+    those flies, 30 lie on a manual outline the ROIs did not match. A place is proposed
+    only if it is at least 20 µm² and holds a circle of 2.5 µm, lies in the ROIs' hull,
+    answers odors reliably (the odors explain at least half the variance of its trial
+    responses) and not as a mixture of its neighbours (their tunings, mixed as best fits,
+    leave at least half of its own unexplained). That leaves 25: 8 on a manual outline the
+    ROIs did not match (5 at IoU ≥ 0.5) and 17 where none is drawn, which says little
+    against them, as outlines are drawn on a glomerulus' clearest planes only. 16 of the 25
+    join an ROI on the plane next to theirs (overlapping it, with a time course
+    correlated at least 0.7: more of that ROI, on a plane it had no outline on); where
+    both lie on manual outlines (5), those are of the same glomerulus. The numbers depend
+    little on most of the factorization's settings (19 to 31 candidates, 8 to 10 of them
+    on such outlines, with fewer or more free footprints, other blurs, time courses of
+    either sign, twice the passes, or only the time points with odor), more on how far a
+    free footprint may reach, how far from the ROIs it starts and the threshold of its
+    place (17 to 40, and 5 to 9), and most on taking each pixel over its noise: without
+    that, 16 and 4 (`notes/nmf_missed/`: the try-out's scripts, and the check of
+    al-diag-seg's own).
+  - *Masks over two glomeruli are not found so.* A rank 2 factorization of each mask's own
+    pixels proposed parts for 5 of the 11 masks holding at least 40% of two manual
+    outlines (2 with each part on its own), and for 159 others, with no measure (the
+    parts' correlation, the fit gained, their reliability) telling them apart, as the
+    movies' unmixing found before. So the look cuts the masks al-diag-seg's `--split`
+    would, by the per-trial dF/F maps: 4 of the 11, and 23 others. These are listed with
+    the rest but not ticked to begin with.
+  - *Candidates are cleaned as the prediction's ROIs were, and named as the model names*:
+    by the steps of the prediction's options that need nothing of Cellpose (`trim`,
+    `margin`; of the ROIs with the candidates in, only the candidates' own pixels are
+    taken, so the ROIs stay as they are), and by `identity.assign_identities` with the
+    atlas on the fly's planes, which a prediction now keeps (`<fly>_atlas_prior.npz`; one
+    made before is registered again, 8 s without an anatomical stack, minutes with). Two
+    namings are kept: the predicted ROIs' names fixed, the candidates named among the
+    glomeruli left (what the viewer shows them as), and all ROIs named again together.
+  - *Merging is the viewer's, into the edited ROIs, and one change to agree to.* What a
+    model predicted stays a result; candidates ticked become part of the edited copy
+    (`nmf_merge.js`), a state like any other: saved whole, undone whole. Before it is
+    made, a box lists it: each ROI added, marked NMF, and each ROI whose name changes,
+    marked predicted or NMF. Names are by default all given again together, since a
+    candidate may be the better fit for a name a predicted ROI holds (in the check above,
+    merging six gave a numbered predicted ROI the name of the manual outline it lies on);
+    or the predicted ROIs keep theirs. An edited ROI is known by its name, which says its
+    label (a glomerulus names one ROI; one not named is its label's number), so renaming
+    needs nothing kept per ROI, and outlines edited by hand stay as edited; the edited
+    ROIs' `.json` says which candidates were merged and every ROI's name then, so that
+    simplifying again makes the same merge from the predicted ROIs and the look, at the
+    new detail. In the list and on the image, ROIs from NMF stay marked.
+  - *Naming some of the candidates is asked of the fit worker* (`nmf_check.call`, the
+    `worker_calls` table: the web server has no al-diag-seg, and waits up to 90 s for a
+    thread of the worker that does nothing else). All of them together, and any of them
+    with the predicted names kept, are as the look left them, and need no worker.
 - **Model data is read where it is, never imported** (`model_data.py`): the Admin tab keeps
   only a folder's path on tensor, its lists of parameters and its patterns of spike count
   files that are not models (`model_sources`), and the
@@ -1890,6 +1953,9 @@ app/fit_worker.py  the fit worker (python -m app.fit_worker): runs fits one at a
                    and predictions (GPU or CPU) and extractions of signals beside them
 app/predictions.py predictions of flies' glomerulus ROIs by fits' models: records, the fly's folders, time
                    estimates, the viewer's images, their ROIs as edited there, downloads
+app/nmf_check.py   glomeruli a prediction's ROIs miss, looked for in the fly's movies (al-diag-seg's alseg.nmf):
+                   the look's state, what it found, ROIs' names with candidates merged in, and what the web
+                   server asks of the fit worker meanwhile
 app/extract.py     signals of a fly's ROIs extracted from its movies as al_analysis does: masks, traces, dF/F,
                    responses, one signal of an ROI's planes; records, time estimates, its files
 app/unmix.py       its option unmix: neighbouring ROIs' signals unmixed (footprints fit to the trials' dF maps,
@@ -1933,7 +1999,8 @@ config/odor_sheet_template.csv   odor sheet columns, with the odors from the the
 app/static/        frontend: index.html, app.js, heatmap.js, colormaps.js (+ mpl_luts.js),
                    app.css, cluster.js (+ cluster-worker.js), figure.js (SVG/PDF/PNG export),
                    player.js (movie player; roi_edit.js: a prediction's ROIs edited in it;
-                   identity.js: what a predicted ROI's name cost),
+                   identity.js: what a predicted ROI's name cost; nmf_merge.js: ROIs found by NMF
+                   merged into those edited),
                    similarity.js (odor similarities, and between them;
                    pvalue-worker.js their p-values), metacyc.js (MetaCyc below its matrices: pathways
                    drawn, compounds, LCA paths, search), lotus.js (LOTUS with its matrices: how
@@ -2112,10 +2179,19 @@ GET    /api/predictions/{id}/view           what the movie player shows of one d
                                             the ROIs predicted and the fly's own; and the predicted ROIs as edited
                                             ("edited": their file, when and by whom saved, how simplified;
                                             "revision")
-PUT    /api/predictions/{id}/edited         save its ROIs as edited in the player: {rois: [{name, z, points}],
-                                            base (the revision edited from), name, simplified, points_edited};
+PUT    /api/predictions/{id}/edited         save its ROIs as edited in the player: {rois: [{name, z, points, nmf}],
+                                            base (the revision edited from), name, simplified, points_edited, nmf
+                                            (what was merged of the look for missed glomeruli)};
                                             409 if they were changed elsewhere since base
 DELETE /api/predictions/{id}/edited?base=   delete its edited ROIs (those predicted are left as they are)
+GET    /api/predictions/{id}/nmf            the look for glomeruli its ROIs miss (nmf_check.py): its state
+                                            ("nmf": status, who asked, how far it is: "fraction") and, once done,
+                                            what it found ("found": the candidates with their outlines and names,
+                                            and every ROI's name with all of them merged in)
+POST   /api/predictions/{id}/nmf            ask for one: {name}; 201 queued, 200 if one is waiting or running
+POST   /api/predictions/{id}/nmf/plan       the ROIs' names with candidates merged in: {chosen: their ids, joint:
+                                            all named again together (the default), or the predicted names kept};
+                                            503 if the fit worker, which names some of them, did not
 GET    /api/predictions/{id}/download       its folder, as a zip sent as it is written
 GET    /api/extractions                     every extraction of a fly's ROIs' signals (those waiting and running
                                             with when they should end), the ways to make one signal of an ROI's
@@ -2124,7 +2200,7 @@ POST   /api/extractions                     ask for one: {name, rois: "own" (wit
                                             data folder, and raw_dir: its raw data folder, if not beside it) |
                                             "predicted" | "edited" (with prediction: its id), mode, window (the
                                             response window, in volumes; without it, those the odor pulse can reach),
-                                            unmix (neighbouring ROIs' signals unmixed too: "blur", "nmf" or true; off
+                                            unmix (neighbouring ROIs' signals unmixed too: "blur", "nmf", "nmf_rims" or true; off
                                             without it)}
 POST   /api/extractions/window              the response window one asked for so would have in each of the fly's
                                             recordings, and how each is worked out (extract.preview)

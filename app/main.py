@@ -39,7 +39,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from . import (backup, bundle_import, chemprops, compare, config, dilution, export, extract, filelog, fits, headspace, lotus,
-               lotus_import, matrix_download, merge, metacyc, metacyc_import, model_data, model_runs, orn_input, movies, odormeta, permalinks,
+               lotus_import, matrix_download, merge, metacyc, metacyc_import, model_data, model_runs, nmf_check, orn_input, movies, odormeta, permalinks,
                predictions, reference, roi_training, sandbox, tensor, thorimage, vcf, version, yamlcheck)
 from .db import PANEL_RENAMES, PROPERTY_COLUMNS, Database, rename_panel
 from .glomeruli import GLOMERULI, load_glomeruli
@@ -1682,12 +1682,12 @@ async def predictions_create(request: Request) -> Response:
 
 
 async def predictions_delete(request: Request) -> Response:
-    """Deletes a prediction and its files. 409 while it runs."""
+    """Deletes a prediction and its files. 409 while it runs, or glomeruli its ROIs miss are being looked for."""
     done = await run_in_threadpool(predictions.delete, db, request.path_params["id"])
     if done is None:
         return json_error(404, "no such prediction")
     if done is False:
-        return json_error(409, "it is running: wait for it to end")
+        return json_error(409, "it is running, or glomeruli its ROIs miss are being looked for: wait for that to end")
     return JSONResponse({"deleted": True})
 
 
@@ -1717,8 +1717,9 @@ async def predictions_identity(request: Request) -> Response:
 
 async def predictions_edited_save(request: Request) -> Response:
     """Saves a prediction's ROIs as edited in the viewer (`predictions.save_edited`): {"rois": [{"name",
-    "z", "points"}], "base": the revision they were edited from, "name" (who, as set in Settings, if
-    set), "simplified", "points_edited"}. Returns what the viewer's ``edited`` then is. 409 (with the
+    "z", "points", "nmf"}], "base": the revision they were edited from, "name" (who, as set in Settings, if
+    set), "simplified", "points_edited", "nmf" (what was merged of the look for glomeruli the ROIs miss)}.
+    Returns what the viewer's ``edited`` then is. 409 (with the
     ``revision`` they are at, and ``edited``) if they were changed elsewhere since ``base``; 400 for
     ROIs not as they must be; 404 for no such prediction done."""
     body = await request.json()
@@ -1727,7 +1728,8 @@ async def predictions_edited_save(request: Request) -> Response:
     try:
         info = await run_in_threadpool(
             predictions.save_edited, db, request.path_params["id"], body.get("rois"), body.get("base"),
-            _user_name(body.get("name")) or None, _client_ip(request), body.get("simplified"), bool(body.get("points_edited")))
+            _user_name(body.get("name")) or None, _client_ip(request), body.get("simplified"), bool(body.get("points_edited")),
+            body.get("nmf"))
     except LookupError as e:
         return json_error(404, str(e))
     except predictions.Stale as e:
@@ -1753,6 +1755,68 @@ async def predictions_edited_delete(request: Request) -> Response:
     except predictions.Stale as e:
         return json_error(409, str(e), revision=e.revision, edited=e.edited)
     return JSONResponse({"deleted": True, "revision": revision})
+
+
+async def predictions_nmf(request: Request) -> Response:
+    """The look for glomeruli a prediction's ROIs miss (`nmf_check`): its state (``nmf``: None if
+    none was asked for) and, once it is done, what it found (``found``: `nmf_check.found`)."""
+    def run():
+        p = predictions.get(db, request.path_params["id"])
+        if p is None or p["status"] != "done":
+            return None
+        return {"nmf": nmf_check.state(db, p), "found": nmf_check.found(p, GLOMERULI)}
+
+    v = await run_in_threadpool(run)
+    return JSONResponse(v) if v else json_error(404, "no such prediction done")
+
+
+async def predictions_nmf_ask(request: Request) -> Response:
+    """Asks for glomeruli a prediction's ROIs miss to be looked for in the fly's movies
+    (`nmf_check.ask`): {"name" (as for a prediction)}. 201 with its state (``nmf``) if queued now,
+    200 if one is queued or running already. 422 without a name; 404 for no such prediction done."""
+    body = await request.json()
+    if not isinstance(body, dict):
+        return json_error(400, "expected a JSON object")
+    name = _user_name(body.get("name"))
+    if not name:
+        return json_error(422, "say who you are: enter your first name in Settings")
+    if first_name_problem(name):
+        return json_error(422, "the name must be a first name alone, with no spaces (e.g. Ann)")
+
+    def run():
+        p, queued = nmf_check.ask(db, request.path_params["id"], name, _client_ip(request))
+        return {"nmf": nmf_check.state(db, p)}, queued
+
+    try:
+        v, queued = await run_in_threadpool(run)
+    except LookupError as e:
+        return json_error(404, str(e))
+    return JSONResponse(v, status_code=201 if queued else 200)
+
+
+async def predictions_nmf_plan(request: Request) -> Response:
+    """The names of a prediction's ROIs with candidates of its look merged in (`nmf_check.plan`):
+    {"chosen": the candidates' ids, "joint": whether every ROI is named again, all together (the
+    default), or the predicted ROIs keep their names}. 404 for a prediction with no look done; 400
+    for ids that are not its candidates'; 503 if the fit worker, which names them, did not."""
+    body = await request.json()
+    if not isinstance(body, dict):
+        return json_error(400, "expected a JSON object")
+
+    def run():
+        p = predictions.get(db, request.path_params["id"])
+        if p is None or p["status"] != "done":
+            raise LookupError("no such prediction done")
+        return nmf_check.plan(db, p, body.get("chosen"), body.get("joint", True) is not False, GLOMERULI)
+
+    try:
+        return JSONResponse(await run_in_threadpool(run))
+    except LookupError as e:
+        return json_error(404, str(e))
+    except ValueError as e:
+        return json_error(400, str(e))
+    except nmf_check.CallError as e:
+        return json_error(503, f"the ROIs could not be named again: {e}")
 
 
 async def predictions_download(request: Request) -> Response:
@@ -4037,6 +4101,9 @@ routes = [
     Route("/api/predictions/{id:int}/identity", predictions_identity),
     Route("/api/predictions/{id:int}/edited", predictions_edited_save, methods=["PUT"]),
     Route("/api/predictions/{id:int}/edited", predictions_edited_delete, methods=["DELETE"]),
+    Route("/api/predictions/{id:int}/nmf", predictions_nmf),
+    Route("/api/predictions/{id:int}/nmf", predictions_nmf_ask, methods=["POST"]),
+    Route("/api/predictions/{id:int}/nmf/plan", predictions_nmf_plan, methods=["POST"]),
     Route("/api/predictions/{id:int}/download", predictions_download),
     Route("/api/extractions", extractions_list),
     Route("/api/extractions", extractions_create, methods=["POST"]),
