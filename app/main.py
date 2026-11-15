@@ -4129,15 +4129,26 @@ async def _save_file_log() -> None:
             log.exception("could not save the files read and written (Admin tab)")
 
 
+async def _warm_reference_list() -> None:
+    """The reference datasets read and listed once as the server starts, so that the first to open
+    the page does not wait for it (`reference.listing` keeps what it found)."""
+    try:
+        await run_in_threadpool(lambda: reference.listing(db, _odor_index()))
+    except Exception:
+        log.exception("could not list the reference datasets")
+
+
 @contextlib.asynccontextmanager
 async def lifespan(app: Starlette):
     filelog.start(db)  # first, to see what it reads as it starts
     # before the first request, so before any worker thread starts (see sandbox.start)
     sandbox.start()
     _look_up_odors()  # (those added, or that could not be looked up, while it was not running)
+    warming = asyncio.create_task(_warm_reference_list())
     saving = asyncio.create_task(_save_file_log())
     yield
     saving.cancel()
+    warming.cancel()
     filelog.flush(db)
 
 

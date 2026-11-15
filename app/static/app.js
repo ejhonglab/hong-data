@@ -3648,6 +3648,13 @@ const ODOR_FIELDS = {
 const isBlank = (v) => v == null || v === '' || (Array.isArray(v) && !v.length);
 const onlyAdds = (c) => !c.rename && !c.unlinked && c.fields.every((f) => isBlank(f.old)
   || (f.field === 'aliases' && Array.isArray(f.new) && f.old.every((a) => f.new.includes(a))));
+// the list of reference datasets: one request for whoever asks while it is under way (the page
+// asks for it as it opens, for the Admin tab's badge, as the tab shown may too), not kept after
+let referenceListing = null;
+function referenceList() {
+  referenceListing ??= api('/api/reference').finally(() => { referenceListing = null; });
+  return referenceListing;
+}
 const extLink = (url, text) => (url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(text)}</a>` : esc(text ?? ''));
 const structureImg = (o) => (o.links?.structure
   ? `<img class="structure" src="${esc(o.links.structure)}" alt="structure of ${esc(o.name)}" loading="lazy" onerror="this.remove()">` : '');
@@ -3803,7 +3810,7 @@ function referenceOdorHelp(check, chem, note = '', fold = 'reference') {
   const n = chem.n, k = chem.n - chem.matched;
   const box = document.createElement('div');
   box.innerHTML = odorSheetHelp(check, `<p><b>${k} of its ${n} odors ${k === 1 ? 'is' : 'are'} not in the <a href="#odors">odor table</a></b>
-    (by their abbreviations, as a dataset's odors are): ${k === 1 ? 'it is' : 'they are'} left out of comparisons with datasets until then.</p>`,
+    (${chem.ids_given ? 'by the CIDs and InChIs it gives, else' : ''} by their abbreviations, as a dataset's odors are): ${k === 1 ? 'it is' : 'they are'} left out of comparisons with datasets until then.</p>`,
   { note, fold, ambiguousFix: 'give them abbreviations of their own in the sheet and sync it here.' });
   return box.firstElementChild;
 }
@@ -4177,11 +4184,11 @@ class Reference {
   }
 
   // after reference datasets were added or deleted, or the odor table changed
-  invalidate() { this.items = null; this.cache.clear(); }
+  invalidate() { this.items = null; this.cache.clear(); referenceListing = null; }
 
   async load() {
     if (!this.items) {
-      try { this.items = (await api('/api/reference')).datasets; } catch (e) { $('#reference-list').replaceChildren(msgBox('error', esc(e.message))); return; }
+      try { this.items = (await referenceList()).datasets; } catch (e) { $('#reference-list').replaceChildren(msgBox('error', esc(e.message))); return; }
       setAdminBadge(this.items);
     }
     const list = $('#reference-list');
@@ -4251,7 +4258,7 @@ class Reference {
     const notes = [];
     if (c.axis && c.odors) {
       notes.push(`Its ${c.axis === 'rows' ? 'rows' : 'columns'} are odors as datasets write them (<code>&lt;abbreviation&gt; @ &lt;log10 conc&gt;</code>):
-        ${c.matched.toLocaleString()} of ${c.n.toLocaleString()} in the Odors table, by abbreviation as a dataset's are, and labelled as there.`);
+        ${c.matched.toLocaleString()} of ${c.n.toLocaleString()} in the Odors table, ${c.ids_given ? 'by the CIDs and InChIs it gives (else by abbreviation)' : "by abbreviation as a dataset's are"}, and labelled as there.`);
     } else if (c.axis) notes.push(`Its ${c.axis === 'rows' ? 'rows' : 'columns'} are chemicals: ${c.matched.toLocaleString()} of ${c.n.toLocaleString()} matched to the Odors table, labelled as there.`);
     const g = ref.glomeruli;
     const kc = kcAxisOf(ref), axisName = (a) => (a === 'rows' ? 'rows' : 'columns');
@@ -5334,7 +5341,7 @@ class AdminPage {
   }
 
   async loadRefs() {
-    try { this.refs = (await api('/api/reference')).datasets; } catch (e) {
+    try { this.refs = (await referenceList()).datasets; } catch (e) {
       $('#admin-refs-list').replaceChildren(msgBox('error', `Could not load the reference data: ${esc(e.message)}`));
       return;
     }
@@ -6419,7 +6426,7 @@ class ComparePage {
   // each time the tab is opened: datasets and reference datasets may have come or gone
   async load() {
     let ds, refs;
-    try { [ds, refs] = await Promise.all([api('/api/datasets'), api('/api/reference')]); } catch (e) {
+    try { [ds, refs] = await Promise.all([api('/api/datasets'), referenceList()]); } catch (e) {
       $('#compare-view').replaceChildren(msgBox('error', `Could not load the datasets: ${esc(e.message)}`));
       return;
     }
@@ -8906,4 +8913,4 @@ function checkVersion() {
 document.addEventListener('visibilitychange', checkVersion);
 window.addEventListener('focus', checkVersion);
 api('/api/odors/status').then((s) => setOdorBadge(s.changed)).catch(() => {});
-api('/api/reference').then((r) => setAdminBadge(r.datasets)).catch(() => {});
+referenceList().then((r) => setAdminBadge(r.datasets)).catch(() => {});

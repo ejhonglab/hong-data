@@ -244,8 +244,15 @@ def test_add_readable(env, tmp_path):
     assert r["warning"].startswith("1 of 3 chemicals") and r["meta"]["kind"] == "sequential"
     # imported again when the file changes, and an error once it cannot be read as a table
     imported = json.loads((cache / "import.json").read_text())["imported_at"]
+    listed = lambda: next(d for d in call(env.reference_list)[1]["datasets"] if d["id"] == "fruit-volatiles-2024")  # noqa: E731
+    assert listed()["shape"] == [3, 1] and listed()["chemicals"]["matched"] == 2
     write(src, "chemical,cid,banana,apple\nlinalool,6549,1,5\n")
     assert call(env.reference_get, path_params={"ref_id": "fruit-volatiles-2024"})[1]["shape"] == [1, 2]
+    # the list's summary of it (kept, `reference._summaries`) made again when it is, and when the odor table changes
+    assert listed()["shape"] == [1, 2] and listed()["chemicals"]["matched"] == 1
+    env.db.apply_odor_sync(added=[], changed=[], deleted=[index(env).match("linalool")[0]], source="test", fingerprint="1",
+                           details={}, when="2026-01-01T00:00:00")
+    assert listed()["chemicals"]["matched"] == 0
     write(src, "nothing,here\n")
     item = next(d for d in call(env.reference_list)[1]["datasets"] if d["id"] == "fruit-volatiles-2024")
     assert item["state"] == "error" and "no rows" in item["error"]

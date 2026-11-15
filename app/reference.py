@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import base64
 import datetime as dt
+import hashlib
 import io
 import json
 import os
@@ -1127,10 +1128,38 @@ def entries(db, odors: Optional[list[dict]] = None) -> list[dict]:
     return out
 
 
+def _summary(rec: dict, index: odormeta.OdorIndex) -> dict:
+    """What `listing` says of a reference dataset's record: its chemicals and glomeruli matched,
+    and the warnings of them."""
+    chem, gl = chemicals(rec, index), glomeruli(rec)
+    return dict(kind=rec["kind"], shape=rec["shape"], notes=rec["notes"], imported_at=rec.get("imported_at"),
+                pairwise=rec.get("pairwise"), metacyc=rec.get("metacyc"), lotus=rec.get("lotus"),
+                chemicals={**{k: chem[k] for k in ("axis", "n", "matched", "identified")},
+                           "odor_ids": [i["odor_id"] for i in chem["items"] if i["odor_id"] is not None]},
+                glomeruli={"axis": gl["axis"], "n": gl["n"], "matched": gl["matched"],
+                           "names": [n for n in gl["names"] if n is not None]},
+                warning=warning(chem, gl), stereo=stereo_warning(chem, rec, short=True))
+
+
+# `_summary`s, by reference dataset and the odor table: (the record they are of, or of an import
+# its stamp, `_record_stamp`; the summary). Matching every chemical of each dataset to the odor
+# table took most of a second for each listing, which the page asks for as it opens
+_summaries: dict[tuple[str, str], tuple[Any, dict]] = {}
+_summaries_lock = threading.Lock()
+
+
+def _record_stamp(rec: dict) -> str:
+    """What tells an import's record from another (it is read again for each listing)."""
+    return json.dumps({k: rec.get(k) for k in ("imported_at", "source", "chemical_axis", "kind_setting", "fields")},
+                      sort_keys=True, default=str)
+
+
 def listing(db, index: odormeta.OdorIndex) -> list[dict]:
     """`entries` for the list in the Reference data tab and the Admin tab."""
-    out = []
-    for e in entries(db, list(index.by_id.values())):
+    odors = list(index.by_id.values())
+    odors_key = hashlib.sha1(json.dumps(odors, sort_keys=True, default=str).encode()).hexdigest()
+    out, keep = [], set()
+    for e in entries(db, odors):
         rec = e.pop("record")
         item = {k: e.get(k) for k in ("id", "title", "description", "origin", "path", "state", "error", "source",
                                       "read_grant", "created_at", "value_label", "row_label", "col_label", "chemical_axis")}
@@ -1138,15 +1167,20 @@ def listing(db, index: odormeta.OdorIndex) -> list[dict]:
         item["fields"] = _fields(e.get("fields"))  # (as chosen: to change them in the Admin tab)
         item["warning"] = item["stereo"] = None
         if rec:
-            chem, gl = chemicals(rec, index), glomeruli(rec)
-            item.update(kind=rec["kind"], shape=rec["shape"], notes=rec["notes"], imported_at=rec.get("imported_at"),
-                        pairwise=rec.get("pairwise"), metacyc=rec.get("metacyc"), lotus=rec.get("lotus"),
-                        chemicals={**{k: chem[k] for k in ("axis", "n", "matched", "identified")},
-                                   "odor_ids": [i["odor_id"] for i in chem["items"] if i["odor_id"] is not None]},
-                        glomeruli={"axis": gl["axis"], "n": gl["n"], "matched": gl["matched"],
-                                   "names": [n for n in gl["names"] if n is not None]},
-                        warning=warning(chem, gl), stereo=stereo_warning(chem, rec, short=True))
+            # (a built-in one's record is kept parsed, `_parsed`: the same object while its file is unchanged)
+            stamp, key = (rec if e["origin"] == "builtin" else _record_stamp(rec)), (e["id"], odors_key)
+            keep.add(key)
+            with _summaries_lock:
+                got = _summaries.get(key)
+            if got is None or (got[0] is not stamp if e["origin"] == "builtin" else got[0] != stamp):
+                got = (stamp, _summary(rec, index))
+                with _summaries_lock:
+                    _summaries[key] = got
+            item.update(got[1])
         out.append(item)
+    with _summaries_lock:
+        for key in [k for k in _summaries if k not in keep]:
+            del _summaries[key]
     return out
 
 
