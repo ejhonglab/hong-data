@@ -464,6 +464,14 @@ def run_prediction(db, p: dict, on_gpu: bool, why_cpu: Optional[str] = None) -> 
 
             model = am.Model.load(mdir)
             model.options.gpu = on_gpu
+            # how its ROIs are cleaned (predictions.options): the cleaned ones are then its ROIs
+            po = p.get("options") or {}
+            if po.get("clean") or po.get("split"):
+                model.options.clean, model.options.split = list(po.get("clean") or []), bool(po.get("split"))
+                model.options.clean_params = {**model.options.clean_params, **(po.get("clean_params") or {})}
+                model.options.final = "clean" if po.get("clean") else model.options.final
+                print("its ROIs cleaned: " + ", ".join([*(["masks over two glomeruli split"] if po.get("split") else []),
+                                                         *(f"{st} {po['clean_params'].get(st) or ''}".strip() for st in po.get("clean") or [])]))
             fly_dir, raw_dir = Path(p["fly_dir"]), Path(p["raw_dir"]) if p["raw_dir"] else None
             inputs = _fly_inputs(fly_dir, raw_dir, model, odormeta.OdorIndex(db.list_odors()))
             f = load_fly(fly_dir, model, raw_dir=raw_dir, name=p["fly"], glomeruli=load_glomeruli(),
@@ -485,6 +493,9 @@ def run_prediction(db, p: dict, on_gpu: bool, why_cpu: Optional[str] = None) -> 
                 ident = next((r for r in res["identity"] if r["rois"] == final), {})
                 scores = {"manual": row("manual")["n"], "manual_2d": row("manual").get("n_2d"),
                           **_scores(row(final), row("manual")),
+                          # each kind of its ROIs, to compare them by: as they are, and cleaned by each step
+                          "kinds": {r["rois"]: {"n": r["n"], **_scores(r, row("manual"))} for r in res["summary"]
+                                    if r["rois"] == "pred" or r["rois"].startswith("clean")},
                           "named": ident.get("correct", 0), "named_of": ident.get("total", 0), "scoring": res.get("scoring")}
                 n = row(final)["n"]
                 with open(d / f"{name}_identities_{final}.csv", newline="") as fh:

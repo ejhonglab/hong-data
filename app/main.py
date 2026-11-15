@@ -1648,7 +1648,7 @@ async def predictions_list(request: Request) -> Response:
 async def predictions_create(request: Request) -> Response:
     """Asks for a fly's glomerulus ROIs, predicted by a fit's model: {"name" (as for a fit), "fit" (its
     id), "dir", "raw_dir" (the fly's motion-corrected and raw data folders, from the top of tensor or
-    absolute), "overwrite"}. 201 if queued now; 200 for one already queued or running; 409 (with
+    absolute), "overwrite", and how its ROIs are cleaned (`predictions.options`: "clean", "clean_params", "split")}. 201 if queued now; 200 for one already queued or running; 409 (with
     ``prediction``) if that model has predicted that fly already, unless ``overwrite`` (then it is
     run again, its files replaced). 422 without a name; 400 for a fit with no model, or a fly not found."""
     body = await request.json()
@@ -1669,7 +1669,8 @@ async def predictions_create(request: Request) -> Response:
         if f is None or f["status"] != "done" or not (fits.fit_dir(fit_id) / "model" / "model.json").is_file():
             raise ValueError(f"fit #{fit_id} has no model to predict with (only fits done have one)")
         fly = predictions.locate(body.get("dir"), body.get("raw_dir"), config.TENSOR_ROOT, [Path(p) for p in sandbox.folders()])
-        return predictions.create(db, fit_id, fly, name, _client_ip(request), overwrite=bool(body.get("overwrite")))
+        return predictions.create(db, fit_id, fly, name, _client_ip(request), overwrite=bool(body.get("overwrite")),
+                                  opts=predictions.options(body))
 
     try:
         p, queued = await run_in_threadpool(run)

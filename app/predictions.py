@@ -93,8 +93,44 @@ def roiset(p: dict) -> Path:
 
 # ------------------------------------------------------------------- records
 
+# The steps that clean a model's ROIs of their neighbours' signal (al-diag-seg's `alseg.clean`: applied in this
+# order), each with the parameters that can be set: {name: (al-diag-seg's default, least, most)}.
+CLEAN = {"trim": {"max_share": (0.1, 0.0, 1.0)},
+         "margin": {"gap_um": (2.0, 0.0, 10.0), "erode_um": (0.0, 0.0, 5.0)},
+         "core": {"core_cellprob": (-1.0, -6.0, 6.0)}}
+
+
+def options(body: dict) -> dict:
+    """How a prediction asked for cleans its ROIs: ``clean`` (the steps of `CLEAN` to apply to the model's ROIs,
+    whose result is then the prediction's ROIs; none by default), ``clean_params`` ({step: {parameter: value}},
+    for the steps asked for, where not al-diag-seg's default) and ``split`` (whether a plane's masks over two
+    glomeruli are split before the planes' are joined).
+
+    Raises:
+        ValueError: for a step or a parameter that is not one, or a value out of range.
+    """
+    steps = body.get("clean") or []
+    if not isinstance(steps, list) or any(s not in CLEAN for s in steps):
+        raise ValueError(f"clean: a list of {', '.join(CLEAN)}")
+    given = body.get("clean_params") or {}
+    if not isinstance(given, dict) or any(k not in CLEAN or not isinstance(v, dict) for k, v in given.items()):
+        raise ValueError(f"clean_params: parameters by step ({', '.join(CLEAN)})")
+    params = {}
+    for step in (s for s in CLEAN if s in steps):
+        for k, v in (given.get(step) or {}).items():
+            if k not in CLEAN[step]:
+                raise ValueError(f"clean_params: {step} has no {k} (it has {', '.join(CLEAN[step])})")
+            default, lo, hi = CLEAN[step][k]
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not lo <= v <= hi:
+                raise ValueError(f"clean_params: {step}'s {k} is a number from {lo:g} to {hi:g}")
+            if float(v) != default:
+                params.setdefault(step, {})[k] = float(v)
+    return {"clean": [s for s in CLEAN if s in steps], "clean_params": params, "split": bool(body.get("split"))}
+
+
 def _row(r) -> dict:
     d = dict(r)
+    d["options"] = json.loads(d.pop("options_json") or "null") or options({})
     for k in ("progress", "result"):
         v = d.pop(f"{k}_json")
         d[k] = json.loads(v) if v else None
@@ -124,8 +160,10 @@ def update(db, pred_id: int, **fields) -> None:
         con.execute(f"UPDATE predictions SET {', '.join(cols)} WHERE id = ?", (*vals, pred_id))
 
 
-def create(db, fit_id: int, fly: dict, name: str, ip: Optional[str], overwrite: bool = False) -> tuple[dict, bool]:
-    """Asks for the ROIs of `fly` (as `locate` gives it) by fit `fit_id`'s model. One asked
+def create(db, fit_id: int, fly: dict, name: str, ip: Optional[str], overwrite: bool = False,
+           opts: Optional[dict] = None) -> tuple[dict, bool]:
+    """Asks for the ROIs of `fly` (as `locate` gives it) by fit `fit_id`'s model, cleaned as ``opts``
+    says (of `options`; default: not). One asked
     for again (``overwrite``) is queued again, as asked for now, its files replaced when it
     runs; one queued or running is left as it is.
 
@@ -142,15 +180,16 @@ def create(db, fit_id: int, fly: dict, name: str, ip: Optional[str], overwrite: 
             return _row(r), False
         if r is not None and not overwrite:
             raise Exists(_row(r))
+        oj = json.dumps(opts or options({}))
         if r is None:
-            pred_id = con.execute("INSERT INTO predictions (fit_id, fly_dir, raw_dir, fly, name, ip, created_at, status) "
-                                  "VALUES (?,?,?,?,?,?,?,?)",
-                                  (fit_id, fly["dir"], fly["raw_dir"], fly["name"], name, ip, now(), "queued")).lastrowid
+            pred_id = con.execute("INSERT INTO predictions (fit_id, fly_dir, raw_dir, fly, name, ip, created_at, status, options_json) "
+                                  "VALUES (?,?,?,?,?,?,?,?,?)",
+                                  (fit_id, fly["dir"], fly["raw_dir"], fly["name"], name, ip, now(), "queued", oj)).lastrowid
         else:
             pred_id = r["id"]
             con.execute("UPDATE predictions SET raw_dir = ?, fly = ?, name = ?, ip = ?, created_at = ?, status = 'queued', "
-                        "started_at = NULL, finished_at = NULL, progress_json = NULL, result_json = NULL, error = NULL "
-                        "WHERE id = ?", (fly["raw_dir"], fly["name"], name, ip, now(), pred_id))
+                        "started_at = NULL, finished_at = NULL, progress_json = NULL, result_json = NULL, error = NULL, options_json = ? "
+                        "WHERE id = ?", (fly["raw_dir"], fly["name"], name, ip, now(), oj, pred_id))
     return get(db, pred_id), True
 
 

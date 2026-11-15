@@ -799,7 +799,13 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   folders saved under your name in Settings, with a recording's `trialmean_dff.tif`), or
   any other on tensor, by its motion-corrected and raw data folders. Your flies are listed
   first; of each person's, those without ROIs, then those with ROIs the model was not fit
-  with, those held out of it, and those it was trained on. The fit worker makes them,
+  with, those held out of it, and those it was trained on. Under *Keep neighboring glomeruli
+  out of its ROIs*, steps can be ticked that remove pixels from the model's ROIs (trim an
+  ROI's edge where it carries a neighbor's tuning, keep ROIs a distance apart, keep the pixels
+  Cellpose is surer of; or split outlines that hold two glomeruli): the prediction's ROIs are
+  then the cleaned ones, and where the fly has ROIs of its own, a table compares the model's
+  ROIs and each step alone by how far ROIs keep from each other and how much of a neighbor
+  their edges carry (the manual ROIs' in brackets). The fit worker makes them,
   on the GPU, or on the CPU while a fit is using the GPU (slower, but not hours later), and
   keeps them on the server (`data/predictions/<id>/`): its ROIs as a `RoiSet.zip` named by
   glomerulus, each kind al-diag-seg makes, the fly's average image, and `provenance.json`

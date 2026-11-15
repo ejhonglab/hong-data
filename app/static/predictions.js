@@ -28,6 +28,25 @@ So a low found means glomeruli missed; a low right, ROIs where the fly has none,
 Unlike right, this is only about names: the outline need not match as well (IoU over 0.3, not 0.5), and the pairing is not one to one.`,
 };
 const scoreTip = (key, label) => tip(label, SCORE_TIPS[key]);
+const KIND_NAMES = { pred: "the model's own", clean: 'cleaned as asked', clean_trim: 'trim alone', clean_margin: 'margin alone', clean_core: 'core alone' };
+// how a prediction's ROIs were cleaned, if they were (its options)
+function cleanedNote(p) {
+  const o = p.options || {}, on = [...(o.split ? ['outlines over two glomeruli split'] : []), ...(o.clean || []).map((st) => {
+    const ps = Object.entries(o.clean_params?.[st] || {}).map(([k, v]) => `${k} ${v}`).join(', ');
+    return ps ? `${st} (${ps})` : st;
+  })];
+  return on.length ? ` Its ROIs are cleaned: ${on.join(', then ')}.` : '';
+}
+// each kind of a prediction's ROIs (as the model made them, and cleaned by each step) by how well they keep from their
+// neighbors: '' where the fly has no ROIs of its own, or it was predicted before there were kinds
+function kindsTable(s) {
+  const kinds = Object.entries(s?.kinds || {});
+  if (kinds.length < 2) return '';
+  return `<table class="odor-table kinds-table"><thead><tr><th>ROIs</th><th>Found · right <span class="muted">(per plane)</span></th>
+    ${PURITY_COLUMNS.map((c) => `<th title="${c[1].replace(/"/g, '&quot;')}">${c[0]} <span class="muted">(manual)</span></th>`).join('')}</tr></thead><tbody>
+    ${kinds.map(([k, x]) => `<tr><td>${KIND_NAMES[k] || k}</td><td>${pct(x.recall_2d)} · ${pct(x.precision_2d)}</td>
+      ${PURITY_COLUMNS.map((c) => `<td>${c[2](x)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+}
 const trim = (s) => (s || '').trim().replace(/\/+$/, '');
 
 export class PredictPanel {
@@ -43,6 +62,10 @@ export class PredictPanel {
     $('#predict-model').addEventListener('change', () => this.renderFlies());
     $('#predict-fly').addEventListener('change', () => { this.flyChosen = $('#predict-fly').value; this._renderPair(); });
     for (const id of ['#predict-dir', '#predict-raw']) $(id).addEventListener('input', () => this._renderPair());
+    $('#predict-clean').addEventListener('change', () => {
+      const o = this._cleanOptions(), on = [...(o.split ? ['split'] : []), ...o.clean];
+      $('#predict-clean-summary').textContent = on.length ? `(${on.join(', ')})` : '';
+    });
     $('#predict-start').addEventListener('click', () => this.start());
     $('#predict-view').addEventListener('click', () => { const p = this._pair(); if (p) this.view(p); });
     $('#predict-list').addEventListener('click', (e) => this._action(e));
@@ -209,7 +232,7 @@ export class PredictPanel {
       ? `<br>Against the fly's own ${s.manual} ROIs${s.recall_2d == null ? '' : ` (${s.manual_2d} outlines on their planes)`}:<br>${scoreTip('found', 'found')} ${both(s, 'recall')},
         ${scoreTip('right', 'right')} ${both(s, 'precision')}, ${scoreTip('dice', 'Dice')} ${both(s, 'dice', num2)} <span class="muted">(${s.recall_2d == null ? '' : 'per plane · as 3D objects; '}${scoringNote(s)})</span>;
         ${scoreTip('named', 'name correct')} ${s.named}/${s.named_of}.${s.edge_share == null && s.gap_um == null ? '' : `<br>Kept from neighbors
-        <span class="muted">(the fly's own ROIs' in brackets)</span>: ${PURITY_COLUMNS.map((c) => `${tip(c[0].toLowerCase(), c[1])} ${c[2](s)}`).join(', ')}.`}` : ''}${p.edited ? ` Edited in the viewer (${esc(this._edited(p))}:
+        <span class="muted">(the fly's own ROIs' in brackets)</span>: ${PURITY_COLUMNS.map((c) => `${tip(c[0].toLowerCase(), c[1])} ${c[2](s)}`).join(', ')}.`}` : ''}${cleanedNote(p)}${kindsTable(s)}${p.edited ? ` Edited in the viewer (${esc(this._edited(p))}:
         ${p.edited.rois} ROIs${p.edited.simplified == null ? '' : `, simplified within ${p.edited.simplified} px`}): its download has those
         too, as <code>${esc(p.fly)}_pred-edited_RoiSet.zip</code>.` : ''}`;
   }
@@ -293,6 +316,18 @@ alseg-predict ${fit}/model --fly /local/tensor/Ann/analysis/2026-03-31/1 \\
     return askDialog($('#predict-again'));
   }
 
+  // how the prediction asked for cleans its ROIs, from the form (the server's predictions.options)
+  _cleanOptions() {
+    const box = this.h.$('#predict-clean');
+    const clean = [...box.querySelectorAll('[data-clean]')].filter((c) => c.checked).map((c) => c.dataset.clean);
+    const clean_params = {};
+    for (const i of box.querySelectorAll('[data-clean-param]')) {
+      const [step, key] = i.dataset.cleanParam.split('.');
+      if (clean.includes(step) && i.value !== '' && Number.isFinite(Number(i.value))) (clean_params[step] ||= {})[key] = Number(i.value);
+    }
+    return { clean, clean_params, split: this.h.$('#predict-split').checked };
+  }
+
   async start() {
     const { $ } = this.h;
     const name = this.h.getName(), m = this._model(), fly = this._fly();
@@ -306,7 +341,7 @@ alseg-predict ${fit}/model --fly /local/tensor/Ann/analysis/2026-03-31/1 \\
       if (a !== 'rerun') return;
     }
     $('#predict-start').disabled = true;
-    await this._post({ name, fit: m.id, ...fly, overwrite });
+    await this._post({ name, fit: m.id, ...fly, overwrite, ...this._cleanOptions() });
   }
 
   // asks for a prediction; if the server has one of that model and fly already (the same fly,

@@ -258,6 +258,7 @@ CREATE TABLE IF NOT EXISTS predictions (  -- glomerulus ROIs a fit's model predi
     progress_json TEXT,                -- the stage it is at, and on what (GPU or CPU)
     result_json TEXT,                  -- its ROIs, and their scores against the fly's own
     error TEXT,
+    options_json TEXT,                 -- how its ROIs are cleaned (predictions.options), where not as the model does
     UNIQUE (fit_id, fly_dir)
 );
 CREATE TABLE IF NOT EXISTS extractions (  -- signals of a fly's ROIs extracted from its movies, asked for in the AL segmentation tab, by the fit worker (see extract.py)
@@ -326,7 +327,7 @@ ADDED_COLUMNS = [("datasets", "mocorr_data_path", "TEXT"), ("datasets", "data_fi
                  ("reference_datasets", "fields", "TEXT"), ("units", "bad", "INTEGER"),
                  ("units", "extra_json", "TEXT"), ("model_sources", "skip", "TEXT NOT NULL DEFAULT ''"),
                  ("model_baselines", "imported_at", "TEXT"), ("model_baselines", "imported_json", "TEXT"),
-                 ("extractions", "raw_dir", "TEXT"),
+                 ("extractions", "raw_dir", "TEXT"), ("predictions", "options_json", "TEXT"),
                  *(c for p, col in PROPERTY_COLUMNS.items()
                    for c in (("pubchem", col, "REAL"), ("pubchem", f"{p}_source", "TEXT"), ("pubchem", f"{p}_at", "TEXT"),
                              ("pubchem", f"{p}_chemutils", "TEXT"), ("pubchem", f"{p}_measured", "INTEGER"),

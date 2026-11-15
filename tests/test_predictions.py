@@ -248,6 +248,19 @@ def test_worker_prediction(main, tensor, monkeypatch):  # noqa: F811
     assert prov["device"] == "CPU (a fit is using the GPU)" and prov["fly"]["recordings"][0]["responses"]["bytes"] > 0
     o = prov["model"]["alseg_options"]  # (how Cellpose's masks are made too, the al-diag-seg's defaults)
     assert o["segmenter"] == "stand-in" and o["cellprob_threshold"] == am.Options().cellprob_threshold
+    # asked for again with its ROIs cleaned: the cleaned ones are its ROIs, each step alone is scored too, and
+    # ROIs kept apart do not touch (the stand-in's, the fly's own grown, do)
+    if hasattr(am.Options(), "clean"):
+        fly = predictions.locate(f"ann/analysis/{date}/{n}", f"ann/raw/{date}/{n}", config.TENSOR_ROOT, [])
+        opts = predictions.options({"clean": ["margin"], "clean_params": {"margin": {"gap_um": 1.0}}})
+        p, _ = predictions.create(main.db, f["id"], fly, "Bob", None, overwrite=True, opts=opts)
+        fit_worker.run_prediction(main.db, predictions.claim(main.db), False)
+        p = predictions.get(main.db, p["id"])
+        assert p["status"] == "done", (predictions.pred_dir(p["id"]) / "log.txt").read_text()[-3000:]
+        k = p["result"]["scores"]["kinds"]
+        assert p["options"] == opts and p["result"]["final"] == "clean" and {"pred", "clean", "clean_margin", "clean_trim"} <= set(k)
+        assert k["clean"]["touching"] == 0 and k["clean"]["gap_um"] > (k["pred"]["gap_um"] or 0) and p["result"]["scores"]["gap_um"] == k["clean"]["gap_um"]
+        assert json.loads((predictions.pred_dir(p["id"]) / "provenance.json").read_text())["model"]["alseg_options"]["clean_params"] == {"margin": {"gap_um": 1.0}}
     assert tifffile.imread(d / "average.tif").shape == tuple(prov["fly"]["planes"])
     assert "summary.csv" in (d / "README.txt").read_text() and (d / "summary.csv").is_file()
     # what each name cost (of its final ROIs, scored: al-diag-seg's file of that kind): every ROI of the RoiSet by its name,
@@ -409,3 +422,15 @@ def test_loops_gpu_lost(main, tensor, monkeypatch):  # noqa: F811
         assert wait(lambda: ran == [(p["id"], False)])
         stop.set()
         t.join(10)
+
+
+def test_clean_options():
+    """How a prediction cleans its ROIs: steps in al-diag-seg's order, only parameters that differ from its defaults."""
+    assert predictions.options({}) == {"clean": [], "clean_params": {}, "split": False}
+    o = predictions.options({"clean": ["margin", "trim"], "split": True,
+                             "clean_params": {"trim": {"max_share": 0.1}, "margin": {"gap_um": 3}, "core": {"core_cellprob": 0}}})
+    assert o == {"clean": ["trim", "margin"], "clean_params": {"margin": {"gap_um": 3.0}}, "split": True}
+    for bad in ({"clean": ["erode"]}, {"clean": "trim"}, {"clean": ["trim"], "clean_params": {"trim": {"max_share": 2}}},
+                {"clean": ["trim"], "clean_params": {"trim": {"gap_um": 1}}}, {"clean_params": {"blur": {}}}):
+        with pytest.raises(ValueError):
+            predictions.options(bad)

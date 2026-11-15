@@ -370,6 +370,20 @@ between the frontend and the server. Using the app is described in
   So is the most a name may cost (`max_cost`, 0.6: al-diag-seg's default, not tuned on the
   database's flies), an option of a fit rather than of a prediction, so that every prediction
   of a model names by the same rule as its held-out scores.
+- **Keeping neighboring glomeruli out of ROIs is an option of a prediction, not of a fit.** The
+  model's ROIs sit closer than manual ones (on fit 7's 4 held-out flies: 0.5 µm apart in the
+  median, 48% touching; manual 1.9 µm, none), and the edge of one that faces a neighbor carries
+  about twice as much of the neighbor's tuning (0.30 of it, as a sum of its own core's and the
+  neighbor's; manual 0.15), though over the whole ROI it comes to the same (0.04 and 0.03), and
+  matched ROIs respond to no more odors than the manual ones (18.0% and 18.3% of ROI-odor pairs
+  over 0.3 dF/F). al-diag-seg's steps (its README has their scores: `trim`, by per-trial tuning,
+  to 0.07 at 89% of the area; `margin`, by distance, 0.13 at 93%; `core`, by Cellpose's
+  probability, 0.10 at 68%; and splitting outlines over two glomeruli, which finds 4 of 11)
+  only remove pixels from ROIs already made and named, so they can be tried on any model
+  without a new fit: a prediction is asked for with them (`predictions.options`), its ROIs
+  are then the cleaned ones, and each step alone is scored beside them
+  (`scores.kinds`). The scores (`fit_worker.PURITY`) are also in a fit's table. Signals can
+  instead be unmixed when they are extracted (*Extract signals*), which changes no ROI.
   Models saved before they were options take al-diag-seg's defaults, so predictions with fits 2
   and 6 use them, though those fits' scores on the tab are as their fits made them; a
   prediction's provenance.json has the options its model ran with (`alseg_options`).

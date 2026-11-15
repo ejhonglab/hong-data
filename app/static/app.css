@@ -352,6 +352,12 @@ dialog.confirm .actions { justify-content: flex-end; }
 .rt-count { margin-top: 12px; max-width: 520px; }
 #rt-rare .nowrap { white-space: nowrap; }
 .fit-options { grid-template-columns: repeat(auto-fill, minmax(200px, 260px)); }
+.predict-clean { margin: 0 0 8px; }
+.predict-clean summary { cursor: pointer; font-weight: 500; }
+.predict-clean .check { display: block; margin: 4px 0; font-weight: 400; }
+.predict-clean .check input[type=checkbox] { width: auto; margin: 0 6px 0 0; }
+.predict-clean .check input.narrow { width: 70px; display: inline-block; padding: 2px 4px; }
+.kinds-table { margin: 6px 0; }
 .predict-options, .predict-paths { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); margin-bottom: 8px; }
 .predict-options select { width: 100%; }
 .step-about { margin-bottom: 10px; }
