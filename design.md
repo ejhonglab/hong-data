@@ -1796,6 +1796,38 @@ check), so al_analysis' numbers are still there.
     neighbour's response, shared or not. With the default's narrow footprints that share
     is small (b stays at 1), but where masks overlap it is not, and those ROIs' entries in
     `unmixing.csv` (neighbours, slope) say how much.
+- **Tried since, and not taken (2026-11-15; `notes/unmix_movie_nmf.py`, same four flies):**
+  the NMF's footprints from every frame of the movies rather than one dF map per trial,
+  and a component more per ROI-plane for the pixels just outside it (its rim: light of
+  glomeruli without an ROI, and neighbours' spill). Predicted ROIs ((a) plain 0.045, core
+  0.030; (d) plain 23.5%):
+
+  | footprints | (a) unmixed | (b) | (d) % |
+  |---|---|---|---|
+  | NMF, a map per trial (the option) | 0.042 | 0.988 | 22.5 |
+  | NMF, every frame of every recording | 0.041 | 0.975 | 22.5 |
+  | the same with rims reaching 2 µm into the masks | 0.025 | 0.946 | 20.4 |
+  | with rims reaching 1 px in | 0.032 | 0.977 | 21.9 |
+  | with rims outside the masks | 0.035 | 0.987 | 22.4 |
+
+  (Manual ROIs: every frame 0.041 → 0.049; rims 2 µm 0.019, b 0.901; rims 1 px 0.033,
+  b 0.976.) Every frame makes the evidence of a pixel's glomerulus about twice as good
+  (deep core pixels seeming to hold over 0.2 of their neighbour: 15.7% of them by a map
+  per trial, 7.4% by every frame), but the ROIs' signals no better; the rims are what
+  take the neighbours' excess, down to the cores' level, and with it 1 to 10% of the
+  ROIs' own responses where their neighbours are quiet. Nor do the movies tell a mask
+  over two glomeruli from one: of 24 masks holding at least 40% of two drawn ROIs, 11
+  are less alike in tuning than the halves of 95% of masks over one, 13 in every frame,
+  12 in what is not locked to the stimulus. The excess they could take is small anyway:
+  in no ROI-odor pair whose core is quiet and whose neighbour responds does a predicted
+  ROI's mean reach 0.3, and the neighbour's share of whole ROIs' means is no worse in
+  predicted ROIs than in manual ones (90th percentile 0.11 and 0.16;
+  `notes/roi_contamination_tail.py`), so al-diag-seg's trimming of masks is the tool for
+  edges. The GPU is not needed here: one plane's seeded NMF took 0.4 to 2.3 s on it
+  against 0.6 to 6.4 s on the CPU (the same footprints), less than reading the movies
+  (6 to 72 s a fly); it would be for factorizing whole planes, unseeded, to find
+  glomeruli without an ROI (100 iterations of 80 components over 2,500 frames: 0.9 s
+  against 19 s), which has not been tried.
 
 ## Code layout
 
