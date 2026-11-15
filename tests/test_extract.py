@@ -506,6 +506,141 @@ def test_loop(main, tensor, monkeypatch):  # noqa: F811
     assert not th.is_alive()
 
 
+# ------------------------------------------------------------ unmixed signals
+
+def mixed_movie(d, sigma=1.5, seed=0, background=40.0, noise=1.0):
+    """A movie whose ROIs' light is known: each its mask blurred by a Gaussian of `sigma` px times its own trace (bleaching,
+    and in each trial a response or none), on a background, with noise; some masks touching. Returns the movie (opened), its
+    ROIs (as `extract.read_rois` gives them, but boxes), trials, and each ROI's own part of its mask mean."""
+    from scipy import ndimage as ndi
+
+    rng = np.random.default_rng(seed)
+    z, y, x = 2, 28, 40
+    boxes = [("A", 0, 3, 3, 11, 13), ("B", 0, 11, 3, 19, 13), ("C", 0, 25, 5, 33, 15), ("D", 1, 5, 8, 15, 18), ("E", 1, 15, 8, 23, 20),
+             ("F", 0, 11, 13, 21, 23)]
+    rois = [{"name": n, "z": zz, "y0": y0, "x0": x0, "mask": np.ones((y1 - y0, x1 - x0), bool), "pixels": (y1 - y0) * (x1 - x0)}
+            for n, zz, x0, y0, x1, y1 in boxes]
+    trials = [{"start": 12 * k, "onset": 12 * k + 4, "end": 12 * k + 11} for k in range(24)]
+    t = 12 * len(trials)
+    f = np.tile(rng.uniform(100, 300, len(rois)), (t, 1)) * np.linspace(1, 0.8, t)[:, None]
+    for tr in trials:
+        f[tr["onset"]:tr["onset"] + 3] *= 1 + (rng.random(len(rois)) < 0.4) * rng.uniform(0.3, 1.0, len(rois))
+    movie, own = np.full((t, z, y, x), background) + rng.normal(0, noise, (t, z, y, x)), np.empty_like(f)
+    for i, r in enumerate(rois):
+        m = np.zeros((y, x))
+        m[r["y0"]:r["y0"] + r["mask"].shape[0], r["x0"]:r["x0"] + r["mask"].shape[1]] = 1
+        a = ndi.gaussian_filter(m, sigma, mode="constant")
+        movie[:, r["z"]] += f[:, i, None, None] * a
+        own[:, i] = f[:, i] * a[m > 0].mean()
+    d.mkdir(parents=True, exist_ok=True)
+    tifffile.imwrite(d / "mocorr.tif", movie.astype("<f4"), imagej=True, metadata={"axes": "TZYX"}, photometric="minisblack")
+    return movies.open_movie(d / "mocorr.tif"), rois, trials, own
+
+
+def test_unmix(tmp_path):
+    """Unmixed traces of a movie with known footprints, blur and traces: each ROI's own light comes back, where its mask mean
+    has its neighbours' too; its F0 is its mask mean's; a footprint too like another's is refused, left as its mask mean."""
+    from app import unmix
+
+    movie, rois, trials, own = mixed_movie(tmp_path)
+    px = 0.5  # (um: the blur 0.75 um; NMF footprints, and their region, reaching 4 px)
+    plain = extract.plane_traces(movie, rois)
+    truth = extract.responses(unmix.unmixed(plain, own, trials), trials, 3)
+    before = extract.responses(plain, trials, 3)
+    # (the mask means have their neighbours' responses: most where a mask is quiet and one touching it responds)
+    assert np.abs(before - truth).max() > 0.1
+    for variant in ("blur", "nmf"):
+        planes = unmix.layout(rois, (28, 40), unmix.REGION_UM[variant] / px)
+        assert [p["z"] for p in planes] == [0, 1] and [p["members"] for p in planes] == [[0, 1, 2, 5], [3, 4]]
+        assert all(not p["outlines"] for p in planes) and (variant == "nmf") == (planes[0]["region"].sum() > planes[0]["masks"].sum())
+        maps = unmix.trial_maps(movie, trials, 3, planes)
+        assert [m.shape for m in maps] == [(len(planes[0]["idx"]), 24), (len(planes[1]["idx"]), 24)]
+        # (a background over the masks alone is all but their footprints' sum: only with pixels round them)
+        for background in (False, True) if variant == "nmf" else (False,):
+            u = unmix.fit(len(rois), planes, [maps], variant, px, background)
+            if variant == "blur":  # (the blur's width found, not assumed: 1.5 px)
+                assert abs(u["how"]["sigma_px"] - 1.5) < 0.1 and not u["how"]["at_edge"], u["how"]
+            assert not u["refused"].any() and (u["vif"] < 3).all() and u["neighbours"][0][0][0] == 1  # (A's light is most B's)
+            traces, summed = extract.plane_traces(movie, rois, weights=u["weights"])
+            assert np.array_equal(traces, plain)  # (mask means as without weights, to the last bit)
+            mixed = unmix.unmixed(plain, summed, trials)
+            assert np.abs(extract.responses(mixed, trials, 3) - truth).max() < 0.02, (variant, background)
+            for t in trials:
+                assert np.allclose(extract._baseline(mixed, t), extract._baseline(plain, t))
+    # one drawn twice: its footprints alike, so neither is told from the other: refused (and the rest are as before)
+    twice = rois + [dict(rois[0], name="A2")]
+    planes2 = unmix.layout(twice, (28, 40), 4)
+    u = unmix.fit(len(twice), planes2, [unmix.trial_maps(movie, trials, 3, planes2)], "blur", px)
+    assert list(np.flatnonzero(u["refused"])) == [0, 6] and u["vif"][0] > 1e6 and not u["refused"][1:6].any()
+    # an outline of others (as Sam's AL_plane3): left out of the model, its trace its mask mean; the others' unmixed as before
+    lobe = rois + [{"name": "AL_plane1", "z": 0, "y0": 1, "x0": 1, "mask": np.ones((24, 36), bool), "pixels": 24 * 36}]
+    planes3 = unmix.layout(lobe, (28, 40), 0)
+    assert planes3[0]["members"] == [0, 1, 2, 5] and planes3[0]["outlines"] == {6: [0, 1, 2, 5]}
+    u = unmix.fit(len(lobe), planes3, [unmix.trial_maps(movie, trials, 3, planes3)], "blur", px, False)
+    assert list(np.flatnonzero(u["refused"])) == [6] and u["holds"][6] == [0, 1, 2, 5] and np.isnan(u["vif"][6])
+    plain3, summed = extract.plane_traces(movie, lobe, weights=u["weights"])
+    assert (summed[:, 6] == 0).all() and np.abs(extract.responses(unmix.unmixed(plain3[:, :6], summed[:, :6], trials), trials, 3) - truth).max() < 0.02
+
+
+def test_unmix_option(main, tensor, monkeypatch):  # noqa: F811
+    """Asked for with unmix: the same tables as without it (identical), and the unmixed ones beside them in unmixed/, with
+    each ROI-plane's unmixing; said in its README, provenance and log."""
+    monkeypatch.setattr(extract, "CHUNK_BYTES", 10 * Z * Y * X * 2)
+    fly = tensor / FLY
+    recording(fly / "megamat1")
+    recording(fly / "megamat2", seed=1, gain=0.5)
+    body = {"name": "Bob", "rois": "own", "dir": FLY}
+    assert extract.options({"unmix": True})["unmix"] == extract.unmix.DEFAULT and extract.options({"unmix": "nmf"})["unmix"] == "nmf"
+    assert all("unmix" not in extract.options({"unmix": off}) for off in (None, False, ""))
+    for bad in ("median", 2, ["blur"]):
+        status, r = call(main.extractions_create, method="POST", body={**body, "unmix": bad})
+        assert status == 400 and "unmix:" in r["error"], r
+    ids = {}
+    for how in (None, True, "nmf"):
+        x = call(main.extractions_create, method="POST", body={**body, **({"unmix": how} if how else {})})[1]
+        assert x["options"] == {"mode": "best_plane", "window": "pulse", **({"unmix": "blur" if how is True else how} if how else {})}
+        fit_worker.run_extraction(main.db, extract.claim(main.db))
+        x = extract.get(main.db, x["id"])
+        assert x["status"] == "done", (extract.out_dir(x["id"]) / "log.txt").read_text()
+        ids[how] = x
+    plain = extract.out_dir(ids[None]["id"])
+    assert "unmix" not in ids[None]["result"] and not (plain / "unmixed").exists()
+    for how in (True, "nmf"):
+        d = extract.out_dir(ids[how]["id"])
+        files = sorted(p.relative_to(d).as_posix() for p in d.rglob("*.csv"))
+        both = sorted(p.relative_to(plain).as_posix() for p in plain.rglob("*.csv"))
+        assert files == sorted(both + [f"unmixed/{f}" for f in both] + [f"unmixed/recordings/{r}/unmixing.csv" for r in ("megamat1", "megamat2")])
+        for f in both:  # (the plain tables as without unmixing, to the last character)
+            assert (d / f).read_bytes() == (plain / f).read_bytes(), f
+        mixed = pd.read_csv(d / "unmixed/recordings/megamat1/plane_traces.csv", index_col=0, header=[0, 1])
+        traces = pd.read_csv(plain / "recordings/megamat1/plane_traces.csv", index_col=0, header=[0, 1])
+        assert list(mixed.columns) == list(traces.columns) and not np.array_equal(mixed.to_numpy(), traces.to_numpy())
+        trials = extract.read_trials(fly / "megamat1" / movies.TRIALS)
+        for t in trials:  # (each trial's F0 the mask mean's)
+            assert np.allclose(extract._baseline(mixed.to_numpy(), t), extract._baseline(traces.to_numpy(), t))
+        table = pd.read_csv(d / "unmixed/recordings/megamat1/unmixing.csv")
+        assert list(table.columns) == ["roi", "z", "pixels", "refused", "holds", "vif", "gain", "condition", "neighbours", "slope",
+                                       "change_median", "change_largest", "largest_plain", "largest_unmixed"]
+        assert list(table["roi"]) == list(pd.read_csv(plain / "recordings/megamat1/planes.csv")["roi"]) and (table["vif"] > 1 - 1e-9).all()
+        assert pd.read_csv(d / "unmixed/responses_glomeruli.csv", index_col=[0, 1, 2, 3], header=[0, 1, 2]).shape == (8, 3)
+        res, prov = ids[how]["result"], json.loads((d / "provenance.json").read_text())
+        variant = "blur" if how is True else how
+        assert res["unmix"]["variant"] == variant and res["unmix"]["sets"][0]["roi_planes"] == 6
+        assert prov["computed"]["unmix"]["variant"] == variant and prov["computed"]["unmix"]["sets"][0]["pixel_from"] == "assumed"
+        assert (res["unmix"]["sets"][0]["sigma_um"] is not None) == (variant == "blur")
+        readme, log = (d / "README.txt").read_text(), (d / "log.txt").read_text()
+        assert "Neighbouring ROIs' signals unmixed too, in unmixed/" in readme and "How signals are unmixed" in readme
+        assert "unmixing: pixels of 0.5 um, assumed" in log and "its trials' dF maps read in" in log and "its traces and unmixed traces read in" in log
+    # (without it, its README as before: nothing of unmixing)
+    assert "unmixed" not in (plain / "README.txt").read_text() and "unmixing" not in (plain / "log.txt").read_text()
+    # its time reckoned as of more movies, unmixing
+    r = call(main.extractions_list)[1]
+    assert r["unmix"] == {"variants": extract.unmix.VARIANTS, "default": extract.unmix.DEFAULT, "cost": extract.UNMIX_COST}
+    queued = [{**ids[how], "status": "queued", "id": 99 + i} for i, how in enumerate((None, True))]
+    extract.estimate(queued + list(ids.values()))
+    assert np.isclose(queued[1]["eta"]["seconds"], queued[0]["eta"]["seconds"] * extract.UNMIX_COST)
+
+
 def call_text(endpoint, ext_id) -> str:
     import asyncio
 

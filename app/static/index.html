@@ -578,6 +578,11 @@ try {
         from; empty: as many as the odor pulse can reach)</span></span>
         <input id="extract-window" type="number" min="1" step="1" inputmode="numeric" placeholder="those the odor pulse can reach"></label>
       <p class="small" id="extract-window-note" aria-live="polite"></p>
+      <div class="grid predict-options">
+        <label class="field"><span>Unmix neighbouring ROIs <span class="muted">(take their light out of one another's masks: tables of
+          the unmixed signals beside the plain ones)</span></span><select id="extract-unmix"></select></label>
+      </div>
+      <p class="small muted" id="extract-unmix-note"></p>
       <p class="small" id="extract-who"></p>
       <div class="actions">
         <button type="button" class="btn primary" id="extract-start">Extract its signals</button>

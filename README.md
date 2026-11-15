@@ -888,7 +888,20 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   over that recording's trials is greatest (al_analysis' way, the default); its best plane
   over all the fly's recordings, the same in each; the mean of all its voxels; or its
   planes' traces, each relative to its mean, averaged with weights 1 / the variance of its
-  dF/F before the odors (the less noisy planes counting more). The fit worker runs them,
+  dF/F before the odors (the less noisy planes counting more). *Unmix neighbouring ROIs*
+  (off by default) also writes the same tables of each ROI's signal with its neighbours'
+  light taken out, in `unmixed/` (the plain tables are as without it): on each plane the
+  movie's fluorescence is fit as each ROI's footprint times its signal, a footprint being
+  its mask blurred by a width fit to the fly's trials (or, chosen instead, found by a
+  non-negative factorization of them), and an ROI's dF/F is its own light's dF over its
+  mask mean's F0. Each recording's `unmixing.csv` says how much each ROI's responses
+  changed, and which ROIs were left as their mask means (those holding others, as an
+  outline of the lobe, and those too like their neighbours to be told apart). It reads the
+  movies twice (the second time mostly from memory). On fit 7's held-out flies it took
+  about 40% of a responding neighbour's light from predicted ROIs whose own core was quiet
+  (little to begin with: 0.015 dF/F), and left other responses as they were (within 1%; no
+  new negative ones to speak of); more is in
+  [design.md](design.md#neighbouring-rois-unmixed-option). The fit worker runs them,
   one at a time, beside fits and predictions (a few seconds per GB of movies; those waiting
   and running say when they should end, from how long the last ones took), and keeps each
   on the server (`data/extractions/<id>/`) to download as a zip: `responses.csv` (trials ×

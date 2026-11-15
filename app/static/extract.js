@@ -2,8 +2,8 @@
 // fit_worker.run_extraction): asking for them (a fly, which ROIs: those a model predicted, as
 // they are or as edited in the viewer, or its own; and how one signal is made of an ROI drawn on
 // several planes; and the response window: how many volumes from the odor's onset a response is taken from, by default
-// as many as the odor pulse can reach, which the server works out for each recording: extract.window), and every
-// extraction made, to download.
+// as many as the odor pulse can reach, which the server works out for each recording: extract.window; and whether
+// neighbouring ROIs' signals are unmixed too: unmix.py), and every extraction made, to download.
 
 import { fmtDuration } from './fits.js';
 import { FlyMenu } from './flymenu.js';
@@ -25,6 +25,22 @@ const MODE_NOTES = {
   weighted: `Each plane's trace divided by its mean over the recording (so that a brighter plane does not count more), then
     averaged with weights 1 / the variance of that plane's dF/F before the odors in that recording: the average of least noise,
     if the planes hold the same signal. Its traces are then of relative F, not F; dF/F and responses are as for the others.`,
+};
+// whether, and how, neighbouring ROIs' signals are unmixed too (extract.py's option unmix: unmix.py's VARIANTS), in more words
+const UNMIX_NAMES = { blur: 'masks blurred', nmf: 'factorized' };
+const UNMIX_NOTES = {
+  '': `No: each ROI's signal is the mean of the movie over its mask, as al_analysis has it, with whatever light of its neighbours'
+    is in the mask (where masks touch, or a neighbour's light spreads into them).`,
+  blur: `Each ROI's signal is also unmixed from its neighbours', in tables beside the plain ones (unmixed/): on each plane, the movie's
+    fluorescence is fit as each ROI's footprint times its signal, a footprint being its mask blurred by a width fit to the fly's
+    trials (how its responses' light spreads). An ROI's dF/F is then its own light's dF over its mask mean's F0. Glomeruli that
+    respond together cannot be told from one another's light, so a shared response may be lowered: each recording's
+    unmixing.csv says how much each ROI's responses changed. Reads the movies twice.`,
+  nmf: `Each ROI's signal is also unmixed from its neighbours', in tables beside the plain ones (unmixed/): on each plane, the movie's
+    fluorescence is fit as each ROI's footprint times its signal, the footprints found from the fly's trials (a non-negative
+    factorization, each started at its mask and kept within 2 µm of it). An ROI's dF/F is then its own light's dF over its mask
+    mean's F0. Glomeruli that respond together cannot be told from one another's light, so a shared response may be lowered: each
+    recording's unmixing.csv says how much each ROI's responses changed. Reads the movies twice.`,
 };
 const ROI_NAMES = { own: "the fly's own", predicted: 'as predicted', edited: 'as edited' };
 const vols = (n) => `${n} volume${n === 1 ? '' : 's'}`;
@@ -76,6 +92,7 @@ export class ExtractPanel {
     $('#extract-rois').addEventListener('change', () => { this.roisChosen = $('#extract-rois').value; this._renderStart(); });
     for (const id of ['#extract-dir', '#extract-raw-dir', '#extract-window']) $(id).addEventListener('input', () => this._renderStart());
     $('#extract-mode').addEventListener('change', () => this._renderMode());
+    $('#extract-unmix').addEventListener('change', () => this._renderUnmix());
     $('#extract-start').addEventListener('click', () => this.start());
     $('#extract-list').addEventListener('click', (e) => this._action(e));
   }
@@ -112,6 +129,10 @@ export class ExtractPanel {
       this.menusMade = true;
       $('#extract-mode').innerHTML = Object.entries(this.data.modes).map(([k, label]) => `<option value="${esc(k)}">${esc(label)}</option>`).join('');
       this._renderMode();
+      const u = this.data.unmix || { variants: {} };
+      $('#extract-unmix').innerHTML = `<option value="">No: mask means only</option>${Object.entries(u.variants).map(([k, label]) =>
+        `<option value="${esc(k)}">Yes: ${esc(label)}${k === u.default ? ' (the default way)' : ''}</option>`).join('')}`;
+      this._renderUnmix();
       this.renderFlies();
     }
     this._renderStart();
@@ -120,6 +141,10 @@ export class ExtractPanel {
 
   _renderMode() {
     this.h.$('#extract-mode-note').textContent = (MODE_NOTES[this.h.$('#extract-mode').value] || '').replace(/\s+/g, ' ');
+  }
+
+  _renderUnmix() {
+    this.h.$('#extract-unmix-note').textContent = (UNMIX_NOTES[this.h.$('#extract-unmix').value] || '').replace(/\s+/g, ' ');
   }
 
   // the predictions done, newest first
@@ -350,7 +375,9 @@ export class ExtractPanel {
         esc([...new Set(r.recordings.map((c) => c.panel))].join(', '))})</span>, in ${fmtDuration(r.seconds)}` : '—';
       return `<tr data-id="${x.id}"><td title="${esc(x.tensor_dir || x.fly_dir)}">${esc(x.fly)}</td><td>${esc(this._rois(x))}</td>
         <td title="${esc(modes[x.options.mode] || '')}">${esc({ best_plane: 'best plane, per recording', best_plane_fly: 'best plane, per fly',
-        all_planes: 'all voxels', weighted: 'weighted by noise' }[x.options.mode] || x.options.mode)}</td>
+        all_planes: 'all voxels', weighted: 'weighted by noise' }[x.options.mode] || x.options.mode)}${x.options.unmix
+  ? `<br><span class="muted" title="${esc(`Unmixed too (in unmixed/): ${this.data.unmix?.variants?.[x.options.unmix] || x.options.unmix}`)}">and unmixed (${
+    esc(UNMIX_NAMES[x.options.unmix] || x.options.unmix)})</span>` : ''}</td>
         <td>${windowCell(x, esc)}</td><td>${esc(x.name)}</td><td>${esc(fmtWhen(x.finished_at || x.created_at))}</td><td>${status}</td><td>${got}</td>
         <td class="acts">${x.status === 'done' ? `<a class="btn small" href="/api/extractions/${x.id}/download" download>Download</a>` : ''}
           ${x.status !== 'queued' ? `<a class="btn small" href="/api/extractions/${x.id}/log" target="_blank" rel="noopener">Log</a>` : ''}
@@ -363,11 +390,12 @@ export class ExtractPanel {
     const name = this.h.getName(), asked = this._asked();
     if (!name || !asked) { this._renderStart(); return; }
     $('#extract-start').disabled = true;
+    const unmix = $('#extract-unmix').value;
     try {
-      const x = await api('/api/extractions', { method: 'POST', json: { name, mode: $('#extract-mode').value, ...asked } });
-      const rate = this.data?.rate;
-      const about = rate && x.bytes ? ` It should take about ${fmtDuration(rate.seconds_per_gb * x.bytes / 2 ** 30)} for its ${(x.bytes / 2 ** 30).toFixed(1)} GB
-        of movies (${this._from(rate)}).` : '';
+      const x = await api('/api/extractions', { method: 'POST', json: { name, mode: $('#extract-mode').value, ...(unmix ? { unmix } : {}), ...asked } });
+      const rate = this.data?.rate, cost = unmix ? this.data?.unmix?.cost || 1 : 1;
+      const about = rate && x.bytes ? ` It should take about ${fmtDuration(rate.seconds_per_gb * cost * x.bytes / 2 ** 30)} for its ${(x.bytes / 2 ** 30).toFixed(1)} GB
+        of movies (${this._from(rate)}${cost > 1 ? `, unmixing taking about ${cost} times as long` : ''}).` : '';
       $('#extract-status').replaceChildren(msgBox('ok', `Asked for: it is below while it waits and runs, then to download.${esc(about)}`));
     } catch (err) {
       $('#extract-status').replaceChildren(msgBox('error', `Could not ask for them: ${esc(err.message)}`));

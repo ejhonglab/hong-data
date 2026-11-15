@@ -1670,6 +1670,133 @@ the ways to combine planes avoid the second.
 9. Smaller: `ijroi_masks` asserts square frames (rows and columns were never told apart
    by a test); an ROI named twice on one plane counts as two planes.
 
+### Neighbouring ROIs unmixed (option)
+
+*Extract signals*' option `unmix` (`app/unmix.py`; demixing_plan.md, section 4), off by
+default, writes the same tables again in `unmixed/`, of each ROI's signal with its
+neighbours' light taken out; the plain tables are as without it (identical, as the tests
+check), so al_analysis' numbers are still there.
+
+- **A model of light, not of dF/F.** On each plane the movie's fluorescence is
+  F(pixel, t) = Σ_k a_k(pixel) f_k(t): each ROI's footprint times its signal (light adds;
+  dF/F does not). Least squares makes each f_k a weighted sum of the pixels (the
+  footprints' pseudo-inverse), so an ROI's unmixed trace is read in the same chunked pass
+  over the movie as its mask mean (`extract.plane_traces` with weight images), and
+  windows, statistics and `MODES` are as for the plain traces. An ROI's own part of its
+  mask mean is f_k times its footprint's mean over its mask.
+- **The dF/F trap.** Unmixing takes the neighbours' light out of F0 as well as out of dF,
+  and dF over that smaller F0 would be inflated. So the unmixed trace is the mask mean less
+  the change, from each trial's baseline, of the rest of it: its F0 is the mask mean's,
+  and F − F0 the ROI's own. The README of an extraction says so.
+- **Footprints, two ways, both fit to the fly's trials.** Each trial's dF map (the mean F
+  over its response window less its baseline's, per pixel: read first, from those frames
+  alone, so a movie is read twice) of every recording. `blur` (the default): each mask
+  blurred by a Gaussian whose width is the one of least residual of the dF maps (over 0 to
+  3 µm, then refined), per set of ROIs, fit and read over the masks alone. `nmf`: a seeded
+  non-negative factorization (each footprint started at its mask, kept within 2 µm of it,
+  the maps' coefficients of either sign; HALS) over the masks and 2 µm round them, to a
+  relative change of 10⁻⁴ or 100 iterations (6 to 100 a plane; 20 and 300 gave the same
+  numbers).
+- **Guards.** An ROI-plane whose footprint is nearly a combination of the others'
+  (variance inflation over 10: an ROI drawn twice) is left as its mask mean; so is one
+  holding at least half of a smaller one's mask, left out of the model too: an outline of
+  others (Sam's `AL_plane1` … `AL_plane10`, which hong2p's `AL` rule does not catch and
+  which every other ROI lay inside, so that the first try subtracted the lobe's response
+  from all of them: 70 to 107 new negative responses in that fly), or one drawn over
+  another (one of Tom's). Each recording's `unmixing.csv` says, per ROI-plane, its
+  variance inflation, noise gain, the plane's condition number, the ROIs whose footprints
+  are most in its mask, and how its responses changed.
+- **Time.** The dF maps are read from the trials' baselines and windows alone, and the
+  second pass is mostly from memory, so where a fly's movies come from tensor unmixing
+  takes about as long as the plain extraction (38 s for 0.73 GB of movies, against 48 and
+  95 s plain for 1.3 and 1.5 GB on a loaded hal); with the movies in memory, 8 to 10 s
+  against 2 to 5 s plain. The blur's fit takes 2 to 4 s; an NMF 20 s more (its fly 29 s in
+  all). Waiting extractions' times are reckoned with unmixing as twice the movies
+  (`UNMIX_COST`).
+- **How it did, and why it is as it is** (fit 7's 4 held-out flies, their diagnostic
+  recordings, with their predicted ROIs and, apart, their manual ones;
+  `notes/unmix_validation.py`). Per ROI-plane and odor, the mean over trials of its
+  response (as extracted, each recording's window), plain and unmixed, and of its core
+  (the mask eroded 3 px), with the neighbours of `notes/roi_contamination_edges.py`: (a)
+  where its core is quiet (< 0.15) and its nearest neighbour's core responds (> 0.3), the
+  ROI's mean response (the target: its core's); (b) where every neighbour's core is quiet,
+  the median ratio unmixed / plain of the responses over 0.3 in size (median over the
+  flies; the target 1); (c) pairs below −0.3, plain → unmixed (how many are new); (d) the
+  share of pairs over 0.3. Pooled over the flies (2,280 to 3,312 pairs each), and per fly
+  for the default:
+
+  | footprints | ROIs | (a) plain → unmixed (core) | (b) | (c) | (d) % |
+  |---|---|---|---|---|---|
+  | **blur, masks alone (default)** | predicted | 0.045 → 0.039 (0.030) | 0.998 | 52 → 58 (6) | 23.5 → 23.1 |
+  | | manual | 0.041 → 0.039 (0.019) | 1.000 | 55 → 55 (0) | 22.5 → 22.4 |
+  | blur, masks and 2 µm round them | predicted | 0.045 → 0.020 (0.030) | 0.988 | 52 → 60 (9) | 23.5 → 22.3 |
+  | | manual | 0.041 → −0.000 (0.019) | 0.971 | 55 → 64 (14) | 22.5 → 22.2 |
+  | nmf (2 µm) | predicted | 0.045 → 0.042 (0.030) | 0.988 | 52 → 48 (1) | 23.5 → 22.5 |
+  | | manual | 0.041 → 0.048 (0.019) | 0.994 | 55 → 49 (2) | 22.5 → 22.2 |
+  | blur (2 µm), with a background | predicted | 0.045 → −0.072 (0.030) | 0.848 | 52 → 221 (170) | 23.5 → 15.8 |
+  | | manual | 0.041 → −0.113 (0.019) | 0.767 | 55 → 500 (445) | 22.5 → 13.9 |
+  | nmf, with a background | predicted | 0.045 → 0.007 (0.030) | 0.941 | 52 → 97 (50) | 23.5 → 20.1 |
+  | | manual | 0.041 → 0.024 (0.019) | 0.951 | 55 → 107 (57) | 22.5 → 20.5 |
+
+  | fly | ROIs | blur fit | (a) plain → unmixed (core) | (b) | (c) | (d) % |
+  |---|---|---|---|---|---|---|
+  | Sam 2024-06-11/2 | predicted | 0.74 µm | 0.051 → 0.043 (0.040) | 0.998 | 4 → 5 (1) | 19.2 → 19.0 |
+  | | manual | 0.28 µm | 0.063 → 0.062 (0.046) | 1.000 | 9 → 9 (0) | 19.7 → 19.6 |
+  | Tom 2023-05-08/1 | predicted | 0.61 µm | 0.038 → 0.033 (0.025) | 0.996 | 5 → 6 (1) | 15.2 → 14.7 |
+  | | manual | 0.84 µm | 0.029 → 0.024 (0.014) | 0.990 | 9 → 9 (0) | 14.7 → 14.4 |
+  | Tom 2023-11-21/3 | predicted | 0.51 µm | 0.043 → 0.035 (0.025) | 0.999 | 16 → 18 (2) | 32.9 → 32.3 |
+  | | manual | 0.28 µm | 0.008 → 0.006 (−0.014) | 0.999 | 20 → 20 (0) | 28.4 → 28.3 |
+  | Tom 2024-09-12/2 | predicted | 0.35 µm | 0.045 → 0.042 (0.025) | 0.998 | 27 → 29 (2) | 25.6 → 25.3 |
+  | | manual | 0.27 µm | 0.062 → 0.061 (0.021) | 1.001 | 17 → 17 (0) | 25.9 → 26.0 |
+
+  On masks matched to a manual one (IoU ≥ 0.5, 215 in-plane pairs), the share over 0.3 is
+  24.6 → 24.3% predicted and 24.9 → 24.8% manual: unmixing does not close or open a gap
+  between them. How much it depends on the blur's width (set, not fit; over the masks
+  alone), and on the NMF's reach and iterations, pooled as above:
+
+  | footprints | (a) predicted | (a) manual | (b) predicted, manual | (c) new, predicted, manual | (d) % predicted, manual |
+  |---|---|---|---|---|---|
+  | blur 0.25 µm | 0.043 | 0.041 | 1.000, 1.000 | 3, 0 | 23.4, 22.5 |
+  | blur 0.5 µm | 0.039 | 0.038 | 0.998, 0.992 | 5, 0 | 23.2, 22.2 |
+  | blur 1 µm | 0.033 | 0.035 | 0.990, 0.980 | 5, 0 | 22.8, 21.7 |
+  | blur 1.5 µm | 0.027 | 0.030 | 0.982, 0.972 | 5, 0 | 22.2, 21.5 |
+  | nmf, 1 µm reach | 0.046 | 0.049 | 0.994, 0.996 | 2, 1 | 22.9, 22.3 |
+  | nmf, 3 µm reach | 0.035 | 0.040 | 0.983, 0.991 | 2, 2 | 21.9, 21.8 |
+  | nmf, 20 or 300 iterations | 0.042 | 0.048 | 0.988, 0.994 | 1, 2 | 22.5, 22.2 |
+
+  (plain: (a) 0.045 and 0.041, cores 0.030 and 0.019; (d) 23.5 and 22.5%.) Smooth in the
+  width, with no new negative responses to speak of at any: a wider blur takes more both
+  of a neighbour's light and, where the neighbours are quiet, of an ROI's own response
+  (b falls below 1 from about 1 µm). The fit's own width is in the narrow half. Read so:
+  - *There is little to unmix in a whole ROI's mean.* Where the core is quiet and the
+    neighbour responds, the plain mask mean is only 0.015 (predicted) and 0.022 (manual)
+    above its core's: the neighbour's share of the facing edge (0.30) is diluted by the
+    rest of the mask, as the plan's yardstick found (0.04 of a whole ROI). The default
+    takes about 40% of that excess from predicted ROIs and about 10% from manual ones,
+    whose masks have gaps between them that a blur of 0.3 µm does not cross, and it
+    leaves the rest of the responses as they were (b, c, d).
+  - *No background term*, though the plan had one: uniform over the region, its level was
+    set by the region's pixels outside the ROIs, which are mostly glomeruli with no ROI,
+    so it took their responses from every ROI on the plane (50 to 445 new negative
+    responses, responses with quiet neighbours 0.77 to 0.95 of what they were, a third of
+    those over 0.3 lost with the blur), at every width tried (0.5 to 2 µm alike). It stays
+    in `unmix.py` (`BACKGROUND`), off.
+  - *The blur is fit over the masks alone.* With pixels round them, its width grew with
+    how far they reached (predicted: 0.35 to 0.74 µm over the masks, 1.1 to 1.8 µm with
+    1 µm round them, 1.6 to 2.7 µm with 2, 1.7 to 2.9 µm with 3; manual: 0.27 to 0.84 µm
+    over the masks, then 2.0 to 3 µm, the widest tried in 9 of the 12 fits): it was
+    explaining glomeruli without an ROI by the ROIs' footprints, which then took more from
+    their neighbours than down to their cores' level (above: to 0.020 and 0, against cores
+    of 0.030 and 0.019).
+  - *NMF is kept as a choice, not the default*: it changed responses little either way
+    and moved none of (a) towards the core (with a background, it took real responses as
+    the blur did, less).
+  - *Glomeruli that respond together* are not told apart from each other's light by
+    either: the share each footprint has in a neighbour's mask is taken from the
+    neighbour's response, shared or not. With the default's narrow footprints that share
+    is small (b stays at 1), but where masks overlap it is not, and those ROIs' entries in
+    `unmixing.csv` (neighbours, slope) say how much.
+
 ## Code layout
 
 ```
@@ -1687,6 +1814,8 @@ app/predictions.py predictions of flies' glomerulus ROIs by fits' models: record
                    estimates, the viewer's images, their ROIs as edited there, downloads
 app/extract.py     signals of a fly's ROIs extracted from its movies as al_analysis does: masks, traces, dF/F,
                    responses, one signal of an ROI's planes; records, time estimates, its files
+app/unmix.py       its option unmix: neighbouring ROIs' signals unmixed (footprints fit to the trials' dF maps,
+                   the weights reading each ROI's own light out of the movie, guards)
 app/model_data.py  model data for the Models tab: folders of model outputs on tensor, scanned into a table of
                    models (params.csv rows, provenance.json keys), their spike count files matched, a run read
 app/metadata.py    form model (pydantic) and README.md generation
@@ -1916,7 +2045,9 @@ GET    /api/extractions                     every extraction of a fly's ROIs' si
 POST   /api/extractions                     ask for one: {name, rois: "own" (with dir: the fly's motion-corrected
                                             data folder, and raw_dir: its raw data folder, if not beside it) |
                                             "predicted" | "edited" (with prediction: its id), mode, window (the
-                                            response window, in volumes; without it, those the odor pulse can reach)}
+                                            response window, in volumes; without it, those the odor pulse can reach),
+                                            unmix (neighbouring ROIs' signals unmixed too: "blur", "nmf" or true; off
+                                            without it)}
 POST   /api/extractions/window              the response window one asked for so would have in each of the fly's
                                             recordings, and how each is worked out (extract.preview)
 DELETE /api/extractions/{id}                delete one and its files (409 while it runs)

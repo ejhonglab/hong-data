@@ -1779,8 +1779,9 @@ async def extractions_create(request: Request) -> Response:
     fly's motion-corrected data folder, and "raw_dir": its raw data folder, if not beside it as
     hong2p has them), or "predicted" or "edited" (with "prediction": its id), "mode" (of
     `extract.MODES`), "window" (the response window: a number of volumes; without it, those the
-    odor pulse can reach)}. 201 with it, queued. 422 without a name; 400 for what cannot be
-    extracted (`extract.locate` and `extract.options` say why)."""
+    odor pulse can reach), "unmix" (neighbouring ROIs' signals unmixed too: a variant of
+    `unmix.VARIANTS`, or true; off without it)}. 201 with it, queued. 422 without a name; 400
+    for what cannot be extracted (`extract.locate` and `extract.options` say why)."""
     body = await request.json()
     if not isinstance(body, dict):
         return json_error(400, "expected a JSON object")

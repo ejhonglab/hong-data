@@ -52,7 +52,9 @@ Where it differs from al_analysis (notes/trace_extraction_notes.md says more of 
   by responses over the same window;
 - its other settings are al_analysis' current defaults, fixed (the baseline, the statistic);
   only ImageJ's ROIs, not suite2p's;
-- the other `MODES` are not al_analysis' at all.
+- the other `MODES` are not al_analysis' at all;
+- on request (option ``unmix``), the ROIs' signals unmixed from their neighbours' (`unmix`)
+  are written too, beside the plain ones (`UNMIXED`), which are as without it.
 """
 from __future__ import annotations
 
@@ -64,13 +66,14 @@ import os
 import re
 import shutil
 import statistics
+import textwrap
 import time
 from pathlib import Path
 from typing import Callable, Optional
 
 import numpy as np
 
-from . import config, movies, predictions, sandbox, tensor, thorimage
+from . import config, movies, predictions, sandbox, tensor, thorimage, unmix
 
 N_RESPONSE = 2  # time points from the odor's onset al_analysis takes a response from (its n_volumes_for_response): the fewest here
 WINDOW = "pulse"  # the response window by default: as many volumes as the odor pulse can reach (`window_volumes`)
@@ -96,7 +99,12 @@ STATUSES = ("queued", "running", "done", "failed", "interrupted")
 ACTIVE = ("queued", "running")
 RECENT = 10  # the extractions done that one's time is estimated from
 GUESS_S_PER_GB = 20.0  # seconds per GB of movies, until one is done to estimate from
+# how many times longer an extraction takes with its ROIs' signals unmixed (blur): about as long when its movies are read
+# from tensor, the reading then most of it (38 s for a fly of 0.73 GB, against 48 and 95 s plain for 1.3 and 1.5 GB);
+# 2 to 4 times when they are in memory (8 and 10 s, against 2 and 5 s)
+UNMIX_COST = 2.0
 CHUNK_BYTES = 256 << 20  # of a movie's plane read at once
+UNMIXED = "unmixed"  # the folder of an extraction's tables of unmixed signals (option unmix)
 
 
 class ExtractError(ValueError):
@@ -212,14 +220,21 @@ def read_rois(path: Path, shape: tuple[int, int, int], say: Callable[[str], None
 
 # ----------------------------------------------------------------- traces
 
-def plane_traces(movie: movies.Movie, rois: list[dict], progress: Optional[Callable[[int, int], None]] = None) -> np.ndarray:
+def plane_traces(movie: movies.Movie, rois: list[dict], progress: Optional[Callable[[int, int], None]] = None,
+                 weights: Optional[list[dict]] = None):
     """Each ROI's trace ((time points, ROIs), float64): the mean of the movie over its mask at
     each time point, as hong2p's ``extract_traces_bool_masks`` computes it (the mean of its
     pixels in their order in the plane, in the file's own number type). The movie is read once,
     from its start, in pieces of at most `CHUNK_BYTES`; `progress` is told (time points read, of
-    how many)."""
+    how many).
+
+    With `weights` (per plane: its ``z``, ``box``, ``idx`` and ``members``, as `unmix.layout`
+    gives them, and ``weights``: (members, pixels of idx)), the weighted sums of each ROI's
+    plane's pixels too, in the same pass: (traces, weighted).
+    """
     s = movie.shape
     out = np.empty((s["t"], len(rois)), dtype=np.float64)
+    summed = None if weights is None else np.zeros((s["t"], len(rois)), dtype=np.float64)
     step = max(1, CHUNK_BYTES // (s["z"] * s["y"] * s["x"] * movie.dtype.itemsize))
     for t0 in range(0, s["t"], step):
         data = movie.volumes(t0, step)
@@ -227,9 +242,13 @@ def plane_traces(movie: movies.Movie, rois: list[dict], progress: Optional[Calla
             m = r["mask"]
             box = data[:, r["z"], r["y0"]:r["y0"] + m.shape[0], r["x0"]:r["x0"] + m.shape[1]]
             out[t0:t0 + len(data), i] = np.mean(box[:, m], axis=1)
+        for p in weights or ():
+            y0, y1, x0, x1 = p["box"]
+            px = data[:, p["z"], y0:y1, x0:x1].reshape(len(data), -1)[:, p["idx"]].astype(np.float64)
+            summed[t0:t0 + len(data), p["members"]] = px @ p["weights"].T
         if progress:
             progress(t0 + len(data), s["t"])
-    return out
+    return out if weights is None else (out, summed)
 
 
 def read_trials(path: Path) -> list[dict]:
@@ -626,13 +645,22 @@ def update(db, ext_id: int, **fields) -> None:
 
 
 def options(body: dict) -> dict:
-    """The options of an extraction asked for: ``mode`` (of `MODES`; al_analysis' by default) and
+    """The options of an extraction asked for: ``mode`` (of `MODES`; al_analysis' by default),
     ``window`` (the response window: `WINDOW`, by default, for as many volumes as the odor pulse
-    can reach, or a number of volumes from 1 to `MAX_WINDOW`).
+    can reach, or a number of volumes from 1 to `MAX_WINDOW`) and ``unmix`` (neighbouring ROIs'
+    signals unmixed too: a footprint variant of `unmix.VARIANTS`, or true for `unmix.DEFAULT`;
+    left out when not asked for, as false, none or "").
 
     Raises:
         ValueError: for one that is not.
     """
+    how = body.get("unmix")
+    if how is True:
+        how = unmix.DEFAULT
+    elif how in (None, False, ""):
+        how = None
+    elif not isinstance(how, str) or how not in unmix.VARIANTS:
+        raise ValueError(f"unmix: one of {', '.join(unmix.VARIANTS)}, true (for {unmix.DEFAULT}), or none")
     mode = body.get("mode") or "best_plane"
     if mode not in MODES:
         raise ValueError(f"mode: one of {', '.join(MODES)}")
@@ -647,7 +675,7 @@ def options(body: dict) -> dict:
         if not ok:
             raise ValueError(f"window: a whole number of volumes from 1 to {MAX_WINDOW}, or none (for those the odor pulse can reach)")
         win = int(float(win))
-    return {"mode": mode, "window": win}
+    return {"mode": mode, "window": win, **({"unmix": how} if how else {})}
 
 
 def locate(db, body: dict, tensor_root: Path, bases: list[Path]) -> dict:
@@ -786,7 +814,7 @@ database's AL segmentation tab (Extract signals), asked for by {name} on {create
 ROIs: {rois}
 Recordings: {recordings}
 One signal of an ROI drawn on several planes: {mode}
-
+{unmixing}
 responses.csv       each ROI's response to each trial's odor: trials (panel, is_pair, odor1, ..., repeat)
                     by ROIs ({columns}), every recording's trials one under another. A panel is named
                     as al_analysis names it, from its recordings' names; an odor as al_analysis' tables
@@ -808,7 +836,7 @@ responses.csv       each ROI's response to each trial's odor: trials (panel, is_
 provenance.json     the files read (with their sizes and when they were modified; the ROIs' checksum),
                     how the signals were computed, the software, and who asked
 log.txt             what it printed (e.g. ROIs left out, and why)
-
+{unmixed_files}
 How they are computed, as al_analysis computes them (with the same numbers, for its way of choosing a
 plane): an ROI's mask on a plane is the pixels (y, x) whose point (x, y) is inside its polygon (hong2p's
 rule: half a pixel down and right of ImageJ's own, which takes a pixel's centre); its trace there, the mean
@@ -826,7 +854,32 @@ left out as al_analysis leaves some; and nothing al_analysis does after its per-
 (ROIs merged across recordings, uncertain ROIs dropped where there is a certain one, concentrations that are
 not a panel's final ones blanked, means taken). Another way than its best plane in each recording to make
 one signal of an ROI's planes (above) is not al_analysis' either.
-"""
+{unmixed_how}"""
+
+# (of a README unmixing: its files, (name, what), and how it is done, unwrapped: `_unmix_words` wraps them as the rest)
+UNMIXED_FILES = (
+    ("unmixed/", "the same tables (responses.csv{glomeruli} and each recording's), of the ROIs' signals unmixed from their neighbours' "
+                 "(below); an ROI's plane is chosen by its unmixed responses"),
+    ("  recordings/<recording>/unmixing.csv",
+     "each ROI-plane's unmixing: whether it was refused (its trace left as its mask mean), and so for holding other ROIs (holds: an "
+     "outline of them, left out of the model), its footprint's variance inflation by the others' (vif; over {vif:g}: refused), how much "
+     "noisier its trace is than its mask mean's (gain), its plane's condition number, the ROIs whose footprints are most in its mask "
+     "(each one's mean over the mask, over its own footprint's), and how much its responses changed (slope: unmixed against plain, "
+     "through 0; the median and the largest change of a response; each plain and unmixed largest response)"),
+)
+UNMIXED_HOW = (
+    "How signals are unmixed (unmixed/; plain ones are al_analysis' as above): on each plane, the movie's fluorescence (not dF/F: "
+    "light adds, ratios do not) over the plane's ROIs' {region} (its region) is modelled as each ROI's footprint times its "
+    "signal{background}. The footprints are {footprints}. Least squares gives each f_k as a weighted sum of the region's pixels (the "
+    "footprints' pseudo-inverse), read in the same pass over the movie as the mask means; an ROI's own part of its mask mean is f_k "
+    "times its footprint's mean over its mask. Its unmixed trace is its mask mean less the change, from each trial's baseline, of the "
+    "rest (its neighbours' light{background_light}): so its F0 is its mask mean's, and its dF/F its own dF over that F0. (Unmixing "
+    "takes the neighbours' light out of F0 too; dividing by that smaller F0 would inflate dF/F.) An ROI-plane holding at least {held:g} "
+    "of a smaller one's mask (an outline of others, as of the whole lobe) is left out of the model, and one whose footprint is nearly "
+    "a combination of the others' (variance inflation over {vif:g}); both are left as their mask means: {refused}. Glomeruli that "
+    "respond together are not told apart from one another's light, and a footprint wider than the light it stands for takes shared "
+    "responses from both: unmixing.csv says how much each ROI's changed.")
+README_WIDTH = 110  # (what a README's paragraphs made of parts are wrapped to)
 
 
 def _window_words(recs: list[dict], option) -> str:
@@ -846,6 +899,53 @@ def _window_words(recs: list[dict], option) -> str:
             + "; log.txt and provenance.json say what each was worked out from")
 
 
+def _unmix_words(variant: Optional[str], groups: dict, gloms: bool) -> dict:
+    """In words, for an extraction's README (its ``unmixing``, ``unmixed_files`` and
+    ``unmixed_how``): how its ROIs' signals were unmixed (by `variant`: none for not at all),
+    for each set of ROIs of `groups` (as `_unmix` left them); `gloms`: whether some ROIs are
+    named as glomeruli."""
+    if not variant:
+        return {"unmixing": "", "unmixed_files": "", "unmixed_how": ""}
+    sets = list(groups.values())
+    feet, refused = [], []
+    for g in sets:
+        px = f"pixels of {g['pixel_um']:g} um, " + ("by the Experiment.xml" if g["pixel_known"] else "assumed: no Experiment.xml said")
+        if variant == "blur":
+            how = g["unmix"]["how"]
+            feet.append(f"{how['sigma_um']:.2f} um ({how['sigma_px']:.2f} pixels; {px})" + (" (the widest tried, so it may be wider)" if how["at_edge"] else ""))
+        else:
+            feet.append(px)
+        refused += [f"{g['rois'][i]['name']} (z {g['rois'][i]['z']}" + (f", holding {len(g['unmix']['holds'][i])} others)" if g["unmix"]["holds"][i] else ")")
+                    for i in np.flatnonzero(g["unmix"]["refused"])]
+    of = (lambda x: x[0]) if len(sets) == 1 else (lambda x: "; ".join(f"{f} for {g['path'].name}" for f, g in zip(x, sets)))
+    if variant == "blur":
+        footprints = (f"each mask blurred by a Gaussian, its width (s.d.) the one whose footprints best explain the trials' dF maps (the mean F "
+                      f"over a trial's response window less its baseline's; least residual, over {', '.join(f'{s:g}' for s in unmix.SIGMAS_UM)} um, "
+                      f"then between the two either side of the least) of all the recordings: {of(feet)}")
+    else:
+        footprints = (f"fit to the trials' dF maps (the mean F over a trial's response window less its baseline's) of all the recordings by "
+                      f"a non-negative factorization, each footprint started at its mask and kept within {unmix.NMF_REACH_UM:g} um of it ({of(feet)})")
+    pad = " " * 20  # (where a file's description begins, in the README's list)
+
+    def item(name: str, text: str) -> str:
+        if len(name) < len(pad):
+            return textwrap.fill(text, README_WIDTH, initial_indent=name.ljust(len(pad)), subsequent_indent=pad) + "\n"
+        return f"{name}\n" + textwrap.fill(text, README_WIDTH, initial_indent=pad, subsequent_indent=pad) + "\n"
+
+    how = UNMIXED_HOW.format(
+        region=(f"masks and the pixels within {unmix.REGION_UM[variant]:g} um of them" if unmix.REGION_UM[variant] else "masks alone"),
+        footprints=footprints, vif=unmix.VIF_MAX, held=unmix.HELD, refused=", ".join(refused) if refused else "none was",
+        background=(", plus a background uniform over the region: F(pixel, t) = sum_k a_k(pixel) f_k(t) + b(t)" if unmix.BACKGROUND else
+                    ": F(pixel, t) = sum_k a_k(pixel) f_k(t) (no background term: one uniform over the region took real responses, as "
+                    "glomeruli without ROIs set its level)"),
+        background_light=", and the background's" if unmix.BACKGROUND else "")
+    return {"unmixing": textwrap.fill(f"Neighbouring ROIs' signals unmixed too, in {UNMIXED}/ ({variant}: {unmix.VARIANTS[variant]})",
+                                      README_WIDTH) + "\n",
+            "unmixed_files": "".join(item(name, text.format(glomeruli=", responses_glomeruli.csv" if gloms else "", vif=unmix.VIF_MAX))
+                                     for name, text in UNMIXED_FILES),
+            "unmixed_how": "\n" + textwrap.fill(how, README_WIDTH, break_on_hyphens=False) + "\n"}
+
+
 def _trial_index(trials: list[dict], panel_name: str, n_odors: int, seen: dict):
     """The rows of a table of trials, as al_analysis' are: (panel, is_pair, odor1, ..., repeat),
     each trial's odors padded with solvent to `n_odors`, ``repeat`` the trials of the same odors
@@ -861,90 +961,20 @@ def _trial_index(trials: list[dict], panel_name: str, n_odors: int, seen: dict):
     return pd.MultiIndex.from_tuples(rows, names=["panel", "is_pair", *(f"odor{i + 1}" for i in range(n_odors)), "repeat"])
 
 
-def run(db, e: dict, say: Callable[[str], None] = print, progress: Optional[Callable[[float, float, str], None]] = None) -> dict:
-    """Extracts the signals an extraction asks for (`e`: its record), and writes them into its
-    folder (`out_dir`, which must be there: `README` says what). `say` is told what to put in
-    its log; `progress`, how far it is: (bytes of movies read, of how many, the recording).
+def _tables(d: Path, recs: list[dict], date_fly: list, fly: bool, n_odors: int) -> tuple[list[str], list[str]]:
+    """Writes an extraction's tables into `d` (`README` says which) of its recordings (`recs`, as
+    `run` makes them, after `combine`), labelled with their fly (`date_fly`: its date and number,
+    if `fly` is known).
 
     Returns:
-        its result: ``mode``, ``recordings`` (each its ``name``, ``panel``, ``trials``,
-        ``frames``, ``planes``), ``rois``, ``roi_planes``, ``glomeruli`` (how many ROIs are
-        named as one), ``bytes`` (of movies read) and ``seconds``.
-
-    Raises:
-        ExtractError: for what cannot be extracted (no recording with ROIs, ROIs that cannot be
-            read, trials beyond a movie's end, a prediction since deleted).
+        (the ROIs of the fly's table, those of them named as glomeruli)
     """
     import pandas as pd
     from hong2p import olf
 
-    t0 = time.time()
-    d, fly_dir, mode, kind = out_dir(e["id"]), Path(e["fly_dir"]), e["options"]["mode"], e["rois"]["kind"]
-    recs = recordings(fly_dir)
-    if not recs:
-        raise ExtractError(f"no recording in {fly_dir} with a movie and its trials")
-    shared, pred = None, None
-    if kind != "own":
-        pred = predictions.get(db, e["rois"]["prediction"])
-        if pred is None or pred["status"] != "done":
-            raise ExtractError("the prediction these ROIs were of is no longer there")
-        shared = predictions.edited_roiset(pred) if kind == "edited" else predictions.roiset(pred)
-        if not shared.is_file():
-            raise ExtractError(f"{shared.name} is no longer there")
-    # (one asked for before there was a choice of window was asked for al_analysis')
-    wins = {w["recording"]: w for w in windows(fly_dir, e.get("raw_dir"), e["options"].get("window", N_RESPONSE),
-                                               stimulus_folders(db, config.TENSOR_ROOT))}
-    sizes = {r["name"]: r["movie"].stat().st_size for r in recs}
-    total, read = sum(sizes.values()), 0
-    groups: dict[tuple, dict] = {}  # recordings by the ROIs' file and the movie's planes: one set of masks each
-    used = []
-    for r in recs:
-        path = shared if shared is not None else own_roiset(r["dir"], fly_dir)
-        if path is None:
-            say(f"{r['name']}: left out, with no {movies.ROISET} in it, nor in the fly's folder")
-            read += sizes[r["name"]]
-            continue
-        try:
-            movie = movies.open_movie(r["movie"])
-        except movies.MovieError as err:
-            raise ExtractError(f"{r['movie']}: {err}") from None
-        s = movie.shape
-        key = (os.path.realpath(path), s["z"], s["y"], s["x"])
-        if key not in groups:
-            say(f"ROIs: {path} ({_file(path)['modified']}), on planes of {s['z']} x {s['y']} x {s['x']} (z, y, x)")
-            groups[key] = {"path": path, "file": {**_file(path), "sha256": _sha256(path)}, "recordings": [],
-                           "rois": read_rois(path, (s["z"], s["y"], s["x"]), say)}
-        g = groups[key]
-        trials = read_trials(r["trials"])
-        if any(t["end"] >= s["t"] or not 0 <= t["start"] <= t["onset"] <= t["end"] for t in trials):
-            raise ExtractError(f"{r['name']}: its trials ({movies.TRIALS}) have frames out of order, or beyond its movie's {s['t']} time points")
-        t1 = time.time()
-        traces = plane_traces(movie, g["rois"], (lambda a, b, base=read, size=sizes[r["name"]], name=r["name"]:
-                                                 progress(base + size * a / b, total, name)) if progress else None)
-        read += sizes[r["name"]]
-        win = wins[r["name"]]
-        rec = {"name": r["name"], "panel": panel(r["name"]), "trials": trials, "traces": traces, "group": g,
-               "movie": {**_file(r["movie"]), "shape": dict(s), "dtype": str(movie.volumes(0, 1).dtype), "fps": movie.fps},
-               "trials_file": _file(r["trials"]), "window": win, "n_response": win["volumes"]}
-        say(f"{r['name']} ({rec['panel']}): {s['t']} time points x {s['z']} planes, {len(trials)} trials, {len(g['rois'])} ROI-planes; "
-            f"read in {time.time() - t1:.1f} s")
-        say(f"{r['name']}: a response is taken from {win['how']}")
-        short = sum(t["end"] - t["onset"] + 1 < win["volumes"] for t in trials)
-        if short:
-            say(f"{r['name']}: {short} of its trials end{'s' if short == 1 else ''} before that many volumes: theirs is from those they have")
-        g["recordings"].append(rec)
-        used.append(rec)
-    if not used:
-        raise ExtractError(f"no recording of the fly has ROIs ({movies.ROISET})")
-    for g in groups.values():
-        combine(mode, g["rois"], g["recordings"])
-
-    fly, _ = movies._path_fly(fly_dir / "x")
-    date_fly = [fly["date"], fly["fly_num"]] if fly else []
-    n_odors = max(len(t["odors"]) for rec in used for t in rec["trials"])
     seen: dict = {}
     parts = []
-    for rec in used:
+    for rec in recs:
         rd = d / "recordings" / rec["name"]
         rd.mkdir(parents=True)
         names, rois = rec["names"], rec["group"]["rois"]
@@ -972,6 +1002,175 @@ def run(db, e: dict, say: Callable[[str], None] = print, progress: Optional[Call
     gloms = [n for n, b in zip(names, bare) if kinds[n] == "glomerulus" or (kinds[n] == "tentative" and bare.count(b) == 1)]
     if gloms:
         table.loc[:, [n in gloms for n in names]].to_csv(d / "responses_glomeruli.csv")
+    return names, gloms
+
+
+def _unmix(used: list[dict], groups: dict, variant: str, say: Callable[[str], None],
+           progress: Optional[Callable[[float, str], None]]) -> None:
+    """Fits each set of ROIs' footprints (`unmix.fit`, by `variant`) to its recordings' trials'
+    dF maps (each recording's ``maps``, as `run` read them), then reads each recording's traces
+    (``traces``: its mask means) and its ROI-planes' unmixed traces (``unmixed_traces``: those
+    refused, their mask means) in one pass over its movie. `progress`: (bytes of movies read in
+    that pass, the recording)."""
+    for g in groups.values():
+        t1 = time.time()
+        g["unmix"] = u = unmix.fit(len(g["rois"]), g["planes"], [rec.pop("maps") for rec in g["recordings"]], variant, g["pixel_um"])
+        if variant == "blur":
+            how = (f"masks blurred by a Gaussian of s.d. {u['how']['sigma_um']:.2f} um, the width of least residual"
+                   + (" (the widest tried: it may be wider)" if u["how"]["at_edge"] else ""))
+        else:
+            how = f"an NMF of each of {len(g['planes'])} planes, in {max(p['iterations'] for p in u['how']['planes'])} iterations at most"
+        named = lambda ix: ", ".join(f"{g['rois'][i]['name']} (z {g['rois'][i]['z']})" for i in ix)  # noqa: E731
+        outlines = [i for i in range(len(g["rois"])) if u["holds"][i]]
+        alike = [i for i in np.flatnonzero(u["refused"]) if not u["holds"][i]]
+        say(f"unmixing: footprints of {len(g['rois']) - len(outlines)} ROI-planes ({g['path']}): {how}; fit in {time.time() - t1:.1f} s; "
+            f"the largest variance inflation {np.nanmax(u['vif']):.2f}"
+            + (f"; {len(alike)} left as their mask means, their footprints nearly the others' ({named(alike)})" if alike else "")
+            + (f"; {len(outlines)} left out, holding other ROIs (outlines: {named(outlines)}), and left as their mask means" if outlines else ""))
+    done = 0
+    for rec in used:
+        g, t1 = rec["group"], time.time()
+        tell = (lambda a, b, base=done, size=rec["size"], name=rec["name"]: progress(base + size * a / b, name)) if progress else None
+        rec["traces"], own = plane_traces(rec.pop("opened"), g["rois"], tell, g["unmix"]["weights"])
+        done += rec["size"]
+        own[:, g["unmix"]["refused"]] = rec["traces"][:, g["unmix"]["refused"]]
+        rec["unmixed_traces"] = unmix.unmixed(rec["traces"], own, rec["trials"])
+        say(f"{rec['name']}: its traces and unmixed traces read in {time.time() - t1:.1f} s")
+
+
+def _unmixing_table(rec: dict):
+    """A recording's ROI-planes' unmixing (as `_unmix` did it), as its ``unmixing.csv``: each its
+    footprint's variance inflation, noise gain and plane's condition number, whether it was
+    refused, the ROIs whose footprints are most in its mask, and how its responses changed
+    (``slope``: of its unmixed responses against its mask mean's, through 0; the median and
+    largest change)."""
+    import pandas as pd
+
+    g, u = rec["group"], rec["group"]["unmix"]
+    rois = g["rois"]
+    plain = responses(rec["traces"], rec["trials"], rec["n_response"])
+    mixed = responses(rec["unmixed_traces"], rec["trials"], rec["n_response"])
+    rows = []
+    for i, r in enumerate(rois):
+        p, q = plain[:, i], mixed[:, i]
+        ok = ~(np.isnan(p) | np.isnan(q))
+        ch = q[ok] - p[ok]
+        rows.append({"roi": r["name"], "z": r["z"], "pixels": r["pixels"], "refused": bool(u["refused"][i]),
+                     "holds": "; ".join(rois[j]["name"] for j in u["holds"][i]), "vif": _num(u["vif"][i]),
+                     "gain": _num(u["gain"][i]), "condition": _num(u["cond"][i]),
+                     "neighbours": "; ".join(f"{rois[j]['name']} {s:.2f}" for j, s in u["neighbours"][i][:3]),
+                     "slope": _num((p[ok] @ q[ok]) / (p[ok] @ p[ok])) if ok.any() and p[ok] @ p[ok] > 0 else None,
+                     "change_median": _num(np.median(ch)) if ok.any() else None,
+                     "change_largest": _num(ch[np.abs(ch).argmax()]) if ok.any() else None,
+                     "largest_plain": _num(p[ok].max()) if ok.any() else None, "largest_unmixed": _num(q[ok].max()) if ok.any() else None})
+    return pd.DataFrame(rows)
+
+
+def run(db, e: dict, say: Callable[[str], None] = print, progress: Optional[Callable[[float, float, str], None]] = None) -> dict:
+    """Extracts the signals an extraction asks for (`e`: its record), and writes them into its
+    folder (`out_dir`, which must be there: `README` says what). `say` is told what to put in
+    its log; `progress`, how far it is: (bytes of movies read, of how many, the recording).
+
+    Returns:
+        its result: ``mode``, ``recordings`` (each its ``name``, ``panel``, ``trials``,
+        ``frames``, ``planes``), ``rois``, ``roi_planes``, ``glomeruli`` (how many ROIs are
+        named as one), ``bytes`` (of movies read) and ``seconds``; with its option ``unmix``,
+        ``unmix`` too (the ``variant``, and of each set of ROIs (``sets``) its ``roi_planes``,
+        how many were ``refused`` and the blur's ``sigma_um``).
+
+    Raises:
+        ExtractError: for what cannot be extracted (no recording with ROIs, ROIs that cannot be
+            read, trials beyond a movie's end, a prediction since deleted).
+    """
+    t0 = time.time()
+    d, fly_dir, mode, kind = out_dir(e["id"]), Path(e["fly_dir"]), e["options"]["mode"], e["rois"]["kind"]
+    recs = recordings(fly_dir)
+    if not recs:
+        raise ExtractError(f"no recording in {fly_dir} with a movie and its trials")
+    shared, pred = None, None
+    if kind != "own":
+        pred = predictions.get(db, e["rois"]["prediction"])
+        if pred is None or pred["status"] != "done":
+            raise ExtractError("the prediction these ROIs were of is no longer there")
+        shared = predictions.edited_roiset(pred) if kind == "edited" else predictions.roiset(pred)
+        if not shared.is_file():
+            raise ExtractError(f"{shared.name} is no longer there")
+    # (one asked for before there was a choice of window was asked for al_analysis')
+    wins = {w["recording"]: w for w in windows(fly_dir, e.get("raw_dir"), e["options"].get("window", N_RESPONSE),
+                                               stimulus_folders(db, config.TENSOR_ROOT))}
+    unmixing = e["options"].get("unmix")
+    sizes = {r["name"]: r["movie"].stat().st_size for r in recs}
+    total, read = sum(sizes.values()), 0
+    passes = 2 if unmixing else 1  # (unmixing reads each movie twice: for its trials' dF maps, then its traces)
+    groups: dict[tuple, dict] = {}  # recordings by the ROIs' file and the movie's planes: one set of masks each
+    used = []
+    for r in recs:
+        path = shared if shared is not None else own_roiset(r["dir"], fly_dir)
+        if path is None:
+            say(f"{r['name']}: left out, with no {movies.ROISET} in it, nor in the fly's folder")
+            read += sizes[r["name"]]
+            continue
+        try:
+            movie = movies.open_movie(r["movie"])
+        except movies.MovieError as err:
+            raise ExtractError(f"{r['movie']}: {err}") from None
+        s = movie.shape
+        key = (os.path.realpath(path), s["z"], s["y"], s["x"])
+        if key not in groups:
+            say(f"ROIs: {path} ({_file(path)['modified']}), on planes of {s['z']} x {s['y']} x {s['x']} (z, y, x)")
+            groups[key] = {"path": path, "file": {**_file(path), "sha256": _sha256(path)}, "recordings": [],
+                           "rois": read_rois(path, (s["z"], s["y"], s["x"]), say)}
+        g = groups[key]
+        trials = read_trials(r["trials"])
+        if any(t["end"] >= s["t"] or not 0 <= t["start"] <= t["onset"] <= t["end"] for t in trials):
+            raise ExtractError(f"{r['name']}: its trials ({movies.TRIALS}) have frames out of order, or beyond its movie's {s['t']} time points")
+        t1 = time.time()
+        win = wins[r["name"]]
+        tell = (lambda a, b, base=read, size=sizes[r["name"]], name=r["name"]: progress(base + size * a / b, passes * total, name)) if progress else None
+        if unmixing:  # (its trials' dF maps, which footprints are fit to; its traces once they are, below)
+            if "planes" not in g:
+                px = unmix.pixel_um(Path(e["raw_dir"]) / r["name"]) if e.get("raw_dir") else None
+                g["pixel_um"], g["pixel_known"] = px or unmix.PIXEL_UM, px is not None
+                say(f"unmixing: pixels of {g['pixel_um']:g} um" + (f", by {r['name']}'s Experiment.xml" if px else
+                                                                    ", assumed (no Experiment.xml of the fly's recordings says)"))
+                g["planes"] = unmix.layout(g["rois"], (s["y"], s["x"]), unmix.REGION_UM[unmixing] / g["pixel_um"])
+            maps, traces = unmix.trial_maps(movie, trials, win["volumes"], g["planes"], tell), None
+        else:
+            traces = plane_traces(movie, g["rois"], tell)
+        read += sizes[r["name"]]
+        rec = {"name": r["name"], "panel": panel(r["name"]), "trials": trials, "traces": traces, "group": g,
+               "movie": {**_file(r["movie"]), "shape": dict(s), "dtype": str(movie.volumes(0, 1).dtype), "fps": movie.fps},
+               "trials_file": _file(r["trials"]), "window": win, "n_response": win["volumes"]}
+        if unmixing:
+            rec.update(maps=maps, opened=movie, size=sizes[r["name"]])
+        part = "its trials' dF maps " if unmixing else ""
+        say(f"{r['name']} ({rec['panel']}): {s['t']} time points x {s['z']} planes, {len(trials)} trials, {len(g['rois'])} ROI-planes; "
+            f"{part}read in {time.time() - t1:.1f} s")
+        say(f"{r['name']}: a response is taken from {win['how']}")
+        short = sum(t["end"] - t["onset"] + 1 < win["volumes"] for t in trials)
+        if short:
+            say(f"{r['name']}: {short} of its trials end{'s' if short == 1 else ''} before that many volumes: theirs is from those they have")
+        g["recordings"].append(rec)
+        used.append(rec)
+    if not used:
+        raise ExtractError(f"no recording of the fly has ROIs ({movies.ROISET})")
+    if unmixing:
+        _unmix(used, groups, unmixing, say, (lambda a, name: progress(total + a, passes * total, name)) if progress else None)
+    for g in groups.values():
+        combine(mode, g["rois"], g["recordings"])
+        if unmixing:  # (the same of the unmixed traces, beside them: each plane chosen by its unmixed responses)
+            for rec in g["recordings"]:
+                rec["unmixed"] = {**rec, "traces": rec["unmixed_traces"]}
+            combine(mode, g["rois"], [rec["unmixed"] for rec in g["recordings"]])
+
+    fly, _ = movies._path_fly(fly_dir / "x")
+    date_fly = [fly["date"], fly["fly_num"]] if fly else []
+    n_odors = max(len(t["odors"]) for rec in used for t in rec["trials"])
+    names, gloms = _tables(d, used, date_fly, bool(fly), n_odors)
+    if unmixing:
+        _tables(d / UNMIXED, [rec["unmixed"] for rec in used], date_fly, bool(fly), n_odors)
+        for rec in used:
+            _unmixing_table(rec).to_csv(d / UNMIXED / "recordings" / rec["name"] / "unmixing.csv", index=False)
 
     seconds = time.time() - t0
     result = {"mode": mode, "rois": len(names), "roi_planes": max(len(g["rois"]) for g in groups.values()), "glomeruli": len(gloms),
@@ -980,6 +1179,9 @@ def run(db, e: dict, say: Callable[[str], None] = print, progress: Optional[Call
                               "window": {k: rec["window"].get(k) for k in ("volumes", "set", "reach", "pulse_s", "volume_s", "missing", "how")}}
                              for rec in used],
               "bytes": total, "seconds": seconds}
+    if unmixing:
+        result["unmix"] = {"variant": unmixing, "sets": [{"roi_planes": len(g["rois"]), "refused": int(g["unmix"]["refused"].sum()),
+                                                          "sigma_um": g["unmix"]["how"].get("sigma_um")} for g in groups.values()]}
     keys = ("volumes", "set", "how", "reach", "pulse_s", "volume_s", "planes", "flyback", "fps", "xml", "yaml", "missing")
     what = {"own": "the fly's own", "predicted": "as predicted", "edited": "as predicted, then edited in the viewer"}[kind]
     of = f", of fit #{pred['fit_id']}'s model (prediction {pred['id']})" if pred else ""
@@ -1007,6 +1209,23 @@ def run(db, e: dict, say: Callable[[str], None] = print, progress: Optional[Call
         "software": _software(),
         "outputs": {k: v for k, v in result.items() if k != "seconds"},
     }
+    if unmixing:
+        prov["computed"]["unmix"] = {
+            "variant": unmixing, "footprints": unmix.VARIANTS[unmixing], "into": f"{UNMIXED}/",
+            "model": f"per plane, F(pixel, t) = sum_k a_k(pixel) f_k(t){' + b(t)' if unmix.BACKGROUND else ''}, fit by least squares over "
+                     f"the ROIs' masks{f' and the pixels within {unmix.REGION_UM[unmixing]:g} um of them' if unmix.REGION_UM[unmixing] else ''}; "
+                     f"a_k fit to the trials' dF maps (the mean F over a trial's response window less its baseline's)"
+                     f"{', b uniform over that region' if unmix.BACKGROUND else ''}",
+            "region_um": unmix.REGION_UM[unmixing], "background": unmix.BACKGROUND,
+            "trace": "the mask mean less the change, from each trial's baseline, of the mask mean less the ROI's own part of it "
+                     "(f_k times the mean of a_k over its mask): so F0 is the mask mean's, and F - F0 the ROI's own",
+            "nmf_reach_um": unmix.NMF_REACH_UM if unmixing == "nmf" else None, "vif_max": unmix.VIF_MAX, "held": unmix.HELD,
+            "blur_sigmas_um": list(unmix.SIGMAS_UM) if unmixing == "blur" else None,
+            "sets": [{"rois": str(g["path"]), "pixel_um": g["pixel_um"], "pixel_from": "Experiment.xml" if g["pixel_known"] else "assumed",
+                      "fit": g["unmix"]["how"], "largest_condition": _num(np.nanmax(g["unmix"]["cond"])),
+                      "refused": [{"roi": g["rois"][i]["name"], "z": g["rois"][i]["z"], "vif": _num(g["unmix"]["vif"][i]),
+                                   "holds": [g["rois"][j]["name"] for j in g["unmix"]["holds"][i]]}
+                                  for i in np.flatnonzero(g["unmix"]["refused"])]} for g in groups.values()]}
     (d / "provenance.json").write_text(json.dumps(prov, indent=1, default=str))
     (d / "README.txt").write_text(README.format(
         fly=e["fly"], name=e["name"], created=e["created_at"], rois=f"{what}{of}: {', '.join(str(g['path']) for g in groups.values())}",
@@ -1017,7 +1236,8 @@ def run(db, e: dict, say: Callable[[str], None] = print, progress: Optional[Call
                    f"                    takes this file as it is{'' if fly else ', once the fly of its ROIs (date, fly_num) is added: its folder does not say'}\n")
         if gloms else "",
         relative=" (F relative to each plane's mean\n                    over the recording, not F: see above)" if mode == "weighted" else "",
-        window=_window_words(used, e["options"].get("window", N_RESPONSE)), n_response=N_RESPONSE, outline=OUTLINE, maximal=MAXIMAL))
+        window=_window_words(used, e["options"].get("window", N_RESPONSE)), n_response=N_RESPONSE, outline=OUTLINE, maximal=MAXIMAL,
+        **_unmix_words(unmixing, groups, bool(gloms))))
     say(f"{len(names)} ROIs ({result['roi_planes']} ROI-planes), {len(gloms)} of them named as glomeruli, in {len(used)} recordings; {seconds:.1f} s")
     return result
 
@@ -1044,10 +1264,18 @@ def _software() -> dict:
 
 # -------------------------------------------------------------- estimates
 
+def _cost(x: dict) -> float:
+    """How many times its bytes of movies an extraction's time is reckoned by: `UNMIX_COST` if it
+    unmixes, else 1."""
+    return UNMIX_COST if (x.get("options") or {}).get("unmix") else 1.0
+
+
 def _rate(done: list[dict]) -> tuple[float, int]:
-    """Seconds an extraction takes per byte of movies: the median of the last `RECENT` done (of
-    `done`, newest first), and how many that is of; `GUESS_S_PER_GB`'s and 0 with none."""
-    rates = [x["result"]["seconds"] / x["bytes"] for x in done if x.get("bytes") and (x.get("result") or {}).get("seconds") is not None][:RECENT]
+    """Seconds an extraction takes per byte of movies (each counted by its `_cost`): the median of
+    the last `RECENT` done (of `done`, newest first), and how many that is of; `GUESS_S_PER_GB`'s
+    and 0 with none."""
+    rates = [x["result"]["seconds"] / (x["bytes"] * _cost(x)) for x in done
+             if x.get("bytes") and (x.get("result") or {}).get("seconds") is not None][:RECENT]
     return (statistics.median(rates), len(rates)) if rates else (GUESS_S_PER_GB / 2**30, 0)
 
 
@@ -1070,7 +1298,7 @@ def estimate(exts: list[dict], t: Optional[float] = None, new_bytes: Optional[in
         return {"seconds": left, "until": at - t, "from": n, "ends_at": dt.datetime.fromtimestamp(at).astimezone().isoformat(timespec="seconds")}
 
     for x in sorted((x for x in exts if x["status"] in ACTIVE), key=lambda x: (x["status"] != "running", x["id"])):
-        left = rate * (x.get("bytes") or 0)
+        left = rate * (x.get("bytes") or 0) * _cost(x)
         pr = x.get("progress") or {}
         if x["status"] == "running" and x.get("started_at"):
             elapsed = t - dt.datetime.fromisoformat(x["started_at"]).timestamp()
@@ -1082,8 +1310,10 @@ def estimate(exts: list[dict], t: Optional[float] = None, new_bytes: Optional[in
 def listing(db, tensor_root: Path) -> dict:
     """Every extraction (newest first: each with ``tensor_dir``, its fly's folder from the top of
     tensor, and those queued or running with ``eta``: `estimate`), how one signal may be made of
-    an ROI's planes (``modes``: `MODES`), and ``rate``: the seconds an extraction takes per GB of
-    movies, with how many done that is of (``from``)."""
+    an ROI's planes (``modes``: `MODES`), how their neighbours' may be unmixed (``unmix``: the
+    footprint ``variants``, the ``default`` one, and how many times longer it takes, ``cost``),
+    and ``rate``: the seconds an extraction takes per GB of movies (one not unmixing), with how
+    many done that is of (``from``)."""
     from . import fits, roi_training
 
     exts = all_extractions(db)
@@ -1092,7 +1322,8 @@ def listing(db, tensor_root: Path) -> dict:
     estimate(exts)
     rate, n = _rate([x for x in exts if x["status"] == "done"])
     return {"extractions": exts, "modes": MODES, "rate": {"seconds_per_gb": rate * 2**30, "from": n}, "worker": fits.worker_status(db),
-            "tensor_root": str(tensor_root), "window": {"al_analysis": N_RESPONSE, "max": MAX_WINDOW}}
+            "tensor_root": str(tensor_root), "window": {"al_analysis": N_RESPONSE, "max": MAX_WINDOW},
+            "unmix": {"variants": unmix.VARIANTS, "default": unmix.DEFAULT, "cost": UNMIX_COST}}
 
 
 def stream_zip(ext_id: int, top: str):
