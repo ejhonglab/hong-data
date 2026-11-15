@@ -35,6 +35,7 @@ FLIES = ["Sam_2024-06-11_2", "Tom_2023-05-08_1", "Tom_2023-11-21_3", "Tom_2024-0
 SETTINGS = {  # (unmix.py's own but where said: no background, the region and NMF reach 2 um, the blur's width fit)
     "blur": dict(variant="blur"),
     "nmf": dict(variant="nmf"),
+    "nmf rims": dict(variant="nmf_rims"),
     "blur s0.25": dict(variant="blur", sigma_um=0.25),
     "blur s0.5": dict(variant="blur", sigma_um=0.5),
     "blur s1": dict(variant="blur", sigma_um=1.0),
@@ -50,6 +51,8 @@ SETTINGS = {  # (unmix.py's own but where said: no background, the region and NM
     "nmf reach 3": dict(variant="nmf", reach=3.0),
     "nmf 20 it": dict(variant="nmf", iters=20),
     "nmf 300 it": dict(variant="nmf", iters=300),
+    "nmf rims 20 it": dict(variant="nmf_rims", iters=20),
+    "nmf rims 300 it": dict(variant="nmf_rims", iters=300),
     # with a background uniform over the region (as demixing_plan.md had it; the blur's then over the masks and 2 um round them)
     "blur bg": dict(variant="blur", background=True, reach=2.0),
     "nmf bg": dict(variant="nmf", background=True),
@@ -147,12 +150,14 @@ def footprints(planes, maps, s, px):
             sig = fit["sigma_px"]
             info = {"sigma_um": sig * px, "residuals": np.round(np.array(fit["residuals"]) / fit["residuals"][0], 4).tolist()}
         return [unmix.blur(p, sig) for p in planes], info
-    out, its = [], []
+    out, its, rims = [], [], []
     for p, D in zip(planes, maps):
-        A, i = unmix.nmf(p, D, reach, bg, iters=s.get("iters", unmix.NMF_ITERS))
+        extra = unmix.rims(p) if s["variant"] == "nmf_rims" else None
+        A, i = unmix.nmf(p, D, reach, bg, iters=s.get("iters", unmix.NMF_ITERS), extra=extra)
         out.append(A)
         its.append(i["iterations"])
-    return out, {"iterations": its}
+        rims.append(0 if extra is None else len(extra))
+    return out, {"iterations": its, **({"rims": rims} if s["variant"] == "nmf_rims" else {})}
 
 
 def maxabs(x):

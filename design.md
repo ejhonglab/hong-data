@@ -1688,7 +1688,7 @@ check), so al_analysis' numbers are still there.
   and dF over that smaller F0 would be inflated. So the unmixed trace is the mask mean less
   the change, from each trial's baseline, of the rest of it: its F0 is the mask mean's,
   and F − F0 the ROI's own. The README of an extraction says so.
-- **Footprints, two ways, both fit to the fly's trials.** Each trial's dF map (the mean F
+- **Footprints, three ways, all fit to the fly's trials.** Each trial's dF map (the mean F
   over its response window less its baseline's, per pixel: read first, from those frames
   alone, so a movie is read twice) of every recording. `blur` (the default): each mask
   blurred by a Gaussian whose width is the one of least residual of the dF maps (over 0 to
@@ -1696,7 +1696,14 @@ check), so al_analysis' numbers are still there.
   non-negative factorization (each footprint started at its mask, kept within 2 µm of it,
   the maps' coefficients of either sign; HALS) over the masks and 2 µm round them, to a
   relative change of 10⁻⁴ or 100 iterations (6 to 100 a plane; 20 and 300 gave the same
-  numbers).
+  numbers). `nmf_rims`: that factorization with a component more per ROI-plane for the
+  pixels round it (its rim: of the region's pixels outside every mask, those nearest its
+  own, where there are at least 8), started at those pixels and kept within 1 px of them,
+  so reaching 1 px into the masks. The rims are fit and solved with the ROIs' footprints
+  (they count in an ROI's variance inflation as its neighbours do), and their own signals
+  are not kept: they stand for the light of glomeruli without an ROI and for neighbours'
+  spill, which is then not read as an ROI's own. It stops as `nmf` does, which with rims
+  is nearly always at the 100 iterations (below).
 - **Guards.** An ROI-plane whose footprint is nearly a combination of the others'
   (variance inflation over 10: an ROI drawn twice) is left as its mask mean; so is one
   holding at least half of a smaller one's mask, left out of the model too: an outline of
@@ -1711,8 +1718,11 @@ check), so al_analysis' numbers are still there.
   takes about as long as the plain extraction (38 s for 0.73 GB of movies, against 48 and
   95 s plain for 1.3 and 1.5 GB on a loaded hal); with the movies in memory, 8 to 10 s
   against 2 to 5 s plain. The blur's fit takes 2 to 4 s; an NMF 20 s more (its fly 29 s in
-  all). Waiting extractions' times are reckoned with unmixing as twice the movies
-  (`UNMIX_COST`).
+  all). With rims an NMF has twice the components (every mask of the four flies below had
+  a rim) and took 3 to 7 times as long to fit: 10 to 22 s a set of ROIs where `nmf` took
+  1.5 to 6 s (those flies' diagnostic recordings' maps, on 8 CPUs of a loaded hal).
+  Waiting extractions' times are reckoned with unmixing as twice the movies
+  (`UNMIX_COST`), whichever the footprints.
 - **How it did, and why it is as it is** (fit 7's 4 held-out flies, their diagnostic
   recordings, with their predicted ROIs and, apart, their manual ones;
   `notes/unmix_validation.py`). Per ROI-plane and odor, the mean over trials of its
@@ -1733,6 +1743,8 @@ check), so al_analysis' numbers are still there.
   | | manual | 0.041 → −0.000 (0.019) | 0.971 | 55 → 64 (14) | 22.5 → 22.2 |
   | nmf (2 µm) | predicted | 0.045 → 0.042 (0.030) | 0.988 | 52 → 48 (1) | 23.5 → 22.5 |
   | | manual | 0.041 → 0.048 (0.019) | 0.994 | 55 → 49 (2) | 22.5 → 22.2 |
+  | nmf_rims (2 µm, rims 1 px into the masks) | predicted | 0.045 → 0.033 (0.030) | 0.983 | 52 → 52 (5) | 23.5 → 21.8 |
+  | | manual | 0.041 → 0.031 (0.019) | 0.975 | 55 → 54 (2) | 22.5 → 21.1 |
   | blur (2 µm), with a background | predicted | 0.045 → −0.072 (0.030) | 0.848 | 52 → 221 (170) | 23.5 → 15.8 |
   | | manual | 0.041 → −0.113 (0.019) | 0.767 | 55 → 500 (445) | 22.5 → 13.9 |
   | nmf, with a background | predicted | 0.045 → 0.007 (0.030) | 0.941 | 52 → 97 (50) | 23.5 → 20.1 |
@@ -1763,6 +1775,8 @@ check), so al_analysis' numbers are still there.
   | nmf, 1 µm reach | 0.046 | 0.049 | 0.994, 0.996 | 2, 1 | 22.9, 22.3 |
   | nmf, 3 µm reach | 0.035 | 0.040 | 0.983, 0.991 | 2, 2 | 21.9, 21.8 |
   | nmf, 20 or 300 iterations | 0.042 | 0.048 | 0.988, 0.994 | 1, 2 | 22.5, 22.2 |
+  | nmf_rims, 20 iterations | 0.032 | 0.030 | 0.977, 0.966 | 6, 2 | 21.6, 20.8 |
+  | nmf_rims, 300 iterations | 0.033 | 0.032 | 0.985, 0.978 | 5, 2 | 21.9, 21.2 |
 
   (plain: (a) 0.045 and 0.041, cores 0.030 and 0.019; (d) 23.5 and 22.5%.) Smooth in the
   width, with no new negative responses to speak of at any: a wider blur takes more both
@@ -1791,31 +1805,63 @@ check), so al_analysis' numbers are still there.
   - *NMF is kept as a choice, not the default*: it changed responses little either way
     and moved none of (a) towards the core (with a background, it took real responses as
     the blur did, less).
+  - *NMF with rims (`nmf_rims`) is a choice too, not the default.* It takes about 80% of
+    the neighbours' excess from predicted ROIs ((a) 0.033, their cores' 0.030) and about
+    45% from manual ones (0.031, cores' 0.019), where the default takes 40 and 10%, and
+    `nmf` 20% and none. It costs what the default does not: about 2% of the responses of
+    ROIs whose neighbours are quiet (b 0.983 and 0.975), 1.7 and 1.4 points of the pairs
+    over 0.3 (d; on matched masks 24.6 → 23.5% predicted and 24.9 → 23.8% manual), and 5
+    and 2 new negative responses (c). A blur of 1 µm, set and not fit, takes about as
+    much of the excess (0.033 and 0.035) for less of the rest (b 0.990 and 0.980, d 22.8
+    and 21.7%: the table above). With the rims among the footprints the planes are less
+    well conditioned (condition numbers to 4.8 and 8.7, against 1.3 and 1.1 without them;
+    variance inflations to 6.1 in predicted ROIs), and 2 of the 438 manual ROI-planes
+    were refused, left as their mask means (variance inflations 16 and 19; none of the
+    456 predicted).
+    *Its factorization does not settle.* All but 1 of the 77 planes ran to the 100
+    iterations (3 did without rims), the footprints still changing by 10⁻⁴ to 10⁻² of
+    their size at the last. Where it is stopped matters little to the responses but more to
+    which ROIs are refused: at 20, 100 and 300 iterations (a) is 0.032, 0.033 and 0.033
+    (manual 0.030, 0.031, 0.032) and b 0.977, 0.983 and 0.985 (0.966, 0.975, 0.978), while
+    the largest variance inflation goes from 2.3 to 6.1 to 26 (3.4, 19, 92) and the
+    ROI-planes refused from none to none to 8 (none, 2, 5): the longer it runs, the
+    nearer some ROIs' footprints come to combinations of the others', rims among them.
+    The 100 are `nmf`'s own (`NMF_ITERS`), not chosen for this.
+    What rims are for shows most in the tests' made-up movie, where a bright glomerulus
+    without an ROI touches one that has (an extreme): that ROI's responses are then off
+    by up to 0.09 in its mask mean, 0.08 by the blur, 0.42 by `nmf` (whose footprint
+    grows over the light beside it) and 0.04 with rims.
   - *Glomeruli that respond together* are not told apart from each other's light by
-    either: the share each footprint has in a neighbour's mask is taken from the
+    any of them: the share each footprint has in a neighbour's mask is taken from the
     neighbour's response, shared or not. With the default's narrow footprints that share
     is small (b stays at 1), but where masks overlap it is not, and those ROIs' entries in
     `unmixing.csv` (neighbours, slope) say how much.
-- **Tried since, and not taken (2026-11-15; `notes/unmix_movie_nmf.py`, same four flies):**
-  the NMF's footprints from every frame of the movies rather than one dF map per trial,
+- **Tried since (2026-11-15; `notes/unmix_movie_nmf.py`, same four flies):** the NMF's
+  footprints from every frame of the movies rather than one dF map per trial (not taken),
   and a component more per ROI-plane for the pixels just outside it (its rim: light of
-  glomeruli without an ROI, and neighbours' spill). Predicted ROIs ((a) plain 0.045, core
-  0.030; (d) plain 23.5%):
+  glomeruli without an ROI, and neighbours' spill; taken since as the choice `nmf_rims`,
+  its rims reaching 1 px in, fit to a map per trial as the other ways are). Predicted ROIs
+  ((a) plain 0.045, core 0.030; (d) plain 23.5%):
 
   | footprints | (a) unmixed | (b) | (d) % |
   |---|---|---|---|
-  | NMF, a map per trial (the option) | 0.042 | 0.988 | 22.5 |
+  | NMF, a map per trial (the choice `nmf`) | 0.042 | 0.988 | 22.5 |
   | NMF, every frame of every recording | 0.041 | 0.975 | 22.5 |
   | the same with rims reaching 2 µm into the masks | 0.025 | 0.946 | 20.4 |
   | with rims reaching 1 px in | 0.032 | 0.977 | 21.9 |
   | with rims outside the masks | 0.035 | 0.987 | 22.4 |
+  | rims reaching 1 px in, a map per trial (the choice `nmf_rims`) | 0.033 | 0.983 | 21.8 |
 
   (Manual ROIs: every frame 0.041 → 0.049; rims 2 µm 0.019, b 0.901; rims 1 px 0.033,
-  b 0.976.) Every frame makes the evidence of a pixel's glomerulus about twice as good
-  (deep core pixels seeming to hold over 0.2 of their neighbour: 15.7% of them by a map
-  per trial, 7.4% by every frame), but the ROIs' signals no better; the rims are what
-  take the neighbours' excess, down to the cores' level, and with it 1 to 10% of the
-  ROIs' own responses where their neighbours are quiet. Nor do the movies tell a mask
+  b 0.976; rims 1 px from a map per trial 0.031, b 0.975.) Every frame makes the evidence
+  of a pixel's glomerulus about twice as good (deep core pixels seeming to hold over 0.2
+  of their neighbour: 15.7% of them by a map per trial, 7.4% by every frame), but the
+  ROIs' signals no better; the rims are what take the neighbours' excess, down to the
+  cores' level, and with it 1 to 10% of the ROIs' own responses where their neighbours
+  are quiet. They do so as well from a map per trial as from every frame (negative
+  responses 52 → 52, 5 new, against 52 → 53, 3 new; manual 55 → 54, 2 new, against
+  55 → 53, none new), so the choice reads the movies no more than the other ways do. Nor
+  do the movies tell a mask
   over two glomeruli from one: of 24 masks holding at least 40% of two drawn ROIs, 11
   are less alike in tuning than the halves of 95% of masks over one, 13 in every frame,
   12 in what is not locked to the stimulus. The excess they could take is small anyway:

@@ -508,10 +508,11 @@ def test_loop(main, tensor, monkeypatch):  # noqa: F811
 
 # ------------------------------------------------------------ unmixed signals
 
-def mixed_movie(d, sigma=1.5, seed=0, background=40.0, noise=1.0):
+def mixed_movie(d, sigma=1.5, seed=0, background=40.0, noise=1.0, outside=False):
     """A movie whose ROIs' light is known: each its mask blurred by a Gaussian of `sigma` px times its own trace (bleaching,
-    and in each trial a response or none), on a background, with noise; some masks touching. Returns the movie (opened), its
-    ROIs (as `extract.read_rois` gives them, but boxes), trials, and each ROI's own part of its mask mean."""
+    and in each trial a response or none), on a background, with noise; some masks touching. With `outside`, a glomerulus
+    without an ROI too, touching C: a box of light as theirs, of a trace of its own. Returns the movie (opened), its ROIs
+    (as `extract.read_rois` gives them, but boxes), trials, and each ROI's own part of its mask mean."""
     from scipy import ndimage as ndi
 
     rng = np.random.default_rng(seed)
@@ -532,6 +533,13 @@ def mixed_movie(d, sigma=1.5, seed=0, background=40.0, noise=1.0):
         a = ndi.gaussian_filter(m, sigma, mode="constant")
         movie[:, r["z"]] += f[:, i, None, None] * a
         own[:, i] = f[:, i] * a[m > 0].mean()
+    if outside:
+        g = 200 * np.linspace(1, 0.8, t)
+        for tr in trials:
+            g[tr["onset"]:tr["onset"] + 3] *= 1 + (rng.random() < 0.4) * rng.uniform(0.3, 1.0)
+        m = np.zeros((y, x))
+        m[5:15, 33:39] = 1
+        movie[:, 0] += g[:, None, None] * ndi.gaussian_filter(m, sigma, mode="constant")
     d.mkdir(parents=True, exist_ok=True)
     tifffile.imwrite(d / "mocorr.tif", movie.astype("<f4"), imagej=True, metadata={"axes": "TZYX"}, photometric="minisblack")
     return movies.open_movie(d / "mocorr.tif"), rois, trials, own
@@ -539,7 +547,10 @@ def mixed_movie(d, sigma=1.5, seed=0, background=40.0, noise=1.0):
 
 def test_unmix(tmp_path):
     """Unmixed traces of a movie with known footprints, blur and traces: each ROI's own light comes back, where its mask mean
-    has its neighbours' too; its F0 is its mask mean's; a footprint too like another's is refused, left as its mask mean."""
+    has its neighbours' too; its F0 is its mask mean's; a footprint too like another's is refused, left as its mask mean;
+    light outside the ROIs is taken for an ROI's by the NMF, and much less so with rims."""
+    from scipy import ndimage as ndi
+
     from app import unmix
 
     movie, rois, trials, own = mixed_movie(tmp_path)
@@ -549,17 +560,20 @@ def test_unmix(tmp_path):
     before = extract.responses(plain, trials, 3)
     # (the mask means have their neighbours' responses: most where a mask is quiet and one touching it responds)
     assert np.abs(before - truth).max() > 0.1
-    for variant in ("blur", "nmf"):
+    for variant in ("blur", "nmf", "nmf_rims"):
         planes = unmix.layout(rois, (28, 40), unmix.REGION_UM[variant] / px)
         assert [p["z"] for p in planes] == [0, 1] and [p["members"] for p in planes] == [[0, 1, 2, 5], [3, 4]]
-        assert all(not p["outlines"] for p in planes) and (variant == "nmf") == (planes[0]["region"].sum() > planes[0]["masks"].sum())
+        assert all(not p["outlines"] for p in planes) and (variant != "blur") == (planes[0]["region"].sum() > planes[0]["masks"].sum())
         maps = unmix.trial_maps(movie, trials, 3, planes)
         assert [m.shape for m in maps] == [(len(planes[0]["idx"]), 24), (len(planes[1]["idx"]), 24)]
-        # (a background over the masks alone is all but their footprints' sum: only with pixels round them)
+        # (a background over the masks alone is all but their footprints' sum: only with pixels round them, and without
+        # rims, which with the masks are all the region)
         for background in (False, True) if variant == "nmf" else (False,):
             u = unmix.fit(len(rois), planes, [maps], variant, px, background)
             if variant == "blur":  # (the blur's width found, not assumed: 1.5 px)
                 assert abs(u["how"]["sigma_px"] - 1.5) < 0.1 and not u["how"]["at_edge"], u["how"]
+            # (a rim per mask: the weights are still the ROIs' alone)
+            assert u["how"].get("rims") == (6 if variant == "nmf_rims" else None) and [len(w["weights"]) for w in u["weights"]] == [4, 2]
             assert not u["refused"].any() and (u["vif"] < 3).all() and u["neighbours"][0][0][0] == 1  # (A's light is most B's)
             traces, summed = extract.plane_traces(movie, rois, weights=u["weights"])
             assert np.array_equal(traces, plain)  # (mask means as without weights, to the last bit)
@@ -580,6 +594,31 @@ def test_unmix(tmp_path):
     assert list(np.flatnonzero(u["refused"])) == [6] and u["holds"][6] == [0, 1, 2, 5] and np.isnan(u["vif"][6])
     plain3, summed = extract.plane_traces(movie, lobe, weights=u["weights"])
     assert (summed[:, 6] == 0).all() and np.abs(extract.responses(unmix.unmixed(plain3[:, :6], summed[:, :6], trials), trials, 3) - truth).max() < 0.02
+    # rims: the region's pixels outside the masks, each one's the mask's nearest it; components after the ROIs', their
+    # footprints reaching 1 px beyond their own pixels, of which `solve` gives no weights
+    p = unmix.layout(rois, (28, 40), 4)[0]
+    rims, outer = unmix.rims(p), p["region"] & ~p["masks"].any(axis=0)
+    assert len(rims) == 4 and np.array_equal(rims.sum(axis=0), outer) and (rims.sum(axis=(1, 2)) >= unmix.RIM_MIN_PX).all()
+    assert all((ndi.distance_transform_edt(~p["masks"][j])[r] <= ndi.distance_transform_edt(~p["masks"][k])[r]).all()
+               for j, r in enumerate(rims) for k in range(4))
+    A, _ = unmix.nmf(p, unmix.trial_maps(movie, trials, 3, [p])[0], 4, extra=rims)
+    reach = unmix._flat(p, np.stack([ndi.binary_dilation(r) for r in rims])) > 0
+    assert A.shape == (len(p["idx"]), 8) and not A[:, 4:][~reach].any() and A[:, 4:][unmix._flat(p, p["masks"]).any(axis=1)].any()
+    assert unmix.solve(p, A)["weights"].shape == (4, len(p["idx"])) and unmix.solve(p, A)["share"].shape == (4, 4)
+    # a glomerulus without an ROI, touching C: the NMF takes its light for C's (more than C's mask mean has of it), unless
+    # rims take it; what is left is what reaches further into C's mask than they do (the blur takes little of it)
+    movie, rois, trials, own = mixed_movie(tmp_path / "outside", outside=True)
+    plain = extract.plane_traces(movie, rois)
+    truth = extract.responses(unmix.unmixed(plain, own, trials), trials, 3)
+    off = {"plain": np.abs(extract.responses(plain, trials, 3) - truth).max(axis=0)}
+    for variant in ("blur", "nmf", "nmf_rims"):
+        planes = unmix.layout(rois, (28, 40), unmix.REGION_UM[variant] / px)
+        u = unmix.fit(len(rois), planes, [unmix.trial_maps(movie, trials, 3, planes)], variant, px)
+        assert not u["refused"].any() and (u["vif"] < 3).all()
+        mixed = unmix.unmixed(plain, extract.plane_traces(movie, rois, weights=u["weights"])[1], trials)
+        off[variant] = np.abs(extract.responses(mixed, trials, 3) - truth).max(axis=0)
+    assert off["nmf_rims"].max() < 0.05 and off["nmf_rims"][2] < 0.5 * off["plain"][2]
+    assert 0.7 * off["plain"][2] < off["blur"][2] < off["plain"][2] and off["nmf"][2] > 2 * off["plain"][2] > 0.15, off
 
 
 def test_unmix_option(main, tensor, monkeypatch):  # noqa: F811
@@ -590,13 +629,14 @@ def test_unmix_option(main, tensor, monkeypatch):  # noqa: F811
     recording(fly / "megamat1")
     recording(fly / "megamat2", seed=1, gain=0.5)
     body = {"name": "Bob", "rois": "own", "dir": FLY}
-    assert extract.options({"unmix": True})["unmix"] == extract.unmix.DEFAULT and extract.options({"unmix": "nmf"})["unmix"] == "nmf"
+    assert extract.options({"unmix": True})["unmix"] == extract.unmix.DEFAULT == "blur"
+    assert all(extract.options({"unmix": how})["unmix"] == how for how in ("blur", "nmf", "nmf_rims"))
     assert all("unmix" not in extract.options({"unmix": off}) for off in (None, False, ""))
     for bad in ("median", 2, ["blur"]):
         status, r = call(main.extractions_create, method="POST", body={**body, "unmix": bad})
         assert status == 400 and "unmix:" in r["error"], r
     ids = {}
-    for how in (None, True, "nmf"):
+    for how in (None, True, "nmf", "nmf_rims"):
         x = call(main.extractions_create, method="POST", body={**body, **({"unmix": how} if how else {})})[1]
         assert x["options"] == {"mode": "best_plane", "window": "pulse", **({"unmix": "blur" if how is True else how} if how else {})}
         fit_worker.run_extraction(main.db, extract.claim(main.db))
@@ -605,7 +645,7 @@ def test_unmix_option(main, tensor, monkeypatch):  # noqa: F811
         ids[how] = x
     plain = extract.out_dir(ids[None]["id"])
     assert "unmix" not in ids[None]["result"] and not (plain / "unmixed").exists()
-    for how in (True, "nmf"):
+    for how in (True, "nmf", "nmf_rims"):
         d = extract.out_dir(ids[how]["id"])
         files = sorted(p.relative_to(d).as_posix() for p in d.rglob("*.csv"))
         both = sorted(p.relative_to(plain).as_posix() for p in plain.rglob("*.csv"))
@@ -629,6 +669,14 @@ def test_unmix_option(main, tensor, monkeypatch):  # noqa: F811
         assert prov["computed"]["unmix"]["variant"] == variant and prov["computed"]["unmix"]["sets"][0]["pixel_from"] == "assumed"
         assert (res["unmix"]["sets"][0]["sigma_um"] is not None) == (variant == "blur")
         readme, log = (d / "README.txt").read_text(), (d / "log.txt").read_text()
+        # (rims: how many, and how far into the masks they reach, in its result, provenance, README and log; none otherwise)
+        rims, pset, words = res["unmix"]["sets"][0]["rims"], prov["computed"]["unmix"]["sets"][0], " ".join(readme.split())
+        assert pset["components"] == {"roi_planes": 6, "rims": rims or 0} and (prov["computed"]["unmix"]["nmf_reach_um"] is None) == (variant == "blur")
+        if variant == "nmf_rims":
+            assert rims == sum(p["rims"] for p in pset["fit"]["planes"]) > 0 and f"with {rims} rims" in log and f"({rims} rims, pixels" in words
+            assert prov["computed"]["unmix"]["rims"]["reach_in_px"] == extract.unmix.RIM_IN_PX and "(its rim, " in words
+        else:
+            assert rims is None and prov["computed"]["unmix"]["rims"] is None and " rim" not in words and " rims" not in log
         assert "Neighbouring ROIs' signals unmixed too, in unmixed/" in readme and "How signals are unmixed" in readme
         assert "unmixing: pixels of 0.5 um, assumed" in log and "its trials' dF maps read in" in log and "its traces and unmixed traces read in" in log
     # (without it, its README as before: nothing of unmixing)

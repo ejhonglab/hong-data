@@ -913,6 +913,8 @@ def _unmix_words(variant: Optional[str], groups: dict, gloms: bool) -> dict:
         if variant == "blur":
             how = g["unmix"]["how"]
             feet.append(f"{how['sigma_um']:.2f} um ({how['sigma_px']:.2f} pixels; {px})" + (" (the widest tried, so it may be wider)" if how["at_edge"] else ""))
+        elif variant == "nmf_rims":
+            feet.append(f"{g['unmix']['how']['rims']} rims, {px}")
         else:
             feet.append(px)
         refused += [f"{g['rois'][i]['name']} (z {g['rois'][i]['z']}" + (f", holding {len(g['unmix']['holds'][i])} others)" if g["unmix"]["holds"][i] else ")")
@@ -923,8 +925,13 @@ def _unmix_words(variant: Optional[str], groups: dict, gloms: bool) -> dict:
                       f"over a trial's response window less its baseline's; least residual, over {', '.join(f'{s:g}' for s in unmix.SIGMAS_UM)} um, "
                       f"then between the two either side of the least) of all the recordings: {of(feet)}")
     else:
+        rims = (f", with a component more per ROI-plane for the region's pixels outside every mask that are nearest its own (its rim, where "
+                f"there are at least {unmix.RIM_MIN_PX}), started at those pixels and kept within {unmix.RIM_IN_PX:g} px of them, so reaching "
+                "that far into the masks: the light of glomeruli without an ROI, and neighbours' spill, is then a rim's, not an ROI's, and "
+                "the rims' own signals are not kept" if variant == "nmf_rims" else "")
         footprints = (f"fit to the trials' dF maps (the mean F over a trial's response window less its baseline's) of all the recordings by "
-                      f"a non-negative factorization, each footprint started at its mask and kept within {unmix.NMF_REACH_UM:g} um of it ({of(feet)})")
+                      f"a non-negative factorization, each footprint started at its mask and kept within {unmix.NMF_REACH_UM:g} um of it{rims} "
+                      f"({of(feet)})")
     pad = " " * 20  # (where a file's description begins, in the README's list)
 
     def item(name: str, text: str) -> str:
@@ -938,7 +945,7 @@ def _unmix_words(variant: Optional[str], groups: dict, gloms: bool) -> dict:
         background=(", plus a background uniform over the region: F(pixel, t) = sum_k a_k(pixel) f_k(t) + b(t)" if unmix.BACKGROUND else
                     ": F(pixel, t) = sum_k a_k(pixel) f_k(t) (no background term: one uniform over the region took real responses, as "
                     "glomeruli without ROIs set its level)"),
-        background_light=", and the background's" if unmix.BACKGROUND else "")
+        background_light=(", and the rims'" if variant == "nmf_rims" else "") + (", and the background's" if unmix.BACKGROUND else ""))
     return {"unmixing": textwrap.fill(f"Neighbouring ROIs' signals unmixed too, in {UNMIXED}/ ({variant}: {unmix.VARIANTS[variant]})",
                                       README_WIDTH) + "\n",
             "unmixed_files": "".join(item(name, text.format(glomeruli=", responses_glomeruli.csv" if gloms else "", vif=unmix.VIF_MAX))
@@ -1020,6 +1027,8 @@ def _unmix(used: list[dict], groups: dict, variant: str, say: Callable[[str], No
                    + (" (the widest tried: it may be wider)" if u["how"]["at_edge"] else ""))
         else:
             how = f"an NMF of each of {len(g['planes'])} planes, in {max(p['iterations'] for p in u['how']['planes'])} iterations at most"
+            if variant == "nmf_rims":
+                how += f", with {u['how']['rims']} rims (components for the pixels round the ROIs, reaching {unmix.RIM_IN_PX:g} px into their masks)"
         named = lambda ix: ", ".join(f"{g['rois'][i]['name']} (z {g['rois'][i]['z']})" for i in ix)  # noqa: E731
         outlines = [i for i in range(len(g["rois"])) if u["holds"][i]]
         alike = [i for i in np.flatnonzero(u["refused"]) if not u["holds"][i]]
@@ -1076,7 +1085,8 @@ def run(db, e: dict, say: Callable[[str], None] = print, progress: Optional[Call
         ``frames``, ``planes``), ``rois``, ``roi_planes``, ``glomeruli`` (how many ROIs are
         named as one), ``bytes`` (of movies read) and ``seconds``; with its option ``unmix``,
         ``unmix`` too (the ``variant``, and of each set of ROIs (``sets``) its ``roi_planes``,
-        how many were ``refused`` and the blur's ``sigma_um``).
+        how many were ``refused``, the blur's ``sigma_um`` and how many ``rims`` an NMF with
+        them had).
 
     Raises:
         ExtractError: for what cannot be extracted (no recording with ROIs, ROIs that cannot be
@@ -1181,7 +1191,8 @@ def run(db, e: dict, say: Callable[[str], None] = print, progress: Optional[Call
               "bytes": total, "seconds": seconds}
     if unmixing:
         result["unmix"] = {"variant": unmixing, "sets": [{"roi_planes": len(g["rois"]), "refused": int(g["unmix"]["refused"].sum()),
-                                                          "sigma_um": g["unmix"]["how"].get("sigma_um")} for g in groups.values()]}
+                                                          "sigma_um": g["unmix"]["how"].get("sigma_um"), "rims": g["unmix"]["how"].get("rims")}
+                                                         for g in groups.values()]}
     keys = ("volumes", "set", "how", "reach", "pulse_s", "volume_s", "planes", "flyback", "fps", "xml", "yaml", "missing")
     what = {"own": "the fly's own", "predicted": "as predicted", "edited": "as predicted, then edited in the viewer"}[kind]
     of = f", of fit #{pred['fit_id']}'s model (prediction {pred['id']})" if pred else ""
@@ -1215,13 +1226,19 @@ def run(db, e: dict, say: Callable[[str], None] = print, progress: Optional[Call
             "model": f"per plane, F(pixel, t) = sum_k a_k(pixel) f_k(t){' + b(t)' if unmix.BACKGROUND else ''}, fit by least squares over "
                      f"the ROIs' masks{f' and the pixels within {unmix.REGION_UM[unmixing]:g} um of them' if unmix.REGION_UM[unmixing] else ''}; "
                      f"a_k fit to the trials' dF maps (the mean F over a trial's response window less its baseline's)"
-                     f"{', b uniform over that region' if unmix.BACKGROUND else ''}",
+                     f"{', b uniform over that region' if unmix.BACKGROUND else ''}"
+                     f"{'; k over the ROI-planes and their rims, whose own f_k are not kept' if unmixing == 'nmf_rims' else ''}",
             "region_um": unmix.REGION_UM[unmixing], "background": unmix.BACKGROUND,
             "trace": "the mask mean less the change, from each trial's baseline, of the mask mean less the ROI's own part of it "
                      "(f_k times the mean of a_k over its mask): so F0 is the mask mean's, and F - F0 the ROI's own",
-            "nmf_reach_um": unmix.NMF_REACH_UM if unmixing == "nmf" else None, "vif_max": unmix.VIF_MAX, "held": unmix.HELD,
+            "nmf_reach_um": unmix.NMF_REACH_UM if unmixing in ("nmf", "nmf_rims") else None, "vif_max": unmix.VIF_MAX, "held": unmix.HELD,
             "blur_sigmas_um": list(unmix.SIGMAS_UM) if unmixing == "blur" else None,
+            "rims": {"what": "a component more of a plane's model per ROI-plane: the region's pixels outside every mask that are nearest its "
+                             "own, where there are enough (least_pixels); started at them and kept within reach_in_px of them, so reaching "
+                             "that far into the masks; fit and solved with the ROIs' footprints, its own signal not kept",
+                     "reach_in_px": unmix.RIM_IN_PX, "least_pixels": unmix.RIM_MIN_PX} if unmixing == "nmf_rims" else None,
             "sets": [{"rois": str(g["path"]), "pixel_um": g["pixel_um"], "pixel_from": "Experiment.xml" if g["pixel_known"] else "assumed",
+                      "components": {"roi_planes": sum(len(p["members"]) for p in g["planes"]), "rims": g["unmix"]["how"].get("rims", 0)},
                       "fit": g["unmix"]["how"], "largest_condition": _num(np.nanmax(g["unmix"]["cond"])),
                       "refused": [{"roi": g["rois"][i]["name"], "z": g["rois"][i]["z"], "vif": _num(g["unmix"]["vif"][i]),
                                    "holds": [g["rois"][j]["name"] for j in g["unmix"]["holds"][i]]}

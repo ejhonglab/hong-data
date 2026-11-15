@@ -27,7 +27,7 @@ const MODE_NOTES = {
     if the planes hold the same signal. Its traces are then of relative F, not F; dF/F and responses are as for the others.`,
 };
 // whether, and how, neighbouring ROIs' signals are unmixed too (extract.py's option unmix: unmix.py's VARIANTS), in more words
-const UNMIX_NAMES = { blur: 'masks blurred', nmf: 'factorized' };
+const UNMIX_NAMES = { blur: 'masks blurred', nmf: 'factorized', nmf_rims: 'factorized, with rims' };
 const UNMIX_NOTES = {
   '': `No: each ROI's signal is the mean of the movie over its mask, as al_analysis has it, with whatever light of its neighbours'
     is in the mask (where masks touch, or a neighbour's light spreads into them).`,
@@ -41,6 +41,15 @@ const UNMIX_NOTES = {
     factorization, each started at its mask and kept within 2 µm of it). An ROI's dF/F is then its own light's dF over its mask
     mean's F0. Glomeruli that respond together cannot be told from one another's light, so a shared response may be lowered: each
     recording's unmixing.csv says how much each ROI's responses changed. Reads the movies twice.`,
+  nmf_rims: `Each ROI's signal is also unmixed from its neighbours', in tables beside the plain ones (unmixed/): on each plane, the movie's
+    fluorescence is fit as each ROI's footprint times its signal, the footprints found from the fly's trials (a non-negative
+    factorization, each started at its mask and kept within 2 µm of it), with a component more for the pixels just outside each
+    ROI (its rim, reaching 1 pixel into the masks). The light of glomeruli without an ROI, or spilling from a neighbour, is then a
+    rim's, not read as an ROI's own: on the flies it was tried on, this took more of a responding neighbour's light from a quiet
+    ROI than the other two ways (about 80% of it from predicted ROIs, 45% from drawn ones), and about 2% of ROIs' own responses
+    too. An ROI's dF/F is then its own light's dF over its mask mean's F0. Glomeruli that respond together cannot be told from one
+    another's light, so a shared response may be lowered: each recording's unmixing.csv says how much each ROI's responses
+    changed. Reads the movies twice, and its fit takes longer than the other two.`,
 };
 const ROI_NAMES = { own: "the fly's own", predicted: 'as predicted', edited: 'as edited' };
 const vols = (n) => `${n} volume${n === 1 ? '' : 's'}`;

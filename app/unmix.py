@@ -9,20 +9,28 @@ squares makes each f_k a weighted sum of the region's pixels (the footprints' ps
 so an ROI's unmixed trace is read in the same pass over the movie as its mask mean
 (`extract.plane_traces`, given each ROI-plane's weights).
 
-Footprints, two ways (`VARIANTS`), both fit to the trials' dF maps (`trial_maps`: the mean F
+Footprints, three ways (`VARIANTS`), all fit to the trials' dF maps (`trial_maps`: the mean F
 of a trial's response window less that of its baseline, per pixel):
 
 - ``blur``: each mask blurred by a Gaussian whose width is fit per set of ROIs (the least
   residual of the dF maps, over `SIGMAS_UM`), never assumed; over the masks alone;
 - ``nmf``: seeded non-negative matrix factorization, each footprint started at its mask and
-  kept within `NMF_REACH_UM` of it (`nmf`), over as far.
+  kept within `NMF_REACH_UM` of it (`nmf`), over as far;
+- ``nmf_rims``: the same, with a component more per ROI-plane for the region's pixels outside
+  every mask that are nearest its own (its rim: `rims`), started at those pixels and kept
+  within `RIM_IN_PX` of them. The rims' signals are not kept: they stand for the light of
+  glomeruli without an ROI, and neighbours' spill, which is then not read as an ROI's own.
+  Its factorization has rarely settled by `NMF_ITERS` (design.md: where it stops matters
+  little to the responses, more to which ROI-planes are refused).
 
 Chosen on fit 7's held-out flies (design.md): the blur's region is the masks alone, since with
 pixels round them its width grew with how far they reached (to the widest tried), explaining
 the light of glomeruli without an ROI by its ROIs' footprints, which then took too much from
-their neighbours; and no background is modelled, as it took real responses, its level being
-set by the region's pixels outside the ROIs, which are mostly such glomeruli, not out-of-focus
-light.
+their neighbours; no background is modelled, as it took real responses, its level being set by
+the region's pixels outside the ROIs, which are mostly such glomeruli, not out-of-focus light;
+and rims reach a pixel into the masks, since reaching as far in as the ROIs' footprints reach
+out they took 5 to 10% of the ROIs' own responses, and kept outside the masks, less of their
+neighbours' light (both tried with footprints fit to every frame of the movies).
 
 An ROI's own part of its mask mean is u = mean over its mask of a_k, times f_k. Its unmixed
 trace (`unmixed`) is its mask mean less the change of the rest (its neighbours' light, and the
@@ -43,11 +51,14 @@ import numpy as np
 VARIANTS = {
     "blur": "each mask blurred by a Gaussian, its width fit to the trials' dF maps over the masks (per set of ROIs)",
     "nmf": "seeded non-negative factorization of the trials' dF maps, each footprint from its mask, kept near it",
+    "nmf_rims": "seeded non-negative factorization of the trials' dF maps, with a component more per ROI for the pixels just outside its mask (its rim)",
 }
 DEFAULT = "blur"
 SIGMAS_UM = (0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0)  # the blur's widths (s.d.) tried
 NMF_REACH_UM = 2.0  # how far from its mask an NMF footprint may reach
-REGION_UM = {"blur": 0.0, "nmf": NMF_REACH_UM}  # how far from the masks each variant's model is fit (its region; see above)
+RIM_IN_PX = 1.0  # how far beyond its own pixels (so into the masks) a rim's footprint may reach
+RIM_MIN_PX = 8  # the pixels a rim has at least: a mask with fewer of the region's nearest it has none
+REGION_UM = {"blur": 0.0, "nmf": NMF_REACH_UM, "nmf_rims": NMF_REACH_UM}  # how far from the masks each variant's model is fit (its region; see above)
 BACKGROUND = False  # whether a background uniform over the region is modelled (see above)
 PIXEL_UM = 0.5  # a pixel's width, where the recording's Experiment.xml does not say
 VIF_MAX = 10.0  # an ROI-plane's variance inflation over which it is left as its mask mean
@@ -190,23 +201,41 @@ def fit_blur(planes: list[dict], maps: list[np.ndarray], sigmas_px, background: 
     return {"sigma_px": best, "residual": least, "residuals": grid, "at_edge": best >= sigmas_px[-1]}
 
 
+def rims(plane: dict) -> np.ndarray:
+    """A plane's rims ((rims, h, w), bool, in its box): of each of its masks, the region's
+    pixels outside every mask that are nearest that one, where there are at least `RIM_MIN_PX`
+    of them. Each is a component more of the plane's `nmf` (its `extra`), so that the light
+    round the ROIs (of glomeruli without one, or their neighbours' spill) need not be taken
+    for an ROI's."""
+    from scipy import ndimage as ndi
+
+    near = np.stack([ndi.distance_transform_edt(~m) for m in plane["masks"]]).argmin(axis=0)
+    halo = plane["region"] & ~plane["masks"].any(axis=0)
+    out = [halo & (near == j) for j in range(len(plane["masks"]))]
+    return np.array([r for r in out if r.sum() >= RIM_MIN_PX], bool).reshape(-1, *halo.shape)
+
+
 def nmf(plane: dict, D: np.ndarray, reach_px: float, background: bool = BACKGROUND, iters: int = NMF_ITERS,
-        tol: float = NMF_TOL) -> tuple[np.ndarray, dict]:
+        tol: float = NMF_TOL, extra: Optional[np.ndarray] = None, extra_px: float = RIM_IN_PX) -> tuple[np.ndarray, dict]:
     """A plane's footprints by seeded non-negative matrix factorization of its dF maps (`D`:
     region pixels, maps): D = A C (+ the background's), A >= 0, each column of A started at its
     mask and 0 beyond `reach_px` of it; C (the maps' coefficients) of any sign. Alternating
     least squares: C by least squares, A by HALS (each footprint in turn, exactly, given the
     others), each footprint then scaled to a mean of 1 over its mask (one that would have none
-    there is its mask again).
+    there is its mask again). With `extra` ((n, h, w), bool, in the plane's box: its `rims`),
+    a component more for each, after the members': as theirs, with those pixels for its mask,
+    and 0 beyond `extra_px` of them.
 
     Returns:
-        (A: (region pixels, members), {iterations, change: the last relative change of A,
-        reset: how many footprints were set back to their mask})
+        (A: (region pixels, members and then `extra`), {iterations, change: the last relative
+        change of A, reset: how many footprints were set back to their mask})
     """
     from scipy import ndimage as ndi
 
-    M = _flat(plane, plane["masks"].astype(np.float64))
-    S = _flat(plane, np.stack([ndi.distance_transform_edt(~m) <= reach_px for m in plane["masks"]])) > 0
+    masks = plane["masks"] if extra is None else np.concatenate([plane["masks"], extra])
+    reach = [reach_px] * len(plane["masks"]) + [extra_px] * (len(masks) - len(plane["masks"]))
+    M = _flat(plane, masks.astype(np.float64))
+    S = _flat(plane, np.stack([ndi.distance_transform_edt(~m) <= r for m, r in zip(masks, reach)])) > 0
     X = _known(D)
     A, K = M.copy(), M.shape[1]
     n = M.sum(axis=0)
@@ -233,23 +262,24 @@ def nmf(plane: dict, D: np.ndarray, reach_px: float, background: bool = BACKGROU
 
 def solve(plane: dict, A: np.ndarray, background: bool = BACKGROUND) -> dict:
     """What reads each of a plane's ROI-planes' own part of its mask mean out of the region's
-    pixels, given their footprints `A` (region pixels, members): least squares (the
+    pixels, given their footprints `A` (region pixels, members; then any more of the model's,
+    as `nmf`'s `extra`: fit with them, their own signals not kept): least squares (the
     pseudo-inverse), each ROI's row times the mean of its footprint over its mask.
 
     Returns:
         ``weights`` (members, region pixels); per member: ``vif`` (its variance inflation: 1 /
-        (1 - R²) of its footprint on the others', the background's among them), ``gain`` (the
-        variance of its unmixed trace over its mask mean's, were the pixels' noise alike and
-        independent), ``share`` ((members, members): [k, j] the mean of footprint j over mask
-        k, over footprint k's) and ``refused`` (vif over `VIF_MAX`: left as the mask mean);
-        ``cond``: the condition number of the footprints, each of norm 1.
+        (1 - R²) of its footprint on the others', the background's and any more among them),
+        ``gain`` (the variance of its unmixed trace over its mask mean's, were the pixels'
+        noise alike and independent), ``share`` ((members, members): [k, j] the mean of
+        footprint j over mask k, over footprint k's) and ``refused`` (vif over `VIF_MAX`: left
+        as the mask mean); ``cond``: the condition number of all the footprints, each of norm 1.
     """
     M = _flat(plane, plane["masks"].astype(np.float64))
     Af = design(A, background)
-    K = A.shape[1]
+    K = M.shape[1]
     W = np.linalg.pinv(Af)[:K]
     n = M.sum(axis=0)
-    mean_in = (M.T @ A) / n[:, np.newaxis]  # [k, j]: footprint j's mean over mask k
+    mean_in = (M.T @ A[:, :K]) / n[:, np.newaxis]  # [k, j]: footprint j's mean over mask k
     own = np.diag(mean_in).copy()
     N = Af / np.linalg.norm(Af, axis=0)
     lam, V = np.linalg.eigh(N.T @ N)
@@ -272,7 +302,8 @@ def fit(n_rois: int, planes: list[dict], maps: list[list[np.ndarray]], variant: 
         holds), ``vif``, ``gain`` (as `solve`), ``cond`` (its plane's) and ``neighbours`` (the
         other ROI-planes whose footprints are most in its mask: (index, `solve`'s share),
         largest first, those of 0.01 or more); ``how`` the footprints were fit (the blur's
-        ``sigma_um``, with the ``residuals`` of `SIGMAS_UM`; an NMF's iterations, per plane).
+        ``sigma_um``, with the ``residuals`` of `SIGMAS_UM`; an NMF's iterations, per plane,
+        and with rims how many it has, ``rims``: per plane, and in all).
     """
     joined = [np.concatenate([m[j] for m in maps], axis=1) for j in range(len(planes))]
     if variant == "blur":
@@ -280,10 +311,13 @@ def fit(n_rois: int, planes: list[dict], maps: list[list[np.ndarray]], variant: 
         A = [blur(p, f["sigma_px"]) for p in planes]
         how = {"sigma_um": f["sigma_px"] * px_um, "sigma_px": f["sigma_px"], "at_edge": f["at_edge"],
                "residuals": {f"{s:g}": r / f["residuals"][0] for s, r in zip(SIGMAS_UM, f["residuals"])}}
-    elif variant == "nmf":
-        fits = [nmf(p, D, NMF_REACH_UM / px_um, background) for p, D in zip(planes, joined)]
+    elif variant in ("nmf", "nmf_rims"):
+        extra = [rims(p) if variant == "nmf_rims" else None for p in planes]
+        fits = [nmf(p, D, NMF_REACH_UM / px_um, background, extra=x) for p, D, x in zip(planes, joined, extra)]
         A = [a for a, _ in fits]
-        how = {"planes": [{"z": p["z"], **i} for p, (_, i) in zip(planes, fits)]}
+        how = {"planes": [{"z": p["z"], **i, **({} if x is None else {"rims": len(x)})} for p, (_, i), x in zip(planes, fits, extra)]}
+        if variant == "nmf_rims":
+            how["rims"] = sum(len(x) for x in extra)
     else:
         raise ValueError(f"no such footprints: {variant}")
     out = {"weights": [], "refused": np.zeros(n_rois, bool), "vif": np.full(n_rois, np.nan), "gain": np.full(n_rois, np.nan),
