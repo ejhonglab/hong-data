@@ -116,7 +116,29 @@ if [ -n "$new_watch" ]; then
     $sudo systemctl enable --now olfdb-restart.path || fail "could not enable olfdb-restart.path"
 fi
 
+# GB free on the disk of the path $1 (nothing if df cannot say)
+free_gb() {
+    df -P -k "$1" 2>/dev/null | awk 'NR == 2 { print int($4 / 1048576) }'
+}
+
+# The site's data, its database among it, is in data/ here: when that disk is full, the site
+# cannot save anything (as on 2026-11-15, when Docker's images filled hal's system disk).
+data_free=$(free_gb "$here/data")
+if [ -n "$data_free" ] && [ "$data_free" -lt 5 ]; then
+    echo "Warning: only $data_free GB free on the disk of the site's data ($here/data): the site cannot save anything once it is full."
+fi
+
 if [ -n "$docker" ]; then
+    # Docker builds the images where it keeps them (its root: on hal /data/docker, beside
+    # containerd's /data/containerd; DEPLOY.md, section 1). A build that fills that disk fails
+    # half-way and fills it for all else there too, so none starts with less than
+    # OLFDB_BUILD_MIN_GB (20 by default) free.
+    root=$($sudo docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)
+    free=$(free_gb "${root:-/var/lib/docker}")
+    min=${OLFDB_BUILD_MIN_GB:-20}
+    if [ -n "$free" ] && [ "$free" -lt "$min" ]; then
+        fail "only $free GB free where Docker keeps its images (${root:-/var/lib/docker}), under the $min GB a build may take: free some (DEPLOY.md, section 7), or set OLFDB_BUILD_MIN_GB"
+    fi
     echo "Building the images (the site stays up meanwhile)..."
     cd "$here"
     $sudo docker compose build || fail "the build failed (above), so the site was left as it was"

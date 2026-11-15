@@ -34,6 +34,28 @@ is the same.) Use one set or the other, never both: they install the same files,
 fails with "trying to overwrite '/usr/libexec/docker/cli-plugins/…'" (or offers to remove
 Docker) when the other set is already there.
 
+### Where Docker keeps its images
+
+The images take tens of GB (the fit worker's alone about 11), and each build writes more
+(old layers and build cache stay until pruned). Keep them off the disk the site's data is
+on (`/opt/olfdb/data`, the database among it): on hal, the system disk is a ZFS pool
+snapshotted every 15 minutes, so what Docker writes and deletes stays held there for hours,
+and on 2026-11-15 image builds filled it, after which the site could save nothing and every
+page failed. Since then Docker and containerd (where Docker 29 keeps image layers) keep
+everything on `/data`, a disk of its own:
+
+```bash
+# /etc/docker/daemon.json: "data-root": "/data/docker" (beside the GPU's "runtimes", below)
+# /etc/containerd/config.toml: root = "/data/containerd"
+# /etc/systemd/system/docker.service.d/data.conf and containerd.service.d/data.conf, so neither
+# starts before /data is mounted (and makes an empty root on the system disk instead):
+#   [Unit]
+#   RequiresMountsFor=/data
+docker info --format '{{.DockerRootDir}}'    # /data/docker
+```
+
+`restart-olfdb` does not start a build with under 20 GB free there (section 4).
+
 ### GPU (the fit worker)
 
 The AL segmentation tab's fits run in a second container, `olfdb-worker`, given the
@@ -243,7 +265,9 @@ restart-olfdb
 `restart-olfdb` restarts the site from the code in `/opt/olfdb`: it installs the units in
 `deploy/` (`olfdb.service`, `olfdb-restart.service` and `olfdb-restart.path`) where they
 differ from those in `/etc/systemd/system` (showing how, then `daemon-reload`), builds
-both images (the site stays up meanwhile, and is left as it was if that fails), then
+the images (the site stays up meanwhile, and is left as it was if that fails; not started
+with under 20 GB free where Docker keeps them, section 1, or `OLFDB_BUILD_MIN_GB`; and it
+warns when the disk of `data/` has under 5 GB free), then
 `sudo systemctl restart olfdb`, which makes both containers again from them. Run as
 root, it needs no `sudo`. Before restarting, it lists the jobs that would stop (fits and
 predictions running in the fit worker, a backup, import or re-lookup in the web server),
@@ -361,6 +385,19 @@ sqlite3 data/olfdb.sqlite3 '.tables'                       # direct SQL access (
 Logs: `journalctl -u olfdb` (with the systemd unit) or `docker compose logs` (`docker
 compose logs worker` for the fit worker's; each fit's own log is in the tab, and in
 `data/fits/<fit>/log.txt`, with its model and results).
+
+### Disk space
+
+```bash
+df -h /data /opt/olfdb/data          # Docker's disk (section 1), and the site's data's
+docker system df                     # images, build cache, and how much of each could go
+docker image prune                   # images no tag names any more (old builds)
+docker builder prune                 # the build cache (the next build takes longer)
+```
+
+When the disk of `data/` is full, the site cannot save anything (every page that writes,
+the fit worker's heartbeat among them, fails), and the fit worker may need
+`restart-olfdb` once there is room again.
 
 ### A container that never started after a restart
 
