@@ -4129,13 +4129,16 @@ async def _save_file_log() -> None:
             log.exception("could not save the files read and written (Admin tab)")
 
 
-async def _warm_reference_list() -> None:
-    """The reference datasets read and listed once as the server starts, so that the first to open
-    the page does not wait for it (`reference.listing` keeps what it found)."""
-    try:
-        await run_in_threadpool(lambda: reference.listing(db, _odor_index()))
-    except Exception:
-        log.exception("could not list the reference datasets")
+async def _warm_lists() -> None:
+    """The reference datasets and the Models tab's folders read and listed once as the server
+    starts, so that the first to open those tabs does not wait for it (`reference.listing` and
+    `model_data.scan` keep what they found)."""
+    for what, f in (("the reference datasets", lambda: reference.listing(db, _odor_index())),
+                    ("the models", lambda: model_data.listing(db, config.TENSOR_ROOT))):
+        try:
+            await run_in_threadpool(f)
+        except Exception:
+            log.exception("could not list %s", what)
 
 
 @contextlib.asynccontextmanager
@@ -4144,7 +4147,7 @@ async def lifespan(app: Starlette):
     # before the first request, so before any worker thread starts (see sandbox.start)
     sandbox.start()
     _look_up_odors()  # (those added, or that could not be looked up, while it was not running)
-    warming = asyncio.create_task(_warm_reference_list())
+    warming = asyncio.create_task(_warm_lists())
     saving = asyncio.create_task(_save_file_log())
     yield
     saving.cancel()

@@ -236,14 +236,16 @@ def _files(folder: Path) -> list[tuple[str, int, int]]:
         n += len(dirs) + len(names)
         if n > MAX_ENTRIES:
             raise ScanError(f"over {MAX_ENTRIES:,} files and folders in it: choose the folder of the model outputs alone")
+        # (paths as strings: pathlib's, for each of thousands of files, took most of the time of each listing)
+        rel = os.path.relpath(d, folder)
+        prefix = "" if rel == "." else rel.replace(os.sep, "/") + "/"
         for name in sorted(names):
             if name in (PARAMS, PROVENANCE) or name.endswith(SUFFIX) or FIT_PROVENANCE.fullmatch(name):
-                p = Path(d) / name
                 try:
-                    st = p.stat()
+                    st = os.stat(os.path.join(d, name))
                 except OSError:
                     continue
-                out.append((p.relative_to(folder).as_posix(), st.st_size, st.st_mtime_ns))
+                out.append((prefix + name, st.st_size, st.st_mtime_ns))
     return out
 
 
