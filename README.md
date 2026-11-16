@@ -857,8 +857,11 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   again needs the fly's responses and the atlas registered to it, as predicting does).
   Predictions made before these were kept (`<fly>_identity_terms*.json`, in the download)
   say to predict again.
-  A fly needs every odor the model was fit with (the diagnostics all its flies share): what the model does with
-  fewer, or with the fly's other odors instead, is measured in al-diag-seg's
+  A fly may lack some of the model's odors (it needs 3 of them): the prediction says which, and its ROIs are then
+  joined into 3D and named by those it has, exactly as by a model fit to the same flies with those odors. They are
+  found as well as by such a model too if the fly has the odors Cellpose's images are made from (by default those every
+  fly the tab lists shares, whichever more the model knows); lacking some of those, fewer are found. How, what it
+  costs, and what a fly with none of the diagnostics would take, is in al-diag-seg's
   [missing_diagnostics.md](https://github.com/tom-f-oconnell/al-diag-seg/blob/main/missing_diagnostics.md)
   (the scripts: `notes/missing_diagnostics/`).
   *Look for missed glomeruli*, under the editing buttons, looks in the fly's movies (every
@@ -985,7 +988,13 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   fine-tuned on their ROIs: every outline of one glomerulus, numbered and uncertain ones
   too, but not `+` ROIs or outlines of the whole AL; an atlas of where each glomerulus is,
   and each one's odor tuning), holding out a few flies (from each dataset in turn) to score
-  its predicted ROIs (Cellpose's own, named) against theirs; with how many to hold out, Cellpose's epochs (15 by default), whether to build the atlas
+  its predicted ROIs (Cellpose's own, named) against theirs; with the odors asked of its flies (a model knows the
+  odors all the flies it is fit to share. *Odors asked of its flies* lists each odor that some flies have and some
+  lack, with how many have it, whose they are and when they were recorded, and a box: ticked, the fit is only to the
+  flies with it, and the model has it. Acetophenone @ -4 and valeric acid @ -3, which every fly since 2024-07 has, are
+  ticked to begin with, and below them it says how many flies, and odors, a fit asked for now would be of. A last box,
+  ticked, has Cellpose's images made from the odors every listed fly shares only, so that flies without the odors
+  ticked are predicted exactly as by a model fit without them), how many to hold out, Cellpose's epochs (15 by default), whether to build the atlas
   (and add the [Grabe et al. 2016](https://doi.org/10.1016/j.celrep.2016.08.063) atlas to
   it, as by default), whether to train on tentative ROIs, and (under *How its ROIs are made and named*) Cellpose's mask thresholds, how much
   to grow its ROIs, and how much each plane's must overlap and be tuned alike to be joined into 3D objects (the

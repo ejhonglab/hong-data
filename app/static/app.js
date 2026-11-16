@@ -8560,7 +8560,8 @@ class RoiTrainingPage {
       $('#rt-count').value = 'all';
       this._render();
     });
-    this.fits = new FitsPanel({ $, esc, api, msgBox, askDialog, fmtWhen, fmtSize, getName: () => settings.current().name });
+    this.fits = new FitsPanel({ $, esc, api, msgBox, askDialog, fmtWhen, fmtSize, getName: () => settings.current().name,
+      flies: () => this.data?.flies || null });
     this.predict = new PredictPanel({ $, esc, api, msgBox, askDialog, fmtWhen, getName: () => settings.current().name,
       player: () => player, flies: () => this.data?.flies || null, onData: () => this.extract?.predictionsChanged(),
       onMine: () => { if (this.extract?.data) this.extract.renderFlies(); } });
@@ -8590,6 +8591,7 @@ class RoiTrainingPage {
         shown = text;
         this.data = found;
         this._render();
+        this.fits.renderOdors();
         this.predict.renderFlies();
         if (this.extract.data) this.extract.renderFlies();
       }

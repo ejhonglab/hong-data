@@ -36,7 +36,14 @@ STAGES = ("load", "train", "atlas", "evaluate")
 ROI_DEFAULTS = {"cellprob_threshold": -2.0, "flow_threshold": 0.8, "dilate": 0, "join_overlap": 0.2, "join_corr": 0.7,
                 "max_cost": 0.6}
 # 15 epochs: the held-out flies' loss had stopped improving by epoch 10 in fits 2 and 6 (design.md)
-DEFAULTS = {"held_out": 4, "epochs": 15, "atlas": True, "tentative": True, "refs": ["grabe2016"], **ROI_DEFAULTS}
+# require_odors: only the flies with all of these odors are fit to (so the model has them, beside those all the flies share:
+# the tab's form has those to choose from, `fly_odors`). image_odors: what Cellpose's images of responses are made from,
+# "shared" (the odors every fly the tab lists has, whichever are fit to) or "all" (every odor of the model): with "shared", a
+# fly that lacks the odors asked for is predicted as by a model fit, to the same flies, without them (al-diag-seg's
+# `Options.image_odors`)
+DEFAULTS = {"held_out": 4, "epochs": 15, "atlas": True, "tentative": True, "refs": ["grabe2016"], "require_odors": [],
+            "image_odors": "shared", **ROI_DEFAULTS}
+IMAGE_ODORS = ("shared", "all")
 LIMITS = {"held_out": (1, 30), "epochs": (1, 5000), "dilate": (0, 10)}  # (whole numbers)
 FLOAT_LIMITS = {"cellprob_threshold": (-6.0, 6.0), "flow_threshold": (0.0, 3.0), "join_overlap": (0.0, 1.0),
                 "join_corr": (-1.0, 1.0), "max_cost": (0.0, 2.0)}
@@ -81,7 +88,8 @@ def options(body: dict) -> dict:
     Raises:
         ValueError: for one out of `LIMITS`, or not a whole number; out of `FLOAT_LIMITS`, or not
             a number; for ``refs`` not a list of `REFERENCES`, or given without the atlas (which
-            they are added to). (Not given, they are `DEFAULTS`' with the atlas, none without.)
+            they are added to); for ``require_odors`` not a list of odors, or ``image_odors`` not
+            of `IMAGE_ODORS`. (Not given, refs are `DEFAULTS`' with the atlas, none without.)
     """
     out = dict(DEFAULTS)
     for k, (lo, hi) in LIMITS.items():
@@ -113,13 +121,22 @@ def options(body: dict) -> dict:
     out["refs"] = list(dict.fromkeys(refs))
     if out["refs"] and not out["atlas"]:
         raise ValueError("a reference atlas is added to the atlas of the flies: it needs the atlas")
+    req = body.get("require_odors") or []
+    if not isinstance(req, list) or len(req) > 50 or not all(isinstance(o, str) and 0 < len(o) <= 200 for o in req):
+        raise ValueError("require odors: a list of odors (as the tab names them, with their concentrations)")
+    out["require_odors"] = list(dict.fromkeys(req))
+    if body.get("image_odors") not in (None, ""):
+        if body["image_odors"] not in IMAGE_ODORS:
+            raise ValueError(f"image odors: one of {', '.join(IMAGE_ODORS)}")
+        out["image_odors"] = body["image_odors"]
     return out
 
 
 def fit_options(fit: dict) -> dict:
     """A fit's options, `DEFAULTS` for those that were not options yet when it was asked for (but
-    no reference atlases: fits from before ``refs`` had none)."""
-    return {**DEFAULTS, "refs": [], **(fit.get("options") or {})}
+    no reference atlases: fits from before ``refs`` had none; and images of all its odors, as
+    fits from before ``image_odors`` had)."""
+    return {**DEFAULTS, "refs": [], "image_odors": "all", **(fit.get("options") or {})}
 
 
 def reference_dir(name: str) -> Path:
@@ -283,6 +300,30 @@ def manifest(found: dict, bases: list[Path]) -> dict:
         })
     return {"format": "olfdb ROI training export", "version": 1, "exported_at": now(), "stacks": True,
             "glomeruli": load_glomeruli(), "flies": flies, "skipped": []}
+
+
+def fly_odors(fly: dict) -> list[str]:
+    """The odors of a fly of a `manifest` (those of its diagnostic recordings, as the odor table names them)."""
+    return list(dict.fromkeys(o for r in fly["recordings"] for o in r["odors"]))
+
+
+def shared_odors(flies: list[dict]) -> list[str]:
+    """The odors every one of a `manifest`'s flies has, in the first one's order."""
+    have = [set(fly_odors(f)) for f in flies]
+    return [o for o in (fly_odors(flies[0]) if flies else []) if all(o in h for h in have)]
+
+
+def with_odors(flies: list[dict], require: list[str]) -> list[dict]:
+    """Those of a `manifest`'s flies that have all the odors of `require` (a fit's ``require_odors``).
+
+    Raises:
+        ValueError: for an odor none of the flies has (named otherwise than the tab names it, or gone).
+    """
+    have = [set(fly_odors(f)) for f in flies]
+    none = [o for o in require if not any(o in h for h in have)]
+    if none:
+        raise ValueError(f"no fly has {', '.join(none)}: the odors a fit can ask of its flies are those the tab lists")
+    return [f for f, h in zip(flies, have) if all(o in h for o in require)]
 
 
 # ----------------------------------------------------------------- estimates

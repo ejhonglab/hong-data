@@ -307,6 +307,36 @@ def test_worker_prediction(main, tensor, monkeypatch):  # noqa: F811
     assert "the fit was deleted" in predictions.get(main.db, q["id"])["error"]
 
 
+def test_prediction_missing_odors(main, tensor, monkeypatch):  # noqa: F811
+    """A fly that lacks an odor of the model (the real al-diag-seg, with its stand-in segmenter): predicted by those it has, and
+    said to lack it; one fit with images of the odors every fly shares says that none of those is missing."""
+    am = pytest.importorskip("alseg.model")
+    from tests.test_fits import NAMES, ODORS, without_odor
+
+    class StandIn(am.Options):
+        def __init__(self, **kw):
+            super().__init__(**{"segmenter": "stand-in", "gpu": False, **kw})
+
+    monkeypatch.setattr(am, "Options", StandIn)
+    without_odor(tensor, "2024-01-01", 3)
+    last = f"{NAMES[ODORS[3][0]]} @ {ODORS[3][1]}"
+    fly = predictions.locate("ann/analysis/2024-01-01/3", "ann/raw/2024-01-01/3", config.TENSOR_ROOT, [])
+    for images, short in (("shared", []), ("all", [last])):
+        f = fits.create(main.db, "Ann", None, fits.options({"held_out": 1, "atlas": False, "require_odors": [last], "image_odors": images}))
+        fit_worker.run(main.db, fits.claim(main.db))
+        assert fits.get(main.db, f["id"])["status"] == "done"
+        p, _ = predictions.create(main.db, f["id"], fly, "Bob", None)
+        fit_worker.run_prediction(main.db, predictions.claim(main.db), False)
+        p = predictions.get(main.db, p["id"])
+        d = predictions.pred_dir(p["id"])
+        assert p["status"] == "done", (d / "log.txt").read_text()[-3000:]
+        r = p["result"]
+        assert r["missing_odors"] == [last] and r["missing_image_odors"] == short and r["model_odors"] == 4 and r["n"] >= 1 and set(r["named"]) <= set(GLOMS)
+        prov = json.loads((d / "provenance.json").read_text())["fly"]
+        assert prov["missing_odors"] == [last] and len(prov["odors"]) == 3
+        assert f"it lacks 1 of the model's 4 odors ({last}): " + ("none that" if not short else "1 of them among the 4 that") in (d / "log.txt").read_text()
+
+
 def test_prediction_with_cellpose(main, tensor, monkeypatch):  # noqa: F811
     """The real al-diag-seg and Cellpose (where they are installed: the worker image): a model fit
     for one epoch on the CPU (leaving the GPU to what else uses it), then a prediction on the CPU

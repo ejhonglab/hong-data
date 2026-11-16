@@ -128,6 +128,18 @@ def test_options():
     assert fits.DEFAULTS["refs"] == ["grabe2016"] and fits.options({"refs": []})["refs"] == []
     assert fits.options({"refs": ["grabe2016", "grabe2016"]})["refs"] == ["grabe2016"]
     assert fits.options({"refs": None, "atlas": False})["refs"] == []
+    # the odors asked of its flies (none unless asked), and what Cellpose's images are made from
+    assert fits.DEFAULTS["require_odors"] == [] and fits.DEFAULTS["image_odors"] == "shared"
+    o = fits.options({"require_odors": ["valeric acid @ -3", "ethyl acetate @ -2", "valeric acid @ -3"], "image_odors": "all"})
+    assert o["require_odors"] == ["valeric acid @ -3", "ethyl acetate @ -2"] and o["image_odors"] == "all"
+    assert fits.options({"require_odors": None, "image_odors": ""}) == fits.DEFAULTS
+    # (a fit from before they were options: of all the flies, its images of all its odors)
+    assert fits.fit_options({"options": {"held_out": 2}})["image_odors"] == "all" and fits.fit_options({"options": {}})["require_odors"] == []
+    flies = [{"recordings": [{"odors": ["a", "b"]}, {"odors": ["c"]}]}, {"recordings": [{"odors": ["c", "a"]}]}, {"recordings": [{"odors": ["a", "d", "c"]}]}]
+    assert fits.fly_odors(flies[0]) == ["a", "b", "c"] and fits.shared_odors(flies) == ["a", "c"] and fits.shared_odors([]) == []
+    assert fits.with_odors(flies, []) == flies and fits.with_odors(flies, ["b"]) == flies[:1] and fits.with_odors(flies, ["d", "c"]) == flies[2:]
+    with pytest.raises(ValueError, match="no fly has e"):
+        fits.with_odors(flies, ["a", "e"])
     # how its ROIs are made (as the form sends them, strings)
     o = fits.options({"cellprob_threshold": "-1.5", "flow_threshold": "0", "dilate": "2", "join_overlap": "", "join_corr": -1})
     assert o == {**fits.DEFAULTS, "cellprob_threshold": -1.5, "flow_threshold": 0.0, "dilate": 2, "join_corr": -1.0}
@@ -136,6 +148,7 @@ def test_options():
     for bad in ({"epochs": 0}, {"held_out": "x"}, {"held_out": 31}, {"refs": ["hemibrain"]}, {"refs": "grabe2016"},
                 {"refs": [{}]}, {"refs": ["grabe2016"], "atlas": False}, {"cellprob_threshold": "x"}, {"cellprob_threshold": 7},
                 {"flow_threshold": -0.1}, {"dilate": "0.5"}, {"dilate": 11}, {"join_overlap": 1.5}, {"join_corr": "nan"},
+                {"require_odors": "valeric acid @ -3"}, {"require_odors": [1]}, {"require_odors": [""]}, {"image_odors": "some"},
                 {"max_cost": -0.1}, {"max_cost": 2.5}, {"max_cost": "x"}):
         with pytest.raises(ValueError):
             fits.options(bad)
@@ -236,6 +249,9 @@ def fake_alseg(monkeypatch, calls):
     class Model:
         info, odors = {}, ["a"]
 
+        def image_odors(self):
+            return ["a"]
+
         def save(self, d):
             d.mkdir(parents=True)
             (d / "model.json").write_text("{}")
@@ -279,8 +295,11 @@ def test_worker(main, tensor, monkeypatch):  # noqa: F811
     f = fits.create(main.db, "Ann", "10.1.2.3", fits.options({"held_out": 1, "epochs": 10, "atlas": False}))
     fit_worker.run(main.db, fits.claim(main.db))
     f = fits.get(main.db, f["id"])
+    shared = [f"{NAMES[a]} @ {c}" for a, c in ODORS]
     assert f["status"] == "done" and f["error"] is None and calls["options"] == {"epochs": 10, "atlas": False, "tentative": True,
-                                                                                 "refs": [], **fits.ROI_DEFAULTS}
+                                                                                 "refs": [], "image_odors": shared, **fits.ROI_DEFAULTS}
+    # (every fly the tab lists, with the odors they share: what Cellpose's images are made from)
+    assert f["flies"]["listed"] == 3 and f["flies"]["odors"] == shared == f["flies"]["image_odors"]
     assert f["flies"]["held_out"] == calls["held_out"] == ["ann_2024-01-01_2"] and len(f["flies"]["train"]) == 2
     # each stage timed, with its size, for estimates of later fits
     assert set(f["stages"]) == set(fits.STAGES) and f["stages"]["train"]["size"] == 20 and f["stages"]["load"]["seconds"] > 0
@@ -440,6 +459,59 @@ def test_worker_with_alseg(main, tensor, monkeypatch):  # noqa: F811
     saved = json.loads((d / "model/model.json").read_text())["options"]
     assert {k: saved[k] for k in fits.ROI_DEFAULTS} == fits.ROI_DEFAULTS
     assert "values not finite (NaN or inf), taken as 0" in (d / "log.txt").read_text()
+
+
+def without_odor(tensor, date, n, k=3):  # noqa: F811
+    """One of the fixture's flies with its diagnostic recording lacking its odor ``k`` (of `ODORS`)."""
+    rec = tensor / f"ann/analysis/{date}/{n}/diagnostics1"
+    resp = tifffile.imread(rec / "trialmean_dff.tif")
+    tifffile.imwrite(rec / "trialmean_dff.tif", np.delete(resp, k, 0), imagej=True, metadata={"axes": "TZYX"})
+    (rec / "trial_frames_and_odors.json").write_text(trials(*(o for i, o in enumerate(ODORS) if i != k)))
+
+
+def test_worker_odors(main, tensor, monkeypatch):  # noqa: F811
+    """A fit asked for with an odor that not every fly has: only the flies with it are fit to, the model has it, and Cellpose's
+    images are of the odors every fly shares (the real al-diag-seg, where it is installed, with its stand-in segmenter)."""
+    am = pytest.importorskip("alseg.model")
+
+    class StandIn(am.Options):
+        def __init__(self, **kw):
+            super().__init__(**{"segmenter": "stand-in", "gpu": False, **kw})
+
+    monkeypatch.setattr(am, "Options", StandIn)
+    without_odor(tensor, "2024-01-01", 3)
+    names = [f"{NAMES[a]} @ {c}" for a, c in ODORS]
+    listed = call(main.roi_training_flies)[1]["flies"]
+    assert [f["odors"] for f in listed] == [names, names, names[:3]]  # (what the form's boxes are made of)
+
+    def fit(**opts):
+        f = fits.create(main.db, "Ann", None, fits.options({"held_out": 1, "atlas": False, **opts}))
+        fit_worker.run(main.db, fits.claim(main.db))
+        f = fits.get(main.db, f["id"])
+        return f, fits.fit_dir(f["id"])
+
+    f, d = fit()
+    assert f["status"] == "done", (d / "log.txt").read_text()[-3000:]
+    assert len(f["flies"]["train"]) == 2 and f["flies"]["listed"] == 3 and f["flies"]["odors"] == names[:3] == f["flies"]["image_odors"]
+    f, d = fit(require_odors=[names[3]])
+    assert f["status"] == "done", (d / "log.txt").read_text()[-3000:]
+    assert sorted(f["flies"]["train"] + f["flies"]["held_out"]) == ["ann_2024-01-01_1", "ann_2024-01-01_2"] and f["flies"]["listed"] == 3
+    assert f["flies"]["odors"] == names and f["flies"]["image_odors"] == names[:3]
+    model = am.Model.load(d / "model")
+    assert model.odors == names and model.image_odors() == names[:3] and model.template["DM2"]["tunings"].shape == (1, 4)
+    log, readme = (d / "log.txt").read_text(), " ".join((d / "model/README.txt").read_text().split())
+    assert "2 flies (0 left out, as the tab says why; 1 more for lacking 1-hexanol @ -4)" in log
+    assert "their 4 odors; Cellpose's images from the 3 that all 3 flies share" in log
+    assert "images of a fly's responses are made from 3 of them" in readme and "(all but 1-hexanol @ -4)" in readme
+    assert len(json.loads((d / "manifest.json").read_text())["flies"]) == 2
+    # with images of all its odors, if asked; an odor no fly has cannot be asked of them
+    f, d = fit(require_odors=[names[3]], image_odors="all")
+    assert f["flies"]["image_odors"] is None and am.Model.load(d / "model").image_odors() == names
+    f, d = fit(require_odors=["geosmin @ -5"])
+    assert f["status"] == "failed" and "no fly has geosmin @ -5" in f["error"]
+    without_odor(tensor, "2024-01-01", 2)
+    f, d = fit(require_odors=[names[3]])
+    assert f["status"] == "failed" and "1 of the 3 flies have 1-hexanol @ -4: at least 2 are needed" in f["error"]
 
 
 def test_worker_with_cellpose(main, tensor):  # noqa: F811

@@ -43,6 +43,15 @@ function nmfNote(p, esc, fmtWhen) {
   }
   return ` Looking for glomeruli its ROIs miss ${n.status === 'failed' ? 'failed' : 'was interrupted'}${n.error ? ` (${esc(n.error)})` : ''}: view the ROIs to ask again.`;
 }
+// the odors of its model that a prediction's fly lacks, if any, and what that means for its ROIs
+function missingNote(r, esc) {
+  const m = r.missing_odors || [];
+  if (!m.length) return '';
+  const img = (r.missing_image_odors || []).length;
+  return ` Its fly lacks ${m.length} of the model's ${r.model_odors} odors (${m.map(esc).join(', ')}): its ROIs are joined into 3D and named by those it has${
+    img ? `, and found from images of ${img} fewer odor${img === 1 ? '' : 's'} than Cellpose was trained on, so fewer may be found than in a fly with all of them`
+      : ', exactly as by a model fit to the same flies without them (Cellpose\'s images are of none of them)'}.`;
+}
 // how a prediction's ROIs were cleaned, if they were (its options)
 function cleanedNote(p) {
   const o = p.options || {}, on = [...(o.split ? ['outlines over two glomeruli split'] : []), ...(o.clean || []).map((st) => {
@@ -246,7 +255,7 @@ export class PredictPanel {
       ? `<br>Against the fly's own ${s.manual} ROIs${s.recall_2d == null ? '' : ` (${s.manual_2d} outlines on their planes)`}:<br>${scoreTip('found', 'found')} ${both(s, 'recall')},
         ${scoreTip('right', 'right')} ${both(s, 'precision')}, ${scoreTip('dice', 'Dice')} ${both(s, 'dice', num2)} <span class="muted">(${s.recall_2d == null ? '' : 'per plane · as 3D objects; '}${scoringNote(s)})</span>;
         ${scoreTip('named', 'name correct')} ${s.named}/${s.named_of}.${s.edge_share == null && s.gap_um == null ? '' : `<br>Kept from neighbors
-        <span class="muted">(the fly's own ROIs' in brackets)</span>: ${PURITY_COLUMNS.map((c) => `${tip(c[0].toLowerCase(), c[1])} ${c[2](s)}`).join(', ')}.`}` : ''}${cleanedNote(p)}${kindsTable(s)}${p.edited ? ` Edited in the viewer (${esc(this._edited(p))}:
+        <span class="muted">(the fly's own ROIs' in brackets)</span>: ${PURITY_COLUMNS.map((c) => `${tip(c[0].toLowerCase(), c[1])} ${c[2](s)}`).join(', ')}.`}` : ''}${missingNote(r, esc)}${cleanedNote(p)}${kindsTable(s)}${p.edited ? ` Edited in the viewer (${esc(this._edited(p))}:
         ${p.edited.rois} ROIs${p.edited.simplified == null ? '' : `, simplified within ${p.edited.simplified} px`}): its download has those
         too, as <code>${esc(p.fly)}_pred-edited_RoiSet.zip</code>.` : ''}${nmfNote(p, esc, fmtWhen)}`;
   }

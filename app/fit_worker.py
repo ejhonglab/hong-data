@@ -221,7 +221,10 @@ def summary(res: dict) -> dict:
 
 README = """al-diag-seg model: fit #{id} in the odor response database's AL segmentation tab, asked for by
 {name} on {created}. Fit to {n_train} flies; scored on {n_val} held out ({held_out}).
-Odors it needs (each fly must have all of them): {odors}.
+Its odors: {odors}.
+{images}A fly need not have all of them (at least 3): its ROIs are then joined and named by those it has, as by a model fit to
+the same flies with those odors alone; where it lacks some of the odors the images are made from, its ROIs are found
+from images of fewer odors than Cellpose was trained on, and fewer are found (al-diag-seg's missing_diagnostics.md).
 
 To run it on your own flies (Python 3.11 to 3.13; with a GPU it is faster, but not needed):
 
@@ -264,21 +267,33 @@ def run(db, fit: dict, gpu: bool = False) -> None:
             m = fits.manifest(found, bases)
             if len(m["flies"]) < 2:
                 raise ValueError(f"{len(m['flies'])} flies to fit to (the AL segmentation tab lists them): at least 2 are needed")
+            # only the flies with the odors asked for, if any were; the odors all the tab's flies share are what
+            # Cellpose's images are made from, unless asked otherwise (fits.DEFAULTS says why)
+            shared, listed = fits.shared_odors(m["flies"]), len(m["flies"])
+            m["flies"] = fits.with_odors(m["flies"], o["require_odors"])
+            if len(m["flies"]) < 2:
+                raise ValueError(f"{len(m['flies'])} of the {listed} flies have {' and '.join(o['require_odors'])}: at least 2 are needed")
             (d / "manifest.json").write_text(json.dumps(m, indent=1))
             names = fits.fly_names(m["flies"])
             held = fits.choose_held_out(m["flies"], o["held_out"])
             flies = {"train": [n for n in names if n not in held], "held_out": held,
                      "stacks": sum(1 for f in m["flies"] if f["stacks"]),
-                     "datasets": sorted({x["id"] for f in m["flies"] for x in f["datasets"]})}
+                     "datasets": sorted({x["id"] for f in m["flies"] for x in f["datasets"]}),
+                     "listed": listed, "odors": fits.shared_odors(m["flies"]),
+                     "image_odors": shared if o["image_odors"] == "shared" else None}
             fits.update(db, fit["id"], flies=flies)
-            print(f"{len(names)} flies ({len(found['skipped'])} left out, as the tab says why); held out: {', '.join(held)}")
+            print(f"{len(names)} flies ({len(found['skipped'])} left out, as the tab says why"
+                  + (f"; {listed - len(names)} more for lacking {' or '.join(o['require_odors'])}" if listed > len(names) else "")
+                  + f"); held out: {', '.join(held)}")
+            print(f"their {len(flies['odors'])} odors"
+                  + (f"; Cellpose's images from the {len(shared)} that all {listed} flies share" if flies["image_odors"] and listed > len(names) else ""))
             from alseg import model as am
             from alseg import olfdb as ao
 
             data = ao.load_export(d / "manifest.json", tentative=o["tentative"], progress=prog)
             (d / "work").mkdir()  # (Cellpose makes only its models/ in the folder it is given)
             model = am.fit(data["flies"], held, am.Options(epochs=o["epochs"], atlas=o["atlas"], tentative=o["tentative"],
-                                                           refs=[str(p) for p in refs],
+                                                           refs=[str(p) for p in refs], image_odors=flies["image_odors"],
                                                            # (a fit asked for before these were options: al-diag-seg's)
                                                            **{k: o[k] for k in fits.ROI_DEFAULTS if k in o}),
                            out=d / "work", progress=prog, odors=data["odors"], aliases=data["aliases"],
@@ -289,6 +304,9 @@ def run(db, fit: dict, gpu: bool = False) -> None:
             (d / "model" / "README.txt").write_text(README.format(
                 id=fit["id"], name=fit["name"], created=fit["created_at"], n_train=len(flies["train"]), n_val=len(held),
                 held_out=", ".join(held), odors=", ".join(model.odors),
+                images="" if len(model.image_odors()) == len(model.odors) else
+                f"Cellpose's images of a fly's responses are made from {len(model.image_odors())} of them, those every fly the database had "
+                f"then shares (all but {', '.join(x for x in model.odors if x not in model.image_odors())}).\n",
                 hong2p=f"@{v['hong2p']}" if v["hong2p"] else "",
                 alseg=f"@{v['alseg']['commit']}" if v["alseg"] and v["alseg"]["commit"] else ""))
             prog("evaluate", 0, len(held))
@@ -486,6 +504,12 @@ def run_prediction(db, p: dict, on_gpu: bool, why_cpu: Optional[str] = None) -> 
             inputs = _fly_inputs(fly_dir, raw_dir, model, odormeta.OdorIndex(db.list_odors()))
             f = load_fly(fly_dir, model, raw_dir=raw_dir, name=p["fly"], glomeruli=load_glomeruli(),
                          tentative=model.options.tentative)
+            missing = list(f.get("missing") or [])
+            if missing:  # (joined and named by those it has; found from images of fewer odors, if it lacks some of those)
+                short = [x for x in model.image_odors() if x in missing]
+                print(f"it lacks {len(missing)} of the model's {len(model.odors)} odors ({', '.join(missing)})"
+                      + (f": {len(short)} of them among the {len(model.image_odors())} that Cellpose's images are made from" if short else
+                         ": none that Cellpose's images are made from"))
             print(f"{sum(r['used'] for r in inputs['recordings'])} recordings of its odors, planes (z, y, x) "
                   f"{f['average'].shape} of {np.round(f['spacing'], 3).tolist()} um"
                   + (f", its own ROIs from {inputs['roiset']}" if f.get("labels") is not None else ", no ROIs of its own")
@@ -531,13 +555,16 @@ def run_prediction(db, p: dict, on_gpu: bool, why_cpu: Optional[str] = None) -> 
             am.write_volume(d / predictions.AVERAGE, f["average"].astype(np.float32))
             seconds = time.time() - t0
             result = {"final": final, "n": int(n), "named": named, "scores": scores, "device": "GPU" if on_gpu else "CPU",
-                      "seconds": seconds, "stages": {"load": t1 - t0, "predict": t0 + seconds - t1}, "stack": stack}
+                      "seconds": seconds, "stages": {"load": t1 - t0, "predict": t0 + seconds - t1}, "stack": stack,
+                      # the model's odors it lacks, and those of them Cellpose's images are made from
+                      "missing_odors": missing, "missing_image_odors": [x for x in model.image_odors() if x in missing],
+                      "model_odors": len(model.odors)}
             v = versions()
             prov = {
                 "prediction": p["id"], "asked_for": {"by": p["name"], "from": p["ip"], "at": p["created_at"]},
                 "started": p["started_at"], "finished": predictions.now(), "seconds": seconds, "stages": result["stages"], "device": device,
                 "fly": {"name": name, "dir": p["fly_dir"], "raw_dir": p["raw_dir"], "spacing_um": list(f["spacing"]),
-                        "planes": list(f["average"].shape), **inputs},
+                        "planes": list(f["average"].shape), "odors": list(f["odors"]), "missing_odors": missing, **inputs},
                 "model": {"fit": p["fit_id"], "folder": str(mdir), "fit_by": fit["name"], "fit_asked_for": fit["created_at"],
                           "fit_finished": fit["finished_at"], "options": fit["options"], "flies": fit["flies"],
                           # (al-diag-seg's, as the model ran: those it was saved without, e.g. how

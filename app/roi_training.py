@@ -509,7 +509,9 @@ def stream_zip(found: dict, root: Path, bases: list[Path], stacks: bool, top: st
 def summary(found: dict, root: Path, bases: list[Path]) -> dict:
     """What the AL segmentation tab shows: each fly to export and those left out, with sizes;
     and of each fly, its glomeruli (`roi_glomeruli`: ``glomeruli`` and ``tentative``, None
-    with ``roi_error`` if its ROIs could not be read) and ``panels``: those but diagnostic ones."""
+    with ``roi_error`` if its ROIs could not be read), ``panels``: those but diagnostic ones, and
+    ``odors``: those of its diagnostic recordings, as the odor table names them (what a fit can ask
+    of its flies: `fits.with_odors`)."""
     with ThreadPoolExecutor(PREFETCH) as pool:  # (each file on tensor takes a while to start reading)
         rois = list(pool.map(lambda f: roi_glomeruli(f["roiset"]), found["flies"]))
     flies = []
@@ -528,6 +530,7 @@ def summary(found: dict, root: Path, bases: list[Path]) -> dict:
             "bytes": size, "problems": f["problems"],
             "glomeruli": glomeruli and glomeruli["glomeruli"], "tentative": glomeruli and glomeruli["tentative"],
             "roi_error": roi_error, "panels": sorted(p for p in f["panels"] if not is_diagnostic_panel(p)),
+            "odors": list(dict.fromkeys(o["odor"] for r in f["recordings"] for o in r["odors"])),
         })
     return {"flies": flies, "skipped": found["skipped"], "bytes": sum(f["bytes"] for f in flies),
             "stack_bytes": sum(s["bytes"] for f in flies for s in f["stacks"])}

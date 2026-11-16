@@ -865,6 +865,11 @@ dialog.player::backdrop { background: rgba(29,31,34,.55); }
 .player-nmf[hidden] { display: none; }
 .player-nmf p { margin: 0; color: var(--ink-muted); }
 .player-nmf p.player-error { color: var(--danger); }
+.fit-odors { margin: 6px 0 8px; font-size: 13px; }
+.fit-odors p { margin: 0 0 4px; }
+.fit-odors .check { display: flex; align-items: baseline; gap: 8px; margin: 3px 0; font-weight: 400; }
+.fit-odors .check input { flex: none; }
+.fit-odors-total { margin-top: 6px !important; }
 .player-nmf-settings summary { cursor: pointer; color: var(--ink-muted); }
 .player-nmf-settings label { display: flex; align-items: center; gap: 4px; margin: 3px 0; color: var(--ink-muted); }
 .player-nmf-settings input[type=number] { width: 56px; padding: 2px 4px; font-size: 12px; }

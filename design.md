@@ -433,6 +433,33 @@ between the frontend and the server. Using the app is described in
   and the next take, less its time in it; those from before stages were kept count by when
   they started and finished. One waiting starts when those before it end (one runs at a
   time), on the device it would get now. With none done on a device, a guess, said to be.
+- **A model can take in an odor that some flies lack, at no cost to those flies** (`fits.with_odors`,
+  al-diag-seg's `Options.image_odors`, `identity.template_for`). A model's odors were those every
+  fly of the tab shared (21 of the 86 flies', once geosmin was one odor), and a fly had to have
+  them all; but panels change (acetophenone @ -4 is in 79 flies, every one since 2023-05-10;
+  valeric acid @ -3 in the 38 since 2024-07-16), and an odor is only worth adding if the flies
+  recorded before it are not predicted worse for it. Three things make that so, each exact:
+  - *A fit is to the flies with the odors asked of it* (the form's boxes: each odor some flies
+    have and some lack, with who has it and since when; those two ticked to begin with, so 38
+    flies and 23 odors), and its model has what those flies share.
+  - *A fly is joined and named by the odors it has*, with a template made for those odors as a
+    fit to them alone would make it: the model keeps each training fly's tuning of each
+    glomerulus, not only their mean (each is z-scored over the odors before the mean is taken,
+    so the mean over 23 odors, cut to 21, is not the mean over 21).
+  - *Cellpose's images are of the odors every listed fly shares* (by default; "all" can be asked
+    for), whichever more the model knows. Its weights are of the images it was trained on, so
+    this is the one part that could not be made exact afterwards: with images of all 23 odors, a
+    fly with 21 would get images Cellpose never saw (what that costs is al-diag-seg's
+    missing_diagnostics.md: with 10 of 20, 49% of ROIs found for 57%). The odors beyond the
+    shared ones are then in joining and names only.
+  So a model fit with 23 odors gives a fly with 21 the ROIs and names of a model fit, to the
+  same flies, with those 21: checked on the database's flies without training (Cellpose's
+  weights fit 7's for both; `notes/missing_diagnostics/same_as_fewer.py`): 4 held-out flies
+  shown only the 21, and 6 flies without one or both odors against models made with the 21 or
+  22 they have, the same voxel for voxel and name for name. What only a fit can say is whether
+  38 flies make as good a model as 86. A fly that lacks some of the image odors is still
+  predicted (it needs 3 of the model's odors), from makeshift images, and its prediction says
+  which odors it lacks, and whether any are of the images.
 - **Predictions of a fly's ROIs run in the fit worker, beside fits** (`predictions.py`,
   `fit_worker.run_prediction`): only its image has al-diag-seg and PyTorch. A thread of
   their own takes them one at a time, on the GPU when no fit holds it (a lock: a fit
@@ -2175,7 +2202,8 @@ GET    /api/roi_training[?datasets=1,2][&kept=1]
                                             first, then asks again without it
 GET    /api/fits                            every fit (those running and waiting with when they should end), and
                                             the fit worker's status (fits.py)
-POST   /api/fits                            ask for a fit: {name (a first name), options}; who and from where are kept
+POST   /api/fits                            ask for a fit: {name (a first name), options (among them require_odors: only
+                                            the flies with these are fit to; image_odors: "shared" or "all")}; who and from where are kept
 POST   /api/fits/{id}/cancel                stop a fit (one waiting now, one running at its next step)
 DELETE /api/fits/{id}                       delete a fit and its files (409 while it runs)
 GET    /api/fits/{id}/log                   its log

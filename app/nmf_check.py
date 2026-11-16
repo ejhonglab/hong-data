@@ -357,7 +357,8 @@ def run(db, p: dict, model, fly: dict, on_gpu: bool, say=print, progress=None) -
         roi_io.write_roiset(shown, {int(l): n for l, n in res["names"]["kept"].items()}, f["roiset"])
     else:
         f["roiset"].unlink(missing_ok=True)
-    np.savez_compressed(f["inputs"], responses=fly["responses"].astype(np.float32), spacing=np.array(fly["spacing"], float))
+    np.savez_compressed(f["inputs"], responses=fly["responses"].astype(np.float32), spacing=np.array(fly["spacing"], float),
+                        odors=np.array(list(fly.get("odors") or model.odors)))
     kinds = {k: sum(c["kind"] == k for c in out) for k in ("added", "extended", "split")}
     doc = {"prediction": p["id"], "fly": p["fly"], "of": f"{p['fly']}_{final}.tif", "named": named or f"{p['fly']}_{final}.tif", "asked_for": {k: (p.get("nmf") or {}).get(k) for k in ("name", "ip", "asked_at")},
            "finished": predictions.now(), "device": "GPU" if on_gpu else "CPU", "params": res["params"], "cleaned": res["cleaned"],
@@ -398,7 +399,9 @@ def run_plan(db, args: dict) -> dict:
     if f["prior"].is_file() and d["files"].get("atlas"):
         z = np.load(f["prior"])
         prior, prior_names = z["prior"].astype(np.float32), [str(n) for n in z["names"]]
-    fly = {"responses": inputs["responses"], "spacing": tuple(float(s) for s in inputs["spacing"])}
+    fly = {"responses": inputs["responses"], "spacing": tuple(float(s) for s in inputs["spacing"]),
+           # (those of the model's odors the fly has: looks made before a fly could lack any have them all)
+           "odors": [str(x) for x in inputs["odors"]] if "odors" in inputs else None}
     ids = anmf.name(model, fly, anmf.subset(labels, merged, cand, args["chosen"]), prior, prior_names)[0]
     return {"names": {str(l): v[0] for l, v in ids.items()}}
 

@@ -8,6 +8,9 @@ const STAGE_NAMES = { load: 'Finding and loading the flies', train: 'Training Ce
 const STATUS_NAMES = { queued: 'Queued', running: 'Running', done: 'Done', failed: 'Failed', cancelled: 'Stopped',
   interrupted: 'Interrupted' };
 const REF_NAMES = { grabe2016: 'Grabe et al. 2016' }; // fits.REFERENCES
+// the odors asked of a fit's flies unless unticked (of those some of the tab's flies have and some lack): all the flies recorded
+// since 2024-07 have them, so a model of those flies can know them
+const REQUIRE_CHECKED = ['acetophenone @ -4', 'valeric acid @ -3'];
 
 // a fit's reference atlases, by name
 const refNames = (o) => (o.refs || []).map((r) => REF_NAMES[r] || r);
@@ -64,7 +67,14 @@ export class FitsPanel {
     this.data = null;
     this.timer = null;
     this.open = new Set(); // past fits whose details are shown
+    this.require = new Set(REQUIRE_CHECKED); // the odors asked of its flies (those ticked in the form)
     const { $ } = h;
+    $('#fit-odors').addEventListener('change', (e) => {
+      const o = e.target.dataset.odor;
+      if (o) { if (e.target.checked) this.require.add(o); else this.require.delete(o); }
+      this._renderOdorsTotal();
+      this._renderExpected();
+    });
     $('#fit-start').addEventListener('click', () => this.start());
     const atlas = $('#fit-atlas'), grabe = $('#fit-grabe');
     const sync = () => { grabe.disabled = !atlas.checked; grabe.closest('label').classList.toggle('disabled', !atlas.checked); };
@@ -120,6 +130,65 @@ export class FitsPanel {
       found, right, Dice <span class="muted">(per plane · 3D)</span>, named</th><th></th></tr></thead><tbody>${past.map((f) => this._pastHtml(f)).join('')}</tbody></table>` : '';
   }
 
+  // The tab's flies with the odors of their diagnostic recordings (null until they are found, or as found before those were
+  // kept with them), and whose each is: [{ who, date, odors: Set }]
+  _odorFlies() {
+    const flies = this.h.flies?.();
+    if (!flies?.length || !flies.every((f) => f.odors)) return null;
+    return flies.map((f) => ({ who: [...new Set(f.datasets.map((d) => d.uploader || '?'))].sort().join(' + '), date: f.date, odors: new Set(f.odors) }));
+  }
+
+  // flies as 'Sam 29 (2024-07-16 to 2026-03-31), Tom 9 (…)': how many of each person's, recorded from when to when
+  _span(flies) {
+    const by = new Map();
+    for (const f of flies) by.set(f.who, [...(by.get(f.who) || []), f.date]);
+    return [...by].sort(([a], [b]) => a.localeCompare(b)).map(([who, d]) => { d.sort(); return `${this.h.esc(who)} ${d.length} (${d[0] === d.at(-1) ? d[0] : `${d[0]} to ${d.at(-1)}`})`; }).join(', ');
+  }
+
+  // the odors a fit can ask of its flies (the odors ticked in the form, of those the tab's flies have): those of flies found
+  _required(flies) { return [...this.require].filter((o) => flies.some((f) => f.odors.has(o))); }
+
+  // The odors that some of the tab's flies have and some lack, each with a box to ask it of the fit's flies: who has it and
+  // who does not, recorded when; and what the fit is of with the boxes as they are (`_renderOdorsTotal`).
+  renderOdors() {
+    const { $, esc } = this.h, box = $('#fit-odors'), flies = this._odorFlies();
+    box.hidden = !flies;
+    if (!flies) return;
+    const count = new Map();
+    for (const f of flies) for (const o of f.odors) count.set(o, (count.get(o) || 0) + 1);
+    const some = [...count].filter(([, n]) => n < flies.length).sort(([a, n], [b, m]) => m - n || a.localeCompare(b));
+    if (!some.length) { box.hidden = true; return; }
+    box.innerHTML = `<p><b>Odors asked of its flies.</b> <span class="muted">The model knows the odors all the flies it is fit to share: the
+      ${[...count].filter(([, n]) => n === flies.length).length} that all ${flies.length} flies below have, and each odor ticked
+      here: the fit is then only to the flies that have it. A fly without an odor of the model can still be predicted, by those it has.</span></p>
+      ${some.map(([o, n]) => `<label class="check"><input type="checkbox" data-odor="${esc(o)}"${this.require.has(o) ? ' checked' : ''}>
+        <span><b>${esc(o)}</b>: ${n} of the ${flies.length} flies have it: ${this._span(flies.filter((f) => f.odors.has(o)))}.
+        <span class="muted">Without it: ${this._span(flies.filter((f) => !f.odors.has(o)))}.</span></span></label>`).join('')}
+      <p class="fit-odors-total" id="fit-odors-total"></p>
+      <label class="check" title="Cellpose is given three images of a fly: its average image, and two made of its responses to odors. Ticked, those two are made of the odors every fly below has, whichever flies the model is fit to: the odors ticked above are then only in what its ROIs are joined into 3D and named by, so a fly without them gets exactly the ROIs and names that a model fit to the same flies without those odors would give it. Unticked, the images are of all the model's odors, and a fly without one of them is found from images Cellpose was not trained on: fewer of its ROIs are found."><input type="checkbox" id="fit-image-shared" checked>
+        <span>Cellpose's images of responses from the odors every fly has only <span class="muted">(so a fly without the odors ticked is predicted exactly as by a model fit without them)</span></span></label>`;
+    this._renderOdorsTotal();
+    this._renderExpected();
+  }
+
+  // what a fit asked for now is of: the flies with every odor ticked, and the odors they share
+  _renderOdorsTotal() {
+    const flies = this._odorFlies(), box = this.h.$('#fit-odors-total');
+    if (!flies || !box) return;
+    const req = this._required(flies), chosen = flies.filter((f) => req.every((o) => f.odors.has(o)));
+    const shared = chosen.length ? [...chosen[0].odors].filter((o) => chosen.every((f) => f.odors.has(o))).length : 0;
+    box.innerHTML = chosen.length >= 2 ? `As ticked, a fit is to <b>${chosen.length}</b> of the ${flies.length} flies (${this._span(chosen)}), and its model has
+      the <b>${shared}</b> odors they share.` : `<span class="player-error">As ticked, ${chosen.length} flies have every odor: a fit needs 2 at least.</span>`;
+  }
+
+  // how many flies a fit asked for now would be of (those with every odor ticked), if the tab's flies are found
+  _chosenFlies() {
+    const flies = this._odorFlies();
+    if (!flies) return null;
+    const req = this._required(flies);
+    return flies.filter((f) => req.every((o) => f.odors.has(o))).length;
+  }
+
   // how long a fit asked for now, with the form's options, should take: each stage's size (as fits.sizes: of as many
   // flies as the last fit that listed its own had) times what a unit of it took in the last fits done (the server's
   // `rates`); and when it would end, after those queued and running
@@ -127,13 +196,13 @@ export class FitsPanel {
     const { $ } = this.h, r = this.data?.rates, box = $('#fit-expected');
     if (!r) { box.textContent = ''; return; }
     const last = this.data.fits.find((f) => f.flies);
-    const n = last ? last.flies.train.length + last.flies.held_out.length : 80; // (fits.DEFAULT_FLIES)
+    const n = this._chosenFlies() ?? (last ? last.flies.train.length + last.flies.held_out.length : 80); // (fits.DEFAULT_FLIES)
     const held = Math.max(0, Math.min(+$('#fit-held-out').value || 0, n - 1)), train = n - held, epochs = +$('#fit-epochs').value || 0;
     const atlas = $('#fit-atlas').checked, refs = atlas && $('#fit-grabe').checked ? 1 : 0, s = r.seconds;
     const secs = s.load * n + s.train * epochs * train + (atlas ? s.atlas * (train + (last?.flies.stacks || 0) + refs) : 0) + s.evaluate * held;
     const wait = Math.max(0, ...this.data.fits.filter((f) => f.eta).map((f) => f.eta.until));
     box.textContent = `A fit asked for now should take about ${fmtDuration(secs)}${wait ? `, after the ${fmtDuration(wait)} those before it have left` : ''}
-      (${r.from ? `estimated from how long the last ${r.from === 1 ? 'fit' : `${r.from} fits`} took, for ${n} flies`
+      (${r.from ? `estimated from how long the last ${r.from === 1 ? 'fit' : `${r.from} fits`} took, for the ${n} flies it would be of`
     : 'a rough guess: no fit has finished yet to estimate from'}).`;
   }
 
@@ -186,8 +255,13 @@ export class FitsPanel {
       <td>${both(x, 'dice', num2)}</td><td>${num2(x.leak)} <span class="muted">(${num2(x.manual_leak)})</span></td>${PURITY_COLUMNS.map((c) => `<td>${c[2](x)}</td>`).join('')}<td>${x.named}/${x.named_of}</td></tr>`).join('');
     const missed = r.glomeruli.filter((g) => g.detected < g.flies);
     const refs = refNames(o).map(esc);
+    const fl = f.flies, of = fl ? fl.train.length + fl.held_out.length : 0;
+    // (the odors asked of its flies, and those its model has: of fits made since they could be asked)
+    const odors = fl?.odors ? ` Its model has the ${fl.odors.length} odors those flies share${fl.listed > of ? `: only the ${of} of ${fl.listed} flies with ${
+      (o.require_odors || []).map(esc).join(' and ')} were fit to` : ''}${fl.image_odors && fl.image_odors.length < fl.odors.length
+      ? `; Cellpose's images are of the ${fl.image_odors.length} that all ${fl.listed} had (a fly without the others is predicted as by a model fit without them)` : ''}.` : '';
     return `<p class="small">${f.flies ? `Fit to ${f.flies.train.length} flies, ${o.held_out} held out, ${o.epochs} epochs${o.atlas
-      ? `, with the atlas${refs.length ? ` (and ${refs.join(' and ')}'s in it)` : ''}` : ''}.${roiSettings(o)}` : ''}
+      ? `, with the atlas${refs.length ? ` (and ${refs.join(' and ')}'s in it)` : ''}` : ''}.${odors}${roiSettings(o)}` : ''}
       Scored are the final ROIs (${esc(FINAL_NAMES[r.final] || r.final)}), against each held-out fly's own${r.mean.recall_2d == null ? ', as 3D objects'
       : ": plane by plane (each glomerulus's outline on a plane, as ROIs are drawn), then as 3D objects (its outlines on all its planes as one)"}.
       ${partlyDrawn(r) ? `As glomeruli are often drawn on their clearest planes only, nothing counts against an ROI where nothing is drawn:
@@ -238,7 +312,10 @@ export class FitsPanel {
     const options = { held_out: $('#fit-held-out').value, epochs: $('#fit-epochs').value, atlas,
       tentative: $('#fit-tentative').checked, refs: atlas && $('#fit-grabe').checked ? ['grabe2016'] : [],
       cellprob_threshold: $('#fit-cellprob').value, flow_threshold: $('#fit-flow').value, dilate: $('#fit-dilate').value,
-      join_overlap: $('#fit-join-overlap').value, join_corr: $('#fit-join-corr').value, max_cost: $('#fit-max-cost').value };
+      join_overlap: $('#fit-join-overlap').value, join_corr: $('#fit-join-corr').value, max_cost: $('#fit-max-cost').value,
+      // (the odors ticked, of those the flies found have: all of them, if the flies are not found yet, for the server to say)
+      require_odors: this._odorFlies() ? this._required(this._odorFlies()) : [...this.require],
+      image_odors: $('#fit-image-shared')?.checked === false ? 'all' : 'shared' };
     $('#fit-start').disabled = true;
     try {
       const f = await api('/api/fits', { method: 'POST', json: { name, options } });
