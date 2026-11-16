@@ -902,7 +902,10 @@ between the frontend and the server. Using the app is described in
   roifile, and each is drawn on its Z plane: the hyperstack Z of the ROI, or its stack
   position on a volume (as hong2p reads them, ROIs being drawn on per-plane average
   images). Contrast is set in the browser from the plane shown, as ImageJ's B&C window
-  sets it (its Auto, Reset and slider arithmetic, over a 256-bin histogram).
+  sets it (its Auto, Reset and slider arithmetic, over a 256-bin histogram). A movie opens
+  at Reset's levels of its strongest plane (each plane's first time point read alone, at
+  most 32 MB of them, evenly spaced), not Auto's of the first: one level for every plane,
+  which a first plane dimmer or brighter than the rest no longer skews.
 - **Motion-corrected movies are found as al_analysis lays out a fly's folder**, not by
   listing every TIFF in it, which also has its dF/F volumes, averages and the suite2p
   run (twice, through its link): the fly's recordings registered together

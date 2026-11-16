@@ -43,6 +43,7 @@ const ONLY = { raw: 'Not in the motion-corrected data', mocorr: 'Not in the raw 
 // keep it, halved at each press (more contrast) until the range found is empty
 const SLIDER = 1000;
 const HIST_BINS = 256;
+const STRONGEST_BYTES = 32 * 1024 * 1024; // at most this much of a movie's planes is read to find its strongest (`_startContrast`)
 const AUTO_THRESHOLD = 5000;
 
 const sleep = (ms) => new Promise((r) => { setTimeout(r, ms); });
@@ -280,9 +281,36 @@ export class MoviePlayer {
     if (id !== this.loadId || !plane) return;
     this.current = plane;
     this._fit();
-    this._resetContrast(false);
-    this._autoContrast();
+    if (!(await this._startContrast(id))) return;
     this._updateLabels();
+  }
+
+  // The levels a movie opens with: as Reset gives them on its plane with the strongest signal (the highest
+  // 99.5th percentile, at its first time point; of a movie with more planes than STRONGEST_BYTES of them,
+  // of as many, evenly spaced), whichever plane is shown. Returns whether the movie is still the one loaded.
+  async _startContrast(id) {
+    const i = this.movie.info, c = this.c, per = i.x * i.y * (TYPED[i.dtype]?.BYTES_PER_ELEMENT || 2);
+    const k = Math.max(1, Math.min(i.z, Math.floor(STRONGEST_BYTES / per)));
+    const zs = [...new Set(Array.from({ length: k }, (_, j) => (k > 1 ? Math.round((j * (i.z - 1)) / (k - 1)) : 0)))];
+    // (each plane's first time point alone: not the chunk of them a plane shown is read in)
+    await Promise.all(zs.map((z) => (this.cache.has(`0|${z}|${c}`) ? null : this._fetch(0, 1, z, c).catch(() => {}))));
+    if (id !== this.loadId) return false;
+    let best = this.current, top = -Infinity;
+    for (const z of zs) {
+      const p = this.cache.get(`0|${z}|${c}`), v = p ? this._high(p) : -Infinity;
+      if (v > top) { top = v; best = p; }
+    }
+    this._resetContrast(true, best);
+    return true;
+  }
+
+  // a plane's 99.5th percentile (of at most about 65,000 of its values, evenly spaced; NaN left out)
+  _high(p) {
+    const step = Math.max(1, Math.floor(p.length / 65536)), v = [];
+    for (let j = 0; j < p.length; j += step) if (p[j] === p[j]) v.push(p[j]);
+    if (!v.length) return -Infinity;
+    v.sort((a, b) => a - b);
+    return v[Math.floor((v.length - 1) * 0.995)];
   }
 
   // the movie's trials (al_analysis' trial_frames_and_odors.json), to name the odor of each over it
@@ -1141,9 +1169,8 @@ export class MoviePlayer {
     return mn <= mx ? [mn, mx] : [0, 1];
   }
 
-  // Reset, as ImageJ's: the sliders' range and the levels, the full range of the plane shown
-  _resetContrast(render = true) {
-    const p = this.current;
+  // Reset, as ImageJ's: the sliders' range and the levels, the full range of the plane shown (or of plane `p`)
+  _resetContrast(render = true, p = this.current) {
     if (!p) return;
     const [mn, mx] = this._extent(p);
     this.range = { lo: mn, hi: mx > mn ? mx : mn + 1 };
@@ -1321,7 +1348,7 @@ export class MoviePlayer {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this._paintOdor(ctx);
     if (!this.showRois || !this.rois.length) return;
-    ctx.font = '12px system-ui, sans-serif';
+    ctx.font = '500 12px system-ui, sans-serif'; // (ROIs' names: a little heavier than normal, to stand out on the image)
     this.rois.forEach((r, i) => {
       const style = this._roiStyle(r, i);
       if (!style) return;

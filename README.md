@@ -396,7 +396,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   Brightness and contrast, under the movies, are set as in ImageJ's B&C window: the plane's histogram with
   its black and white levels, Minimum, Maximum, Brightness and Contrast sliders, *Auto*
   (as ImageJ's: few pixels saturated, more contrast at each press) and *Reset* (the
-  plane's full range). Keys as in ImageJ where they exist (space or `\` to play, `<` /
+  plane's full range). A movie opens as *Reset* would set it on its plane with the strongest
+  signal (the highest 99.5th percentile at its first time point), so no plane is saturated. Keys as in ImageJ where they exist (space or `\` to play, `<` /
   `>` and the arrows to step, `A` auto contrast), `R` to reset the contrast and `O` for
   odor names. Only the planes shown are read, on the server, so even large movies open
   at once.
