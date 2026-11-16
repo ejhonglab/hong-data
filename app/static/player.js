@@ -407,8 +407,15 @@ export class MoviePlayer {
       ? `${found ? ', or' : ' ·'} ${found ? '' : `${cands} `}found by NMF on any plane` : ''}`
       : `${found || (shown === this.rois.length ? this.rois.length : `${shown} of ${this.rois.length}`)} from …/${this.esc(from)}`;
     const tag = '<span class="tag-nmf" title="Found by NMF in the fly\'s movies (a look for glomeruli the predicted ROIs miss), not predicted by the model">NMF</span>';
+    // (searched for: grouped by name, each name's by plane; else as they are)
+    const order = this.rois.map((r, i) => i);
+    if (q) {
+      const nat = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' }), z = (i) => this._roiPlane(this.rois[i]) ?? -1;
+      order.sort((a, b) => nat.compare(String(this.rois[a].name), String(this.rois[b].name)) || z(a) - z(b) || a - b);
+    }
     box.innerHTML = `<p class="muted small" title="${this.esc(path)}">${head}</p>`
-      + this.rois.map((r, i) => {
+      + order.map((i) => {
+        const r = this.rois[i];
         if (!listed(r)) return '';
         const plane = this._roiPlane(r);
         const name = this.esc(r.name);
