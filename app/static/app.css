@@ -888,6 +888,8 @@ summary.player-rois-head::-webkit-details-marker { display: none; }
 .player-nmf p { margin: 0; color: var(--ink-muted); }
 .player-nmf p.player-error { color: var(--danger); }
 .fit-odors { margin: 6px 0 8px; font-size: 13px; }
+.fit-count { margin: 4px 0 8px; font-size: 13.5px; }
+.fit-count:empty { display: none; }
 .fit-odors p { margin: 0 0 4px; }
 .fit-odors .check { display: flex; align-items: baseline; gap: 8px; margin: 3px 0; font-weight: 400; }
 .fit-odors .check input { flex: none; }

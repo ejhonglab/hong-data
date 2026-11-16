@@ -90,6 +90,7 @@ export class FitsPanel {
     atlas.addEventListener('change', sync);
     sync();
     for (const id of ['#fit-held-out', '#fit-epochs', '#fit-atlas', '#fit-grabe']) $(id).addEventListener('input', () => this._renderExpected());
+    $('#fit-held-out').addEventListener('input', () => this._renderCount());
     $('#fits-list').addEventListener('click', (e) => this._action(e));
     $('#fits-past').addEventListener('click', (e) => this._action(e));
   }
@@ -162,6 +163,7 @@ export class FitsPanel {
   renderOdors() {
     const { $, esc } = this.h, box = $('#fit-odors'), flies = this._odorFlies();
     box.hidden = !flies;
+    this._renderCount();
     if (!flies) return;
     const count = new Map();
     for (const f of flies) for (const o of f.odors) count.set(o, (count.get(o) || 0) + 1);
@@ -180,8 +182,20 @@ export class FitsPanel {
     this._renderExpected();
   }
 
+  // what a fit asked for now is of, by the held-out box: how many flies it is trained on and holds out, and how many odors
+  _renderCount() {
+    const flies = this._odorFlies(), box = this.h.$('#fit-count');
+    if (!flies) { box.textContent = ''; return; }
+    const req = this._required(flies), chosen = flies.filter((f) => req.every((o) => f.odors.has(o)));
+    const odors = chosen.length ? [...chosen[0].odors].filter((o) => chosen.every((f) => f.odors.has(o))).length : 0;
+    const held = Math.max(0, Math.min(Math.floor(+this.h.$('#fit-held-out').value || 0), chosen.length - 1));
+    box.innerHTML = chosen.length < 2 ? '<span class="player-error">As the odors below are ticked, under 2 flies have them all: a fit needs 2 at least.</span>'
+      : `As set, a fit is to <b>${chosen.length}</b> of the ${flies.length} flies (<b>${chosen.length - held}</b> trained on, ${held} held out), with <b>${odors}</b> odors.`;
+  }
+
   // what a fit asked for now is of: the flies with every odor ticked, and the odors they share
   _renderOdorsTotal() {
+    this._renderCount();
     const flies = this._odorFlies(), box = this.h.$('#fit-odors-total');
     if (!flies || !box) return;
     const req = this._required(flies), chosen = flies.filter((f) => req.every((o) => f.odors.has(o)));

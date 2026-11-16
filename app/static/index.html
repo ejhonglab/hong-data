@@ -634,6 +634,7 @@ try {
         <label class="field"><span>Held-out flies</span><input type="number" id="fit-held-out" min="1" max="30" value="4"></label>
         <label class="field"><span>Epochs <span class="muted">(of Cellpose's training)</span></span><input type="number" id="fit-epochs" min="1" max="5000" value="15"></label>
       </div>
+      <p class="fit-count" id="fit-count" aria-live="polite"></p>
       <label class="check"><input type="checkbox" id="fit-atlas" checked><span>The atlas <span class="muted">(the flies registered to
         each other, through their anatomical stacks where they have them: slower, but places and names glomeruli better)</span></span></label>
       <label class="check fit-sub"><input type="checkbox" id="fit-grabe" checked><span>With the <a href="https://doi.org/10.1016/j.celrep.2016.08.063"
