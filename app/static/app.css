@@ -794,8 +794,18 @@ dialog.player::backdrop { background: rgba(29,31,34,.55); }
 .player-head h2 { font-size: 15px; white-space: nowrap; }
 .player-sub { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
 .player-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 260px minmax(0, 1fr) 250px; }
-.player-list, .player-rois { overflow: auto; }
-.player-list { border-right: 1px solid var(--rule); padding: 6px 0; }
+.player-left { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--rule); }
+.player-list { flex: 1; min-height: 0; overflow: auto; padding: 6px 0; }
+.player-bc-box { flex: none; border-top: 1px solid var(--rule); padding: 6px 10px; max-height: 60%; overflow: auto; }
+.player-bc-box > summary, .player-roi-box > summary, .player-edit-help-box > summary, .player-nmf-status-box > summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+.player-bc-box[open] > summary { margin-bottom: 4px; }
+.player-dff { display: flex; flex-direction: column; gap: 2px; padding: 0 14px 6px 22px; font-size: 11.5px; }
+.player-dff:empty { display: none; }
+.player-dff progress { width: 100%; height: 6px; }
+.player-dff-item { text-align: left; border: 0; background: none; padding: 2px 6px; border-left: 3px solid transparent; cursor: pointer; font-size: 12px; color: var(--accent); }
+.player-dff-item:hover { background: var(--surface-2); }
+.player-dff-item.active { background: var(--accent-soft); border-left-color: var(--accent); }
+.player-edit-help-box > summary, .player-nmf-status-box > summary { font-weight: 400; font-size: 12px; color: var(--ink-muted); }
 .player-list h3 { font-size: 12px; color: var(--ink-muted); padding: 10px 14px 4px; }
 .player-list p { padding: 0 14px; }
 .player-item { display: flex; flex-direction: column; gap: 1px; width: 100%; text-align: left; border: 0; background: none; padding: 6px 14px 6px 11px; cursor: pointer; border-left: 3px solid transparent; font-size: 12.5px; }
@@ -824,11 +834,13 @@ dialog.player::backdrop { background: rgba(29,31,34,.55); }
 .player-play { width: 42px; justify-content: center; }
 .player-pixel { margin-left: auto; font-variant-numeric: tabular-nums; }
 .player-keys { margin: 0; font-size: 11.5px; color: var(--ink-muted); }
-.player-rois { border-left: 1px solid var(--rule); padding: 8px 10px; display: flex; flex-direction: column; overflow: hidden; }
-.player-roi-list { flex: 1; min-height: 0; overflow: auto; }
+.player-rois { border-left: 1px solid var(--rule); padding: 8px 10px; display: flex; flex-direction: column; overflow-y: auto; min-height: 0; }
+.player-roi-list { flex: none; }
+.player-roi-box { margin-bottom: 6px; }
+.player-roi-box[open] > summary { margin-bottom: 6px; }
 .player-roi-search { width: 100%; box-sizing: border-box; margin-bottom: 4px; padding: 3px 6px; font-size: 12.5px; }
 .player-item-recs { font-size: 11.5px; color: var(--accent); word-break: break-word; }
-.player-bc { display: flex; flex-direction: column; gap: 4px; padding-bottom: 10px; margin-bottom: 8px; border-bottom: 1px solid var(--rule); font-size: 12px; }
+.player-bc { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
 .player-bc h3 { font-size: 13px; margin-bottom: 2px; }
 .player-hist { width: 100%; height: 72px; background: var(--surface-2); border: 1px solid var(--rule); color: var(--ink-muted); --line: var(--accent); }
 .player-bc-range { display: flex; justify-content: space-between; font-size: 11px; font-variant-numeric: tabular-nums; }
@@ -836,7 +848,11 @@ dialog.player::backdrop { background: rgba(29,31,34,.55); }
 .player-slider input { width: 100%; margin: 0; }
 .player-slider output { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); font-size: 11.5px; }
 .player-bc-buttons { display: flex; gap: 6px; margin-top: 2px; }
-.player-rois-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.player-rois-head { display: flex; align-items: center; gap: 10px; }
+.player-rois-head::before { content: '▸'; font-size: 11px; color: var(--ink-muted); }
+.player-roi-box[open] > .player-rois-head::before { content: '▾'; }
+summary.player-rois-head { list-style: none; }
+summary.player-rois-head::-webkit-details-marker { display: none; }
 .player-rois-head h3 { font-size: 13px; margin-right: auto; }
 .player-rois-head .check { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--ink-muted); }
 .player-roi-opts { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; font-size: 12px; color: var(--ink-muted); }

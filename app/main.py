@@ -40,7 +40,7 @@ from starlette.staticfiles import StaticFiles
 
 from . import (backup, bundle_import, chemprops, compare, config, dilution, export, extract, filelog, fits, headspace, lotus,
                lotus_import, matrix_download, merge, metacyc, metacyc_import, model_data, model_runs, nmf_check, orn_input, movies, odormeta, permalinks,
-               predictions, reference, roi_training, sandbox, tensor, thorimage, vcf, version, yamlcheck)
+               predictions, reference, roi_training, sandbox, tensor, thorimage, trial_dff, vcf, version, yamlcheck)
 from .db import PANEL_RENAMES, PROPERTY_COLUMNS, Database, rename_panel
 from .glomeruli import GLOMERULI, load_glomeruli
 from .ingest import (ParsedData, ValidationError, combine, extra_text, files_text, fly_key, kc_id_problems, load_file,
@@ -1340,7 +1340,7 @@ def _server_file(path: Any, suffixes: tuple[str, ...]) -> Path:
     if not os.path.isabs(p) or not p.lower().endswith(suffixes):
         raise HTTPException(400, f"expected the path on the server of a {' / '.join(suffixes)} file")
     real = os.path.realpath(p)
-    tops = [os.path.realpath(t).rstrip("/") for t in [config.TENSOR_ROOT, *sandbox.folders(), predictions.root()]]
+    tops = [os.path.realpath(t).rstrip("/") for t in [config.TENSOR_ROOT, *sandbox.folders(), predictions.root(), trial_dff.cache_dir()]]
     if not any(real == t or real.startswith(t + "/") for t in tops) or not sandbox.can_read(real):
         raise HTTPException(403, tensor.NOT_ALLOWED)
     if not os.path.isfile(real):
@@ -1427,13 +1427,38 @@ async def movie_rois_download(request: Request) -> Response:
 
 async def movie_trials(request: Request) -> Response:
     """The trials of a movie, from an al_analysis trial_frames_and_odors.json on the server
-    (``?path=``): see `movies.read_trials`."""
+    (``?path=``): see `movies.read_trials`; with ``&by=trials`` or ``&by=odors``, the labels of its
+    per-trial or per-odor dF/F images' time points (`trial_dff.labels`)."""
     path = _server_file(request.query_params.get("path"), (".json",))
+    by = request.query_params.get("by")
     try:
-        trials = await run_in_threadpool(movies.read_trials, path)
+        trials = await run_in_threadpool(trial_dff.labels, path, by) if by in ("trials", "odors") else await run_in_threadpool(movies.read_trials, path)
     except movies.MovieError as e:
         return json_error(422, str(e))
     return JSONResponse({"trials": trials})
+
+
+async def movie_trial_dff(request: Request) -> Response:
+    """Each trial's dF/F image of movies, and each odor's mean (`trial_dff`): {"movies": [{"path", "trials"}] (a movie
+    and its trials file, on the server), "first": the path of one to compute before the others}. Returns of each its
+    images' paths and how they are coming (`trial_dff.status`); those not there yet are computed in the background."""
+    body = await request.json()
+    items = body.get("movies") if isinstance(body, dict) else None
+    if not isinstance(items, list) or len(items) > 500 or not all(isinstance(i, dict) for i in items):
+        return json_error(400, "movies: a list of {path, trials}")
+
+    def run():
+        ok = []
+        for i in items:
+            m = _server_file(i.get("path"), movies.TIFF_SUFFIXES)
+            t = _server_file(i.get("trials"), (".json",))
+            ok.append({"path": str(m), "trials": str(t), "asked": i.get("path")})
+        first = body.get("first")
+        first = next((o["path"] for o in ok if o["asked"] == first), None)
+        return trial_dff.status([{"path": o["path"], "trials": o["trials"]} for o in ok], first), ok
+
+    st, ok = await run_in_threadpool(run)
+    return JSONResponse({"movies": [{**s, "path": o["asked"]} for s, o in zip(st, ok)]})
 
 
 async def dataset_file(request: Request) -> Response:
@@ -4087,6 +4112,7 @@ routes = [
     Route("/api/movie/rois", movie_rois),
     Route("/api/movie/rois/download", movie_rois_download),
     Route("/api/movie/trials", movie_trials),
+    Route("/api/movie/trial_dff", movie_trial_dff, methods=["POST"]),
     Route("/api/download", download),
     Route("/api/roi_training", roi_training_flies),
     Route("/api/roi_training/download", roi_training_download),

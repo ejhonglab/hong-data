@@ -1380,7 +1380,24 @@ try {
     <button type="button" class="btn small player-close">Close</button>
   </div>
   <div class="player-body">
-    <nav class="player-list" aria-label="Movies"></nav>
+    <div class="player-left">
+      <nav class="player-list" aria-label="Movies"></nav>
+      <details class="player-bc-box" open>
+        <summary>Brightness &amp; contrast</summary>
+      <section class="player-bc" aria-label="Brightness and contrast">
+        <canvas class="player-hist" aria-hidden="true"></canvas>
+        <div class="player-bc-range muted"><span class="player-bc-range-lo"></span><span class="player-bc-range-hi"></span></div>
+        <label class="player-slider"><span>Minimum</span><input type="range" class="player-bc-min" min="0" max="1000" value="0"><output class="player-bc-min-out"></output></label>
+        <label class="player-slider"><span>Maximum</span><input type="range" class="player-bc-max" min="0" max="1000" value="1000"><output class="player-bc-max-out"></output></label>
+        <label class="player-slider"><span>Brightness</span><input type="range" class="player-bc-bright" min="0" max="1000" value="500"><output></output></label>
+        <label class="player-slider"><span>Contrast</span><input type="range" class="player-bc-contrast" min="0" max="1000" value="500"><output></output></label>
+        <div class="player-bc-buttons">
+          <button type="button" class="btn small player-auto" title="As ImageJ's Auto: from the histogram of the plane shown, leaving out only its sparsest ends (bins with under 0.02% of its pixels). Press again for more contrast (A)">Auto</button>
+          <button type="button" class="btn small player-reset" title="The full range of the plane shown (R)">Reset</button>
+        </div>
+      </section>
+      </details>
+    </div>
     <div class="player-main">
       <div class="player-stage">
         <canvas class="player-canvas" aria-label="Movie"></canvas>
@@ -1410,24 +1427,12 @@ try {
       </div>
     </div>
     <aside class="player-rois" aria-label="Brightness and contrast, and ImageJ ROIs">
-      <section class="player-bc" aria-label="Brightness and contrast">
-        <h3>Brightness &amp; contrast</h3>
-        <canvas class="player-hist" aria-hidden="true"></canvas>
-        <div class="player-bc-range muted"><span class="player-bc-range-lo"></span><span class="player-bc-range-hi"></span></div>
-        <label class="player-slider"><span>Minimum</span><input type="range" class="player-bc-min" min="0" max="1000" value="0"><output class="player-bc-min-out"></output></label>
-        <label class="player-slider"><span>Maximum</span><input type="range" class="player-bc-max" min="0" max="1000" value="1000"><output class="player-bc-max-out"></output></label>
-        <label class="player-slider"><span>Brightness</span><input type="range" class="player-bc-bright" min="0" max="1000" value="500"><output></output></label>
-        <label class="player-slider"><span>Contrast</span><input type="range" class="player-bc-contrast" min="0" max="1000" value="500"><output></output></label>
-        <div class="player-bc-buttons">
-          <button type="button" class="btn small player-auto" title="As ImageJ's Auto: from the histogram of the plane shown, leaving out only its sparsest ends (bins with under 0.02% of its pixels). Press again for more contrast (A)">Auto</button>
-          <button type="button" class="btn small player-reset" title="The full range of the plane shown (R)">Reset</button>
-        </div>
-      </section>
-      <div class="player-rois-head">
+      <details class="player-roi-box">
+      <summary class="player-rois-head">
         <h3>ROIs</h3>
         <label class="check"><input type="checkbox" class="player-show-rois" checked> show</label>
         <label class="check"><input type="checkbox" class="player-roi-names" checked> names</label>
-      </div>
+      </summary>
       <div class="player-roi-opts">
         <label class="player-roi-planes-row" title="ROIs drawn on other planes than the one shown (all are drawn on a max projection)">ROIs of other planes
           <select class="player-roi-planes">
@@ -1443,6 +1448,7 @@ try {
           <input type="checkbox" class="player-roi-unnamed" checked> unnamed predicted ROIs <span class="player-roi-unnamed-n muted"></span></label>
       </div>
       <div class="player-roi-sources" hidden></div>
+      </details>
       <section class="player-edit" aria-label="Editing the predicted ROIs" hidden>
         <div class="player-edit-row">
           <label title="How far, in pixels, an outline may move from the predicted one when points are left out of it (Ramer–Douglas–Peucker: the points kept are the predicted outline's own). 1 leaves about a tenth of the points; 0 leaves them all.">Simplify
@@ -1456,10 +1462,12 @@ try {
           <button type="button" class="btn small player-edit-discard" title="Delete the edited ROIs, once confirmed: those predicted are shown again (Undo brings the edited ones back, while this viewer stays open)" hidden>Discard…</button>
         </div>
         <p class="player-edit-status small" aria-live="polite"></p>
+        <details class="player-edit-help-box"><summary>Edit controls</summary>
         <p class="player-edit-help muted small">Click an edited ROI to choose it; then drag its points, or drag from inside it to move all of it. Shift-click a point
           to add one beside it, Alt-click (or Ctrl-click) one to delete it, as in ImageJ. Double-click a predicted ROI's name on the image
           for what naming it cost.<br>Each change is saved at once, beside the ROIs as predicted, which
           stay as they are.</p>
+        </details>
       </section>
       <section class="player-nmf" aria-label="Glomeruli the predicted ROIs miss" hidden>
         <div class="player-edit-row">
@@ -1478,7 +1486,9 @@ try {
           <label class="check" title="Also proposes cutting ROIs whose pixels are tuned in two ways over the trials (al-diag-seg's test, not the factorization). Few of these were right on the test flies (4 of 27), so they are not ticked to merge to begin with."><input type="checkbox" data-nmf="split" checked> propose parts of ROIs that may hold two glomeruli</label>
         </details>
         <progress class="player-nmf-bar" max="1" hidden></progress>
-        <p class="player-nmf-status small" aria-live="polite"></p>
+        <details class="player-nmf-status-box"><summary>The look</summary>
+          <p class="player-nmf-status small" aria-live="polite"></p>
+        </details>
       </section>
       <div class="player-roi-legend muted small"></div>
       <button type="button" class="btn small player-roi-download" hidden>Download the ROIs</button>

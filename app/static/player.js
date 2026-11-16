@@ -28,6 +28,9 @@ const SOURCES = { predicted: { label: 'predicted', color: '#ff4fd8' }, manual: {
 const NMF_STAGES = { load: 'reading the fly', register: 'registering the atlas to the fly', read: 'reading its movies', factorize: 'factorizing its planes',
   name: 'naming what it found' };
 const NMF_POLL_MS = 2000;
+// each trial's dF/F image of a movie, and each odor's mean (trial_dff.py): how often their making is asked after, and what they are called
+const DFF_POLL_MS = 2000;
+const DFF_NAMES = { trials: 'dF/F, each trial', odors: 'dF/F, each odor (mean of its trials)' };
 const HANDLE = 6; // the side of an edited ROI's points' handles, and how near one the pointer takes hold of it (CSS pixels)
 const CLICK = 3; // how far the pointer may move between press and release for it to be a click, not a drag
 const WHEEL_STEP = 40; // pixels of wheel scrolling (a trackpad's, added up) for one step of a slider
@@ -75,6 +78,8 @@ export class MoviePlayer {
     this.$('.player-close').addEventListener('click', () => el.close());
     el.addEventListener('close', () => this._unload());
     this.$('.player-list').addEventListener('click', (e) => {
+      const d = e.target.closest('[data-dff]');
+      if (d) { this._loadDff(+d.dataset.dff, d.dataset.by); return; }
       const b = e.target.closest('[data-movie]');
       if (b) this.load(this.movies[+b.dataset.movie]);
     });
@@ -172,6 +177,7 @@ export class MoviePlayer {
         + (only ? `<h4 class="player-unmatched">${ONLY[k]}</h4>${only}` : '');
     });
     this.$('.player-list').innerHTML = groups.join('');
+    this._dffInit();
     const first = this.movies[0];
     if (first) this.load(first);
     else this._clearMovie(`No ${kind === 'raw' ? 'raw' : 'motion-corrected'} movies were found for this dataset.`);
@@ -198,6 +204,7 @@ export class MoviePlayer {
       m.rois ? " · the fly's own ROIs" : ''}${m.trials ? ' · odors' : ''}</span>${m.recordings
       ? `<span class="player-item-recs">${this.esc(this._registered(m))}</span>` : ''}</button>`).join('')
       : '<p class="muted small">No image of this fly was found.</p>';
+    this._dffInit();
     if (this.movies[0]) this.load(this.movies[0]);
   }
 
@@ -229,6 +236,8 @@ export class MoviePlayer {
     this._resetCache();
     const id = (this.loadId = (this.loadId || 0) + 1);
     this.el.querySelectorAll('.player-item').forEach((b) => b.classList.toggle('active', this.movies[+b.dataset.movie] === movie));
+    this.el.querySelectorAll('[data-dff]').forEach((b) => b.classList.toggle('active', movie.dff?.of === +b.dataset.dff && movie.dff.by === b.dataset.by));
+    if (movie.trials && !movie.dff && this.dff?.status.get(movie.path)?.status !== 'ready') this._dffAsk(movie.path);
     this._clearMovie('Opening the movie…');
     let info;
     try { info = await this.api(`/api/movie?path=${encodeURIComponent(movie.path)}`); } catch (e) {
@@ -276,7 +285,8 @@ export class MoviePlayer {
   // the movie's trials (al_analysis' trial_frames_and_odors.json), to name the odor of each over it
   async _loadTrials(path, id) {
     let res;
-    try { res = await this.api(`/api/movie/trials?path=${encodeURIComponent(path)}`); } catch (e) {
+    const by = this.movie?.dff ? `&by=${this.movie.dff.by}` : '';
+    try { res = await this.api(`/api/movie/trials?path=${encodeURIComponent(path)}${by}`); } catch (e) {
       if (id === this.loadId) this.$('.player-msg').textContent = `Could not read its odors: ${e.message}`;
       return;
     }
@@ -380,12 +390,13 @@ export class MoviePlayer {
     // (a prediction's: those of the plane shown only, as drawn; but those found by NMF and not merged, of every
     // plane, first: each is to be looked at, and choosing one shows its plane)
     const cand = (r) => r.source === 'nmf';
-    const q = this.roiQuery, onPlane = (r) => this._visible(r) && (cand(r) || !(pred && this._roiPlane(r) != null && this._roiPlane(r) !== this.z));
+    // (searched for: of every plane, each with its plane, which choosing it shows)
+    const q = this.roiQuery, onPlane = (r) => this._visible(r) && (cand(r) || q || !(pred && this._roiPlane(r) != null && this._roiPlane(r) !== this.z));
     const listed = (r) => onPlane(r) && (!q || String(r.name).toLowerCase().includes(q));
     const from = path.split('/').slice(-2).join('/'), shown = this.rois.filter(listed).length, all = this.rois.filter(onPlane).length;
     const cands = this.rois.filter((r) => cand(r) && listed(r)).length;
-    const found = q ? `${shown} of ${all} ROI${all === 1 ? '' : 's'} matching “${this.esc(q)}”` : '';
-    const head = pred ? `${found || `${shown - cands} ROI${shown - cands === 1 ? '' : 's'}`} on plane ${this.z + 1}${cands
+    const found = q ? `${shown} of ${all} ROI${all === 1 ? '' : 's'} matching “${this.esc(q)}”${pred ? ', on every plane' : ''}` : '';
+    const head = pred ? `${found || `${shown - cands} ROI${shown - cands === 1 ? '' : 's'} on plane ${this.z + 1}`}${!q && cands
       ? `${found ? ', or' : ' ·'} ${found ? '' : `${cands} `}found by NMF on any plane` : ''}`
       : `${found || (shown === this.rois.length ? this.rois.length : `${shown} of ${this.rois.length}`)} from …/${this.esc(from)}`;
     const tag = '<span class="tag-nmf" title="Found by NMF in the fly\'s movies (a look for glomeruli the predicted ROIs miss), not predicted by the model">NMF</span>';
@@ -742,6 +753,10 @@ export class MoviePlayer {
       : 'Looks in the fly\'s movies for glomeruli the predicted ROIs miss (by NMF: on the GPU when no fit has it), about a minute. What it finds is listed here, to merge into the ROIs or not.';
     const out = this.$('.player-nmf-status');
     out.textContent = text;
+    // (in a box of its own, closed to begin with: what it says in a word or two above it)
+    this.$('.player-nmf-status-box summary').textContent = `The look: ${n.error ? 'could not be asked for'
+      : status === 'running' ? `${Math.round((st.fraction || 0) * 100)}%` : status === 'done' && found ? `found ${found.candidates.length}`
+        : { queued: 'waiting', failed: 'failed', interrupted: 'interrupted' }[status] || 'what it does'}`;
     out.classList.toggle('player-error', Boolean(n.error) || status === 'failed' || status === 'interrupted');
   }
 
@@ -1344,7 +1359,8 @@ export class MoviePlayer {
     ctx.fillStyle = on ? '#fff' : '#9a9a9a';
     ctx.fillText(at.trial.odor ?? '(odor not named)', 20, 10);
     ctx.font = '12px system-ui, sans-serif';
-    ctx.fillText(`trial ${at.i + 1} / ${this.trials.length} · ${on ? 'odor on' : 'before odor'}`, 20, 31);
+    const by = this.movie.dff?.by;
+    ctx.fillText(by ? `${by === 'odors' ? 'odor' : 'trial'} ${at.i + 1} / ${this.trials.length} · dF/F` : `trial ${at.i + 1} / ${this.trials.length} · ${on ? 'odor on' : 'before odor'}`, 20, 31);
     if (on) {
       ctx.shadowBlur = 0;
       ctx.fillStyle = '#ff5a4f';
@@ -1395,6 +1411,7 @@ export class MoviePlayer {
   }
 
   _unload() {
+    this.dff = null; // (no more asking after dF/F images being made)
     this.stop();
     this.loadId = (this.loadId || 0) + 1;
     this._resetCache();
@@ -1466,6 +1483,7 @@ export class MoviePlayer {
   // the wheel over a slider steps it: a step a notch (a trackpad's scrolling added up), up
   // or right for more; ten with Shift; the brightness and contrast sliders by a hundredth
   _wheelSlider(e) {
+    if (e.target.closest?.('.player-fps')) { this._wheelFps(e); return; }
     const el = e.target.closest?.('input[type=range]');
     if (!el || el.disabled) return;
     e.preventDefault();
@@ -1480,6 +1498,78 @@ export class MoviePlayer {
     if (v === +el.value) return;
     el.value = v;
     el.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  // the wheel over the speed box: a frame per second faster (up) or slower a notch, ten with Shift; under 1, by tenths
+  _wheelFps(e) {
+    e.preventDefault();
+    const px = (e.deltaY || e.deltaX) * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1);
+    if (this.wheel?.el !== 'fps' || Math.sign(this.wheel.px) !== Math.sign(px)) this.wheel = { el: 'fps', px: 0 };
+    this.wheel.px += px;
+    if (Math.abs(this.wheel.px) < WHEEL_STEP) return;
+    const dir = this.wheel.px < 0 ? 1 : -1, box = this.$('.player-fps');
+    this.wheel.px = 0;
+    const v = +box.value || this.fps || 10, step = (v < 1 || (v === 1 && dir < 0) ? 0.1 : 1) * (e.shiftKey ? 10 : 1);
+    this.fps = Math.max(0.1, Math.min(200, Math.round((v + dir * step) * 10) / 10));
+    box.value = this.fps;
+  }
+
+  // ------------------------------------------- dF/F images of each trial and odor
+  // For each movie with trials, its per-trial and per-odor dF/F images (trial_dff.py): al_analysis' where it left them, as
+  // new as the movie, else made on the server in the background, one at a time, the movie chosen first; listed under the
+  // movie, each with a bar while it is being made, to show as a movie whose time points are the trials (or odors), named.
+
+  // the movies to ask after, and a place under each in the list for its images
+  _dffInit() {
+    const items = this.movies.map((m, i) => ({ m, i })).filter(({ m }) => m.trials);
+    this.dff = items.length ? { items, status: new Map(), timer: null, id: (this.dff?.id || 0) + 1 } : null;
+    for (const { i } of items) {
+      const b = this.$(`.player-item[data-movie="${i}"]`);
+      if (b && !b.nextElementSibling?.classList.contains('player-dff')) b.insertAdjacentHTML('afterend', `<div class="player-dff" data-of="${i}"></div>`);
+    }
+    if (this.dff) this._dffAsk(null);
+  }
+
+  // asks the server how each movie's images are coming (`first`: one to make before the others), and again while some are being made
+  async _dffAsk(first) {
+    const d = this.dff;
+    if (!d) return;
+    clearTimeout(d.timer);
+    let res;
+    try {
+      res = await this.api('/api/movie/trial_dff', { method: 'POST', json: { movies: d.items.map(({ m }) => ({ path: m.path, trials: m.trials })), first } });
+    } catch (e) {
+      if (d === this.dff) this._dffRender(e.message);
+      return;
+    }
+    if (d !== this.dff || !this.el.open) return;
+    for (const s of res.movies) d.status.set(s.path, s);
+    this._dffRender();
+    if (res.movies.some((s) => s.status === 'queued' || s.status === 'running')) d.timer = setTimeout(() => this._dffAsk(null), DFF_POLL_MS);
+  }
+
+  _dffRender(error) {
+    const d = this.dff;
+    if (!d) return;
+    for (const { m, i } of d.items) {
+      const box = this.$(`.player-dff[data-of="${i}"]`), s = d.status.get(m.path);
+      if (!box) continue;
+      if (error) { box.innerHTML = `<span class="player-error">dF/F images: ${this.esc(error)}</span>`; continue; }
+      if (!s) { box.innerHTML = ''; continue; }
+      const active = (by) => (this.movie?.dff?.of === i && this.movie.dff.by === by ? ' active' : '');
+      box.innerHTML = s.status === 'ready' ? Object.entries(DFF_NAMES).map(([by, label]) => `<button type="button" class="player-dff-item${active(by)}"
+          data-dff="${i}" data-by="${by}" title="${this.esc(`${s.source === 'al_analysis' ? "al_analysis' " : 'Made here, as al_analysis makes it: '}${s[by]}`)}">${label}</button>`).join('')
+        : s.status === 'failed' ? `<span class="player-error" title="${this.esc(s.error || '')}">dF/F images could not be made${s.error ? `: ${this.esc(s.error)}` : ''}</span>`
+        : `<span class="muted">dF/F images: ${s.status === 'running' ? `being made, ${Math.round(100 * s.fraction)}%` : 'waiting to be made'}</span>
+          <progress max="1"${s.status === 'running' ? ` value="${s.fraction}"` : ''}></progress>`;
+    }
+  }
+
+  // shows a movie's per-trial or per-odor dF/F images, with the movie's ROIs, its trials naming each time point
+  _loadDff(i, by) {
+    const m = this.movies[i], s = this.dff?.status.get(m.path);
+    if (!s || s.status !== 'ready') return;
+    this.load({ ...m, path: s[by], label: `${m.label}: ${DFF_NAMES[by]}`, recordings: m.recordings, size: null, dff: { of: i, by } });
   }
 
   // the value of the pixel under the pointer
