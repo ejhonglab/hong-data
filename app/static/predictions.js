@@ -5,7 +5,7 @@
 // refining one's ROIs (refinement.py: split, trimmed, kept apart), with their scores before and after.
 // Also fills in the example, under Fit a model, of running a downloaded model yourself.
 
-import { both, fmtDuration, PURITY_COLUMNS, scoringNote } from './fits.js';
+import { both, BRACKETS_NOTE, fmtDuration, LEAK_TIP, manualValue, PURITY_COLUMNS, scoringNote } from './fits.js';
 import { listLink, tip } from './tips.js';
 
 const STATUS_NAMES = { queued: 'Queued', running: 'Running', done: 'Done', failed: 'Failed', interrupted: 'Interrupted' };
@@ -72,19 +72,19 @@ function refineTable(r, esc) {
   const hint = { pred: 'As the model predicted them', split: 'Outlines over two glomeruli cut in two, joined into 3D and named again',
     clean: 'After every step asked for' };
   // (of a fly without ROIs of its own, no manual values to put in brackets)
-  const cell = (c, x) => (scored ? c[2](x) : c[2](x).replace(/ <span class="muted">\(—\)<\/span>/, ''));
+  const cell = (c, x) => (scored ? c[2](x) : c[2](x).replace(/ <span class="muted"[^>]*>\(—\)<\/span>/, ''));
   const head = `<th>ROIs</th>${scored ? ['Found', 'Right', 'Dice'].map((h) => `<th>${h}${kinds.pred.recall_2d == null ? ''
-    : ' <span class="muted">(per plane · 3D)</span>'}</th>`).join('') : ''}<th title="Signal from neighbors in an ROI's border${scored
-    ? " (the fly's own ROIs' in brackets)" : ''}">Leak${scored ? ' <span class="muted">(manual)</span>' : ''}</th>${PURITY_COLUMNS.map((c) => `<th
-    title="${esc(c[1])}">${c[0]}${scored ? ' <span class="muted">(manual)</span>' : ''}</th>`).join('')}${scored ? '<th>Named</th>' : ''}`;
+    : ' <span class="muted">(per plane · 3D)</span>'}</th>`).join('') : ''}<th title="${esc(LEAK_TIP)}">Leak</th>${PURITY_COLUMNS.map((c) => `<th
+    title="${esc(c[1])}">${c[0]}</th>`).join('')}${scored ? '<th>Named</th>' : ''}`;
   const rows = ['pred', 'split', 'clean'].filter((k) => kinds[k]).map((k) => {
     const x = kinds[k];
-    return `<tr${k === final ? ' class="refine-final"' : ''}><td title="${hint[k]}">${label(k)} <span class="muted">(${x.n})</span></td>${scored
-      ? `<td>${both(x, 'recall')}</td><td>${both(x, 'precision')}</td><td>${both(x, 'dice', num2)}</td>` : ''}<td>${num2(x.leak)}${scored
-      ? ` <span class="muted">(${num2(x.manual_leak)})</span>` : ''}</td>${PURITY_COLUMNS.map((c) => `<td>${cell(c, x)}</td>`).join('')}${scored
+    return `<tr${k === final ? ' class="refine-final"' : ''}><td title="${hint[k]}">${label(k)} <span class="muted" title="${x.n} ROIs (as 3D objects)">(${
+      x.n})</span></td>${scored ? `<td>${both(x, 'recall')}</td><td>${both(x, 'precision')}</td><td>${both(x, 'dice', num2)}</td>` : ''}<td>${num2(x.leak)}${
+      scored ? ` ${manualValue(x.manual_leak)}` : ''}</td>${PURITY_COLUMNS.map((c) => `<td>${cell(c, x)}</td>`).join('')}${scored
       ? `<td>${x.named ?? '—'}/${x.named_of ?? '—'}</td>` : ''}</tr>`;
   }).join('');
-  return `<table class="odor-table refine-table"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>${scored ? ''
+  return `${scored ? `<p class="muted small">${BRACKETS_NOTE}</p>` : ''}<table class="odor-table refine-table"><thead><tr>${head}</tr></thead><tbody>${
+    rows}</tbody></table>${scored ? ''
     : '<p class="muted small">The fly has no ROIs of its own: only how the ROIs keep from their neighbors is measured.</p>'}`;
 }
 const trim = (s) => (s || '').trim().replace(/\/+$/, '');

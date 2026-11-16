@@ -42,9 +42,18 @@ export function both(x, key, fmt = pct) {
 
 // how a fit's or a prediction's ROIs were scored (al-diag-seg's): as glomeruli drawn on some of their
 // planes only (often their clearest), so not counted wrong where none is drawn; or strictly (before)
-// a score of the predicted ROIs with the fly's own ROIs' in brackets ('0.30 (0.15)'); '' for fits scored before it was
-const withManual = (x, key, fmt = num2, manual = `manual_${key}`) => (x[key] == null ? '—'
-  : `${fmt(x[key])} <span class="muted">(${fmt(x[manual])})</span>`);
+// a score of the fly's own ROIs (drawn by hand), in brackets after the predicted ROIs' (`withManual`), saying so on hover
+const OWN = "The same score of the fly's own ROIs (drawn by hand)";
+export const manualValue = (v, fmt = num2, what = OWN) => `<span class="muted" title="${what}: ${fmt(v)}">(${fmt(v)})</span>`;
+// what the tables say above them of their bracketed values
+export const BRACKETS_NOTE = "In brackets: the same score of the fly's own ROIs (drawn by hand), to compare with (hover over one to see).";
+// a score of the predicted ROIs with the fly's own ROIs' in brackets ('0.30 (0.15)'); '—' for fits scored before it was
+const withManual = (x, key, fmt = num2, manual = `manual_${key}`, what = OWN) => (x[key] == null ? '—'
+  : `${fmt(x[key])} ${manualValue(x[manual], fmt, what)}`);
+// what Leak is (al-diag-seg's refine.crosstalk_report), for its heading
+export const LEAK_TIP = `How much of an ROI's edge signal looks like a neighbor's. For each ROI, the outer 1-pixel ring of its outline on each plane is taken, and its mean response to each odor; that is fit (least squares, over the odors) as a mix of the ROI's own mean response and one neighbor's, edge ≈ a × own + b × neighbor. The leak of that pair is the neighbor's share, b / (|a| + |b|). The number shown is the mean of |leak| over every ROI and neighbor.
+
+No units: a share from 0 (the edge is all the ROI's own) to 1; 0.10 means about a tenth of an edge's odor tuning looks like its neighbor's. Neighbor at edge and Neighbor in ROI ask the same more carefully (weights kept non-negative, only the part of the edge facing the neighbor).`;
 const um = (v) => (v == null ? '—' : `${v.toFixed(1)} µm`);
 // how far ROIs keep from each other and how much of a neighbour they carry (al-diag-seg's purity scores): the
 // table's columns after Leak, each [heading, what it is, a fly's cell]
@@ -53,7 +62,7 @@ export const PURITY_COLUMNS = [
   ['Touching', 'Outlines on a plane that touch another ROI there', (x) => withManual(x, 'touching', pct)],
   ['Neighbor at edge', `Of the signal of an ROI's edge facing its nearest neighbor (the outer 1 µm, within 3 µm of it), the share that is the neighbor's: the edge's odor tuning as a sum of its own core's and the neighbor's core's (cores: 1.5 µm from the edge). Median over outlines with a core and such a neighbor. 0: all its own`, (x) => withManual(x, 'edge_share')],
   ['Neighbor in ROI', "The same of the whole ROI's mean signal: what reaches its responses", (x) => withManual(x, 'whole_share')],
-  ['Responding', "Of ROIs matching one of the fly's own on a plane (IoU at least 0.5) and the odors, the pairs with a mean response over 0.3 dF/F; in brackets the same of the fly's own ROIs they match. Higher than them: tuned more broadly", (x) => withManual(x, 'breadth', pct, 'breadth_manual')],
+  ['Responding', "Of ROIs matching one of the fly's own on a plane (IoU at least 0.5) and the odors, the pairs with a mean response over 0.3 dF/F; in brackets the same of the fly's own ROIs they match. Higher than them: tuned more broadly", (x) => withManual(x, 'breadth', pct, 'breadth_manual', "The same of the fly's own ROIs these match")],
 ];
 
 export const partlyDrawn = (x) => x.scoring === 'partly drawn';
@@ -252,7 +261,7 @@ export class FitsPanel {
     const { esc } = this.h;
     const r = f.result, o = f.options || {};
     const flies = r.flies.map((x) => `<tr><td>${esc(x.fly)}</td><td>${x.n}</td><td>${both(x, 'recall')}</td><td>${both(x, 'precision')}</td>
-      <td>${both(x, 'dice', num2)}</td><td>${num2(x.leak)} <span class="muted">(${num2(x.manual_leak)})</span></td>${PURITY_COLUMNS.map((c) => `<td>${c[2](x)}</td>`).join('')}<td>${x.named}/${x.named_of}</td></tr>`).join('');
+      <td>${both(x, 'dice', num2)}</td><td>${num2(x.leak)} ${manualValue(x.manual_leak)}</td>${PURITY_COLUMNS.map((c) => `<td>${c[2](x)}</td>`).join('')}<td>${x.named}/${x.named_of}</td></tr>`).join('');
     const missed = r.glomeruli.filter((g) => g.detected < g.flies);
     const refs = refNames(o).map(esc);
     const fl = f.flies, of = fl ? fl.train.length + fl.held_out.length : 0;
@@ -269,9 +278,10 @@ export class FitsPanel {
         outside every drawn glomerulus are left out of Right.` : `Scored strictly, as before that changed: an ROI's parts on planes its
         glomerulus has no outline on count against it, as does every ROI where no glomerulus is drawn, so these are lower than a newer
         fit's would be.`}</p>
+      ${r.mean.manual_leak == null ? '' : `<p class="small muted">${BRACKETS_NOTE}</p>`}
       <table class="odor-table"><thead><tr><th>Held-out fly</th><th>ROIs</th>${['Found', 'Right', 'Dice'].map((h) => `<th>${h}${r.mean.recall_2d == null
         ? '' : ' <span class="muted">(per plane · 3D)</span>'}</th>`).join('')}
-      <th title="Signal from neighbors in an ROI's border (its manual ROIs' in brackets)">Leak <span class="muted">(manual)</span></th>${PURITY_COLUMNS.map((c) => `<th title="${esc(c[1])}">${c[0]} <span class="muted">(manual)</span></th>`).join('')}<th>Named</th></tr></thead><tbody>${flies}</tbody></table>
+      <th title="${esc(LEAK_TIP)}">Leak</th>${PURITY_COLUMNS.map((c) => `<th title="${esc(c[1])}">${c[0]}</th>`).join('')}<th>Named</th></tr></thead><tbody>${flies}</tbody></table>
       ${missed.length ? `<p class="small">Glomeruli not found (as 3D objects) in every held-out fly with one: ${missed.map((g) => `${esc(g.glomerulus)}
         <span class="muted">${g.detected}/${g.flies}</span>`).join(', ')}.</p>` : '<p class="small">Every glomerulus of the held-out flies was found.</p>'}`;
   }
