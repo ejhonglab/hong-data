@@ -386,6 +386,8 @@ dialog.refine-dialog .predict-clean { margin: 10px 0; }
 #extract-window-note { margin-top: 0; min-height: 1.4em; }
 .predict-pair { margin-top: 8px; }
 .predictions-table td.acts { white-space: nowrap; }
+.predictions-table .acts-grid { display: grid; grid-template-columns: repeat(2, auto); gap: 4px; justify-content: start; }
+.predictions-table .acts-grid > .btn { justify-content: center; text-align: center; }
 .fit-zip { margin: 4px 0 8px; padding-left: 20px; }
 .fit-zip li { margin: 2px 0; }
 .code-block { overflow: auto; font-size: 12px; line-height: 1.5; background: var(--surface-2); border: 1px solid var(--rule);
