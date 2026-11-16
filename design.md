@@ -2035,6 +2035,7 @@ app/sandbox.py     folders the server may read and write (Admin tab): settings, 
 app/filelog.py     the files the server has read and written in its own folders (Admin tab), paths on the server
 app/backup.py      backups of the database and files into a folder the server may write (Admin tab)
 app/movies.py      a dataset's movies on tensor: finding them, reading their planes, their ImageJ ROIs
+app/trial_dff.py   each trial's dF/F image of a movie, and each odor's mean: al_analysis', or made in the background
 config/odor_sheet_template.csv   odor sheet columns, with the odors from the thesis tables
 app/static/        frontend: index.html, app.js, heatmap.js, colormaps.js (+ mpl_luts.js),
                    app.css, cluster.js (+ cluster-worker.js), figure.js (SVG/PDF/PNG export),

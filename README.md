@@ -379,10 +379,20 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   it (for a raw movie, its recording's in the motion-corrected data), unless *odor
   names* is unticked. Play / pause, time and Z sliders (the wheel over a slider steps
   it, ten with Shift; a movie of one time point, such as an average over time, has no
-  play button, time slider or speed), max projection over Z, channel, speed, zoom (wheel; out no
+  play button, time slider or speed), max projection over Z, channel, speed (the wheel over it too), zoom (wheel; out no
   further than the movie fits the window) and move (drag; never past its edges), with
   the value of the pixel under the pointer.
-  Brightness and contrast are set as in ImageJ's B&C window: the plane's histogram with
+  Under each movie with trials are its dF/F images, to show as a movie: *each trial*
+  (one image per trial, its dF/F averaged over the first 2 volumes from the odor's onset,
+  F0 the mean before it) and *each odor* (the mean of its trials), each named by its odor
+  as it is shown. They are al_analysis' own (`trial_dff.tif`, `trialmean_dff.tif`, or
+  `*_concat.tif` for a fly's movie) where those are as new as the movie, else made on the
+  server, as al_analysis makes them, in the background (a bar under the movie while they
+  are; the movie chosen first), and kept for next time. The ROI list's box (what is
+  shown, of which sources), and in a prediction its editing help and the look's status,
+  are folded away to begin with; searching the ROIs finds them on every plane, each with
+  its plane, which choosing it shows.
+  Brightness and contrast, under the movies, are set as in ImageJ's B&C window: the plane's histogram with
   its black and white levels, Minimum, Maximum, Brightness and Contrast sliders, *Auto*
   (as ImageJ's: few pixels saturated, more contrast at each press) and *Reset* (the
   plane's full range). Keys as in ImageJ where they exist (space or `\` to play, `<` /
