@@ -879,7 +879,12 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   and extended ROIs it proposed were on a glomerulus drawn but not predicted, the rest
   where nothing is drawn (which may still be glomeruli: not every plane is drawn), and 4
   of the 27 parts cut off were of an ROI over two drawn glomeruli: look at each before
-  merging it ([design.md](design.md) has more). Its files are in the prediction's download
+  merging it ([design.md](design.md) has more). *Settings of the look* has its
+  thresholds (hover over each for what it is, and what it did on those flies), whether
+  parts of ROIs are proposed, and whether anything is factorized at all: either way the
+  look also puts the predicted ROIs' own outlines to the same tests, and marks with a `?`
+  in the list those that answer odors unreliably or as a mixture of their neighbors
+  (hover over any ROI for its numbers). Its files are in the prediction's download
   (`<fly>_nmf.json` and beside it).
   *Extract signals*, below it, computes the signals of a fly's ROIs from its
   motion-corrected movies as al_analysis does, with the same numbers for its response
@@ -917,7 +922,7 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   light taken out, in `unmixed/` (the plain tables are as without it): on each plane the
   movie's fluorescence is fit as each ROI's footprint times its signal, a footprint being
   its mask blurred by a width fit to the fly's trials (or, chosen instead, found by a
-  non-negative factorization of them, alone or with a component more for the pixels just
+  non-negative factorization of them (or its mask blurred by a set 1 µm), alone or with a component more for the pixels just
   outside each ROI, which takes the light of glomeruli without one), and an ROI's dF/F is
   its own light's dF over its mask mean's F0. Each recording's `unmixing.csv` says how
   much each ROI's responses changed, and which ROIs were left as their mask means (those

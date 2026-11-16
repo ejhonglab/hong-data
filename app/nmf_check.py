@@ -42,6 +42,10 @@ STAGES = ("load", "register", "read", "factorize", "name")  # what a look goes t
 # seconds each stage takes, until a look done on that device says (its result's ``stages``)
 GUESSES = {"GPU": {"load": 10, "register": 60, "read": 30, "factorize": 20, "name": 10},
            "CPU": {"load": 10, "register": 60, "read": 30, "factorize": 240, "name": 10}}
+# what of a look can be set when it is asked for (`settings`): al-diag-seg's `alseg.nmf.DEFAULTS` of those names, each its
+# (default, least, most); n_free 0: nothing is factorized, and the look only tests the predicted ROIs themselves
+SETTINGS = {"n_free": (25, 0, 100), "min_area_um2": (20.0, 1.0, 500.0), "min_radius_um": (2.5, 0.0, 20.0), "min_in_hull": (0.8, 0.0, 1.0),
+            "min_eta2": (0.5, 0.0, 1.0), "min_novelty": (0.5, 0.0, 1.0)}
 INPUTS = ".nmf_inputs.npz"
 CALL_TIMEOUT_S = 90.0  # how long the web server waits for the fit worker to do what it asked
 CALL_POLL_S = 0.2
@@ -57,6 +61,30 @@ def files(p: dict) -> dict[str, Path]:
     d, fly = predictions.pred_dir(p["id"]), p["fly"]
     return {"json": d / f"{fly}_nmf.json", "labels": d / f"{fly}_nmf.tif", "candidates": d / f"{fly}_nmf_candidates.tif",
             "roiset": d / f"{fly}_nmf_RoiSet.zip", "prior": d / f"{fly}_atlas_prior.npz", "inputs": d / INPUTS}
+
+
+def settings(body: dict) -> dict:
+    """How a look asked for is made, where not as by default: of `SETTINGS`, the values given that are not the default
+    (``n_free`` a whole number), and ``split`` false if the masks al-diag-seg would cut in two are not to be proposed.
+
+    Raises:
+        ValueError: for a setting that is not one, or a value out of range.
+    """
+    given = body.get("settings") or {}
+    if not isinstance(given, dict) or any(k not in SETTINGS and k != "split" for k in given):
+        raise ValueError(f"settings: of {', '.join(SETTINGS)}, split")
+    out = {}
+    for k, v in given.items():
+        if k == "split":
+            if v is False:
+                out[k] = False
+            continue
+        default, lo, hi = SETTINGS[k]
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not lo <= v <= hi or (k == "n_free" and v != int(v)):
+            raise ValueError(f"settings: {k} is a {'whole ' if k == 'n_free' else ''}number from {lo:g} to {hi:g}")
+        if v != default:
+            out[k] = int(v) if k == "n_free" else float(v)
+    return out
 
 
 # -------------------------------------------------------------------- state
@@ -80,9 +108,9 @@ def update(db, pred_id: int, status: Optional[str] = None, **fields) -> None:
         _set(con, pred_id, status, **fields)
 
 
-def ask(db, pred_id: int, name: str, ip: Optional[str]) -> tuple[dict, bool]:
-    """Asks for a look for glomeruli a prediction's ROIs miss: queued, unless one is queued or
-    running already. One made before is replaced when this one is done.
+def ask(db, pred_id: int, name: str, ip: Optional[str], how: Optional[dict] = None) -> tuple[dict, bool]:
+    """Asks for a look for glomeruli a prediction's ROIs miss (made as ``how`` says: `settings`'):
+    queued, unless one is queued or running already. One made before is replaced when this one is done.
 
     Returns:
         (the prediction, whether it was queued now).
@@ -98,7 +126,7 @@ def ask(db, pred_id: int, name: str, ip: Optional[str]) -> tuple[dict, bool]:
         queued = r["nmf_status"] not in ACTIVE
         if queued:
             con.execute("UPDATE predictions SET nmf_status = 'queued', nmf_json = ? WHERE id = ?",
-                        (json.dumps({"name": name, "ip": ip, "asked_at": predictions.now()}), pred_id))
+                        (json.dumps({"name": name, "ip": ip, "asked_at": predictions.now(), "settings": how or {}}), pred_id))
     return predictions.get(db, pred_id), queued
 
 
@@ -162,7 +190,7 @@ def state(db, p: dict) -> Optional[dict]:
     n = p.get("nmf")
     if not n:
         return None
-    out = {k: n.get(k) for k in ("status", "name", "asked_at", "started_at", "finished_at", "progress", "result", "error")}
+    out = {k: n.get(k) for k in ("status", "name", "asked_at", "started_at", "finished_at", "progress", "result", "error", "settings")}
     if n["status"] == "running":
         out["fraction"] = fraction(n.get("progress"), expected(db, (n.get("progress") or {}).get("device") or "CPU"))
     return out
@@ -189,8 +217,11 @@ def found(p: dict, glomeruli: set) -> Optional[dict]:
     its plane, as outlines), ``predicted`` ({label: name or None}: the prediction's ROIs),
     ``names`` (of every ROI with all candidates merged in, by label: ``kept``, the predicted
     ROIs' as they are, and ``joint``, all named again together), ``kinds`` ({name: whether it is
-    a glomerulus to the database, `movies.roi_kind`}, of every name the model can give) and
-    ``run`` (when it was made: what candidates' ids are of). None if it has none (not done, or
+    a glomerulus to the database, `movies.roi_kind`}, of every name the model can give),
+    ``rois`` (the predicted ROIs' own in-plane masks by the tests a candidate is taken by: each
+    its ``name``, ``z``, ``eta2``, ``novelty``, ``radius_um``, ``area_um2``), ``params`` (the
+    look's: its thresholds among them) and ``run`` (when it was made: what candidates' ids are
+    of). None if it has none (not done, or
     its file is gone)."""
     if (p.get("nmf") or {}).get("status") != "done":
         return None
@@ -199,7 +230,7 @@ def found(p: dict, glomeruli: set) -> Optional[dict]:
         return None
     names = [n for m in d["names"].values() for n in m.values()] + list(d["predicted"].values()) + d.get("glomeruli", [])
     return {"run": d["finished"], "candidates": d["candidates"], "predicted": d["predicted"], "names": d["names"],
-            "kinds": _kinds(names, glomeruli), "params": d.get("params"), "cleaned": d.get("cleaned")}
+            "kinds": _kinds(names, glomeruli), "params": d.get("params"), "cleaned": d.get("cleaned"), "rois": d.get("rois", [])}
 
 
 def plan(db, p: dict, chosen, joint: bool, glomeruli: set) -> dict:
@@ -306,7 +337,7 @@ def run(db, p: dict, model, fly: dict, on_gpu: bool, say=print, progress=None) -
     steps = [s for s in po.get("clean") or [] if s != "core"]  # (core goes by Cellpose's probabilities, which candidates have none of)
     res = anmf.check(model, fly, labels, names, prior=prior, steps=steps, clean_params={**model.options.clean_params, **(po.get("clean_params") or {})},
                      movies=mv, progress=lambda stage, a, b: tell("name" if stage == "name" else "factorize", a, b),
-                     named=tifffile.imread(d / named) if named else None)
+                     named=tifffile.imread(d / named) if named else None, **((p.get("nmf") or {}).get("settings") or {}))
     merged, cand = res["labels"], res["candidate"]
     out = []
     for c in res["candidates"]:
@@ -331,7 +362,8 @@ def run(db, p: dict, model, fly: dict, on_gpu: bool, say=print, progress=None) -
     doc = {"prediction": p["id"], "fly": p["fly"], "of": f"{p['fly']}_{final}.tif", "named": named or f"{p['fly']}_{final}.tif", "asked_for": {k: (p.get("nmf") or {}).get(k) for k in ("name", "ip", "asked_at")},
            "finished": predictions.now(), "device": "GPU" if on_gpu else "CPU", "params": res["params"], "cleaned": res["cleaned"],
            "movies": {"recordings": mv["recordings"], "time_points": int(len(mv["dff"])), "trials": len(mv["trials"])},
-           "planes": res["planes"], "candidates": out, "predicted": {str(l): n for l, n in names.items()},
+           "planes": res["planes"], "candidates": out,
+           "rois": [{**r, "name": names.get(r["label"]) or str(r["label"])} for r in res["rois"]], "predicted": {str(l): n for l, n in names.items()},
            "glomeruli": sorted(set(model.template) | set(prior_names or [])),
            "names": {k: {str(l): n for l, n in v.items()} for k, v in res["names"].items()},
            "files": {"labels": f["labels"].name, "candidates": f["candidates"].name, "rois": f["roiset"].name if out else None,

@@ -539,6 +539,16 @@ between the frontend and the server. Using the app is described in
     place (17 to 40, and 5 to 9), and most on taking each pixel over its noise: without
     that, 16 and 4 (`notes/nmf_missed/`: the try-out's scripts, and the check of
     al-diag-seg's own).
+    Each test alone leaves 426 to 817 of 911 places; left out of the five, the hull
+    leaves 63 for 25, the circle 43, the area 25, and reliability and novelty 122 and 104,
+    with 15 and 17 on such outlines for 8: those two do the most, and trade candidates for
+    outlines found. All five, the number of places tried, and whether masks are cut, are
+    settings of the look in the viewer (`nmf_check.SETTINGS`).
+  - *The tests need no factorization to say something of the ROIs there are.* The look
+    also puts each predicted ROI's own outline on a plane to them (`alseg.nmf.find`'s
+    ``rois``), and the viewer marks those under the look's thresholds of reliability and
+    novelty, with the numbers of each on hover; asked for with nothing factorized
+    (``n_free`` 0), that is all it does.
   - *Masks over two glomeruli are not found so.* A rank 2 factorization of each mask's own
     pixels proposed parts for 5 of the 11 masks holding at least 40% of two manual
     outlines (2 with each part on its own), and for 159 others, with no measure (the
@@ -1865,6 +1875,9 @@ check), so al_analysis' numbers are still there.
     explaining glomeruli without an ROI by the ROIs' footprints, which then took more from
     their neighbours than down to their cores' level (above: to 0.020 and 0, against cores
     of 0.030 and 0.019).
+  - *A blur of 1 µm, set, is a choice too* (`blur_1um`: the row above), for taking about
+    what the factorization with rims takes without its fit, at 1 to 2% of the ROIs' own
+    responses.
   - *NMF is kept as a choice, not the default*: it changed responses little either way
     and moved none of (a) towards the core (with a background, it took real responses as
     the blur did, less).
@@ -2188,7 +2201,8 @@ GET    /api/predictions/{id}/nmf            the look for glomeruli its ROIs miss
                                             ("nmf": status, who asked, how far it is: "fraction") and, once done,
                                             what it found ("found": the candidates with their outlines and names,
                                             and every ROI's name with all of them merged in)
-POST   /api/predictions/{id}/nmf            ask for one: {name}; 201 queued, 200 if one is waiting or running
+POST   /api/predictions/{id}/nmf            ask for one: {name, settings (its thresholds, n_free: 0 for no
+                                            factorization, split)}; 201 queued, 200 if one is waiting or running
 POST   /api/predictions/{id}/nmf/plan       the ROIs' names with candidates merged in: {chosen: their ids, joint:
                                             all named again together (the default), or the predicted names kept};
                                             503 if the fit worker, which names some of them, did not

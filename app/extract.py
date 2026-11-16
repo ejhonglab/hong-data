@@ -910,7 +910,7 @@ def _unmix_words(variant: Optional[str], groups: dict, gloms: bool) -> dict:
     feet, refused = [], []
     for g in sets:
         px = f"pixels of {g['pixel_um']:g} um, " + ("by the Experiment.xml" if g["pixel_known"] else "assumed: no Experiment.xml said")
-        if variant == "blur":
+        if variant.startswith("blur"):
             how = g["unmix"]["how"]
             feet.append(f"{how['sigma_um']:.2f} um ({how['sigma_px']:.2f} pixels; {px})" + (" (the widest tried, so it may be wider)" if how["at_edge"] else ""))
         elif variant == "nmf_rims":
@@ -920,7 +920,9 @@ def _unmix_words(variant: Optional[str], groups: dict, gloms: bool) -> dict:
         refused += [f"{g['rois'][i]['name']} (z {g['rois'][i]['z']}" + (f", holding {len(g['unmix']['holds'][i])} others)" if g["unmix"]["holds"][i] else ")")
                     for i in np.flatnonzero(g["unmix"]["refused"])]
     of = (lambda x: x[0]) if len(sets) == 1 else (lambda x: "; ".join(f"{f} for {g['path'].name}" for f, g in zip(x, sets)))
-    if variant == "blur":
+    if variant in unmix.BLUR_SET_UM:
+        footprints = f"each mask blurred by a Gaussian of a set width (s.d.), not fit to the fly: {of(feet)}"
+    elif variant == "blur":
         footprints = (f"each mask blurred by a Gaussian, its width (s.d.) the one whose footprints best explain the trials' dF maps (the mean F "
                       f"over a trial's response window less its baseline's; least residual, over {', '.join(f'{s:g}' for s in unmix.SIGMAS_UM)} um, "
                       f"then between the two either side of the least) of all the recordings: {of(feet)}")
@@ -1022,7 +1024,9 @@ def _unmix(used: list[dict], groups: dict, variant: str, say: Callable[[str], No
     for g in groups.values():
         t1 = time.time()
         g["unmix"] = u = unmix.fit(len(g["rois"]), g["planes"], [rec.pop("maps") for rec in g["recordings"]], variant, g["pixel_um"])
-        if variant == "blur":
+        if variant in unmix.BLUR_SET_UM:
+            how = f"masks blurred by a Gaussian of s.d. {u['how']['sigma_um']:g} um (set, not fit)"
+        elif variant == "blur":
             how = (f"masks blurred by a Gaussian of s.d. {u['how']['sigma_um']:.2f} um, the width of least residual"
                    + (" (the widest tried: it may be wider)" if u["how"]["at_edge"] else ""))
         else:

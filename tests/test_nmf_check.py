@@ -58,8 +58,14 @@ def test_state(main, tensor):  # noqa: F811
     predictions.update(db, p["id"], status="done")
     assert nmf()[1] == {"nmf": None, "found": None} and predictions.get(db, p["id"])["nmf"] is None
     assert ask()[0] == 422 and ask(name="Bob Smith")[0] == 422 and call(main.predictions_nmf_ask, method="POST", path_params={"id": 99}, body={"name": "Bob"})[0] == 404
-    status, r = ask(name="Bob")
-    assert status == 201 and r["nmf"]["status"] == "queued" and r["nmf"]["name"] == "Bob" and r["nmf"]["asked_at"]
+    # its settings: those of the form that are not the defaults are kept; one that is none, or out of range, is refused
+    assert nmf_check.settings({}) == {} and nmf_check.settings({"settings": {"min_eta2": 0.5, "n_free": 25, "split": True}}) == {}
+    assert nmf_check.settings({"settings": {"min_eta2": 0.3, "n_free": 0.0, "split": False}}) == {"min_eta2": 0.3, "n_free": 0, "split": False}
+    for bad in ({"theta": 0.2}, {"min_eta2": 1.5}, {"min_novelty": "0.5"}, {"n_free": 2.5}, {"n_free": True}, {"min_area_um2": 0}):
+        status, r = ask(name="Bob", settings=bad)
+        assert status == 400 and r["error"].startswith("settings:"), bad
+    status, r = ask(name="Bob", settings={"min_novelty": 0.4, "min_eta2": 0.5})
+    assert status == 201 and r["nmf"]["status"] == "queued" and r["nmf"]["name"] == "Bob" and r["nmf"]["asked_at"] and r["nmf"]["settings"] == {"min_novelty": 0.4}
     assert ask(name="Cy")[0] == 200 and nmf()[1]["nmf"]["name"] == "Bob"  # (once: the one waiting is whose it is)
     listed = call(main.predictions_list)[1]["predictions"][0]
     assert listed["nmf"]["status"] == "queued" and call(main.predictions_view, path_params={"id": p["id"]})[1]["nmf"]["status"] == "queued"
@@ -91,7 +97,7 @@ def test_state(main, tensor):  # noqa: F811
     assert nmf_check.expected(db, "GPU") == {**nmf_check.GUESSES["GPU"], "load": 4.0, "read": 9.0} and nmf_check.expected(db, "CPU") == nmf_check.GUESSES["CPU"]
     found = r["found"]
     assert found["run"] == DOC["finished"] and [c["id"] for c in found["candidates"]] == [1, 2, 3] and found["predicted"] == DOC["predicted"]
-    assert found["names"] == DOC["names"] and found["candidates"][2]["rest"] == [{"z": 0, "points": SQUARE}]
+    assert found["names"] == DOC["names"] and found["candidates"][2]["rest"] == [{"z": 0, "points": SQUARE}] and found["rois"] == []
     assert found["kinds"] == {"DA1": "glomerulus", "DL5": "glomerulus", "DM2": "glomerulus", "VA1d": "glomerulus", "not_one": "other"}
     # once it is over, the prediction can be deleted, the look's files with it
     assert predictions.delete(db, p["id"]) is True and not nmf_check.files(got)["json"].exists()
@@ -109,7 +115,7 @@ def test_again(main, tensor):  # noqa: F811
     assert nmf_check.found(predictions.get(db, p["id"]), set(GLOMS)) is None
     _, queued = nmf_check.ask(db, p["id"], "Cy", "10.0.0.1")
     n = predictions.get(db, p["id"])["nmf"]
-    assert queued and n == {"status": "queued", "name": "Cy", "ip": "10.0.0.1", "asked_at": n["asked_at"]}
+    assert queued and n == {"status": "queued", "name": "Cy", "ip": "10.0.0.1", "asked_at": n["asked_at"], "settings": {}}
     # predicted again: the look is gone with the prediction's files, and what a worker still at it says is dropped
     nmf_check.claim(db)
     predictions.create(db, p["fit_id"], predictions.locate(FLY, RAW, config.TENSOR_ROOT, []), "Ann", None, overwrite=True)
@@ -354,6 +360,16 @@ def test_worker_nmf(main, tensor, monkeypatch):  # noqa: F811
         stop.set()
         t.join()
 
+    # the predicted ROIs' own outlines by the same tests, for the viewer to mark those under them
+    assert doc["rois"] == found["rois"] and {(r["name"], r["z"]) for r in found["rois"]} == {(v or str(l), z) for l, v in names0.items() for z in range(3)} - {("DL5", 1)}
+    assert all(r["eta2"] > 0.9 and r["novelty"] > 0.5 and r["area_um2"] > 20 for r in found["rois"])
+    # asked for with nothing factorized, and no masks cut: those tests alone
+    assert call(main.predictions_nmf_ask, method="POST", path_params={"id": p["id"]}, body={"name": "Cy", "settings": {"n_free": 0, "split": False}})[0] == 201
+    fit_worker.run_nmf(db, nmf_check.claim(db), False)
+    got = predictions.get(db, p["id"])
+    assert got["nmf"]["status"] == "done" and got["nmf"]["result"]["candidates"] == 0 and got["nmf"]["settings"] == {"n_free": 0, "split": False}
+    f2 = call(main.predictions_nmf, path_params={"id": p["id"]})[1]["found"]
+    assert f2["candidates"] == [] and f2["params"]["n_free"] == 0 and len(f2["rois"]) == len(found["rois"]) and not nmf_check.files(got)["roiset"].exists()
     # asked for again, it is made again; a fly with no movie fails, said in the prediction's log
     (rec / "mocorr.tif").unlink()
     nmf_check.ask(db, p["id"], "Cy", None)

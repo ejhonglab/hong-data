@@ -394,8 +394,8 @@ export class MoviePlayer {
         if (!listed(r)) return '';
         const plane = this._roiPlane(r);
         const name = this.esc(r.name);
-        const row = `<button type="button" class="player-roi${i === this.selectedRoi ? ' active' : ''}" data-roi="${i}">
-          <span class="swatch-roi" style="background:${this.esc(this._roiColor(r))}"></span>${name}${cand(r) || r.nmf != null ? tag : ''}
+        const row = `<button type="button" class="player-roi${i === this.selectedRoi ? ' active' : ''}" data-roi="${i}"${this._tested(r).title}>
+          <span class="swatch-roi" style="background:${this.esc(this._roiColor(r))}"></span>${name}${cand(r) || r.nmf != null ? tag : ''}${this._tested(r).tag}
           <span class="muted">${cand(r) ? `${this.esc(r.what)} · ` : ''}${plane == null ? 'all planes' : `plane ${plane + 1}`}</span></button>`;
         // (one found by NMF: ticked if it is to be merged, at its first outline)
         return cand(r) ? `<div class="player-roi-cand"><input type="checkbox" class="player-nmf-pick" data-cand="${r.cand}"${
@@ -645,6 +645,22 @@ export class MoviePlayer {
   // (`this.nmf.found`) is listed and drawn with the ROIs, each candidate ticked (`this.nmf.pick`) or not;
   // those ticked are merged into the edited ROIs once the change, with the names it gives, is agreed to.
 
+  // What the look's tests say of a predicted ROI's own outline on its plane (or its copy's, not from NMF), as the list
+  // shows it: { title (an attribute: its numbers), tag (a mark, if it is under a threshold the look had) }
+  _tested(r) {
+    const f = this.nmf?.found, none = { title: '', tag: '' };
+    if (!f?.rois?.length || !['predicted', 'edited'].includes(r.source) || r.nmf != null) return none;
+    const names = mergedOf(f, this.edit?.hist?.current)?.names, plane = this._roiPlane(r);
+    // (its name is its label's: as predicted, or as named when candidates were merged)
+    const m = f.rois.find((x) => x.z === plane && (r.source === 'edited' && names ? (names[x.label] ?? String(x.label)) : x.name) === r.name);
+    if (!m) return none;
+    const p = f.params || {}, low = [...(m.eta2 < (p.min_eta2 ?? 0.5) ? [`answers odors less reliably than the look asked of a place (${m.eta2.toFixed(2)})`] : []),
+      ...(m.novelty < (p.min_novelty ?? 0.5) ? [`is mostly a mixture of the ROIs next to it (${m.novelty.toFixed(2)} of its tuning is its own)`] : [])];
+    const text = `By the look's tests, this outline: odors explain ${m.eta2.toFixed(2)} of its trial responses' variance; the ROIs next to it leave ${
+      m.novelty.toFixed(2)} of its tuning unexplained; ${m.area_um2.toFixed(0)} µm², holding a circle of ${m.radius_um.toFixed(1)} µm.`;
+    return { title: ` title="${this.esc(text)}"`, tag: low.length ? `<span class="tag-weak" title="${this.esc(`This outline ${low.join(', and ')}: it may be no glomerulus of its own, or one that answers none of the odors. ${text}`)}">?</span>` : '' };
+  }
+
   // asks the server how the look is (and what it found, once), then again while it is not over
   async _nmfRefresh(ed) {
     const n = this.nmf;
@@ -676,8 +692,13 @@ export class MoviePlayer {
     if (!ed || !n || ed.stale) return;
     const name = ed.name?.() || '';
     if (!name) { n.error = 'Enter your first name in Settings first: a look says who asked for it.'; this._renderNmf(); return; }
+    // (its settings, as the form has them: the server keeps those that are not the defaults)
+    const settings = {}, box = this.$('.player-nmf-settings');
+    for (const i of box.querySelectorAll('input[type=number]')) if (i.value !== '' && Number.isFinite(+i.value)) settings[i.dataset.nmf] = +i.value;
+    if (!box.querySelector('[data-nmf=nmf]').checked) settings.n_free = 0;
+    settings.split = box.querySelector('[data-nmf=split]').checked;
     try {
-      n.state = (await this.api(`/api/predictions/${ed.id}/nmf`, { method: 'POST', json: { name } })).nmf;
+      n.state = (await this.api(`/api/predictions/${ed.id}/nmf`, { method: 'POST', json: { name, settings } })).nmf;
       n.error = null;
     } catch (e) { n.error = `Could not ask for it: ${e.message}`; }
     if (ed !== this.edit || n !== this.nmf) return;
@@ -711,6 +732,8 @@ export class MoviePlayer {
       : status === 'queued' ? `Waiting for the fit worker${by}.`
       : status === 'running' ? `${NMF_STAGES[pr.stage] || 'starting'}${of}${pr.device ? `, on the ${pr.device}` : ''}: ${Math.round((st.fraction || 0) * 100)}%${by}.`
       : status === 'done' && !found ? 'Reading what it found…'
+      : status === 'done' && found.params?.n_free === 0 && !found.candidates.length ? `Nothing was factorized (as its settings said): the predicted ROIs' own outlines were put to the tests, and ${
+        this.rois.filter((r) => this._tested(r).tag).length} of those listed now are marked ? (hover over one for why, and over any for its numbers).`
       : status === 'done' ? (found.candidates.length ? `Found ${found.candidates.length} in the fly's movies: ${[[count('added'), 'new'], [count('extended'), 'more of an ROI on a plane it had no outline on'],
         [count('split'), `part${count('split') === 1 ? '' : 's'} of ROIs that may hold two glomeruli (not ticked to begin with: of those found so on flies with ROIs drawn by hand, few were)`]]
         .filter(([k]) => k).map(([k, w]) => `${k} ${w}`).join(', ')}${merged.size ? `; ${merged.size} merged in` : ''}. Those not merged are listed first, dashed on the image: look at each, and tick those to merge.`

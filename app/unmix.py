@@ -14,6 +14,9 @@ of a trial's response window less that of its baseline, per pixel):
 
 - ``blur``: each mask blurred by a Gaussian whose width is fit per set of ROIs (the least
   residual of the dF maps, over `SIGMAS_UM`), never assumed; over the masks alone;
+- ``blur_1um``: the same with the width set to 1 um, not fit: wider than the fit's (0.3 to 0.8 um on fit
+  7's held-out flies), it takes about as much of a responding neighbour's light as ``nmf_rims`` does,
+  and about 1 to 2% of the ROIs' own responses (design.md);
 - ``nmf``: seeded non-negative matrix factorization, each footprint started at its mask and
   kept within `NMF_REACH_UM` of it (`nmf`), over as far;
 - ``nmf_rims``: the same, with a component more per ROI-plane for the region's pixels outside
@@ -50,6 +53,7 @@ import numpy as np
 
 VARIANTS = {
     "blur": "each mask blurred by a Gaussian, its width fit to the trials' dF maps over the masks (per set of ROIs)",
+    "blur_1um": "each mask blurred by a Gaussian of 1 um (s.d.), set, not fit to the trials (wider than the fits come out: it takes more of a neighbour's light)",
     "nmf": "seeded non-negative factorization of the trials' dF maps, each footprint from its mask, kept near it",
     "nmf_rims": "seeded non-negative factorization of the trials' dF maps, with a component more per ROI for the pixels just outside its mask (its rim)",
 }
@@ -58,7 +62,8 @@ SIGMAS_UM = (0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0)  # the blur's 
 NMF_REACH_UM = 2.0  # how far from its mask an NMF footprint may reach
 RIM_IN_PX = 1.0  # how far beyond its own pixels (so into the masks) a rim's footprint may reach
 RIM_MIN_PX = 8  # the pixels a rim has at least: a mask with fewer of the region's nearest it has none
-REGION_UM = {"blur": 0.0, "nmf": NMF_REACH_UM, "nmf_rims": NMF_REACH_UM}  # how far from the masks each variant's model is fit (its region; see above)
+BLUR_SET_UM = {"blur_1um": 1.0}  # the variants whose blur's width is set
+REGION_UM = {"blur": 0.0, "blur_1um": 0.0, "nmf": NMF_REACH_UM, "nmf_rims": NMF_REACH_UM}  # how far from the masks each variant's model is fit (its region; see above)
 BACKGROUND = False  # whether a background uniform over the region is modelled (see above)
 PIXEL_UM = 0.5  # a pixel's width, where the recording's Experiment.xml does not say
 VIF_MAX = 10.0  # an ROI-plane's variance inflation over which it is left as its mask mean
@@ -306,7 +311,11 @@ def fit(n_rois: int, planes: list[dict], maps: list[list[np.ndarray]], variant: 
         and with rims how many it has, ``rims``: per plane, and in all).
     """
     joined = [np.concatenate([m[j] for m in maps], axis=1) for j in range(len(planes))]
-    if variant == "blur":
+    if variant in BLUR_SET_UM:
+        sig = BLUR_SET_UM[variant] / px_um
+        A = [blur(p, sig) for p in planes]
+        how = {"sigma_um": BLUR_SET_UM[variant], "sigma_px": sig, "at_edge": False, "set": True}
+    elif variant == "blur":
         f = fit_blur(planes, joined, [s / px_um for s in SIGMAS_UM], background)
         A = [blur(p, f["sigma_px"]) for p in planes]
         how = {"sigma_um": f["sigma_px"] * px_um, "sigma_px": f["sigma_px"], "at_edge": f["at_edge"],

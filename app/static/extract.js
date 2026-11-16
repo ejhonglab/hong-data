@@ -27,7 +27,7 @@ const MODE_NOTES = {
     if the planes hold the same signal. Its traces are then of relative F, not F; dF/F and responses are as for the others.`,
 };
 // whether, and how, neighbouring ROIs' signals are unmixed too (extract.py's option unmix: unmix.py's VARIANTS), in more words
-const UNMIX_NAMES = { blur: 'masks blurred', nmf: 'factorized', nmf_rims: 'factorized, with rims' };
+const UNMIX_NAMES = { blur: 'masks blurred', blur_1um: 'masks blurred 1 µm', nmf: 'factorized', nmf_rims: 'factorized, with rims' };
 const UNMIX_NOTES = {
   '': `No: each ROI's signal is the mean of the movie over its mask, as al_analysis has it, with whatever light of its neighbours'
     is in the mask (where masks touch, or a neighbour's light spreads into them).`,
@@ -36,6 +36,10 @@ const UNMIX_NOTES = {
     trials (how its responses' light spreads). An ROI's dF/F is then its own light's dF over its mask mean's F0. Glomeruli that
     respond together cannot be told from one another's light, so a shared response may be lowered: each recording's
     unmixing.csv says how much each ROI's responses changed. Reads the movies twice.`,
+  blur_1um: `As the masks blurred by a width fit to the fly, but the width (s.d.) set to 1 µm, wider than the fits came out (0.3 to
+    0.8 µm on the flies it was tried on). It takes more of a responding neighbour's light from a quiet ROI (about 80% of it from
+    predicted ROIs, 30% from drawn ones, against 40% and 10%), about as much as the factorization with rims, and 1 to 2% of ROIs'
+    own responses too; its fit takes no time. Reads the movies twice.`,
   nmf: `Each ROI's signal is also unmixed from its neighbours', in tables beside the plain ones (unmixed/): on each plane, the movie's
     fluorescence is fit as each ROI's footprint times its signal, the footprints found from the fly's trials (a non-negative
     factorization, each started at its mask and kept within 2 µm of it). An ROI's dF/F is then its own light's dF over its mask

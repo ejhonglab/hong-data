@@ -1772,7 +1772,8 @@ async def predictions_nmf(request: Request) -> Response:
 
 async def predictions_nmf_ask(request: Request) -> Response:
     """Asks for glomeruli a prediction's ROIs miss to be looked for in the fly's movies
-    (`nmf_check.ask`): {"name" (as for a prediction)}. 201 with its state (``nmf``) if queued now,
+    (`nmf_check.ask`): {"name" (as for a prediction), "settings" (`nmf_check.settings`: its thresholds, and whether
+    anything is factorized; optional)}. 201 with its state (``nmf``) if queued now,
     200 if one is queued or running already. 422 without a name; 404 for no such prediction done."""
     body = await request.json()
     if not isinstance(body, dict):
@@ -1784,13 +1785,15 @@ async def predictions_nmf_ask(request: Request) -> Response:
         return json_error(422, "the name must be a first name alone, with no spaces (e.g. Ann)")
 
     def run():
-        p, queued = nmf_check.ask(db, request.path_params["id"], name, _client_ip(request))
+        p, queued = nmf_check.ask(db, request.path_params["id"], name, _client_ip(request), nmf_check.settings(body))
         return {"nmf": nmf_check.state(db, p)}, queued
 
     try:
         v, queued = await run_in_threadpool(run)
     except LookupError as e:
         return json_error(404, str(e))
+    except ValueError as e:
+        return json_error(400, str(e))
     return JSONResponse(v, status_code=201 if queued else 200)
 
 

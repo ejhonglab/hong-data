@@ -560,10 +560,10 @@ def test_unmix(tmp_path):
     before = extract.responses(plain, trials, 3)
     # (the mask means have their neighbours' responses: most where a mask is quiet and one touching it responds)
     assert np.abs(before - truth).max() > 0.1
-    for variant in ("blur", "nmf", "nmf_rims"):
+    for variant in ("blur", "blur_1um", "nmf", "nmf_rims"):
         planes = unmix.layout(rois, (28, 40), unmix.REGION_UM[variant] / px)
         assert [p["z"] for p in planes] == [0, 1] and [p["members"] for p in planes] == [[0, 1, 2, 5], [3, 4]]
-        assert all(not p["outlines"] for p in planes) and (variant != "blur") == (planes[0]["region"].sum() > planes[0]["masks"].sum())
+        assert all(not p["outlines"] for p in planes) and (not variant.startswith("blur")) == (planes[0]["region"].sum() > planes[0]["masks"].sum())
         maps = unmix.trial_maps(movie, trials, 3, planes)
         assert [m.shape for m in maps] == [(len(planes[0]["idx"]), 24), (len(planes[1]["idx"]), 24)]
         # (a background over the masks alone is all but their footprints' sum: only with pixels round them, and without
@@ -578,7 +578,10 @@ def test_unmix(tmp_path):
             traces, summed = extract.plane_traces(movie, rois, weights=u["weights"])
             assert np.array_equal(traces, plain)  # (mask means as without weights, to the last bit)
             mixed = unmix.unmixed(plain, summed, trials)
-            assert np.abs(extract.responses(mixed, trials, 3) - truth).max() < 0.02, (variant, background)
+            if variant != "blur_1um":  # (a width set is not the movie's: its responses are off by what that makes)
+                assert np.abs(extract.responses(mixed, trials, 3) - truth).max() < 0.02, (variant, background)
+            else:
+                assert u["how"]["sigma_um"] == 1.0 and u["how"]["set"] and abs(u["how"]["sigma_px"] - 1.0 / px) < 1e-9
             for t in trials:
                 assert np.allclose(extract._baseline(mixed, t), extract._baseline(plain, t))
     # one drawn twice: its footprints alike, so neither is told from the other: refused (and the rest are as before)
@@ -630,13 +633,13 @@ def test_unmix_option(main, tensor, monkeypatch):  # noqa: F811
     recording(fly / "megamat2", seed=1, gain=0.5)
     body = {"name": "Bob", "rois": "own", "dir": FLY}
     assert extract.options({"unmix": True})["unmix"] == extract.unmix.DEFAULT == "blur"
-    assert all(extract.options({"unmix": how})["unmix"] == how for how in ("blur", "nmf", "nmf_rims"))
+    assert all(extract.options({"unmix": how})["unmix"] == how for how in ("blur", "blur_1um", "nmf", "nmf_rims"))
     assert all("unmix" not in extract.options({"unmix": off}) for off in (None, False, ""))
     for bad in ("median", 2, ["blur"]):
         status, r = call(main.extractions_create, method="POST", body={**body, "unmix": bad})
         assert status == 400 and "unmix:" in r["error"], r
     ids = {}
-    for how in (None, True, "nmf", "nmf_rims"):
+    for how in (None, True, "blur_1um", "nmf", "nmf_rims"):
         x = call(main.extractions_create, method="POST", body={**body, **({"unmix": how} if how else {})})[1]
         assert x["options"] == {"mode": "best_plane", "window": "pulse", **({"unmix": "blur" if how is True else how} if how else {})}
         fit_worker.run_extraction(main.db, extract.claim(main.db))
@@ -645,7 +648,7 @@ def test_unmix_option(main, tensor, monkeypatch):  # noqa: F811
         ids[how] = x
     plain = extract.out_dir(ids[None]["id"])
     assert "unmix" not in ids[None]["result"] and not (plain / "unmixed").exists()
-    for how in (True, "nmf", "nmf_rims"):
+    for how in (True, "blur_1um", "nmf", "nmf_rims"):
         d = extract.out_dir(ids[how]["id"])
         files = sorted(p.relative_to(d).as_posix() for p in d.rglob("*.csv"))
         both = sorted(p.relative_to(plain).as_posix() for p in plain.rglob("*.csv"))
@@ -667,11 +670,11 @@ def test_unmix_option(main, tensor, monkeypatch):  # noqa: F811
         variant = "blur" if how is True else how
         assert res["unmix"]["variant"] == variant and res["unmix"]["sets"][0]["roi_planes"] == 6
         assert prov["computed"]["unmix"]["variant"] == variant and prov["computed"]["unmix"]["sets"][0]["pixel_from"] == "assumed"
-        assert (res["unmix"]["sets"][0]["sigma_um"] is not None) == (variant == "blur")
+        assert (res["unmix"]["sets"][0]["sigma_um"] is not None) == variant.startswith("blur")
         readme, log = (d / "README.txt").read_text(), (d / "log.txt").read_text()
         # (rims: how many, and how far into the masks they reach, in its result, provenance, README and log; none otherwise)
         rims, pset, words = res["unmix"]["sets"][0]["rims"], prov["computed"]["unmix"]["sets"][0], " ".join(readme.split())
-        assert pset["components"] == {"roi_planes": 6, "rims": rims or 0} and (prov["computed"]["unmix"]["nmf_reach_um"] is None) == (variant == "blur")
+        assert pset["components"] == {"roi_planes": 6, "rims": rims or 0} and (prov["computed"]["unmix"]["nmf_reach_um"] is None) == variant.startswith("blur")
         if variant == "nmf_rims":
             assert rims == sum(p["rims"] for p in pset["fit"]["planes"]) > 0 and f"with {rims} rims" in log and f"({rims} rims, pixels" in words
             assert prov["computed"]["unmix"]["rims"]["reach_in_px"] == extract.unmix.RIM_IN_PX and "(its rim, " in words
