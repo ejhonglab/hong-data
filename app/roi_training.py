@@ -124,8 +124,12 @@ def recording_odors(path: Path, index: odormeta.OdorIndex) -> Optional[list[dict
         labels = [x for x in (name, abbrev if isinstance(abbrev, str) else None) if x]
         odor_id = None
         if labels:
-            odor_id, _ = index.match_chemical({"cid": cid, "name": name, "abbrev": abbrev if isinstance(abbrev, str) else None},
-                                              labels[0])
+            ids = {"cid": cid, "name": name, "abbrev": abbrev if isinstance(abbrev, str) else None}
+            odor_id, _ = index.match_chemical(ids, labels[0])
+            if odor_id is None and cid is not None:
+                # (its CID another of the same odor, as PubChem has one per stereochemistry given: Tom's flies of 2024-09 and
+                # 2024-10 have geosmin as CID 1213, the odor table as 29746. What it was recorded as says which odor it is)
+                odor_id, _ = index.match_chemical({**ids, "cid": None}, labels[0])
         keys = {k for k in (_key(x, conc) for x in labels) if k}
         if odor_id is not None and conc is not None:
             keys.add((odor_id, format_conc(conc)))

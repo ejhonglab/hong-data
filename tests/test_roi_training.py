@@ -130,6 +130,10 @@ def test_recording_odors(tmp_path):
     assert [(o["recorded"], o["odor"], o["odor_id"]) for o in odors] == [
         ("pentanoic acid @ -3", "valeric acid @ -3", 1), ("ea @ -2", "ea @ -2", None)]
     assert ("ea", "-2") in odors[1]["keys"]
+    # one given another CID than the odor table's of it (PubChem's of another stereochemistry): the odor its name says
+    index = odormeta.OdorIndex([{**rows[0], "id": 1, "cid": 7991}])
+    p.write_text(json.dumps([{"odors": "valeric acid @ -4", "name": "valeric acid", "abbrev": "va", "log10_conc": -4, "cid": 12345}]))
+    assert [(o["odor"], o["odor_id"]) for o in roi_training.recording_odors(p, index)] == [("valeric acid @ -4", 1)]
     p.write_text("{}")
     assert roi_training.recording_odors(p, index) is None
 
