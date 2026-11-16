@@ -323,10 +323,10 @@ export class PredictPanel {
       return `<tr data-id="${p.id}"><td title="${esc(p.tensor_dir || p.fly_dir)}">${esc(p.fly)}</td>
         <td>#${p.fit_id}${p.fit_deleted ? ' <span class="muted">(deleted)</span>' : ''}</td><td>${esc(p.name)}</td>
         <td>${esc(fmtWhen(p.finished_at || p.created_at))}</td><td>${status}</td><td>${rois}</td><td class="acts">${this._refineCell(p)}</td>
-        <td class="acts">${p.status === 'done' ? `<button type="button" class="btn small" data-act="view">View</button>
+        <td class="acts"><div class="acts-grid">${p.status === 'done' ? `<button type="button" class="btn small" data-act="view">View</button>
           <a class="btn small" href="/api/predictions/${p.id}/download" download>Download</a>` : ''}
           ${p.status !== 'queued' ? `<a class="btn small" href="/api/predictions/${p.id}/log" target="_blank" rel="noopener">Log</a>` : ''}
-          ${p.status !== 'running' ? '<button type="button" class="btn small danger" data-act="delete">Delete</button>' : ''}</td></tr>${
+          ${p.status !== 'running' ? '<button type="button" class="btn small danger" data-act="delete">Delete</button>' : ''}</div></td></tr>${
         this.shown.has(p.id) && p.refine?.status === 'done' ? `<tr class="refine-details" data-id="${p.id}"><td colspan="8">${this._refineHtml(p, true)}</td></tr>` : ''}`;
     }).join('')}</tbody></table>`;
   }
