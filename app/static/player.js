@@ -240,7 +240,7 @@ export class MoviePlayer {
     const id = (this.loadId = (this.loadId || 0) + 1);
     this.el.querySelectorAll('.player-item').forEach((b) => b.classList.toggle('active', this.movies[+b.dataset.movie] === movie));
     this.el.querySelectorAll('[data-dff]').forEach((b) => b.classList.toggle('active', movie.dff?.of === +b.dataset.dff && movie.dff.by === b.dataset.by));
-    if (movie.trials && !movie.dff && this.dff?.status.get(movie.path)?.status !== 'ready') this._dffAsk(movie.path);
+    if (movie.trials && !movie.dff && this.dff?.items.some(({ m }) => m.path === movie.path) && this.dff.status.get(movie.path)?.status !== 'ready') this._dffAsk(movie.path);
     this._clearMovie('Opening the movie…');
     let info;
     try { info = await this.api(`/api/movie?path=${encodeURIComponent(movie.path)}`); } catch (e) {
@@ -1553,7 +1553,9 @@ export class MoviePlayer {
 
   // the movies to ask after, and a place under each in the list for its images
   _dffInit() {
-    const items = this.movies.map((m, i) => ({ m, i })).filter(({ m }) => m.trials);
+    // (not of a recording's own movie where the fly's concatenated one, al_analysis' mocorr_concat.tif, has it: that one's are enough)
+    const inConcat = new Set(this.movies.filter((m) => m.path.endsWith('/mocorr_concat.tif')).flatMap((m) => m.recordings || []));
+    const items = this.movies.map((m, i) => ({ m, i })).filter(({ m }) => m.trials && !(m.recording && inConcat.has(m.recording)));
     this.dff = items.length ? { items, status: new Map(), timer: null, id: (this.dff?.id || 0) + 1 } : null;
     for (const { i } of items) {
       const b = this.$(`.player-item[data-movie="${i}"]`);

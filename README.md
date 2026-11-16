@@ -382,7 +382,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   play button, time slider or speed), max projection over Z, channel, speed (the wheel over it too), zoom (wheel; out no
   further than the movie fits the window) and move (drag; never past its edges), with
   the value of the pixel under the pointer.
-  Under each movie with trials are its dF/F images, to show as a movie: *each trial*
+  Under each movie with trials (but a recording's own, where the fly's concatenated movie,
+  `mocorr_concat.tif`, has that recording) are its dF/F images, to show as a movie: *each trial*
   (one image per trial, its dF/F averaged over the first 2 volumes from the odor's onset,
   F0 the mean before it) and *each odor* (the mean of its trials), each named by its odor
   as it is shown. They are al_analysis' own (`trial_dff.tif`, `trialmean_dff.tif`, or
