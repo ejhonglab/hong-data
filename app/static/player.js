@@ -22,7 +22,9 @@ const SELECTED_COLOR = '#00e5ff';
 const ABOVE_COLOR = '#ff5050';
 const BELOW_COLOR = '#4aa3ff';
 // a prediction's ROIs, by where they are from (`openPrediction`)
-const SOURCES = { predicted: { label: 'predicted', color: '#ff4fd8' }, manual: { label: "the fly's own (drawn by hand)", color: ROI_COLOR },
+// (of a prediction whose ROIs were refined: those refined, and, apart, the model's own before that)
+const SOURCES = { predicted: { label: 'predicted', color: '#ff4fd8' }, unrefined: { label: 'predicted, before refinement', color: '#e6e6e6' },
+  manual: { label: "the fly's own (drawn by hand)", color: ROI_COLOR },
   edited: { label: 'predicted, as edited here', color: '#a394ff' }, nmf: { label: 'found by NMF, not merged', color: '#39b8ff' } };
 // a look for glomeruli the predicted ROIs miss (nmf_check.py): what its stages are called, and how often it is asked how far it is
 const NMF_STAGES = { load: 'reading the fly', register: 'registering the atlas to the fly', read: 'reading its movies', factorize: 'factorizing its planes',
@@ -194,6 +196,7 @@ export class MoviePlayer {
       editedPath: view.edited?.path || null };
     this.nmf = { state: view.nmf || null, found: null, pick: new Set(), run: null };
     if (view.nmf) this._nmfRefresh(this.edit);
+    this.refined = view.refined || null; // what refining its ROIs did to each (refinement.details), if they were
     this.datasetId = null;
     this.$('.player-title').textContent = title;
     this._clearMovie('Choose an image on the left.');
@@ -218,8 +221,8 @@ export class MoviePlayer {
     this.glomOnly = this.showTentative = this.showUnnamed = true;
     for (const c of ['glom', 'tentative', 'unnamed']) this.$(`.player-roi-${c}`).checked = true;
     this.roiQuery = this.$('.player-roi-search').value = '';
-    this.showSource = { predicted: true, manual: true, edited: true, nmf: true };
-    if (!pred) { this.edit = null; this.nmf = null; }
+    this.showSource = { predicted: true, unrefined: false, manual: true, edited: true, nmf: true };
+    if (!pred) { this.edit = null; this.nmf = null; this.refined = null; }
     this.base = null;
     this.hoverHandle = -1;
   }
@@ -318,13 +321,16 @@ export class MoviePlayer {
     };
     // (a prediction's ROIs as edited: read once, when it is opened; then as they are here)
     const ed = this.mode === 'prediction' ? this.edit : null, first = ed && !ed.hist;
-    let manual, predicted, edited;
-    try { [manual, predicted, edited] = await Promise.all([read(movie.rois), read(movie.predicted), read(first && ed.saved?.path)]); } catch (e) {
+    let manual, predicted, edited, unrefined;
+    try {
+      [manual, predicted, edited, unrefined] = await Promise.all([read(movie.rois), read(movie.predicted), read(first && ed.saved?.path), read(movie.unrefined)]);
+    } catch (e) {
       if (id === this.loadId) this.$('.player-roi-list').innerHTML = `<p class="player-error small">${this.esc(e.message)}</p>`;
       return;
     }
     if (id !== this.loadId) return;
-    this.base = { predicted: predicted.map((r) => ({ ...r, source: 'predicted' })), manual: manual.map((r) => ({ ...r, source: 'manual' })) };
+    this.base = { predicted: predicted.map((r) => ({ ...r, source: 'predicted' })), manual: manual.map((r) => ({ ...r, source: 'manual' })),
+      unrefined: unrefined.map((r) => ({ ...r, source: 'unrefined' })) };
     if (first && !ed.hist) {
       // (with what was merged into them of a look for missed glomeruli, and which of them are of it)
       const state = ed.saved && edited.length ? { simplified: ed.saved.simplified ?? null, pointsEdited: Boolean(ed.saved.points_edited),
@@ -353,7 +359,7 @@ export class MoviePlayer {
   }
 
   // whether an ROI is predicted (or a copy of one, edited, or one found for them by NMF), not one drawn by hand
-  _predicted(r) { return ['predicted', 'edited', 'nmf'].includes(r.source); }
+  _predicted(r) { return ['predicted', 'unrefined', 'edited', 'nmf'].includes(r.source); }
 
   // a prediction's legend: the colour of each source of ROIs, how many there are, and whether shown
   _renderSources() {
@@ -361,10 +367,11 @@ export class MoviePlayer {
     box.hidden = !pred;
     if (!pred) { box.innerHTML = ''; return; }
     const n = (s) => this.rois.filter((r) => r.source === s).length;
-    // (the edited ones, and those found by NMF: only once there are any)
-    box.innerHTML = Object.entries(SOURCES).map(([s, { label, color }]) => ((s === 'edited' || s === 'nmf') && !n(s) ? '' : `<label class="check"><input type="checkbox"
+    // (the edited ones, those found by NMF and those before refinement: only once there are any)
+    const what = (s, label) => (s === 'predicted' && this.refined ? 'predicted, refined' : label);
+    box.innerHTML = Object.entries(SOURCES).map(([s, { label, color }]) => (['edited', 'nmf', 'unrefined'].includes(s) && !n(s) ? '' : `<label class="check"><input type="checkbox"
       data-source="${s}"${this.showSource[s] ? ' checked' : ''}><span class="swatch-roi" style="background:${color}"></span>
-      ${this.esc(label)} <span class="muted">(${n(s)})</span></label>`)).join('');
+      ${this.esc(what(s, label))} <span class="muted">(${n(s)})</span></label>`)).join('');
   }
 
   _roisFiltered() {
@@ -405,14 +412,26 @@ export class MoviePlayer {
         if (!listed(r)) return '';
         const plane = this._roiPlane(r);
         const name = this.esc(r.name);
-        const row = `<button type="button" class="player-roi${i === this.selectedRoi ? ' active' : ''}" data-roi="${i}"${this._tested(r).title}>
-          <span class="swatch-roi" style="background:${this.esc(this._roiColor(r))}"></span>${name}${cand(r) || r.nmf != null ? tag : ''}${this._tested(r).tag}
-          <span class="muted">${cand(r) ? `${this.esc(r.what)} · ` : ''}${plane == null ? 'all planes' : `plane ${plane + 1}`}</span></button>`;
+        const tested = this._tested(r), done = this._refinedOf(r), title = [...done.map((x) => x.text), tested.text].filter(Boolean).join('\n\n');
+        const row = `<button type="button" class="player-roi${i === this.selectedRoi ? ' active' : ''}" data-roi="${i}"${title ? ` title="${this.esc(title)}"` : ''}>
+          <span class="swatch-roi" style="background:${this.esc(this._roiColor(r))}"></span>${name}${cand(r) || r.nmf != null ? tag : ''}${tested.tag}
+          <span class="muted">${cand(r) ? `${this.esc(r.what)} · ` : ''}${plane == null ? 'all planes' : `plane ${plane + 1}`}${done.map((x) => ` · ${x.word}`).join('')}</span></button>`;
         // (one found by NMF: ticked if it is to be merged, at its first outline)
         return cand(r) ? `<div class="player-roi-cand"><input type="checkbox" class="player-nmf-pick" data-cand="${r.cand}"${
           this.nmf?.pick.has(r.cand) ? ' checked' : ''}${r.first ? '' : ' style="visibility:hidden"'} aria-label="Merge ${name}"
           title="Ticked: merged into the ROIs with the others ticked, by Merge">${row}</div>` : row;
       }).join('');
+  }
+
+  // what refining a prediction's ROIs did to a refined one on its plane (the server's refinement.details): [{ word, text }],
+  // split (a part of an outline of the model's cut in two) and trimmed (its edge cut back), as far as each was
+  _refinedOf(r) {
+    const done = r.source === 'predicted' ? this.refined?.rois?.[r.name]?.[String(this._roiPlane(r))] : null;
+    if (!done) return [];
+    return [...(done.split_from != null ? [{ word: 'split', text: `Split: on this plane, a part of the model's outline ${
+      /^\d+$/.test(done.split_from) ? `numbered ${done.split_from}` : `named ${done.split_from}`}, which was cut in two as it held two glomeruli tuned unlike (then the planes' outlines were joined and named again)` }] : []),
+    ...(done.trimmed != null ? [{ word: 'trimmed', text: `Trimmed: its edge cut back on this plane, where it carried a neighbor's signal (${
+      Math.round(done.trimmed * 100)}% of its area here kept)` }] : [])];
   }
 
   // an ROI's colour: in a prediction, its source's; else its own (as set in ImageJ), if it has one
@@ -462,12 +481,12 @@ export class MoviePlayer {
   // the ROIs listed and drawn: those found by NMF and not merged (first: they are to be looked at), those
   // predicted, the fly's own, and the edited ones as they are now
   _composeRois() {
-    const state = this.edit?.hist?.current, b = this.base || { predicted: [], manual: [] };
+    const state = this.edit?.hist?.current, b = this.base || { predicted: [], manual: [], unrefined: [] };
     const roi = (r, more) => ({ name: r.name, z: r.z, position: null, color: null, closed: true, type: 'polygon', kind: r.kind, paths: [r.points], ...more });
     const edited = (state?.rois || []).map((r, k) => roi(r, { source: 'edited', k, nmf: r.nmf ?? null }));
     const found = this.base && this.mode === 'prediction' ? provisional(this.nmf?.found, state).map((r) => roi(r, { source: 'nmf', cand: r.cand,
       what: r.what, first: r.first })) : [];
-    this.rois = [...found, ...b.predicted, ...b.manual, ...edited];
+    this.rois = [...found, ...b.predicted, ...(b.unrefined || []), ...b.manual, ...edited];
     this.editedFrom = this.rois.length - edited.length; // (where the edited ones start)
   }
 
@@ -659,7 +678,7 @@ export class MoviePlayer {
   // What the look's tests say of a predicted ROI's own outline on its plane (or its copy's, not from NMF), as the list
   // shows it: { title (an attribute: its numbers), tag (a mark, if it is under a threshold the look had) }
   _tested(r) {
-    const f = this.nmf?.found, none = { title: '', tag: '' };
+    const f = this.nmf?.found, none = { text: '', tag: '' };
     if (!f?.rois?.length || !['predicted', 'edited'].includes(r.source) || r.nmf != null) return none;
     const names = mergedOf(f, this.edit?.hist?.current)?.names, plane = this._roiPlane(r);
     // (its name is its label's: as predicted, or as named when candidates were merged)
@@ -669,7 +688,7 @@ export class MoviePlayer {
       ...(m.novelty < (p.min_novelty ?? 0.5) ? [`is mostly a mixture of the ROIs next to it (${m.novelty.toFixed(2)} of its tuning is its own)`] : [])];
     const text = `By the look's tests, this outline: odors explain ${m.eta2.toFixed(2)} of its trial responses' variance; the ROIs next to it leave ${
       m.novelty.toFixed(2)} of its tuning unexplained; ${m.area_um2.toFixed(0)} µm², holding a circle of ${m.radius_um.toFixed(1)} µm.`;
-    return { title: ` title="${this.esc(text)}"`, tag: low.length ? `<span class="tag-weak" title="${this.esc(`This outline ${low.join(', and ')}: it may be no glomerulus of its own, or one that answers none of the odors. ${text}`)}">?</span>` : '' };
+    return { text, tag: low.length ? `<span class="tag-weak" title="${this.esc(`This outline ${low.join(', and ')}: it may be no glomerulus of its own, or one that answers none of the odors. ${text}`)}">?</span>` : '' };
   }
 
   // asks the server how the look is (and what it found, once), then again while it is not over
@@ -846,6 +865,12 @@ export class MoviePlayer {
     const r = this.rois[i], ed = this.edit, dialog = document.getElementById('roi-identity');
     if (!ed || !r || r.source === 'manual' || !this.base) return;
     const copy = r.source === 'edited';
+    if (r.source === 'unrefined' && this.refined?.steps?.includes('split')) { // (named before the outlines split were named again: not kept apart)
+      showNoIdentity(dialog, `ROI ${/^\d+$/.test(r.name) ? `${r.name}: not named` : `named ${r.name}`}, before refinement`, `This is one of the model's
+        own ROIs, before they were refined. Refining split outlines over two glomeruli and named all the ROIs again, and what the names cost is kept of
+        those refined: double-click a refined ROI (“predicted, refined”) for those values.`);
+      return;
+    }
     if (r.source === 'nmf' || r.nmf != null || (copy && ed.hist.current.nmf)) { // (named when what NMF found was, or was merged: not what the prediction kept)
       showNoIdentity(dialog, `ROI ${/^\d+$/.test(r.name) ? `${r.name}: not named` : `named ${r.name}`}`, r.source === 'nmf' || r.nmf != null
         ? `This ROI was found by NMF in the fly's movies, not predicted by the model. It was named as the model names a fly's ROIs (by its odor

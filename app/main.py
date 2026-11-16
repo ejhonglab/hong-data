@@ -40,7 +40,7 @@ from starlette.staticfiles import StaticFiles
 
 from . import (backup, bundle_import, chemprops, compare, config, dilution, export, extract, filelog, fits, headspace, lotus,
                lotus_import, matrix_download, merge, metacyc, metacyc_import, model_data, model_runs, nmf_check, orn_input, movies, odormeta, permalinks,
-               predictions, reference, roi_training, sandbox, tensor, thorimage, trial_dff, vcf, version, yamlcheck)
+               predictions, refinement, reference, roi_training, sandbox, tensor, thorimage, trial_dff, vcf, version, yamlcheck)
 from .db import PANEL_RENAMES, PROPERTY_COLUMNS, Database, rename_panel
 from .glomeruli import GLOMERULI, load_glomeruli
 from .ingest import (ParsedData, ValidationError, combine, extra_text, files_text, fly_key, kc_id_problems, load_file,
@@ -1707,12 +1707,12 @@ async def predictions_create(request: Request) -> Response:
 
 
 async def predictions_delete(request: Request) -> Response:
-    """Deletes a prediction and its files. 409 while it runs, or glomeruli its ROIs miss are being looked for."""
+    """Deletes a prediction and its files. 409 while it runs, glomeruli its ROIs miss are being looked for, or its ROIs refined."""
     done = await run_in_threadpool(predictions.delete, db, request.path_params["id"])
     if done is None:
         return json_error(404, "no such prediction")
     if done is False:
-        return json_error(409, "it is running, or glomeruli its ROIs miss are being looked for: wait for that to end")
+        return json_error(409, "it is running, glomeruli its ROIs miss are being looked for, or its ROIs refined: wait for that to end")
     return JSONResponse({"deleted": True})
 
 
@@ -1845,6 +1845,38 @@ async def predictions_nmf_plan(request: Request) -> Response:
         return json_error(400, str(e))
     except nmf_check.CallError as e:
         return json_error(503, f"the ROIs could not be named again: {e}")
+
+
+async def predictions_refine(request: Request) -> Response:
+    """Asks for a prediction's ROIs to be refined (`refinement.ask`): {"name" (as for a prediction), and how
+    (`predictions.options`: "clean", "clean_params", "split"; at least one step)}. 201 with its state (``refine``) if
+    queued now, 200 if one is queued or running already. 422 without a name; 404 for no such prediction done; 409
+    for what cannot be refined (nothing asked for, core of a prediction that did not keep what it goes by, or
+    glomeruli its ROIs miss being looked for)."""
+    body = await request.json()
+    if not isinstance(body, dict):
+        return json_error(400, "expected a JSON object")
+    name = _user_name(body.get("name"))
+    if not name:
+        return json_error(422, "say who you are: enter your first name in Settings")
+    if first_name_problem(name):
+        return json_error(422, "the name must be a first name alone, with no spaces (e.g. Ann)")
+    try:
+        opts = predictions.options(body)
+    except ValueError as e:
+        return json_error(400, str(e))
+
+    def run():
+        p, queued = refinement.ask(db, request.path_params["id"], name, _client_ip(request), opts)
+        return {"refine": refinement.state(p)}, queued
+
+    try:
+        v, queued = await run_in_threadpool(run)
+    except LookupError as e:
+        return json_error(404, str(e))
+    except ValueError as e:
+        return json_error(409, str(e))
+    return JSONResponse(v, status_code=201 if queued else 200)
 
 
 async def predictions_download(request: Request) -> Response:
@@ -4133,6 +4165,7 @@ routes = [
     Route("/api/predictions/{id:int}/nmf", predictions_nmf),
     Route("/api/predictions/{id:int}/nmf", predictions_nmf_ask, methods=["POST"]),
     Route("/api/predictions/{id:int}/nmf/plan", predictions_nmf_plan, methods=["POST"]),
+    Route("/api/predictions/{id:int}/refine", predictions_refine, methods=["POST"]),
     Route("/api/predictions/{id:int}/download", predictions_download),
     Route("/api/extractions", extractions_list),
     Route("/api/extractions", extractions_create, methods=["POST"]),

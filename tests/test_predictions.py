@@ -248,19 +248,25 @@ def test_worker_prediction(main, tensor, monkeypatch):  # noqa: F811
     assert prov["device"] == "CPU (a fit is using the GPU)" and prov["fly"]["recordings"][0]["responses"]["bytes"] > 0
     o = prov["model"]["alseg_options"]  # (how Cellpose's masks are made too, the al-diag-seg's defaults)
     assert o["segmenter"] == "stand-in" and o["cellprob_threshold"] == am.Options().cellprob_threshold
-    # asked for again with its ROIs cleaned: the cleaned ones are its ROIs, each step alone is scored too, and
-    # ROIs kept apart do not touch (the stand-in's, the fly's own grown, do)
-    if hasattr(am.Options(), "clean"):
+    # asked for again with its ROIs refined: refined as one asked for later is (refinement.py), the refined ones its ROIs,
+    # the model's own kept, both scored; ROIs kept apart do not touch (the stand-in's, the fly's own grown, do)
+    if hasattr(am.Model, "refine"):
         fly = predictions.locate(f"ann/analysis/{date}/{n}", f"ann/raw/{date}/{n}", config.TENSOR_ROOT, [])
         opts = predictions.options({"clean": ["margin"], "clean_params": {"margin": {"gap_um": 1.0}}})
         p, _ = predictions.create(main.db, f["id"], fly, "Bob", None, overwrite=True, opts=opts)
         fit_worker.run_prediction(main.db, predictions.claim(main.db), False)
         p = predictions.get(main.db, p["id"])
         assert p["status"] == "done", (predictions.pred_dir(p["id"]) / "log.txt").read_text()[-3000:]
-        k = p["result"]["scores"]["kinds"]
-        assert p["options"] == opts and p["result"]["final"] == "clean" and {"pred", "clean", "clean_margin", "clean_trim"} <= set(k)
+        k, r = p["result"]["scores"]["kinds"], p["refine"]
+        assert p["options"] == opts and p["result"]["final"] == "clean" and set(k) == {"pred", "clean"}
+        assert r["status"] == "done" and r["with_prediction"] and (r["name"], r["options"]) == ("Bob", opts) and r["result"]["steps"] == ["margin"]
+        assert r["result"]["kinds"] == k and r["result"]["n"] == p["result"]["n"] == k["clean"]["n"] and k["clean"]["named_of"] > 0
         assert k["clean"]["touching"] == 0 and k["clean"]["gap_um"] > (k["pred"]["gap_um"] or 0) and p["result"]["scores"]["gap_um"] == k["clean"]["gap_um"]
-        assert json.loads((predictions.pred_dir(p["id"]) / "provenance.json").read_text())["model"]["alseg_options"]["clean_params"] == {"margin": {"gap_um": 1.0}}
+        assert (d / f"{held}_RoiSet.zip").read_bytes() == (d / f"{held}_clean_RoiSet.zip").read_bytes()
+        assert (d / f"{held}_pred_RoiSet.zip").is_file() and not (d / f"{held}_cellprob.tif").exists()  # (the stand-in has no probabilities)
+        assert json.loads((d / f"{held}_refinement.json").read_text())["options"] == opts
+        # (the model, as it predicted: its own ROIs, refined after)
+        assert json.loads((d / "provenance.json").read_text())["model"]["alseg_options"]["clean"] == []
     assert tifffile.imread(d / "average.tif").shape == tuple(prov["fly"]["planes"])
     assert "summary.csv" in (d / "README.txt").read_text() and (d / "summary.csv").is_file()
     # what each name cost (of its final ROIs, scored: al-diag-seg's file of that kind): every ROI of the RoiSet by its name,
@@ -361,6 +367,16 @@ def test_prediction_with_cellpose(main, tensor, monkeypatch):  # noqa: F811
         p = predictions.get(main.db, p["id"])
         assert p["status"] == "done", (predictions.pred_dir(p["id"]) / "log.txt").read_text()[-3000:]
         assert p["result"]["device"] == ("GPU" if on_gpu else "CPU") and p["result"]["scores"]["manual"] == len(GLOMS)
+    # Cellpose's cell probabilities kept, on the fly's grid: its ROIs can be refined by core after
+    from app import refinement
+
+    prob = tifffile.imread(refinement.files(p)["cellprob"])
+    assert prob.shape == tifffile.imread(predictions.pred_dir(p["id"]) / "average.tif").shape and refinement.can(p)["core"]
+    refinement.ask(main.db, p["id"], "Bob", None, predictions.options({"clean": ["core"]}))
+    fit_worker.run_refinement(main.db, refinement.claim(main.db))
+    p = predictions.get(main.db, p["id"])
+    assert p["refine"]["status"] == "done", (predictions.pred_dir(p["id"]) / "log.txt").read_text()[-3000:]
+    assert p["refine"]["result"]["steps"] == ["core"] and p["result"]["final"] == "clean"
 
 
 def wait(cond, seconds: float = 10) -> bool:

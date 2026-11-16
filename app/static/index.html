@@ -510,12 +510,13 @@ try {
       </div>
       <details class="predict-clean" id="predict-clean">
         <summary>Keep neighboring glomeruli out of its ROIs <span class="muted" id="predict-clean-summary"></span></summary>
-        <p class="muted small">Steps that only remove pixels from the model's ROIs, on each plane, applied in this order; the ROIs
-          left are then the prediction's (to view, download and extract signals from). Each step alone is scored too, where the fly
-          has ROIs of its own, to compare them by. None ticked: the model's ROIs as they are.</p>
-        <label class="check"><input type="checkbox" id="predict-split"> Split a plane's outlines that hold two glomeruli tuned
-          differently <span class="muted">(before the planes' outlines are joined: changes the model's ROIs themselves; found 4 of 11
-          such outlines on fit 7's held-out flies)</span></label>
+        <p class="muted small">Steps that refine the model's ROIs, applied in this order: split first, then steps that only remove
+          pixels, on each plane. The ROIs they leave are then the prediction's (to view, download and extract signals from); the
+          model's own are kept, to compare with (Refinement, in the list of predictions, and the viewer). They can also be
+          applied later, from that list. None ticked: the model's ROIs as they are.</p>
+        <label class="check"><input type="checkbox" id="predict-split" data-split> Split a plane's outlines that hold two glomeruli
+          tuned differently <span class="muted">(then the planes' outlines are joined into 3D ROIs again, and named again; found 4 of
+          11 such outlines on fit 7's held-out flies)</span></label>
         <label class="check"><input type="checkbox" data-clean="trim"> Trim: cut an ROI's edge back while it carries more than
           <input type="number" class="narrow" data-clean-param="trim.max_share" value="0.1" min="0" max="1" step="0.05"> of a
           neighboring ROI's tuning <span class="muted">(by every recording's per-trial dF/F)</span></label>
@@ -1356,6 +1357,18 @@ try {
     <div class="nmf-merge-body"></div>
     <div class="actions">
       <button type="submit" value="merge" class="btn primary nmf-merge-ok" disabled>Merge</button>
+      <button type="submit" value="cancel" class="btn" autofocus>Cancel</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="refine-dialog" class="confirm refine-dialog" aria-labelledby="refine-dialog-q">
+  <form method="dialog">
+    <p id="refine-dialog-q">Refine these ROIs</p>
+    <div class="predict-clean" id="refine-steps"></div>
+    <p class="muted small" id="refine-dialog-detail"></p>
+    <div class="actions">
+      <button type="submit" value="refine" class="btn primary">Refine</button>
       <button type="submit" value="cancel" class="btn" autofocus>Cancel</button>
     </div>
   </form>

@@ -34,7 +34,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from . import fits, movies, predictions
+from . import fits, movies, predictions, refinement
 
 STATUSES = ("queued", "running", "done", "failed", "interrupted")
 ACTIVE = ("queued", "running")
@@ -117,12 +117,15 @@ def ask(db, pred_id: int, name: str, ip: Optional[str], how: Optional[dict] = No
 
     Raises:
         LookupError: no such prediction done.
+        ValueError: its ROIs are being refined (`refinement`), which would make the look out of date.
     """
     with db.connect() as con:
         con.execute("BEGIN IMMEDIATE")
-        r = con.execute("SELECT status, nmf_status FROM predictions WHERE id = ?", (pred_id,)).fetchone()
+        r = con.execute("SELECT status, nmf_status, refine_status FROM predictions WHERE id = ?", (pred_id,)).fetchone()
         if r is None or r["status"] != "done":
             raise LookupError("no such prediction done")
+        if r["refine_status"] in ACTIVE:
+            raise ValueError("its ROIs are being refined: look for glomeruli they miss once that is done")
         queued = r["nmf_status"] not in ACTIVE
         if queued:
             con.execute("UPDATE predictions SET nmf_status = 'queued', nmf_json = ? WHERE id = ?",
@@ -311,8 +314,9 @@ def run(db, p: dict, model, fly: dict, on_gpu: bool, say=print, progress=None) -
     final = p["result"]["final"]
     d = predictions.pred_dir(p["id"])
     labels = tifffile.imread(d / f"{p['fly']}_{final}.tif")
-    # (cleaned ROIs keep the names Cellpose's own were given: named again, it is by those)
-    named = f"{p['fly']}_pred.tif" if final.startswith("clean") and (d / f"{p['fly']}_pred.tif").is_file() else None
+    # (cleaned ROIs keep the names of those they were cleaned from, Cellpose's own or those split: named again, it is by those)
+    base = next((f"{p['fly']}_{k}.tif" for k in ("split", "pred") if (d / f"{p['fly']}_{k}.tif").is_file()), None)
+    named = base if final.startswith("clean") else None
     names = predicted_names(p)
     tell = progress or (lambda *a: None)
     prior, prior_names = None, None
@@ -333,7 +337,7 @@ def run(db, p: dict, model, fly: dict, on_gpu: bool, say=print, progress=None) -
     tell("read", 0, 1)
     mv = evidence.frames(fly["dir"], labels.shape, progress=lambda a, b: tell("read", a, b))
     say(f"movies of {len(mv['recordings'])} recordings ({', '.join(mv['recordings'])}): {len(mv['dff'])} time points of {len(mv['trials'])} trials")
-    po = p.get("options") or {}
+    po = refinement.options_of(p)  # (how its ROIs were refined, if they were)
     steps = [s for s in po.get("clean") or [] if s != "core"]  # (core goes by Cellpose's probabilities, which candidates have none of)
     res = anmf.check(model, fly, labels, names, prior=prior, steps=steps, clean_params={**model.options.clean_params, **(po.get("clean_params") or {})},
                      movies=mv, progress=lambda stage, a, b: tell("name" if stage == "name" else "factorize", a, b),

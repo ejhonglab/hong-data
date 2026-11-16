@@ -6,12 +6,16 @@ A prediction is a row of the ``predictions`` table, one per fit and fly (its mot
 data folder, on tensor): asked for again, it is run again, its files replaced. Its folder
 (`pred_dir`) has:
 
-- ``<fly>_RoiSet.zip``: the ROIs to use (the model's final ones), named by glomerulus where
-  one fits (numbered where none does), per plane, for ImageJ and al_analysis;
+- ``<fly>_RoiSet.zip``: the ROIs to use (the model's own, or once they are refined, those refined:
+  `refinement`), named by glomerulus where one fits (numbered where none does), per plane, for
+  ImageJ and al_analysis;
 - ``<fly>_<kind>.tif`` and ``<fly>_<kind>_RoiSet.zip``: each kind of ROIs al-diag-seg makes
-  (``pred``: Cellpose's; ``refined_tuning``; ``refined_prior``, with the atlas), as labels and
-  RoiSets, the names given (``<fly>_identities*.csv``) and what each cost
-  (``<fly>_identity_terms*.json``: `identity_terms`);
+  (``pred``: Cellpose's, the model's own; ``refined_tuning``; ``refined_prior``, with the atlas;
+  ``clean_<step>``, each step of `CLEAN` alone; and, once refined, ``split`` and ``clean``), as
+  labels and RoiSets, the names given (``<fly>_identities_<kind>.csv``) and what each cost
+  (``<fly>_identity_terms_<kind>.json``: `identity_terms`);
+- ``<fly>_cellprob.tif``: Cellpose's cell probabilities, which `refinement`'s core goes by, and
+  ``<fly>_atlas_prior.npz``: the atlas on the fly's grid, which ROIs split are named by (`refinement`);
 - ``average.tif``: the fly's average image, as the model saw it (for the tab's viewer);
 - where the fly has ROIs of its own, the scores of each kind against them (``summary.csv``,
   ``glomeruli.csv``);
@@ -101,10 +105,11 @@ CLEAN = {"trim": {"max_share": (0.1, 0.0, 1.0)},
 
 
 def options(body: dict) -> dict:
-    """How a prediction asked for cleans its ROIs: ``clean`` (the steps of `CLEAN` to apply to the model's ROIs,
-    whose result is then the prediction's ROIs; none by default), ``clean_params`` ({step: {parameter: value}},
-    for the steps asked for, where not al-diag-seg's default) and ``split`` (whether a plane's masks over two
-    glomeruli are split before the planes' are joined).
+    """How a prediction asked for (or a refinement of one: `refinement`) cleans its ROIs: ``clean`` (the steps of
+    `CLEAN` to apply to the model's ROIs, whose result is then the prediction's ROIs; none by default),
+    ``clean_params`` ({step: {parameter: value}}, for the steps asked for, where not al-diag-seg's default) and
+    ``split`` (whether a plane's masks over two glomeruli are cut in two first, and the planes' masks joined and
+    named again).
 
     Raises:
         ValueError: for a step or a parameter that is not one, or a value out of range.
@@ -137,7 +142,22 @@ def _row(r) -> dict:
     # the look for glomeruli its ROIs miss (nmf_check.py), if one was asked for
     status, more = d.pop("nmf_status", None), d.pop("nmf_json", None)
     d["nmf"] = {**(json.loads(more) if more else {}), "status": status} if status else None
+    # its ROIs' refinement (refinement.py), if one was asked for: once done, its result is of the ROIs refined
+    status, more = d.pop("refine_status", None), d.pop("refine_json", None)
+    d["refine"] = {**(json.loads(more) if more else {}), "status": status} if status else None
+    if status == "done" and d["result"] and (d["refine"].get("result") or {}).get("final"):
+        d["result"] = with_refined(d["result"], d["refine"]["result"])
     return d
+
+
+def with_refined(res: dict, out: dict) -> dict:
+    """A prediction's result (``res``: of the model's own ROIs, as `fit_worker.run_prediction` keeps it) with its ROIs
+    those its refinement made (``out``: its result, `refinement.run`'s): their ``final``, ``n``, ``named`` and, of a
+    fly with ROIs of its own, ``scores`` (with each kind's: ``kinds``)."""
+    res = {**res, "final": out["final"], "n": out["n"], "named": out.get("named", res.get("named"))}
+    if res.get("scores") is not None and out.get("kinds"):
+        res["scores"] = {**res["scores"], **{k: v for k, v in out["kinds"][out["final"]].items() if k != "n"}, "kinds": out["kinds"]}
+    return res
 
 
 def get(db, pred_id: int) -> Optional[dict]:
@@ -165,10 +185,10 @@ def update(db, pred_id: int, **fields) -> None:
 
 def create(db, fit_id: int, fly: dict, name: str, ip: Optional[str], overwrite: bool = False,
            opts: Optional[dict] = None) -> tuple[dict, bool]:
-    """Asks for the ROIs of `fly` (as `locate` gives it) by fit `fit_id`'s model, cleaned as ``opts``
+    """Asks for the ROIs of `fly` (as `locate` gives it) by fit `fit_id`'s model, refined as ``opts``
     says (of `options`; default: not). One asked
     for again (``overwrite``) is queued again, as asked for now, its files replaced when it
-    runs; one queued or running is left as it is.
+    runs; one queued or running (or whose ROIs are being refined) is left as it is.
 
     Returns:
         (the prediction, whether it was queued now).
@@ -179,7 +199,7 @@ def create(db, fit_id: int, fly: dict, name: str, ip: Optional[str], overwrite: 
     with db.connect() as con:
         con.execute("BEGIN IMMEDIATE")
         r = con.execute("SELECT * FROM predictions WHERE fit_id = ? AND fly_dir = ?", (fit_id, fly["dir"])).fetchone()
-        if r is not None and r["status"] in ACTIVE:
+        if r is not None and (r["status"] in ACTIVE or (r["status"] == "done" and r["refine_status"] == "running")):
             return _row(r), False
         if r is not None and not overwrite:
             raise Exists(_row(r))
@@ -192,17 +212,18 @@ def create(db, fit_id: int, fly: dict, name: str, ip: Optional[str], overwrite: 
             pred_id = r["id"]
             con.execute("UPDATE predictions SET raw_dir = ?, fly = ?, name = ?, ip = ?, created_at = ?, status = 'queued', "
                         "started_at = NULL, finished_at = NULL, progress_json = NULL, result_json = NULL, error = NULL, options_json = ?, "
-                        "nmf_status = NULL, nmf_json = NULL WHERE id = ?", (fly["raw_dir"], fly["name"], name, ip, now(), oj, pred_id))
+                        "nmf_status = NULL, nmf_json = NULL, refine_status = NULL, refine_json = NULL WHERE id = ?", (fly["raw_dir"], fly["name"], name, ip, now(), oj, pred_id))
     return get(db, pred_id), True
 
 
 def delete(db, pred_id: int) -> Optional[bool]:
     """Deletes a prediction and its folder. None if there is no such prediction; False if it
-    is running, or glomeruli its ROIs miss are being looked for (`nmf_check`)."""
+    is running, or glomeruli its ROIs miss are being looked for (`nmf_check`), or its ROIs refined
+    (`refinement`)."""
     p = get(db, pred_id)
     if p is None:
         return None
-    if p["status"] == "running" or (p["nmf"] or {}).get("status") == "running":
+    if p["status"] == "running" or (p["nmf"] or {}).get("status") == "running" or (p["refine"] or {}).get("status") == "running":
         return False
     with db.connect() as con:
         con.execute("DELETE FROM predictions WHERE id = ? AND status != 'running'", (pred_id,))
@@ -337,6 +358,10 @@ def worker_jobs(db) -> dict:
             jobs.append({"what": f"Glomeruli that fit #{p['fit_id']}'s ROIs of {p['fly']} miss being looked for, asked for by {p['nmf'].get('name')}",
                          "started_at": p["nmf"].get("started_at"), "ends_at": None,
                          "then": "It would be stopped and marked interrupted, to be asked for again."})
+        if (p["refine"] or {}).get("status") == "running" and p["status"] == "done":
+            jobs.append({"what": f"Fit #{p['fit_id']}'s ROIs of {p['fly']} being refined, asked for by {p['refine'].get('name')}",
+                         "started_at": p["refine"].get("started_at"), "ends_at": None,
+                         "then": "It would be stopped and marked interrupted, to be asked for again."})
     from . import extract  # (it imports this module)
 
     exts = extract.all_extractions(db)
@@ -347,7 +372,8 @@ def worker_jobs(db) -> dict:
                          "started_at": x["started_at"], "ends_at": x["eta"]["ends_at"] if x["eta"]["seconds"] else None,
                          "then": "It would be stopped and marked interrupted, to be asked for again."})
     queued = (sum(f["status"] == "queued" for f in all_fits) + sum(p["status"] == "queued" for p in preds)
-              + sum((p["nmf"] or {}).get("status") == "queued" for p in preds) + sum(x["status"] == "queued" for x in exts))
+              + sum((p["nmf"] or {}).get("status") == "queued" for p in preds) + sum((p["refine"] or {}).get("status") == "queued" for p in preds)
+              + sum(x["status"] == "queued" for x in exts))
     return {"jobs": jobs, "queued": queued}
 
 
@@ -457,10 +483,11 @@ def models(all_fits: list[dict]) -> list[dict]:
 def listing(db, root_: Path) -> dict:
     """Every prediction (newest first: each with ``tensor_dir`` and ``tensor_raw_dir``, its fly's
     folders from the top of tensor, ``fit_deleted``, ``nmf`` (the look for glomeruli its ROIs
-    miss, if one was asked for: `nmf_check.state`), and those queued or running with ``eta``:
+    miss, if one was asked for: `nmf_check.state`), ``refine`` and ``refinable`` (its ROIs'
+    refinement: `refinement.listing_fields`), and those queued or running with ``eta``:
     when it should end, see `estimate`), the models to predict with (`models`), the fit worker,
     where tensor is on the server, and ``expected``: the same of a prediction asked for now."""
-    from . import nmf_check  # (it imports this module)
+    from . import nmf_check, refinement  # (they import this module)
 
     all_fits = fits.all_fits(db)
     have = {f["id"] for f in all_fits}
@@ -469,7 +496,7 @@ def listing(db, root_: Path) -> dict:
         rel = lambda s: roi_training._arcname(Path(s), root_, []) if s else None  # noqa: E731
         preds.append({**p, "tensor_dir": rel(p["fly_dir"]), "tensor_raw_dir": rel(p["raw_dir"]),
                       "fit_deleted": p["fit_id"] not in have, "edited": edited_info(p) if p["status"] == "done" else None,
-                      "nmf": nmf_check.state(db, p)})
+                      "nmf": nmf_check.state(db, p), **refinement.listing_fields(p)})
     worker = fits.worker_status(db)
     new = estimate(preds, bool(worker.get("gpu")), any(f["status"] == "running" for f in all_fits))
     return {"predictions": preds, "models": models(all_fits), "worker": worker, "tensor_root": str(root_), "expected": new}
@@ -481,8 +508,9 @@ def view(db, pred_id: int) -> Optional[dict]:
     prediction's ROIs) and ``rois`` (the fly's own, next to the movie or above it; for the
     average image, those the prediction was scored against); the predicted ROIs as edited
     there (``edited``: `edited_info`, None if they were not; ``revision``: `edited_revision`);
-    and the look for glomeruli they miss, if one was asked for (``nmf``: `nmf_check.state`).
-    None if there is no such prediction done."""
+    the look for glomeruli they miss, if one was asked for (``nmf``: `nmf_check.state`); and,
+    once its ROIs were refined, what that did (``refined``: `refinement.details`), each movie then
+    with ``unrefined`` too (the model's own ROIs). None if there is no such prediction done."""
     p = get(db, pred_id)
     if p is None or p["status"] != "done":
         return None
@@ -507,12 +535,14 @@ def view(db, pred_id: int) -> Optional[dict]:
     for m in found:
         m["label"] = f"{top.name}/{Path(m['path']).relative_to(top).as_posix()}" if m["recording"] else f"{top.name}/{Path(m['path']).name}"
         out.append(m)
+    from . import nmf_check, refinement  # (they import this module)
+
+    refined = refinement.details(p)
     for m in out:
         m["predicted"] = pred
-    from . import nmf_check  # (it imports this module)
-
+        m["unrefined"] = refined["unrefined"] if refined else None
     return {"id": p["id"], "fit_id": p["fit_id"], "fly": p["fly"], "movies": out, "edited": edited_info(p),
-            "revision": edited_revision(p), "nmf": nmf_check.state(db, p)}
+            "revision": edited_revision(p), "nmf": nmf_check.state(db, p), "refined": refined}
 
 
 def identity_terms(db, pred_id: int) -> Optional[dict]:

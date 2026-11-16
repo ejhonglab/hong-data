@@ -261,6 +261,8 @@ CREATE TABLE IF NOT EXISTS predictions (  -- glomerulus ROIs a fit's model predi
     options_json TEXT,                 -- how its ROIs are cleaned (predictions.options), where not as the model does
     nmf_status TEXT,                   -- of the look for glomeruli its ROIs miss (nmf_check.py): none (never asked for), queued, running, done, failed, interrupted
     nmf_json TEXT,                     -- who asked for that and when, how far it is, what it found
+    refine_status TEXT,                -- of its ROIs' refinement (refinement.py): none (never asked for), queued, running, done, failed, interrupted
+    refine_json TEXT,                  -- who asked for that and when, how, how far it is, what it made
     UNIQUE (fit_id, fly_dir)
 );
 CREATE TABLE IF NOT EXISTS worker_calls (  -- quick things the web server asks of the fit worker, which has al-diag-seg, and waits for (nmf_check.call)
@@ -340,6 +342,7 @@ ADDED_COLUMNS = [("datasets", "mocorr_data_path", "TEXT"), ("datasets", "data_fi
                  ("model_baselines", "imported_at", "TEXT"), ("model_baselines", "imported_json", "TEXT"),
                  ("extractions", "raw_dir", "TEXT"), ("predictions", "options_json", "TEXT"),
                  ("predictions", "nmf_status", "TEXT"), ("predictions", "nmf_json", "TEXT"),
+                 ("predictions", "refine_status", "TEXT"), ("predictions", "refine_json", "TEXT"),
                  *(c for p, col in PROPERTY_COLUMNS.items()
                    for c in (("pubchem", col, "REAL"), ("pubchem", f"{p}_source", "TEXT"), ("pubchem", f"{p}_at", "TEXT"),
                              ("pubchem", f"{p}_chemutils", "TEXT"), ("pubchem", f"{p}_measured", "INTEGER"),

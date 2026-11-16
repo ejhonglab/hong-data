@@ -357,7 +357,11 @@ dialog.confirm .actions { justify-content: flex-end; }
 .predict-clean .check { display: block; margin: 4px 0; font-weight: 400; }
 .predict-clean .check input[type=checkbox] { width: auto; margin: 0 6px 0 0; }
 .predict-clean .check input.narrow { width: 70px; display: inline-block; padding: 2px 4px; }
-.kinds-table { margin: 6px 0; }
+.refine-table { margin: 6px 0; }
+.refine-table tr.refine-final td:first-child { font-weight: 600; }
+.refine-details > td { background: var(--surface); }
+dialog.refine-dialog { max-width: 640px; }
+dialog.refine-dialog .predict-clean { margin: 10px 0; }
 .predict-options, .predict-paths { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); margin-bottom: 8px; }
 .predict-options select { width: 100%; }
 .step-about { margin-bottom: 10px; }

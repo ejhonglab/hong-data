@@ -5,8 +5,9 @@ Cellpose-SAM's weights), the only one given the GPU.
 
 Beside them, in a thread of its own, it predicts the ROIs of flies with fits' models, as asked
 in the tab (`predictions`), one at a time: on the GPU when no fit is using it (a fit waits for
-one to end), else on the CPU, so that a prediction does not wait hours for a fit. Each thread's
-printing goes to its own log (`_Streams`).
+one to end), else on the CPU, so that a prediction does not wait hours for a fit. Refinements of
+predictions' ROIs (`refinement`) and extractions of signals (`extract`) run in threads of their
+own, on the CPU. Each thread's printing goes to its own log (`_Streams`).
 
 It is held to the folders the server may use as the web server is (`sandbox.start`), and
 may also write to the GPU's device files (and its own threads' /proc entries, as CUDA does); the
@@ -41,7 +42,7 @@ from importlib import metadata
 from pathlib import Path
 from typing import Optional
 
-from . import config, extract, filelog, fits, nmf_check, odormeta, predictions, roi_training, sandbox, version
+from . import config, extract, filelog, fits, nmf_check, odormeta, predictions, refinement, roi_training, sandbox, version
 from .db import Database
 from .glomeruli import load_glomeruli
 
@@ -345,12 +346,20 @@ def run(db, fit: dict, gpu: bool = False) -> None:
 PRED_README = """Glomerulus ROIs of {fly}, predicted by the model of fit #{fit} in the odor response database's
 AL segmentation tab, asked for by {name} on {created}, on the {device}.
 
-{fly}_RoiSet.zip    the ROIs to use ({final}: {final_what}), named by glomerulus where one fits
-                    (numbered where none does), per plane (hyperstack Z), for ImageJ and al_analysis
+{fly}_RoiSet.zip    the ROIs to use, named by glomerulus where one fits (numbered where none does), per
+                    plane (hyperstack Z), for ImageJ and al_analysis: the model's own (pred), or once they
+                    were refined, those refined (split, or clean: {fly}_refinement.json says how)
 {fly}_<kind>.tif and {fly}_<kind>_RoiSet.zip
                     each kind of ROIs al-diag-seg makes, as label volumes (Z, Y, X) and RoiSets:
-                    pred (Cellpose's), refined_tuning (refined by odor tuning), refined_prior (refined
-                    with the atlas, if the model has one)
+                    pred (Cellpose's, the model's own), refined_tuning (refined by odor tuning),
+                    refined_prior (refined with the atlas, if the model has one), clean_<step> (each
+                    cleaning step alone, as by default, on the model's own); and once refined, split (the
+                    model's own with outlines over two glomeruli cut in two, joined into 3D and named
+                    again) and clean (those after the other steps asked for)
+{fly}_refinement.json
+                    (once refined) how, by whom and when; each kind's scores; and per refined ROI, the planes
+                    where it is a part of an outline cut in two (and of which), and where trim cut its edge
+{fly}_cellprob.tif  Cellpose's cell probability (logits) at each voxel, which refining by core goes by
 {fly}_identities*.csv
                     the name given each ROI (by its label in the .tif), with its cost and confidence{manual_ids}
 {fly}_identity_terms*.json
@@ -378,7 +387,6 @@ log.txt             what it printed
 
 To make these again elsewhere, download fit #{fit}'s model, and run alseg-predict on the fly, as its README says.
 """
-KINDS = {"pred": "Cellpose's own, named", "refined_tuning": "refined by odor tuning", "refined_prior": "refined with the atlas"}
 
 
 def _free_gpu() -> None:
@@ -487,19 +495,15 @@ def run_prediction(db, p: dict, on_gpu: bool, why_cpu: Optional[str] = None) -> 
                 raise FileNotFoundError(f"fit #{p['fit_id']}'s model is not there (the fit was deleted)")
             import numpy as np
             from alseg import model as am
-            from alseg import roi_io
             from alseg.fly import load_fly
 
             model = am.Model.load(mdir)
             model.options.gpu = on_gpu
-            # how its ROIs are cleaned (predictions.options): the cleaned ones are then its ROIs
+            # (the model's own ROIs: refined after, as its options ask, as a refinement asked for later is: refinement.run)
+            model.options.split, model.options.clean = False, []
+            if model.options.final == "clean":
+                model.options.final = "pred"
             po = p.get("options") or {}
-            if po.get("clean") or po.get("split"):
-                model.options.clean, model.options.split = list(po.get("clean") or []), bool(po.get("split"))
-                model.options.clean_params = {**model.options.clean_params, **(po.get("clean_params") or {})}
-                model.options.final = "clean" if po.get("clean") else model.options.final
-                print("its ROIs cleaned: " + ", ".join([*(["masks over two glomeruli split"] if po.get("split") else []),
-                                                         *(f"{st} {po['clean_params'].get(st) or ''}".strip() for st in po.get("clean") or [])]))
             fly_dir, raw_dir = Path(p["fly_dir"]), Path(p["raw_dir"]) if p["raw_dir"] else None
             inputs = _fly_inputs(fly_dir, raw_dir, model, odormeta.OdorIndex(db.list_odors()))
             f = load_fly(fly_dir, model, raw_dir=raw_dir, name=p["fly"], glomeruli=load_glomeruli(),
@@ -527,19 +531,16 @@ def run_prediction(db, p: dict, on_gpu: bool, why_cpu: Optional[str] = None) -> 
                 ident = next((r for r in res["identity"] if r["rois"] == final), {})
                 scores = {"manual": row("manual")["n"], "manual_2d": row("manual").get("n_2d"),
                           **_scores(row(final), row("manual")),
-                          # each kind of its ROIs, to compare them by: as they are, and cleaned by each step
-                          "kinds": {r["rois"]: {"n": r["n"], **_scores(r, row("manual"))} for r in res["summary"]
-                                    if r["rois"] == "pred" or r["rois"].startswith("clean")},
                           "named": ident.get("correct", 0), "named_of": ident.get("total", 0), "scoring": res.get("scoring")}
                 n = row(final)["n"]
                 with open(d / f"{name}_identities_{final}.csv", newline="") as fh:
                     named = sorted({r["assigned"] for r in csv.DictReader(fh) if r["assigned"]})
+                cellprob = f.get("cellprob")
             else:
                 pr = model.predict(f)
-                final = pr["final"]
+                final, cellprob = pr["final"], pr.get("cellprob")
                 for kind, lab in pr["labels"].items():
-                    am.write_volume(d / f"{name}_{kind}.tif", lab.astype(np.uint16))
-                    roi_io.write_roiset(lab, {l: v[0] for l, v in pr["identities"][kind].items()}, d / f"{name}_{kind}_RoiSet.zip")
+                    refinement.write_kind(d, name, kind, lab, pr["identities"][kind], pr["identity_terms"][kind])
                 if pr["atlas_maxprob"] is not None:
                     am.write_volume(d / f"{name}_atlas_maxprob.tif", pr["atlas_maxprob"])
                     am.write_prior(d / f"{name}_atlas_prior.npz", pr["prior"], model.atlas.names)
@@ -553,12 +554,27 @@ def run_prediction(db, p: dict, on_gpu: bool, why_cpu: Optional[str] = None) -> 
                 named = sorted({v[0] for v in ids.values() if v[0]})
             shutil.copyfile(d / f"{name}_{final}_RoiSet.zip", d / f"{name}_RoiSet.zip")
             am.write_volume(d / predictions.AVERAGE, f["average"].astype(np.float32))
-            seconds = time.time() - t0
+            if cellprob is not None:  # (what a refinement's core goes by)
+                am.write_volume(d / f"{name}_{refinement.CELLPROB}.tif", np.asarray(cellprob, np.float32))
             result = {"final": final, "n": int(n), "named": named, "scores": scores, "device": "GPU" if on_gpu else "CPU",
-                      "seconds": seconds, "stages": {"load": t1 - t0, "predict": t0 + seconds - t1}, "stack": stack,
                       # the model's odors it lacks, and those of them Cellpose's images are made from
                       "missing_odors": missing, "missing_image_odors": [x for x in model.image_odors() if x in missing],
                       "model_odors": len(model.odors)}
+            if refinement.asked(po):  # (refined as one asked for later is, from what it has kept)
+                print("its ROIs refined: " + _steps_said(po))
+                refinement.start(db, p, po)
+                try:
+                    out = refinement.run(db, {**p, "result": result, "refine": {"name": p["name"], "ip": p["ip"], "asked_at": p["created_at"]}},
+                                         model, f, po, print)
+                    refinement.update(db, p["id"], "done", finished_at=predictions.now(), result={**out, "seconds": time.time() - t1})
+                    rr = predictions.with_refined(result, out)  # (what its provenance and log say: the refined ROIs)
+                    final, n, named, scores = rr["final"], rr["n"], rr["named"], rr["scores"]
+                except Exception as e:  # noqa: BLE001 (the refinement's failure, said in its record: the model's own ROIs are the prediction's)
+                    traceback.print_exc()
+                    refinement.update(db, p["id"], "failed", finished_at=predictions.now(), error=f"{type(e).__name__}: {e}")
+                    refinement.undo(db, {**p, "result": result, "refine": None})
+            seconds = time.time() - t0
+            result.update(seconds=seconds, stages={"load": t1 - t0, "predict": t0 + seconds - t1}, stack=stack)
             v = versions()
             prov = {
                 "prediction": p["id"], "asked_for": {"by": p["name"], "from": p["ip"], "at": p["created_at"]},
@@ -576,8 +592,7 @@ def run_prediction(db, p: dict, on_gpu: bool, why_cpu: Optional[str] = None) -> 
             }
             (d / predictions.PROVENANCE).write_text(json.dumps(prov, indent=1, default=str))
             (d / "README.txt").write_text(PRED_README.format(
-                fly=name, fit=p["fit_id"], name=p["name"], created=p["created_at"], device=device, final=final,
-                final_what=KINDS.get(final, final),
+                fly=name, fit=p["fit_id"], name=p["name"], created=p["created_at"], device=device,
                 manual_ids=", and the fly's own ROI it overlaps" if scores else "",
                 scores="summary.csv and glomeruli.csv\n                    each kind's scores against the fly's own ROIs\n" if scores else ""))
             print(f"{n} ROIs ({final}), {len(named)} named; {seconds:.0f} s")
@@ -644,6 +659,89 @@ def run_nmf(db, p: dict, on_gpu: bool, why_cpu: Optional[str] = None) -> None:
             traceback.print_exc()
     nmf_check.update(db, p["id"], status, finished_at=predictions.now(), error=error, result=result, progress=None)
     log.info("prediction %s, glomeruli its ROIs miss: %s%s", p["id"], status, f" ({error})" if error else "")
+
+
+# --------------------------------------------------------------- refinements
+
+def _steps_said(opts: dict) -> str:
+    """The steps of a refinement (`predictions.options`), as its log says them."""
+    return ", ".join([*(["masks over two glomeruli split"] if opts.get("split") else []),
+                      *(f"{st} {opts['clean_params'].get(st) or ''}".strip() for st in opts.get("clean") or [])])
+
+
+def run_refinement(db, p: dict) -> None:
+    """Refines one prediction's ROIs (claimed: `refinement.claim`), as asked, to the end, on the CPU (it needs no
+    GPU): done or failed. Its files go in the prediction's folder (`refinement` says which), and what it prints after
+    what the prediction did, in its log."""
+    d = predictions.pred_dir(p["id"])
+    t0 = time.time()
+    status, error, result = "failed", None, None
+    stages, at = {}, [None, t0]
+
+    def progress(stage: str) -> None:
+        now = time.time()
+        if at[0]:
+            stages[at[0]] = stages.get(at[0], 0.0) + now - at[1]
+        at[0], at[1] = stage, now
+        refinement.update(db, p["id"], progress={"stage": stage, "stage_started": now})
+
+    with open(d / "log.txt", "a", buffering=1) as out, _output_to(out):
+        try:
+            asked = p.get("refine") or {}
+            opts = asked.get("options") or predictions.options({})
+            print(f"\nits ROIs refined: asked for by {asked.get('name')} ({asked.get('ip')}) at {asked.get('asked_at')}: {_steps_said(opts)}")
+            mdir = fits.fit_dir(p["fit_id"]) / "model"
+            if fits.get(db, p["fit_id"]) is None or not (mdir / "model.json").is_file():
+                raise FileNotFoundError(f"fit #{p['fit_id']}'s model is not there (the fit was deleted)")
+            from alseg import model as am
+            from alseg.fly import load_fly
+
+            model = am.Model.load(mdir)
+            model.options.gpu = False
+            progress("load")
+            # (its anatomical stack only if the atlas is to be registered again: the prediction did not keep it)
+            stack = model.atlas is not None and not refinement.files(p)["prior"].is_file()
+            fly_dir, raw_dir = Path(p["fly_dir"]), Path(p["raw_dir"]) if p["raw_dir"] else None
+            _fly_inputs(fly_dir, raw_dir, model, odormeta.OdorIndex(db.list_odors()))
+            f = load_fly(fly_dir, model, raw_dir=raw_dir, name=p["fly"], glomeruli=load_glomeruli(), tentative=model.options.tentative,
+                         stack=stack)
+            result = refinement.run(db, p, model, f, opts, print, progress)
+            result.pop("named", None)
+            progress("done")
+            result.update(seconds=time.time() - t0, stages={k: v for k, v in stages.items() if k in refinement.STAGES})
+            status = "done"
+        except Exception as e:  # noqa: BLE001 (any failure is the refinement's, said in the prediction's log and its record)
+            error = f"{type(e).__name__}: {e}"
+            traceback.print_exc()
+            try:  # (its ROIs the model's own again)
+                refinement.undo(db, {**p, "refine": None})
+            except Exception:  # noqa: BLE001
+                traceback.print_exc()
+    refinement.update(db, p["id"], status, finished_at=predictions.now(), error=error, result=result, progress=None)
+    log.info("prediction %s, refinement: %s%s", p["id"], status, f" ({error})" if error else "")
+
+
+def refine_loop(db, state: dict, stop: Optional[threading.Event] = None) -> None:
+    """Refines the predictions' ROIs asked for, one at a time, beside fits and predictions (on the CPU: they need
+    no GPU), until `stop` is set, if given. ``state["refinement"]``: the prediction whose ROIs are being refined."""
+    while not (stop and stop.is_set()):
+        try:
+            p = refinement.claim(db)
+        except Exception:  # noqa: BLE001
+            log.exception("could not look for refinements to make")
+            p = None
+        if p is None:
+            time.sleep(POLL_S)
+            continue
+        state["refinement"] = p["id"]
+        log.info("prediction %s, refinement: started (asked for by %s)", p["id"], (p["refine"] or {}).get("name"))
+        try:
+            run_refinement(db, p)
+        except Exception:  # noqa: BLE001 (said in its record; the thread goes on)
+            log.exception("prediction %s, refinement", p["id"])
+        finally:
+            _free_ram()
+            state["refinement"] = None
 
 
 # ---------------------------------------------------------------- extractions
@@ -718,19 +816,22 @@ def main() -> None:
         log.warning("prediction %s was left running by a worker before this one: marked interrupted", i)
     for i in nmf_check.interrupt_running(db):
         log.warning("prediction %s's look for missed glomeruli was left running by a worker before this one: marked interrupted", i)
+    for i in refinement.interrupt_running(db):
+        log.warning("prediction %s's refinement was left running by a worker before this one: marked interrupted", i)
     for i in extract.interrupt_running(db):
         log.warning("extraction %s was left running by a worker before this one: marked interrupted", i)
     info = {"host": host_name(), "pid": os.getpid(), "started": fits.now(), **gpu(), **versions(),
             "landlock": status["kernel"]["enforced"]}
     log.info("fit worker on %s: GPU %s, al-diag-seg %s", info["host"], info["gpu"], info["alseg"])
-    state = {"fit": None, "prediction": None, "extraction": None}
+    state = {"fit": None, "prediction": None, "extraction": None, "refinement": None}
     gpu_lock = threading.Lock()  # held by a fit, or a prediction on the GPU
 
     def beat():
         n = 0
         while True:
             try:
-                fits.heartbeat(db, {**info, "fit": state["fit"], "prediction": state["prediction"], "extraction": state["extraction"]})
+                fits.heartbeat(db, {**info, "fit": state["fit"], "prediction": state["prediction"], "extraction": state["extraction"],
+                                    "refinement": state["refinement"]})
                 n += 1
                 if n * fits.HEARTBEAT_S % filelog.SAVE_S < fits.HEARTBEAT_S:
                     filelog.flush(db)
@@ -744,10 +845,13 @@ def main() -> None:
     predictor.start()
     extractor = threading.Thread(target=extract_loop, args=(db, state, stop), daemon=True)
     extractor.start()
+    refiner = threading.Thread(target=refine_loop, args=(db, state, stop), daemon=True)
+    refiner.start()
     threading.Thread(target=call_loop, args=(db,), daemon=True).start()
     fit_loop(db, state, gpu_lock, bool(info["gpu"]), stop)
     predictor.join()  # (a prediction on the CPU ends first)
     extractor.join()  # (and an extraction under way)
+    refiner.join()  # (and a refinement)
     log.error("exiting, for Docker to start the worker again, with the GPU")
     sys.exit(1)
 

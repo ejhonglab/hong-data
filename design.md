@@ -535,6 +535,20 @@ between the frontend and the server. Using the app is described in
   revision is refused (409) rather than written over someone else's; deleting the copy
   keeps the `.json` beside it, so that revisions never repeat. No login, so who saved is
   the name set in Settings, if any, and the IP address, as for fits.
+- **A prediction's ROIs are refined from what it kept, with it or after** (`refinement.py`,
+  `fit_worker.run_refinement`, al-diag-seg's `Model.refine`). The steps that keep neighbours out
+  of the model's ROIs (split, then trim, margin, core) need nothing of Cellpose but its cell
+  probabilities (core), so a prediction keeps those (`<fly>_cellprob.tif`), the atlas on the
+  fly's grid (to name split ROIs again) and its own ROIs' names, and refining is the same job
+  whether asked for with the prediction or later from the list: always from the model's own
+  ROIs, which stay beside the refined ones to compare with. Split cuts the joined ROIs' in-plane
+  masks and joins the planes again as the model does (nearly what splitting before joining did:
+  the masks are those Cellpose made, but for objects under 15 voxels and holes, which joining
+  drops and fills). The prediction's stored result stays the model's own; while a refinement is
+  done, the result read (`predictions._row`) is of the refined ROIs, so a failed, interrupted or
+  newly asked refinement leaves the model's own, its `RoiSet.zip` copied back at once (`undo`).
+  A look for missed glomeruli made of other ROIs than those now used is deleted; edited ROIs, a
+  copy someone made, are kept.
 - **Glomeruli a prediction's ROIs miss are looked for in the fly's movies, and only ever
   proposed** (`nmf_check.py`, `fit_worker.run_nmf`, al-diag-seg's `alseg.nmf`; the viewer's
   *Look for missed glomeruli*). Cellpose outlines what the average image and the odors'
@@ -1990,9 +2004,11 @@ app/yamlcheck.py   odor YAML parsing, what looks wrong in one, and the matrix ‚ä
 app/thorimage.py   Experiment.xml summary, and a .raw file's layout (with hong2p.thor)
 app/fits.py        fits of al-diag-seg models: records, options, held-out flies, their manifest, time estimates
 app/fit_worker.py  the fit worker (python -m app.fit_worker): runs fits one at a time, with al-diag-seg,
-                   and predictions (GPU or CPU) and extractions of signals beside them
+                   and predictions (GPU or CPU), refinements and extractions of signals beside them
 app/predictions.py predictions of flies' glomerulus ROIs by fits' models: records, the fly's folders, time
                    estimates, the viewer's images, their ROIs as edited there, downloads
+app/refinement.py  a prediction's ROIs refined (split, trimmed, kept apart: al-diag-seg's Model.refine), with it or
+                   after, from what it kept: state, undoing one, what was done to each ROI, scores before and after
 app/nmf_check.py   glomeruli a prediction's ROIs miss, looked for in the fly's movies (al-diag-seg's alseg.nmf):
                    the look's state, what it found, ROIs' names with candidates merged in, and what the web
                    server asks of the fit worker meanwhile
@@ -2213,14 +2229,16 @@ GET    /api/predictions                     every prediction of a fly's glomerul
                                             with when they should end; those done with their ROIs as edited, if
                                             they were), the models to predict with, the fit worker's status, and
                                             how long one asked for now should take (predictions.py)
-POST   /api/predictions                     ask for one: {name, fit, dir, raw_dir (the fly's folders), overwrite};
+POST   /api/predictions                     ask for one: {name, fit, dir, raw_dir (the fly's folders), overwrite,
+                                            and its refinement: clean, clean_params, split};
                                             409 with the one there is of that model and fly, unless overwrite
-DELETE /api/predictions/{id}                delete one and its files (409 while it runs)
+DELETE /api/predictions/{id}                delete one and its files (409 while it runs, or is refined)
 GET    /api/predictions/{id}/log            its log
 GET    /api/predictions/{id}/view           what the movie player shows of one done: the fly's images, each with
                                             the ROIs predicted and the fly's own; and the predicted ROIs as edited
                                             ("edited": their file, when and by whom saved, how simplified;
-                                            "revision")
+                                            "revision"); once refined, what was done to each ROI by plane
+                                            ("refined") and each image's "unrefined" (the model's own ROIs)
 PUT    /api/predictions/{id}/edited         save its ROIs as edited in the player: {rois: [{name, z, points, nmf}],
                                             base (the revision edited from), name, simplified, points_edited, nmf
                                             (what was merged of the look for missed glomeruli)};
@@ -2235,6 +2253,10 @@ POST   /api/predictions/{id}/nmf            ask for one: {name, settings (its th
 POST   /api/predictions/{id}/nmf/plan       the ROIs' names with candidates merged in: {chosen: their ids, joint:
                                             all named again together (the default), or the predicted names kept};
                                             503 if the fit worker, which names some of them, did not
+POST   /api/predictions/{id}/refine         refine its ROIs (refinement.py): {name, clean, clean_params, split};
+                                            201 queued (one refined before undone at once), 200 if one is waiting
+                                            or running; 409 for nothing asked, or core of one that did not keep
+                                            Cellpose's probabilities
 GET    /api/predictions/{id}/download       its folder, as a zip sent as it is written
 GET    /api/extractions                     every extraction of a fly's ROIs' signals (those waiting and running
                                             with when they should end), the ways to make one signal of an ROI's

@@ -1,7 +1,8 @@
 // Predictions of a fly's glomerulus ROIs by a fit's model, in the AL segmentation tab
 // (predictions.py, fit_worker.run_prediction): asking for one (a model, and a fly of the site's
 // datasets or any on tensor), the one of the model and fly chosen, every one made, and viewing
-// one in the movie player (player.js: the ROIs predicted and the fly's own, of the plane shown).
+// one in the movie player (player.js: the ROIs predicted and the fly's own, of the plane shown), and
+// refining one's ROIs (refinement.py: split, trimmed, kept apart), with their scores before and after.
 // Also fills in the example, under Fit a model, of running a downloaded model yourself.
 
 import { both, fmtDuration, PURITY_COLUMNS, scoringNote } from './fits.js';
@@ -28,7 +29,8 @@ So a low found means glomeruli missed; a low right, ROIs where the fly has none,
 Unlike right, this is only about names: the outline need not match as well (IoU over 0.3, not 0.5), and the pairing is not one to one.`,
 };
 const scoreTip = (key, label) => tip(label, SCORE_TIPS[key]);
-const KIND_NAMES = { pred: "the model's own", clean: 'cleaned as asked', clean_trim: 'trim alone', clean_margin: 'margin alone', clean_core: 'core alone' };
+// a refinement running: what it is doing (refinement.STAGES)
+const REFINE_STAGES = { load: 'loading the fly', register: 'registering the atlas to it', refine: 'refining', score: 'scoring' };
 // the look for glomeruli a prediction's ROIs miss (nmf_check.py), if one was asked for: how it is, in a sentence
 function nmfNote(p, esc, fmtWhen) {
   const n = p.nmf;
@@ -52,23 +54,38 @@ function missingNote(r, esc) {
     img ? `, and found from images of ${img} fewer odor${img === 1 ? '' : 's'} than Cellpose was trained on, so fewer may be found than in a fly with all of them`
       : ', exactly as by a model fit to the same flies without them (Cellpose\'s images are of none of them)'}.`;
 }
-// how a prediction's ROIs were cleaned, if they were (its options)
-function cleanedNote(p) {
-  const o = p.options || {}, on = [...(o.split ? ['outlines over two glomeruli split'] : []), ...(o.clean || []).map((st) => {
+// the steps a refinement was asked for (predictions.options), in the order they are done, with their settings
+function stepsText(o) {
+  return [...(o?.split ? ['outlines over two glomeruli split'] : []), ...(o?.clean || []).map((st) => {
     const ps = Object.entries(o.clean_params?.[st] || {}).map(([k, v]) => `${k} ${v}`).join(', ');
     return ps ? `${st} (${ps})` : st;
-  })];
-  return on.length ? ` Its ROIs are cleaned: ${on.join(', then ')}.` : '';
+  })].join(', then ');
 }
-// each kind of a prediction's ROIs (as the model made them, and cleaned by each step) by how well they keep from their
-// neighbors: '' where the fly has no ROIs of its own, or it was predicted before there were kinds
-function kindsTable(s) {
-  const kinds = Object.entries(s?.kinds || {});
-  if (kinds.length < 2) return '';
-  return `<table class="odor-table kinds-table"><thead><tr><th>ROIs</th><th>Found · right <span class="muted">(per plane)</span></th>
-    ${PURITY_COLUMNS.map((c) => `<th title="${c[1].replace(/"/g, '&quot;')}">${c[0]} <span class="muted">(manual)</span></th>`).join('')}</tr></thead><tbody>
-    ${kinds.map(([k, x]) => `<tr><td>${KIND_NAMES[k] || k}</td><td>${pct(x.recall_2d)} · ${pct(x.precision_2d)}</td>
-      ${PURITY_COLUMNS.map((c) => `<td>${c[2](x)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+const plural = (n, what) => `${n} ${what}${n === 1 ? '' : 's'}`;
+// each kind of a refined prediction's ROIs (the model's own, split, refined) by the scores the fit's held-out flies are shown
+// with: how they match the fly's own ROIs, where it has some, and how well they keep from their neighbors
+function refineTable(r, esc) {
+  const kinds = r?.result?.kinds;
+  if (!kinds) return '<p class="muted small">Its scores were not kept (refined before they were).</p>';
+  const scored = kinds.pred?.recall != null, final = r.result.final;
+  const label = (k) => (k === 'pred' ? "The model's own" : k === final ? 'Refined' : 'Split only');
+  const hint = { pred: 'As the model predicted them', split: 'Outlines over two glomeruli cut in two, joined into 3D and named again',
+    clean: 'After every step asked for' };
+  // (of a fly without ROIs of its own, no manual values to put in brackets)
+  const cell = (c, x) => (scored ? c[2](x) : c[2](x).replace(/ <span class="muted">\(—\)<\/span>/, ''));
+  const head = `<th>ROIs</th>${scored ? ['Found', 'Right', 'Dice'].map((h) => `<th>${h}${kinds.pred.recall_2d == null ? ''
+    : ' <span class="muted">(per plane · 3D)</span>'}</th>`).join('') : ''}<th title="Signal from neighbors in an ROI's border${scored
+    ? " (the fly's own ROIs' in brackets)" : ''}">Leak${scored ? ' <span class="muted">(manual)</span>' : ''}</th>${PURITY_COLUMNS.map((c) => `<th
+    title="${esc(c[1])}">${c[0]}${scored ? ' <span class="muted">(manual)</span>' : ''}</th>`).join('')}${scored ? '<th>Named</th>' : ''}`;
+  const rows = ['pred', 'split', 'clean'].filter((k) => kinds[k]).map((k) => {
+    const x = kinds[k];
+    return `<tr${k === final ? ' class="refine-final"' : ''}><td title="${hint[k]}">${label(k)} <span class="muted">(${x.n})</span></td>${scored
+      ? `<td>${both(x, 'recall')}</td><td>${both(x, 'precision')}</td><td>${both(x, 'dice', num2)}</td>` : ''}<td>${num2(x.leak)}${scored
+      ? ` <span class="muted">(${num2(x.manual_leak)})</span>` : ''}</td>${PURITY_COLUMNS.map((c) => `<td>${cell(c, x)}</td>`).join('')}${scored
+      ? `<td>${x.named ?? '—'}/${x.named_of ?? '—'}</td>` : ''}</tr>`;
+  }).join('');
+  return `<table class="odor-table refine-table"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>${scored ? ''
+    : '<p class="muted small">The fly has no ROIs of its own: only how the ROIs keep from their neighbors is measured.</p>'}`;
 }
 const trim = (s) => (s || '').trim().replace(/\/+$/, '');
 
@@ -89,6 +106,12 @@ export class PredictPanel {
       const o = this._cleanOptions(), on = [...(o.split ? ['split'] : []), ...o.clean];
       $('#predict-clean-summary').textContent = on.length ? `(${on.join(', ')})` : '';
     });
+    this.shown = new Set(); // predictions whose refinement's scores are shown in the list
+    // (the refine dialog's steps: the form's, as they are in it)
+    const steps = $('#refine-steps');
+    for (const n of $('#predict-clean').children) if (!['SUMMARY', 'P'].includes(n.tagName)) steps.append(n.cloneNode(true));
+    steps.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));
+    steps.addEventListener('change', () => this._refineChecked());
     $('#predict-start').addEventListener('click', () => this.start());
     $('#predict-view').addEventListener('click', () => { const p = this._pair(); if (p) this.view(p); });
     $('#predict-list').addEventListener('click', (e) => this._action(e));
@@ -103,7 +126,7 @@ export class PredictPanel {
     this.timer = setInterval(() => {
       if (this.h.$('#tab-al-segmentation').hidden) return;
       n += 1;
-      const busy = this.data?.predictions.some((p) => ACTIVE.has(p.status) || ACTIVE.has(p.nmf?.status));
+      const busy = this.data?.predictions.some((p) => ACTIVE.has(p.status) || ACTIVE.has(p.nmf?.status) || ACTIVE.has(p.refine?.status));
       if (busy || n % 10 === 0) this.refresh();
     }, 3000);
   }
@@ -255,7 +278,7 @@ export class PredictPanel {
       ? `<br>Against the fly's own ${s.manual} ROIs${s.recall_2d == null ? '' : ` (${s.manual_2d} outlines on their planes)`}:<br>${scoreTip('found', 'found')} ${both(s, 'recall')},
         ${scoreTip('right', 'right')} ${both(s, 'precision')}, ${scoreTip('dice', 'Dice')} ${both(s, 'dice', num2)} <span class="muted">(${s.recall_2d == null ? '' : 'per plane · as 3D objects; '}${scoringNote(s)})</span>;
         ${scoreTip('named', 'name correct')} ${s.named}/${s.named_of}.${s.edge_share == null && s.gap_um == null ? '' : `<br>Kept from neighbors
-        <span class="muted">(the fly's own ROIs' in brackets)</span>: ${PURITY_COLUMNS.map((c) => `${tip(c[0].toLowerCase(), c[1])} ${c[2](s)}`).join(', ')}.`}` : ''}${missingNote(r, esc)}${cleanedNote(p)}${kindsTable(s)}${p.edited ? ` Edited in the viewer (${esc(this._edited(p))}:
+        <span class="muted">(the fly's own ROIs' in brackets)</span>: ${PURITY_COLUMNS.map((c) => `${tip(c[0].toLowerCase(), c[1])} ${c[2](s)}`).join(', ')}.`}` : ''}${missingNote(r, esc)}${this._refineNote(p)}${p.edited ? ` Edited in the viewer (${esc(this._edited(p))}:
         ${p.edited.rois} ROIs${p.edited.simplified == null ? '' : `, simplified within ${p.edited.simplified} px`}): its download has those
         too, as <code>${esc(p.fly)}_pred-edited_RoiSet.zip</code>.` : ''}${nmfNote(p, esc, fmtWhen)}`;
   }
@@ -285,6 +308,7 @@ export class PredictPanel {
     const { $, esc, fmtWhen } = this.h, ps = this.data.predictions;
     $('#predict-list').innerHTML = !ps.length ? '' : `<h3>Predictions</h3><table class="odor-table predictions-table"><thead><tr>
       <th>Fly</th><th>Model</th><th>Asked for by</th><th>When</th><th>Status</th><th>ROIs <span class="muted">(named; ${scoreTip('found', 'found')}, ${scoreTip('right', 'right')}, ${scoreTip('dice', 'Dice')}, ${scoreTip('named', 'name correct')})</span></th>
+      <th title="Its ROIs kept from their neighbors: split where an outline holds two glomeruli, trimmed, kept apart. Show: their scores before and after">Refinement</th>
       <th></th></tr></thead><tbody>${ps.map((p) => {
       const r = p.result, s = r?.scores;
       const rois = r ? `${r.n} <span class="muted">(${r.named.length} named)</span>${s ? ` <span class="muted">· ${both(s, 'recall')}, ${both(s, 'precision')},
@@ -298,12 +322,95 @@ export class PredictPanel {
         p.error ? ` <span class="muted" title="${esc(p.error)}">(${esc(p.error.slice(0, 60))}${p.error.length > 60 ? '…' : ''})</span>` : ''}`;
       return `<tr data-id="${p.id}"><td title="${esc(p.tensor_dir || p.fly_dir)}">${esc(p.fly)}</td>
         <td>#${p.fit_id}${p.fit_deleted ? ' <span class="muted">(deleted)</span>' : ''}</td><td>${esc(p.name)}</td>
-        <td>${esc(fmtWhen(p.finished_at || p.created_at))}</td><td>${status}</td><td>${rois}</td>
+        <td>${esc(fmtWhen(p.finished_at || p.created_at))}</td><td>${status}</td><td>${rois}</td><td class="acts">${this._refineCell(p)}</td>
         <td class="acts">${p.status === 'done' ? `<button type="button" class="btn small" data-act="view">View</button>
           <a class="btn small" href="/api/predictions/${p.id}/download" download>Download</a>` : ''}
           ${p.status !== 'queued' ? `<a class="btn small" href="/api/predictions/${p.id}/log" target="_blank" rel="noopener">Log</a>` : ''}
-          ${p.status !== 'running' ? '<button type="button" class="btn small danger" data-act="delete">Delete</button>' : ''}</td></tr>`;
+          ${p.status !== 'running' ? '<button type="button" class="btn small danger" data-act="delete">Delete</button>' : ''}</td></tr>${
+        this.shown.has(p.id) && p.refine?.status === 'done' ? `<tr class="refine-details" data-id="${p.id}"><td colspan="8">${this._refineHtml(p, true)}</td></tr>` : ''}`;
     }).join('')}</tbody></table>`;
+  }
+
+  // a prediction's Refinement cell in the list: Show (its scores), once refined; how it is, while it is being; else Refine
+  _refineCell(p) {
+    const { esc } = this.h, r = p.refine;
+    if (p.status !== 'done') return '—';
+    if (r?.status === 'done') {
+      const open = this.shown.has(p.id);
+      return `<button type="button" class="btn small" data-act="refine-show" aria-expanded="${open}" title="${esc(`Refined: ${stepsText(r.options)}`)}">${
+        open ? 'Hide' : 'Show'}</button>`;
+    }
+    if (r && ACTIVE.has(r.status)) {
+      return `<span class="muted">${r.status === 'queued' ? 'Queued' : `Refining${r.progress?.stage ? `: ${REFINE_STAGES[r.progress.stage] || esc(r.progress.stage)}` : '…'}`}</span>`;
+    }
+    const failed = r ? `<span class="muted" title="${esc(r.error || '')}">${r.status === 'failed' ? 'Failed' : 'Interrupted'}</span> ` : '';
+    return p.refinable?.any ? `${failed}<button type="button" class="btn small" data-act="refine">Refine</button>` : `${failed}—`;
+  }
+
+  // what a prediction's refinement done did, and its ROIs' scores before and after (`buttons`: with Refine again)
+  _refineHtml(p, buttons) {
+    const { esc, fmtWhen } = this.h, r = p.refine, res = r.result || {};
+    const steps = res.steps || [], did = [...(steps.includes('split') && res.split != null ? [`${plural(res.split, 'ROI')} ${res.split === 1 ? 'is a part'
+      : 'are parts'} of an outline cut in two`] : []), ...(steps.includes('trim') && res.trimmed != null ? [`${plural(res.trimmed, 'ROI')} trimmed`] : [])];
+    const said = did.length ? ` ${did.join(', and ')}, on some plane (in the viewer, hover over one in the list for what was done to it there).` : '';
+    return `<p class="small">Refined ${esc(fmtWhen(r.finished_at))}${r.with_prediction ? ', as it was predicted' : ''}, asked for by <b>${esc(r.name || '?')}</b>:
+      ${esc(stepsText(r.options))}${(res.steps || []).length < [...(r.options?.split ? ['split'] : []), ...(r.options?.clean || [])].length
+      ? ' <span class="muted">(core left out: Cellpose\'s probabilities were not kept)</span>' : ''}.${said}${r.legacy
+      ? ' <span class="muted">Refined before the model\'s own ROIs were kept apart: those here are already split, if split was asked for.</span>' : ''}</p>
+      ${refineTable(r, esc)}${buttons ? '<div class="actions"><button type="button" class="btn small" data-act="refine">Refine again…</button></div>' : ''}`;
+  }
+
+  // a prediction's refinement, in what is said of it above the list
+  _refineNote(p) {
+    const { esc } = this.h, r = p.refine;
+    if (!r) return '';
+    if (r.status === 'done') return `<br>${this._refineHtml(p, false)}`;
+    if (ACTIVE.has(r.status)) return ` Its ROIs are ${r.status === 'queued' ? 'to be refined (waiting for the fit worker)' : 'being refined'}: ${esc(stepsText(r.options))}.`;
+    return ` Refining its ROIs ${r.status === 'failed' ? 'failed' : 'was interrupted'}${r.error ? ` (${esc(r.error)})` : ''}: they are the model's own.`;
+  }
+
+  // the refine dialog: which steps can be ticked (core, only of a prediction that kept what it goes by)
+  _refineChecked() {
+    const box = this.h.$('#refine-steps'), core = box.querySelector('[data-clean="core"]');
+    core.disabled = !this.refining?.refinable?.core;
+    if (core.disabled) core.checked = false;
+    core.closest('label').title = core.disabled ? "This prediction did not keep Cellpose's cell probabilities, which core goes by (only those made since 2026-11-16 do): predict it again to refine by it" : '';
+    const o = this._cleanOptions(box);
+    box.closest('form').querySelector('[value="refine"]').disabled = !(o.split || o.clean.length);
+  }
+
+  // asks how to refine a prediction's ROIs (as it was refined last, if it was), and asks for it
+  async refine(p) {
+    const { $, api, msgBox, esc, askDialog, fmtWhen } = this.h;
+    const name = this.h.getName();
+    if (!name) {
+      $('#predict-status').replaceChildren(msgBox('error', 'Enter your first name in <a href="#settings/name">Settings</a> first: refinements say who asked for them.'));
+      return;
+    }
+    const box = $('#refine-steps'), o = p.refine?.options || { clean: [], clean_params: {}, split: false };
+    box.querySelector('[data-split]').checked = Boolean(o.split);
+    for (const c of box.querySelectorAll('[data-clean]')) c.checked = (o.clean || []).includes(c.dataset.clean);
+    for (const i of box.querySelectorAll('[data-clean-param]')) {
+      const [step, key] = i.dataset.cleanParam.split('.');
+      i.value = o.clean_params?.[step]?.[key] ?? i.defaultValue;
+    }
+    this.refining = p;
+    this._refineChecked();
+    $('#refine-dialog-q').textContent = `Refine fit #${p.fit_id}'s ROIs of ${p.fly}`;
+    $('#refine-dialog-detail').innerHTML = [
+      'Applied in this order: split first, then the steps that only remove pixels, on each plane, from the model\'s own ROIs. Those are kept, to compare with',
+      '(the list\'s Show, and the viewer); the refined ones are then the prediction\'s, to view, download and extract signals from.',
+      ...(p.refine?.status === 'done' ? [`This replaces its refinement of ${esc(fmtWhen(p.refine.finished_at))} (made again from the model's own).`] : []),
+      ...(p.edited ? ['Its ROIs as edited in the viewer stay as they are: a copy of those it has now.'] : []),
+      ...(p.nmf?.status === 'done' ? ['The look for glomeruli its ROIs miss, made of those it has now, is deleted: ask for it again in the viewer.'] : []),
+    ].join(' ');
+    if (await askDialog($('#refine-dialog')) !== 'refine') return;
+    try {
+      await api(`/api/predictions/${p.id}/refine`, { method: 'POST', json: { name, ...this._cleanOptions(box) } });
+    } catch (err) {
+      $('#predict-status').replaceChildren(msgBox('error', `Could not ask for it: ${esc(err.message)}`));
+    }
+    await this.refresh();
   }
 
   // the example under Fit a model: the last fit done's download, and the al-diag-seg (and hong2p) the worker has
@@ -341,16 +448,15 @@ alseg-predict ${fit}/model --fly /local/tensor/Ann/analysis/2026-03-31/1 \\
     return askDialog($('#predict-again'));
   }
 
-  // how the prediction asked for cleans its ROIs, from the form (the server's predictions.options)
-  _cleanOptions() {
-    const box = this.h.$('#predict-clean');
-    const clean = [...box.querySelectorAll('[data-clean]')].filter((c) => c.checked).map((c) => c.dataset.clean);
+  // how the prediction asked for refines its ROIs, from the form (or the refine dialog's `box`): the server's predictions.options
+  _cleanOptions(box = this.h.$('#predict-clean')) {
+    const clean = [...box.querySelectorAll('[data-clean]')].filter((c) => c.checked && !c.disabled).map((c) => c.dataset.clean);
     const clean_params = {};
     for (const i of box.querySelectorAll('[data-clean-param]')) {
       const [step, key] = i.dataset.cleanParam.split('.');
       if (clean.includes(step) && i.value !== '' && Number.isFinite(Number(i.value))) (clean_params[step] ||= {})[key] = Number(i.value);
     }
-    return { clean, clean_params, split: this.h.$('#predict-split').checked };
+    return { clean, clean_params, split: box.querySelector('[data-split]').checked };
   }
 
   async start() {
@@ -394,6 +500,12 @@ alseg-predict ${fit}/model --fly /local/tensor/Ann/analysis/2026-03-31/1 \\
     const id = Number(b.closest('[data-id]').dataset.id), p = this.data.predictions.find((x) => x.id === id);
     const { $, api, msgBox, esc, askDialog } = this.h;
     if (b.dataset.act === 'view') { this.view(p); return; }
+    if (b.dataset.act === 'refine') { this.refine(p); return; }
+    if (b.dataset.act === 'refine-show') {
+      if (this.shown.has(id)) this.shown.delete(id); else this.shown.add(id);
+      this._renderList();
+      return;
+    }
     if (b.dataset.act === 'delete') {
       $('#delete-confirm-q').textContent = `Delete fit #${p.fit_id}'s prediction of ${p.fly}'s ROIs?`;
       $('#delete-confirm-detail').textContent = 'Its ROIs, and what they were made from, are deleted from the server, for everyone.';

@@ -810,12 +810,16 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   any other on tensor, by its motion-corrected and raw data folders. Your flies are listed
   first; of each person's, those without ROIs, then those with ROIs the model was not fit
   with, those held out of it, and those it was trained on. Under *Keep neighboring glomeruli
-  out of its ROIs*, steps can be ticked that remove pixels from the model's ROIs (trim an
-  ROI's edge where it carries a neighbor's tuning, keep ROIs a distance apart, keep the pixels
-  Cellpose is surer of; or split outlines that hold two glomeruli): the prediction's ROIs are
-  then the cleaned ones, and where the fly has ROIs of its own, a table compares the model's
-  ROIs and each step alone by how far ROIs keep from each other and how much of a neighbor
-  their edges carry (the manual ROIs' in brackets). The fit worker makes them,
+  out of its ROIs*, steps can be ticked that refine the model's ROIs (split outlines that hold
+  two glomeruli, then trim an ROI's edge where it carries a neighbor's tuning, keep ROIs a
+  distance apart, keep the pixels Cellpose is surer of): the prediction's ROIs are then the
+  refined ones, and the model's own are kept beside them. The same can be done later: the list
+  of predictions has a *Refinement* column, with *Refine* for one not refined (a box of the same
+  steps; core only for predictions made since 2026-11-16, which keep Cellpose's probabilities),
+  and *Show* for one refined: the steps, how many ROIs were split or trimmed, and a table of the
+  model's own ROIs and the refined ones by the scores a fit's held-out flies are shown with
+  (where the fly has ROIs of its own: found, right, Dice, named; always: leak and how far ROIs
+  keep from their neighbors, the manual ROIs' in brackets). The fit worker makes them,
   on the GPU, or on the CPU while a fit is using the GPU (slower, but not hours later), and
   keeps them on the server (`data/predictions/<id>/`): its ROIs as a `RoiSet.zip` named by
   glomerulus, each kind al-diag-seg makes, the fly's average image, and `provenance.json`
@@ -824,7 +828,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   make them again, replacing them. *View the ROIs* opens them in the movie player, on the
   fly's average image (as the model saw it) and its motion-corrected movies: only the ROIs
   of the plane shown, those predicted and the fly's own (if it has them) in two colours,
-  each shown or not. Where the fly has ROIs of its own, the predicted ones are scored
+  each shown or not (and of refined ones, the model's own before refinement, in a third,
+  hidden at first; hovering over a refined ROI in the list says whether it was split or
+  trimmed on that plane). Where the fly has ROIs of its own, the predicted ones are scored
   against them. Every prediction is listed below, to view, download or delete. One waiting
   or running says when it should end, and the box how long one asked for now should take:
   the median of the last ten done like it (on the GPU or the CPU; with an anatomical stack
