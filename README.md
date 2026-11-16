@@ -857,6 +857,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   again needs the fly's responses and the atlas registered to it, as predicting does).
   Predictions made before these were kept (`<fly>_identity_terms*.json`, in the download)
   say to predict again.
+  A fly needs every odor the model was fit with (the diagnostics all its flies share): what the model does with
+  fewer, or with the fly's other odors instead, is measured in al-diag-seg's
+  [missing_diagnostics.md](https://github.com/tom-f-oconnell/al-diag-seg/blob/main/missing_diagnostics.md)
+  (the scripts: `notes/missing_diagnostics/`).
   *Look for missed glomeruli*, under the editing buttons, looks in the fly's movies (every
   recording's, every time point of every trial) for glomeruli the predicted ROIs miss: the
   fit worker factorizes each plane's movie (non-negative matrix factorization, on the GPU
