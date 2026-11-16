@@ -5,6 +5,7 @@
 // in the tab's viewer (as a model's), and saved.
 
 import { fmtDuration } from './fits.js';
+import { tip } from './tips.js';
 
 const STATUS_NAMES = { queued: 'Queued', running: 'Running', done: 'Done', failed: 'Failed', cancelled: 'Stopped', interrupted: 'Interrupted' };
 const STAGE_NAMES = { inputs: 'scaling its responses into spike rates', model: 'running the model (fit_and_plot_mb_model)', outputs: 'reading what it wrote' };
@@ -167,6 +168,18 @@ export class ModelRuns {
       <span class="muted">(${esc(o.panels.join(', '))}; ${esc(TUNING_NAMES[o.tuning] || o.tuning)})</span>`;
   }
 
+  // a done run's "n odors", with which data they are on hover: each dataset (whose, how many flies) and the panels of it taken
+  _odors(r) {
+    const n = r.result.n_odors, src = r.sources, label = `${n} odor${n === 1 ? '' : 's'}`;
+    if (!src?.length) return label;
+    const plural = (k, w) => `${k} ${w}${k === 1 ? '' : 's'}`;
+    const lines = src.map((d) => `#${d.id} ${d.title || '(untitled)'}: ${d.uploader ? `${d.uploader}'s, ` : ''}${d.n_flies == null ? '' : `${d.n_flies} ${d.n_flies === 1 ? 'fly' : 'flies'}; `}${
+      d.panels.length ? d.panels.map((p) => `${p.name || '(no panel)'} (${plural(p.n_odors, 'odor')})`).join(', ') : 'none of the panels chosen'}`);
+    return tip(label, [`${label} of one component, from the panels chosen of ${plural(src.length, 'dataset')} (each glomerulus's mean response over each dataset's flies):`,
+      ...lines, `An odor in more than one dataset or panel is the mean of them.${src.some((d) => d.now)
+        ? ' (As the datasets are now: runs made before 2026-11-16 did not record it.)' : ''}`].join('\n\n'));
+  }
+
   _renderLists() {
     const { $, esc, fmtWhen, fmtSize } = this.h, runs = this.data.runs;
     const active = runs.filter((r) => ACTIVE.has(r.status)).sort((a, b) => (a.status === 'running' ? -1 : b.status === 'running' ? 1 : a.position - b.position));
@@ -185,7 +198,7 @@ export class ModelRuns {
     $('#mruns-past').innerHTML = past.length ? `<table class="odor-table fits-table"><thead><tr><th>Run</th><th>Model, on</th><th>Asked for by</th><th>Started</th><th>Took</th>
       <th>Result</th><th></th></tr></thead><tbody>${past.map((r) => {
     const took = r.started_at && r.finished_at ? (new Date(r.finished_at) - new Date(r.started_at)) / 1000 : null, x = r.result;
-    const result = r.status === 'done' ? `${x.n_kcs.toLocaleString()} KCs × ${x.n_odors} odors, ${+(x.rate * 100).toPrecision(3)}% responding;
+    const result = r.status === 'done' ? `${x.n_kcs.toLocaleString()} KCs × ${this._odors(r)}, ${+(x.rate * 100).toPrecision(3)}% responding;
         input ${x.n_glomeruli} glomeruli, × ${+x.scaling.factor.toPrecision(4)} <span class="muted" title="${esc(x.scaling.said)}">(${x.scaling.method === 'hallem' ? 'by Hallem' : 'by all datasets, then Hallem'})</span>`
       : `${STATUS_NAMES[r.status] || esc(r.status)}${r.error ? `: <span class="mruns-error" title="${esc(r.error)}">${esc(r.error.split('\n')[0].slice(0, 160))}${r.error.length > 160 ? '…' : ''}</span>` : ''}`;
     return `<tr data-id="${r.id}"><td>#${r.id}</td><td>${this._what(r)}</td><td>${esc(r.name)}</td><td>${r.started_at ? esc(fmtWhen(r.started_at)) : '—'}</td>

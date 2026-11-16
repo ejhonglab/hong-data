@@ -293,6 +293,16 @@ def test_runs(env, root, tmp_path):  # noqa: F811
     out = call(env.model_runs_list)[1]
     listed = next(r for r in out["runs"] if r["id"] == r1["id"])
     assert listed["run"] == f"olfdb:runs/{r1['id']}/run{r1['id']}_on_spike_counts.parquet" and listed["title"] == f"bouton_base on #{a} (fixed)"
+    # what each dataset gave its input (whose, how many flies, the panels taken): as the run recorded it; of one made before
+    # that was, as the datasets are now
+    src = listed["sources"]
+    assert src == res["scaling"]["sources"] and [(x["id"], x["title"]) for x in src] == [(a, "megamat")]
+    assert src[0]["panels"] == [{"name": "p1", "n_odors": 6}] and src[0]["uploader"] and src[0]["n_flies"] >= 1 and "now" not in src[0]
+    old = {**done["result"], "scaling": {k: v for k, v in res["scaling"].items() if k != "sources"}}
+    model_runs.update(db, r1["id"], result=old)
+    again = next(r for r in call(env.model_runs_list)[1]["runs"] if r["id"] == r1["id"])
+    assert again["sources"] == [{**src[0], "now": True}]
+    model_runs.update(db, r1["id"], result=res)
     m = out["view"]["models"][0]
     assert m["runs"][0]["id"] == listed["run"] and m["params"]["tuning"] == "fixed" and m["n_spikes"]["value"] == 2
     assert out["view"]["experiments"][m["experiment"]]["folder"] == f"run #{r1['id']} (bouton_base on #{a} (fixed))"

@@ -701,7 +701,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   some glomeruli, a breadth exponent) cannot be run, and is listed saying which. One
   model is run at a time (others wait their turn, in the order asked for), with a bar of
   how far along it is (by how long the last runs took) and what it last said; it can be
-  stopped. A run done is listed with its response rate and factor: *Show* opens its KCs'
+  stopped. A run done is listed with its response rate and factor (hovering over its number of
+  odors says which data they are: each dataset, whose, how many flies, and the panels of it
+  taken, with their odors): *Show* opens its KCs'
   spike counts to each odor below, as any model's (to filter, cluster, compare with
   datasets, or save as shown: *Download › Spike counts, wide CSV*); *Spike counts (CSV)*
   saves them as the model wrote them (KCs as rows, an odor a column); *Everything (zip)*

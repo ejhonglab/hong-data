@@ -217,6 +217,24 @@ def _combination(db, ids: list[int], mine: dict, index: OdorIndex, tolerance: fl
             "n_stimuli": len({k for k, by in per_group[0].items() if set(by) & set(target.get(k, {}))})}
 
 
+def sources(db, ids: list[int], of_panels: Optional[list[str]] = None) -> list[dict]:
+    """Where a model's input is from: of each dataset of `ids`, its ``id``, ``title``, ``uploader``,
+    ``n_flies`` and ``panels`` (those of `of_panels` it has, all if None: each its ``name`` and
+    ``n_odors``, its odors of one component), in the order of `ids` and of its panels."""
+    out = []
+    for i in ids:
+        d, m = db.get_dataset(i) or {}, db.get_matrix_arrays(i) or {}
+        per: dict[str, set] = {}
+        for t in m.get("trials", []):
+            p = t["panel"] or ""
+            key = merge.odor_key(t["components"])
+            if (of_panels is None or p in of_panels) and key is not None and len(key) == 1:
+                per.setdefault(p, set()).add(key)
+        out.append({"id": i, "title": d.get("title"), "uploader": d.get("uploader_name"), "n_flies": d.get("n_flies"),
+                    "panels": [{"name": p, "n_odors": len(v)} for p, v in per.items()]})
+    return out
+
+
 def scale(db, ids: list[int], index: OdorIndex, of_panels: Optional[list[str]] = None,
           tolerance: float = merge.DEFAULT_TOLERANCE) -> dict:
     """The datasets `ids` as a model's input: their glomeruli's mean responses to the odors of
@@ -229,7 +247,7 @@ def scale(db, ids: list[int], index: OdorIndex, of_panels: Optional[list[str]] =
         ``datasets``, its own factor to the combination ``factor`` and ``r``, ``n_points``,
         ``n_stimuli``, and ``hallem``: `to_hallem`'s of the combination), ``glomeruli``,
         ``odors`` and ``odor_panels`` (the input's, each odor's panel), ``panels`` (those
-        taken), ``dropped`` (glomeruli not measured for every odor), ``mixtures`` (stimuli
+        taken), ``sources`` (what each dataset gave of them: `sources`), ``dropped`` (glomeruli not measured for every odor), ``mixtures`` (stimuli
         left out), ``tolerance``, and the frames ``responses`` and ``orn_deltas`` (glomeruli
         × odors: the means, and those times the factor).
 
@@ -264,7 +282,8 @@ def scale(db, ids: list[int], index: OdorIndex, of_panels: Optional[list[str]] =
     direct = to_hallem(every["values"], hal, every["labels"], tolerance)
     out = {"method": HALLEM, "factor": direct["factor"], "hallem": direct, "combination": None, "tolerance": tolerance,
            "glomeruli": [str(g) for g in frame.index], "odors": [str(o) for o in frame.columns],
-           "odor_panels": [mine["panels"][k] for k in mine["values"]], "panels": of_panels, "dropped": dropped,
+           "odor_panels": [mine["panels"][k] for k in mine["values"]], "panels": of_panels, "sources": sources(db, ids, of_panels),
+           "dropped": dropped,
            "mixtures": mine["mixtures"]}
     if not direct["enough"]:
         c = _combination(db, ids, every, index, tolerance)
@@ -301,6 +320,7 @@ def summary(s: dict) -> dict:
         return {k: h[k] for k in ("factor", "r", "n_odors", "n_points", "enough")}
 
     out = {k: s[k] for k in ("method", "factor", "tolerance", "glomeruli", "odors", "panels", "dropped", "mixtures")}
+    out["sources"] = s.get("sources")
     out["hallem"] = fit(s["hallem"])
     out["combination"] = s["combination"] and {**{k: v for k, v in s["combination"].items() if k != "hallem"},
                                                 "hallem": fit(s["combination"]["hallem"])}

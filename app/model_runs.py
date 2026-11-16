@@ -356,12 +356,27 @@ def title(db, r: dict) -> str:
     return f"{o['baseline']['name']} on {', '.join(f'#{i}' for i in o['datasets'])} ({o['tuning']})"
 
 
+_SOURCES: dict[int, list] = {}  # (of runs made before their sources were recorded: worked out once)
+
+
+def _sources_now(db, r: dict) -> Optional[list]:
+    """What each dataset of a run made before it was recorded gives its input now (`orn_input.sources`), with
+    ``now`` set on each; None if a dataset is gone."""
+    if r["id"] not in _SOURCES:
+        o = r["options"]
+        if any(db.get_dataset(i) is None for i in o["datasets"]):
+            return None
+        _SOURCES[r["id"]] = [{**x, "now": True} for x in orn_input.sources(db, o["datasets"], o["panels"])]
+    return _SOURCES[r["id"]]
+
+
 def listing(db, tensor_root: Path) -> dict:
     """What the Models tab shows of runs: ``worker`` (`worker`'s, without ``kwargs``),
     ``baselines`` (`baselines`'s, without their rows), ``datasets`` (those of glomeruli:
     ``id``, ``title``, ``uploader``, ``n_flies``, ``panels``), ``runs`` (each with its
-    ``title``, ``progress`` (`progress`'s), ``position`` (in the queue, from 1) and ``run``
-    (the id the Models tab opens its spike counts by, once done)), and ``view``: the done
+    ``title``, ``progress`` (`progress`'s), ``position`` (in the queue, from 1), ``run``
+    (the id the Models tab opens its spike counts by, once done) and ``sources``: what each
+    dataset gave its input, of one done (`orn_input.sources`)), and ``view``: the done
     runs' models, as `model_data.baseline_listing` lists models (``experiments``, ``models``,
     ``columns``)."""
     w = worker()
@@ -391,6 +406,9 @@ def listing(db, tensor_root: Path) -> dict:
                 for k in [*e["params"], *e["keys"]]:
                     keys[k] = keys.get(k, 0) + 1
         out_runs.append(entry)
+    for r, entry in zip(runs, out_runs):  # (what each dataset gave its input: as recorded, else as the datasets are now)
+        rec = (r["result"] or {}).get("scaling", {}).get("sources")
+        entry["sources"] = (rec or _sources_now(db, r)) if r["status"] == "done" else None
     view["columns"] = model_data._columns(keys, {k: [] for k in model_data.LISTS})
     datasets = [{"id": d["id"], "title": d["title"], "uploader": d["uploader_name"], "n_flies": d["n_flies"]}
                 for d in sorted(db.list_datasets(), key=lambda d: d["id"]) if d["roi_kind"] == "glomeruli"]
