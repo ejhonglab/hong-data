@@ -198,6 +198,10 @@ def test_plan():
     # another experiment's own mechanism: not run
     p = model_runs.plan({**ROW, "gain": 1.5, "k": 2.0, "gain_glomeruli": "DM2,DL5"}, KWARGS)
     assert p["runnable"] is False and "gain = 1.5, k = 2.0, gain_glomeruli = DM2,DL5" in p["why"][0]
+    # how its parameters were fitted (the optimizer's settings) is no setting, and not said to be one
+    p = model_runs.plan({**ROW, "gain": 1.5, "init_from": "thr40_gain1.5_k2_cap3", "method": "Nelder-Mead", "maxfev": 150.0}, KWARGS)
+    assert p["runnable"] is False and p["why"][0].endswith(": gain = 1.5")
+    assert model_runs.plan({**ROW, "loss_variant": "structure", "kckc0": 60.0, "thr0_factor": 0.7}, KWARGS)["runnable"]
     p = model_runs.plan({**ROW, "base_kwargs_json": json.dumps({**BOUTON, "prat_boutons": True})}, KWARGS)
     assert p["runnable"] is False and p["why"] == ["prat_boutons is not a setting fit_and_plot_mb_model takes"]
     assert model_runs.plan({k: v for k, v in ROW.items() if k != "base_kwargs_json"}, KWARGS)["runnable"] is False

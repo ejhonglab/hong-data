@@ -55,7 +55,9 @@ NEEDED = ("fixed_thr", "wAPLKC_scale")  # those without which it cannot be run a
 TARGET = ("target_rate", "target_sparsity")  # its response rate tuned to: the columns of it, the first it has
 # params.csv columns that say what a model is, or how it came out: not settings
 INFO = {"source_table", "tag", "variant", "base", "part", "n_kcs", "n_glomeruli", "rate_on", "rate_off", BASE_KWARGS,
-        "base_params", "init_params", "generated"}
+        "base_params", "init_params", "generated",
+        # how its parameters were fitted (the optimizer's settings and starting point: model_experiment_queue's E10_joint_fit)
+        "init_from", "loss_variant", "method", "maxfev", "kckc0", "thr0_factor"}
 NEUTRAL = {"gain": 1.0, "thr_factor": 1.0, "wAPLKC_scale_factor": 1.0}  # values of settings that are not ones of it, that leave it as it is (besides 0 and none)
 
 
