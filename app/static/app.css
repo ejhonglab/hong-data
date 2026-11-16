@@ -1165,3 +1165,22 @@ dialog.roi-identity::backdrop { background: rgba(29,31,34,.3); }
 .tip-count { font-size: 12px; margin: 4px 0; }
 .tip-items { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow-y: auto; columns: 3 70px; column-gap: 12px; }
 .tip-items li { break-inside: avoid; }
+
+/* AL atlas tab (atlas.js): the 3D view beside the glomeruli's list */
+.atlas-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 14px; align-items: start; max-width: 1500px; margin: 0 auto; padding: 0 16px; }
+#atlas-source { max-width: 1500px; margin: 8px auto 0; padding: 0 16px; }
+.atlas-view { position: relative; height: calc(100vh - 230px); min-height: 420px; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--panel); overflow: hidden; }
+.atlas-view > canvas:first-child { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+.atlas-view > canvas:first-child:active { cursor: grabbing; }
+.atlas-axes { position: absolute; left: 8px; bottom: 8px; width: 130px; height: 150px; pointer-events: none; }
+.atlas-tip { position: absolute; padding: 3px 8px; border: 1px solid var(--rule-strong); border-radius: 4px; background: var(--panel); font-size: 13px; pointer-events: none; white-space: nowrap; }
+.atlas-status { position: absolute; left: 14px; top: 10px; margin: 0; }
+.atlas-side { display: flex; flex-direction: column; gap: 8px; height: calc(100vh - 230px); min-height: 420px; }
+.atlas-views { display: flex; flex-wrap: wrap; gap: 4px; }
+.atlas-list { overflow-y: auto; flex: 1; border-top: 1px solid var(--rule); }
+.atlas-row { display: grid; grid-template-columns: auto 1fr auto auto auto; align-items: center; gap: 6px; padding: 2px 2px; border-bottom: 1px solid var(--rule); }
+.atlas-row .atlas-name { font-weight: 500; }
+.atlas-row.focused { background: var(--accent-soft); }
+.atlas-row.hidden-row .atlas-name, .atlas-row.hidden-row .swatch-roi { opacity: 0.4; }
+.atlas-row .btn.small { padding: 1px 6px; }
+@media (max-width: 900px) { .atlas-layout { grid-template-columns: 1fr; } .atlas-side { height: auto; } .atlas-list { max-height: 50vh; } }

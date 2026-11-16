@@ -1030,6 +1030,13 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   held-out flies' predicted ROIs. Anyone may delete one (it asks first). The bottom of
   *Fit a model* says what such a download has, and how to install al-diag-seg and run a
   model on a fly (the versions the fit worker has filled in).
+- **AL atlas**: the 108 glomeruli (54 per lobe) of the Grabe et al. 2016 in vivo atlas in 3D:
+  drag to turn them (Shift or the right button: to move them), the wheel to zoom, and buttons to
+  look from each side (anterior, dorsal, lateral, ...). Choose the left lobe, the right or both.
+  Each glomerulus in the list can be hidden or focused (also by clicking it in the view): while
+  any are focused, the others shown are drawn nearly transparent. Neighbouring glomeruli are
+  coloured apart. Arrows in the corner turn with the view, showing where dorsal/ventral,
+  anterior/posterior and medial/lateral (with both lobes: the fly's left/right) are.
 - **Admin** (to the right of Docs; it first asks whether you are Tom, Jon or Betty, or
   have asked one of them): settings for the whole site.
   - *Folders on the server* the app may read (by default tensor) and also write (none

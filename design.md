@@ -13,7 +13,9 @@ between the frontend and the server. Using the app is described in
   stores and serves matrices; displaying, clustering and figure export all happen in the
   browser. The frontend is plain JavaScript modules, with no build step and no
   dependencies (the figure export writes its PDFs itself for that reason), but MathJax,
-  for labels' math (below), vendored as its one self-contained file.
+  for labels' math (below), and three.js, for the AL atlas tab's 3D view, each vendored as
+  its one self-contained file (three.js 0.170.0's `three.module.min.js`, MIT, loaded only
+  when that tab is first shown).
 - **Intranet only, no login.** The network is trusted and nothing secret is entered, so
   users are just names: a user's tensor folders are saved on the server under their
   name, upload form defaults in the browser (localStorage). It is plain HTTP unless a
@@ -535,6 +537,18 @@ between the frontend and the server. Using the app is described in
   revision is refused (409) rather than written over someone else's; deleting the copy
   keeps the `.json` beside it, so that revisions never repeat. No login, so who saved is
   the name set in Settings, if any, and the IP address, as for fits.
+- **The AL atlas tab's meshes are made once, offline, and served as static files**
+  (`static/atlas/grabe2016.json` and `.bin`, 2.8 MB, made by `make_grabe2016.py` beside them from
+  al_atlas' `labels.tif` at the commit the Dockerfile pins, its checksum checked). The web image has
+  no scikit-image, and the meshes never change, so nothing is computed on the server: each
+  glomerulus' label is binned in-plane to about 1 µm, smoothed (0.7 µm) and surfaced by marching
+  cubes, about 3,000 triangles each, vertices as int16 hundredths of a µm. Colours are by
+  glomerulus name (both lobes alike): DSatur graph colouring of the glomeruli within 1.5 µm of
+  each other, over 10 colours, which no two neighbours then share, each taking the colour whose
+  nearest glomerulus of it is farthest. The atlas' axes (its stack is tilted about 45° between
+  dorsal and anterior) are found from the glomeruli's names: D against V, the second letters A
+  against P and M against L, made perpendicular (anterior was 1–10° off, medial 20°, as names
+  are coarse), so the arrows need nothing said of the stack's orientation.
 - **A prediction's ROIs are refined from what it kept, with it or after** (`refinement.py`,
   `fit_worker.run_refinement`, al-diag-seg's `Model.refine`). The steps that keep neighbours out
   of the model's ROIs (split, then trim, margin, core) need nothing of Cellpose but its cell
@@ -2068,7 +2082,9 @@ app/static/        frontend: index.html, app.js, heatmap.js, colormaps.js (+ mpl
                    in the Admin tab), fits.js, predictions.js and extract.js (the AL segmentation tab's
                    fits, predictions and extractions of signals; flymenu.js: a menu of flies with a search box), models.js (the Models
                    tab: its table of models and a run's viewer), latex.js (labels with
-                   LaTeX math, by MathJax: vendor/mathjax/)
+                   LaTeX math, by MathJax: vendor/mathjax/), atlas.js (the AL atlas tab: the
+                   Grabe 2016 glomeruli in 3D, by three.js: vendor/three/; their meshes in
+                   atlas/, made by atlas/make_grabe2016.py)
 manage.py          list / show / export / delete datasets from the server
 deploy/            systemd units; Dockerfile + docker-compose.yml at the top level
 tests/             pytest tests

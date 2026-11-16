@@ -14,6 +14,7 @@ import { PredictPanel } from './predictions.js';
 import { ExtractPanel } from './extract.js';
 import { ModelsPage } from './models.js';
 import { ModelRuns } from './model_runs.js';
+import { AtlasPage } from './atlas.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -8845,6 +8846,7 @@ const modelRuns = new ModelRuns({
   setJobs: (view) => modelsPage.setJobs(view), onChange: () => modelsPage.forget('olfdb:runs/'),
 });
 const roiTraining = new RoiTrainingPage();
+const atlasPage = new AtlasPage({ $, esc });
 const headspacePage = new HeadspacePage();
 const headspaceVcf = new HeadspaceVcf(headspacePage);
 const headspaceDilutions = new HeadspaceDilutions(headspacePage);
@@ -8858,7 +8860,7 @@ const BROWSE_EMPTY = $('#browse-empty').innerHTML;
 
 function route() {
   const [tab, id] = location.hash.replace(/^#/, '').split('/');
-  const name = ['upload', 'browse', 'merge', 'compare', 'odors', 'reference', 'models', 'settings', 'headspace', 'al-segmentation', 'admin'].includes(tab) ? tab : 'browse';
+  const name = ['upload', 'browse', 'merge', 'compare', 'odors', 'reference', 'models', 'settings', 'headspace', 'al-segmentation', 'al-atlas', 'admin'].includes(tab) ? tab : 'browse';
   $$('.tab').forEach((s) => { s.hidden = s.id !== `tab-${name}`; });
   $$('.tabs a').forEach((a) => a.classList.toggle('active', a.dataset.tab === name));
   if (name === 'admin' && currentTab !== 'admin') admin.enter(lastPlace);
@@ -8870,6 +8872,7 @@ function route() {
   if (name === 'models') Promise.all([modelsPage.load(), modelRuns.load()]).then(() => (id ? modelsPage.show(decodeURIComponent(id)) : modelsPage.close()));
   if (name === 'settings') settings.load().then(() => { if (id === 'name') settings.focusName(); });
   if (name === 'al-segmentation') roiTraining.load();
+  if (name === 'al-atlas') atlasPage.load();
   if (name === 'headspace') headspacePage.load().then(() => headspaceVcf.load());
   if (name === 'merge') mergePage.load();
   if (name === 'compare') {

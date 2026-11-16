@@ -30,6 +30,7 @@ try {
     <a href="#headspace" data-tab="headspace">Headspace calculator</a>
     <span class="tabs-sep" aria-hidden="true"></span>
     <a href="#al-segmentation" data-tab="al-segmentation">AL segmentation</a>
+    <a href="#al-atlas" data-tab="al-atlas">AL atlas</a>
   </nav>
   <span class="topbar-status" id="topbar-status"></span>
   <nav class="tabs" aria-label="Settings, help and administration">
@@ -731,6 +732,38 @@ try {
       <div class="step-head"><h2>Left out</h2></div>
       <div id="rt-skipped"></div>
     </div>
+  </section>
+
+  <!-- ====================================================== AL ATLAS -->
+  <section id="tab-al-atlas" class="tab" hidden>
+    <div class="page-head">
+      <h1>AL atlas</h1>
+      <p class="lede">The glomeruli of the Grabe et al. 2016 in vivo antennal lobe atlas, in 3D. Drag to turn them (with Shift, or the
+        right button: to move them), and the wheel to zoom; hover over a glomerulus for its name, and click it to focus it: the others
+        shown are then drawn nearly transparent. The arrows in the corner turn with them: dorsal/ventral, anterior/posterior, and
+        medial/lateral (of both lobes: the fly's left/right).</p>
+    </div>
+    <div class="atlas-layout">
+      <div class="atlas-view" id="atlas-view">
+        <canvas class="atlas-axes" id="atlas-axes" aria-label="The anatomical axes, as seen now"></canvas>
+        <div class="atlas-tip" id="atlas-tip" hidden></div>
+        <p class="atlas-status muted" id="atlas-status"></p>
+      </div>
+      <aside class="atlas-side">
+        <label class="field"><span>Lobes</span><select id="atlas-side">
+          <option value="left" selected>Left</option><option value="right">Right</option><option value="both">Both</option></select></label>
+        <div class="atlas-views" id="atlas-views" aria-label="Views"></div>
+        <div class="actions">
+          <button type="button" class="btn small" id="atlas-show-all">Show all</button>
+          <button type="button" class="btn small" id="atlas-hide-all">Hide all</button>
+          <button type="button" class="btn small" id="atlas-unfocus">Unfocus all</button>
+        </div>
+        <input type="search" id="atlas-search" placeholder="Search glomeruli or receptors" aria-label="Search glomeruli or receptors">
+        <p class="muted small" id="atlas-count"></p>
+        <div class="atlas-list" id="atlas-list"></div>
+      </aside>
+    </div>
+    <p class="muted small" id="atlas-source"></p>
   </section>
 
   <!-- ====================================================== SETTINGS -->

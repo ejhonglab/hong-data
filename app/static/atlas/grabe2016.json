@@ -1,0 +1,3231 @@
+{
+ "title": "Grabe et al. 2016 in vivo antennal lobe atlas",
+ "citation": "Grabe V, Baschwitz A, Dweck HKM, Lavista-Llanos S, Hansson BS, Sachse S. Elucidating the Neuronal Architecture of Olfactory Glomeruli in the Drosophila Antennal Lobe. Cell Rep. 2016;16(12):3401-3413. doi:10.1016/j.celrep.2016.08.063",
+ "source": "https://github.com/ejhonglab/al_atlas/tree/88ebada36bed414e7799d887b6fceca034bbc0cb/grabe2016 (labels.tif, structures.csv)",
+ "made_by": "make_grabe2016.py",
+ "spacing_um": [
+  0.96,
+  0.34,
+  0.34
+ ],
+ "smooth_um": 0.7,
+ "near_um": 1.5,
+ "units": "vertices: int16, 1/100 um, x y z (the atlas' columns, rows, planes), less the middle of all glomeruli",
+ "quant": 100,
+ "palette": [
+  "#4e79a7",
+  "#f28e2b",
+  "#e15759",
+  "#76b7b2",
+  "#59a14f",
+  "#edc948",
+  "#b07aa1",
+  "#ff9da7",
+  "#9c755f",
+  "#bab0ac"
+ ],
+ "neighbours_sharing_a_colour": 0,
+ "axes": {
+  "left": {
+   "dorsal": [
+    -0.0121,
+    0.7029,
+    -0.7112
+   ],
+   "anterior": [
+    -0.1266,
+    -0.7066,
+    -0.6962
+   ],
+   "medial": [
+    0.9919,
+    -0.0816,
+    -0.0975
+   ],
+   "from_names_deg": {
+    "anterior": 10.3,
+    "medial": 21.1
+   }
+  },
+  "right": {
+   "dorsal": [
+    0.0603,
+    0.6762,
+    -0.7342
+   ],
+   "anterior": [
+    -0.0303,
+    -0.734,
+    -0.6785
+   ],
+   "medial": [
+    -0.9977,
+    0.0631,
+    -0.0238
+   ],
+   "from_names_deg": {
+    "anterior": 1.4,
+    "medial": 20.3
+   }
+  },
+  "both": {
+   "dorsal": [
+    0.0241,
+    0.6901,
+    -0.7233
+   ],
+   "anterior": [
+    -0.0785,
+    -0.72,
+    -0.6896
+   ],
+   "left": [
+    -0.9966,
+    0.0734,
+    0.0368
+   ]
+  }
+ },
+ "glomeruli": [
+  {
+   "label": 1,
+   "name": "D",
+   "side": "left",
+   "receptor": "Or69a",
+   "volume_um3": 1677.2,
+   "centroid": [
+    -37.78,
+    19.95,
+    -23.83
+   ],
+   "colour": "#76b7b2",
+   "neighbours": [
+    "DA2",
+    "DA3",
+    "DA4l",
+    "DA4m",
+    "DC1",
+    "DL1",
+    "DL4",
+    "DL5"
+   ],
+   "vertices": [
+    0,
+    1112
+   ],
+   "triangles": [
+    6672,
+    2220
+   ]
+  },
+  {
+   "label": 2,
+   "name": "DA1",
+   "side": "left",
+   "receptor": "Or67d",
+   "volume_um3": 3747.0,
+   "centroid": [
+    -63.54,
+    6.85,
+    -24.85
+   ],
+   "colour": "#f28e2b",
+   "neighbours": [
+    "DA3",
+    "DC3",
+    "DL3",
+    "DL4",
+    "VA1d"
+   ],
+   "vertices": [
+    19992,
+    1848
+   ],
+   "triangles": [
+    31080,
+    3692
+   ]
+  },
+  {
+   "label": 3,
+   "name": "DA2",
+   "side": "left",
+   "receptor": "Or56a",
+   "volume_um3": 2582.9,
+   "centroid": [
+    -30.48,
+    8.63,
+    -25.37
+   ],
+   "colour": "#4e79a7",
+   "neighbours": [
+    "D",
+    "DA4l",
+    "DA4m",
+    "DC1",
+    "DM6",
+    "VA6"
+   ],
+   "vertices": [
+    53232,
+    1488
+   ],
+   "triangles": [
+    62160,
+    2972
+   ]
+  },
+  {
+   "label": 4,
+   "name": "DA3",
+   "side": "left",
+   "receptor": "Or23a",
+   "volume_um3": 546.4,
+   "centroid": [
+    -48.79,
+    16.49,
+    -29.01
+   ],
+   "colour": "#edc948",
+   "neighbours": [
+    "D",
+    "DA1",
+    "DA4l",
+    "DA4m",
+    "DL4"
+   ],
+   "vertices": [
+    79992,
+    524
+   ],
+   "triangles": [
+    83136,
+    1044
+   ]
+  },
+  {
+   "label": 5,
+   "name": "DA4l",
+   "side": "left",
+   "receptor": "Or43a",
+   "volume_um3": 1308.1,
+   "centroid": [
+    -43.84,
+    3.49,
+    -25.84
+   ],
+   "colour": "#b07aa1",
+   "neighbours": [
+    "D",
+    "DA2",
+    "DA3",
+    "DA4m",
+    "DC3",
+    "VA1d",
+    "VA6"
+   ],
+   "vertices": [
+    89400,
+    886
+   ],
+   "triangles": [
+    94716,
+    1768
+   ]
+  },
+  {
+   "label": 6,
+   "name": "DA4m",
+   "side": "left",
+   "receptor": "Or2a",
+   "volume_um3": 907.1,
+   "centroid": [
+    -39.68,
+    14.07,
+    -29.59
+   ],
+   "colour": "#bab0ac",
+   "neighbours": [
+    "D",
+    "DA2",
+    "DA3",
+    "DA4l",
+    "DC1"
+   ],
+   "vertices": [
+    105324,
+    786
+   ],
+   "triangles": [
+    110040,
+    1568
+   ]
+  },
+  {
+   "label": 7,
+   "name": "DC1",
+   "side": "left",
+   "receptor": "Or19a",
+   "volume_um3": 2733.0,
+   "centroid": [
+    -33.11,
+    14.66,
+    -13.78
+   ],
+   "colour": "#f28e2b",
+   "neighbours": [
+    "D",
+    "DA2",
+    "DA4m",
+    "DC2",
+    "DC4",
+    "DL1",
+    "DL5",
+    "DM3",
+    "DM6",
+    "VP1"
+   ],
+   "vertices": [
+    119448,
+    1550
+   ],
+   "triangles": [
+    128748,
+    3096
+   ]
+  },
+  {
+   "label": 8,
+   "name": "DC2",
+   "side": "left",
+   "receptor": "Or13a",
+   "volume_um3": 1089.0,
+   "centroid": [
+    -28.83,
+    -1.31,
+    -8.2
+   ],
+   "colour": "#e15759",
+   "neighbours": [
+    "DC1",
+    "DM5",
+    "DM6",
+    "VA6",
+    "VC1",
+    "VC4",
+    "VM5d",
+    "VM5v",
+    "VM7v"
+   ],
+   "vertices": [
+    147324,
+    792
+   ],
+   "triangles": [
+    152076,
+    1580
+   ]
+  },
+  {
+   "label": 9,
+   "name": "DC3",
+   "side": "left",
+   "receptor": "Or83c",
+   "volume_um3": 1826.9,
+   "centroid": [
+    -50.13,
+    1.65,
+    -11.57
+   ],
+   "colour": "#76b7b2",
+   "neighbours": [
+    "DA1",
+    "DA4l",
+    "VA1d",
+    "VA6",
+    "VC1",
+    "VC2"
+   ],
+   "vertices": [
+    161556,
+    1234
+   ],
+   "triangles": [
+    168960,
+    2464
+   ]
+  },
+  {
+   "label": 10,
+   "name": "DC4",
+   "side": "left",
+   "receptor": "Ir64a",
+   "volume_um3": 2294.3,
+   "centroid": [
+    -26.06,
+    20.65,
+    -4.43
+   ],
+   "colour": "#edc948",
+   "neighbours": [
+    "DC1",
+    "DL5",
+    "DM3",
+    "DP1m",
+    "VM7d",
+    "VP1"
+   ],
+   "vertices": [
+    183744,
+    1448
+   ],
+   "triangles": [
+    192432,
+    2892
+   ]
+  },
+  {
+   "label": 11,
+   "name": "DL1",
+   "side": "left",
+   "receptor": "Or10a",
+   "volume_um3": 2313.6,
+   "centroid": [
+    -47.71,
+    26.31,
+    -16.26
+   ],
+   "colour": "#e15759",
+   "neighbours": [
+    "D",
+    "DC1",
+    "DL2d",
+    "DL4",
+    "DL5",
+    "VP1"
+   ],
+   "vertices": [
+    209784,
+    1368
+   ],
+   "triangles": [
+    217992,
+    2732
+   ]
+  },
+  {
+   "label": 12,
+   "name": "DL2d",
+   "side": "left",
+   "receptor": null,
+   "volume_um3": 2747.9,
+   "centroid": [
+    -59.34,
+    25.14,
+    -7.11
+   ],
+   "colour": "#ff9da7",
+   "neighbours": [
+    "DL1",
+    "DL2v",
+    "DL5",
+    "DP1l",
+    "DP1m"
+   ],
+   "vertices": [
+    234384,
+    1632
+   ],
+   "triangles": [
+    244176,
+    3260
+   ]
+  },
+  {
+   "label": 13,
+   "name": "DL2v",
+   "side": "left",
+   "receptor": null,
+   "volume_um3": 3108.0,
+   "centroid": [
+    -58.39,
+    14.34,
+    0.22
+   ],
+   "colour": "#9c755f",
+   "neighbours": [
+    "DL2d",
+    "DP1l",
+    "DP1m",
+    "VL2a"
+   ],
+   "vertices": [
+    263736,
+    1768
+   ],
+   "triangles": [
+    274344,
+    3532
+   ]
+  },
+  {
+   "label": 14,
+   "name": "DL3",
+   "side": "left",
+   "receptor": "Or65a",
+   "volume_um3": 864.8,
+   "centroid": [
+    -62.07,
+    17.45,
+    -27.9
+   ],
+   "colour": "#4e79a7",
+   "neighbours": [
+    "DA1",
+    "DL4"
+   ],
+   "vertices": [
+    295536,
+    666
+   ],
+   "triangles": [
+    299532,
+    1328
+   ]
+  },
+  {
+   "label": 15,
+   "name": "DL4",
+   "side": "left",
+   "receptor": "Or49a_Or85f",
+   "volume_um3": 546.0,
+   "centroid": [
+    -52.71,
+    17.78,
+    -21.14
+   ],
+   "colour": "#59a14f",
+   "neighbours": [
+    "D",
+    "DA1",
+    "DA3",
+    "DL1",
+    "DL3"
+   ],
+   "vertices": [
+    307500,
+    502
+   ],
+   "triangles": [
+    310512,
+    1000
+   ]
+  },
+  {
+   "label": 16,
+   "name": "DL5",
+   "side": "left",
+   "receptor": "Or7a",
+   "volume_um3": 3139.3,
+   "centroid": [
+    -33.2,
+    32.71,
+    -15.64
+   ],
+   "colour": "#59a14f",
+   "neighbours": [
+    "D",
+    "DC1",
+    "DC4",
+    "DL1",
+    "DL2d",
+    "DM3",
+    "DP1m"
+   ],
+   "vertices": [
+    316512,
+    1618
+   ],
+   "triangles": [
+    326220,
+    3232
+   ]
+  },
+  {
+   "label": 17,
+   "name": "DM1",
+   "side": "left",
+   "receptor": "Or42b",
+   "volume_um3": 3848.8,
+   "centroid": [
+    -12.21,
+    21.41,
+    4.13
+   ],
+   "colour": "#4e79a7",
+   "neighbours": [
+    "DM2",
+    "DM3",
+    "DM4",
+    "VC3",
+    "VM7d"
+   ],
+   "vertices": [
+    345612,
+    2084
+   ],
+   "triangles": [
+    358116,
+    4164
+   ]
+  },
+  {
+   "label": 18,
+   "name": "DM2",
+   "side": "left",
+   "receptor": "Or22a",
+   "volume_um3": 1788.9,
+   "centroid": [
+    -9.23,
+    13.16,
+    -3.27
+   ],
+   "colour": "#59a14f",
+   "neighbours": [
+    "DM1",
+    "DM5",
+    "VM5d",
+    "VM7d"
+   ],
+   "vertices": [
+    383100,
+    1196
+   ],
+   "triangles": [
+    390276,
+    2388
+   ]
+  },
+  {
+   "label": 19,
+   "name": "DM3",
+   "side": "left",
+   "receptor": "Or47a",
+   "volume_um3": 968.8,
+   "centroid": [
+    -15.71,
+    24.76,
+    -15.65
+   ],
+   "colour": "#9c755f",
+   "neighbours": [
+    "DC1",
+    "DC4",
+    "DL5",
+    "DM1"
+   ],
+   "vertices": [
+    404604,
+    710
+   ],
+   "triangles": [
+    408864,
+    1416
+   ]
+  },
+  {
+   "label": 20,
+   "name": "DM4",
+   "side": "left",
+   "receptor": "Or59b",
+   "volume_um3": 2515.8,
+   "centroid": [
+    -13.37,
+    28.74,
+    12.0
+   ],
+   "colour": "#e15759",
+   "neighbours": [
+    "DM1",
+    "DP1m",
+    "VM7d",
+    "VP4"
+   ],
+   "vertices": [
+    417360,
+    1680
+   ],
+   "triangles": [
+    427440,
+    3356
+   ]
+  },
+  {
+   "label": 21,
+   "name": "DM5",
+   "side": "left",
+   "receptor": "Or43b",
+   "volume_um3": 1523.0,
+   "centroid": [
+    -10.44,
+    3.64,
+    -9.67
+   ],
+   "colour": "#f28e2b",
+   "neighbours": [
+    "DC2",
+    "DM2",
+    "DM6",
+    "VM2",
+    "VM5d"
+   ],
+   "vertices": [
+    447576,
+    1090
+   ],
+   "triangles": [
+    454116,
+    2176
+   ]
+  },
+  {
+   "label": 22,
+   "name": "DM6",
+   "side": "left",
+   "receptor": "Or67a",
+   "volume_um3": 1223.0,
+   "centroid": [
+    -18.53,
+    8.03,
+    -15.9
+   ],
+   "colour": "#b07aa1",
+   "neighbours": [
+    "DA2",
+    "DC1",
+    "DC2",
+    "DM5"
+   ],
+   "vertices": [
+    467172,
+    840
+   ],
+   "triangles": [
+    472212,
+    1676
+   ]
+  },
+  {
+   "label": 23,
+   "name": "DP1l",
+   "side": "left",
+   "receptor": "Ir75a",
+   "volume_um3": 3915.6,
+   "centroid": [
+    -59.19,
+    22.34,
+    9.64
+   ],
+   "colour": "#bab0ac",
+   "neighbours": [
+    "DL2d",
+    "DL2v",
+    "DP1m",
+    "VL2a",
+    "VL2p",
+    "VP4"
+   ],
+   "vertices": [
+    482268,
+    1986
+   ],
+   "triangles": [
+    494184,
+    3968
+   ]
+  },
+  {
+   "label": 24,
+   "name": "DP1m",
+   "side": "left",
+   "receptor": "Ir64a",
+   "volume_um3": 5792.7,
+   "centroid": [
+    -35.03,
+    31.36,
+    3.92
+   ],
+   "colour": "#b07aa1",
+   "neighbours": [
+    "DC4",
+    "DL2d",
+    "DL2v",
+    "DL5",
+    "DM4",
+    "DP1l",
+    "VP1"
+   ],
+   "vertices": [
+    517992,
+    2660
+   ],
+   "triangles": [
+    533952,
+    5316
+   ]
+  },
+  {
+   "label": 25,
+   "name": "V",
+   "side": "left",
+   "receptor": "Gr21a",
+   "volume_um3": 2563.0,
+   "centroid": [
+    -48.2,
+    -17.29,
+    29.61
+   ],
+   "colour": "#edc948",
+   "neighbours": [
+    "VA4",
+    "VL1",
+    "VM4",
+    "VP1"
+   ],
+   "vertices": [
+    565848,
+    1514
+   ],
+   "triangles": [
+    574932,
+    3024
+   ]
+  },
+  {
+   "label": 26,
+   "name": "VA1d",
+   "side": "left",
+   "receptor": "Or88a",
+   "volume_um3": 5311.8,
+   "centroid": [
+    -57.14,
+    -6.09,
+    -18.81
+   ],
+   "colour": "#e15759",
+   "neighbours": [
+    "DA1",
+    "DA4l",
+    "DC3",
+    "VA1v",
+    "VA6",
+    "VC2",
+    "VL2a"
+   ],
+   "vertices": [
+    593076,
+    2454
+   ],
+   "triangles": [
+    607800,
+    4904
+   ]
+  },
+  {
+   "label": 27,
+   "name": "VA1v",
+   "side": "left",
+   "receptor": "Or47b",
+   "volume_um3": 5094.0,
+   "centroid": [
+    -60.2,
+    -17.09,
+    -9.86
+   ],
+   "colour": "#4e79a7",
+   "neighbours": [
+    "VA1d",
+    "VA5",
+    "VL2a"
+   ],
+   "vertices": [
+    637224,
+    2578
+   ],
+   "triangles": [
+    652692,
+    5152
+   ]
+  },
+  {
+   "label": 28,
+   "name": "VA2",
+   "side": "left",
+   "receptor": "Or92a",
+   "volume_um3": 2956.6,
+   "centroid": [
+    -24.29,
+    -21.21,
+    8.95
+   ],
+   "colour": "#4e79a7",
+   "neighbours": [
+    "VA3",
+    "VA7m",
+    "VC4",
+    "VM2",
+    "VM3",
+    "VM4",
+    "VM5v"
+   ],
+   "vertices": [
+    683604,
+    1524
+   ],
+   "triangles": [
+    692748,
+    3044
+   ]
+  },
+  {
+   "label": 29,
+   "name": "VA3",
+   "side": "left",
+   "receptor": "Or67b",
+   "volume_um3": 2110.3,
+   "centroid": [
+    -39.42,
+    -24.01,
+    9.27
+   ],
+   "colour": "#76b7b2",
+   "neighbours": [
+    "VA2",
+    "VA4",
+    "VA5",
+    "VA7l",
+    "VA7m",
+    "VC2",
+    "VM4"
+   ],
+   "vertices": [
+    711012,
+    1244
+   ],
+   "triangles": [
+    718476,
+    2484
+   ]
+  },
+  {
+   "label": 30,
+   "name": "VA4",
+   "side": "left",
+   "receptor": "Or85d",
+   "volume_um3": 968.6,
+   "centroid": [
+    -48.58,
+    -16.71,
+    11.71
+   ],
+   "colour": "#e15759",
+   "neighbours": [
+    "V",
+    "VA3",
+    "VA5",
+    "VC2",
+    "VL1",
+    "VM4"
+   ],
+   "vertices": [
+    733380,
+    814
+   ],
+   "triangles": [
+    738264,
+    1624
+   ]
+  },
+  {
+   "label": 31,
+   "name": "VA5",
+   "side": "left",
+   "receptor": "Or49b",
+   "volume_um3": 1145.2,
+   "centroid": [
+    -51.53,
+    -20.21,
+    0.45
+   ],
+   "colour": "#9c755f",
+   "neighbours": [
+    "VA1v",
+    "VA3",
+    "VA4",
+    "VA7l",
+    "VC2",
+    "VL1"
+   ],
+   "vertices": [
+    748008,
+    856
+   ],
+   "triangles": [
+    753144,
+    1708
+   ]
+  },
+  {
+   "label": 32,
+   "name": "VA6",
+   "side": "left",
+   "receptor": "Or67d",
+   "volume_um3": 2280.0,
+   "centroid": [
+    -38.02,
+    -9.7,
+    -14.06
+   ],
+   "colour": "#ff9da7",
+   "neighbours": [
+    "DA2",
+    "DA4l",
+    "DC2",
+    "DC3",
+    "VA1d",
+    "VC1",
+    "VC2",
+    "VM5v"
+   ],
+   "vertices": [
+    763392,
+    1328
+   ],
+   "triangles": [
+    771360,
+    2652
+   ]
+  },
+  {
+   "label": 33,
+   "name": "VA7l",
+   "side": "left",
+   "receptor": "Or46aA",
+   "volume_um3": 489.0,
+   "centroid": [
+    -40.13,
+    -22.63,
+    -3.4
+   ],
+   "colour": "#f28e2b",
+   "neighbours": [
+    "VA3",
+    "VA5",
+    "VA7m",
+    "VC2",
+    "VM5v"
+   ],
+   "vertices": [
+    787272,
+    542
+   ],
+   "triangles": [
+    790524,
+    1080
+   ]
+  },
+  {
+   "label": 34,
+   "name": "VA7m",
+   "side": "left",
+   "receptor": null,
+   "volume_um3": 559.2,
+   "centroid": [
+    -35.61,
+    -19.46,
+    -2.4
+   ],
+   "colour": "#edc948",
+   "neighbours": [
+    "VA2",
+    "VA3",
+    "VA7l",
+    "VC2",
+    "VM5v"
+   ],
+   "vertices": [
+    797004,
+    504
+   ],
+   "triangles": [
+    800028,
+    1004
+   ]
+  },
+  {
+   "label": 35,
+   "name": "VC1",
+   "side": "left",
+   "receptor": "Or33c",
+   "volume_um3": 2580.1,
+   "centroid": [
+    -37.0,
+    -1.64,
+    5.94
+   ],
+   "colour": "#b07aa1",
+   "neighbours": [
+    "DC2",
+    "DC3",
+    "VA6",
+    "VC2",
+    "VC3",
+    "VC4",
+    "VM5v",
+    "VP1"
+   ],
+   "vertices": [
+    806052,
+    1534
+   ],
+   "triangles": [
+    815256,
+    3064
+   ]
+  },
+  {
+   "label": 36,
+   "name": "VC2",
+   "side": "left",
+   "receptor": "Or71a",
+   "volume_um3": 1208.8,
+   "centroid": [
+    -42.0,
+    -10.75,
+    6.22
+   ],
+   "colour": "#bab0ac",
+   "neighbours": [
+    "DC3",
+    "VA1d",
+    "VA3",
+    "VA4",
+    "VA5",
+    "VA6",
+    "VA7l",
+    "VA7m",
+    "VC1",
+    "VM5v"
+   ],
+   "vertices": [
+    833640,
+    940
+   ],
+   "triangles": [
+    839280,
+    1876
+   ]
+  },
+  {
+   "label": 37,
+   "name": "VC3",
+   "side": "left",
+   "receptor": "Or35a",
+   "volume_um3": 3276.7,
+   "centroid": [
+    -24.23,
+    0.49,
+    18.23
+   ],
+   "colour": "#f28e2b",
+   "neighbours": [
+    "DM1",
+    "VC1",
+    "VC4",
+    "VC5",
+    "VM3",
+    "VM4",
+    "VM7d",
+    "VM7v",
+    "VP2"
+   ],
+   "vertices": [
+    850536,
+    1888
+   ],
+   "triangles": [
+    861864,
+    3772
+   ]
+  },
+  {
+   "label": 38,
+   "name": "VC4",
+   "side": "left",
+   "receptor": "Or67c",
+   "volume_um3": 1570.9,
+   "centroid": [
+    -23.28,
+    -3.56,
+    8.16
+   ],
+   "colour": "#9c755f",
+   "neighbours": [
+    "DC2",
+    "VA2",
+    "VC1",
+    "VC3",
+    "VM2",
+    "VM3",
+    "VM5d",
+    "VM5v",
+    "VM7v"
+   ],
+   "vertices": [
+    884496,
+    1110
+   ],
+   "triangles": [
+    891156,
+    2216
+   ]
+  },
+  {
+   "label": 39,
+   "name": "VC5",
+   "side": "left",
+   "receptor": "Ir41a",
+   "volume_um3": 1218.5,
+   "centroid": [
+    -19.9,
+    13.02,
+    26.98
+   ],
+   "colour": "#59a14f",
+   "neighbours": [
+    "VC3",
+    "VM7d",
+    "VP1",
+    "VP2"
+   ],
+   "vertices": [
+    904452,
+    936
+   ],
+   "triangles": [
+    910068,
+    1868
+   ]
+  },
+  {
+   "label": 40,
+   "name": "VL1",
+   "side": "left",
+   "receptor": "Ir75d",
+   "volume_um3": 6098.1,
+   "centroid": [
+    -62.61,
+    -10.79,
+    17.88
+   ],
+   "colour": "#59a14f",
+   "neighbours": [
+    "V",
+    "VA4",
+    "VA5",
+    "VL2a",
+    "VL2p",
+    "VP1",
+    "VP3",
+    "VP4"
+   ],
+   "vertices": [
+    921276,
+    2594
+   ],
+   "triangles": [
+    936840,
+    5184
+   ]
+  },
+  {
+   "label": 41,
+   "name": "VL2a",
+   "side": "left",
+   "receptor": "Ir84a",
+   "volume_um3": 3706.0,
+   "centroid": [
+    -67.14,
+    0.81,
+    4.81
+   ],
+   "colour": "#edc948",
+   "neighbours": [
+    "DL2v",
+    "DP1l",
+    "VA1d",
+    "VA1v",
+    "VL1",
+    "VL2p"
+   ],
+   "vertices": [
+    967944,
+    1844
+   ],
+   "triangles": [
+    979008,
+    3684
+   ]
+  },
+  {
+   "label": 42,
+   "name": "VL2p",
+   "side": "left",
+   "receptor": "Ir31a",
+   "volume_um3": 3622.3,
+   "centroid": [
+    -74.3,
+    6.49,
+    15.87
+   ],
+   "colour": "#f28e2b",
+   "neighbours": [
+    "DP1l",
+    "VL1",
+    "VL2a",
+    "VP4"
+   ],
+   "vertices": [
+    1001112,
+    1884
+   ],
+   "triangles": [
+    1012416,
+    3764
+   ]
+  },
+  {
+   "label": 43,
+   "name": "VM1",
+   "side": "left",
+   "receptor": "Ir92a",
+   "volume_um3": 1121.6,
+   "centroid": [
+    -16.24,
+    -14.89,
+    32.61
+   ],
+   "colour": "#bab0ac",
+   "neighbours": [
+    "VM4",
+    "VP1",
+    "VP2"
+   ],
+   "vertices": [
+    1035000,
+    844
+   ],
+   "triangles": [
+    1040064,
+    1684
+   ]
+  },
+  {
+   "label": 44,
+   "name": "VM2",
+   "side": "left",
+   "receptor": "Or43b",
+   "volume_um3": 1773.7,
+   "centroid": [
+    -12.84,
+    -9.3,
+    7.82
+   ],
+   "colour": "#b07aa1",
+   "neighbours": [
+    "DM5",
+    "VA2",
+    "VC4",
+    "VM3",
+    "VM5d"
+   ],
+   "vertices": [
+    1050168,
+    1224
+   ],
+   "triangles": [
+    1057512,
+    2444
+   ]
+  },
+  {
+   "label": 45,
+   "name": "VM3",
+   "side": "left",
+   "receptor": "Or9a",
+   "volume_um3": 1662.8,
+   "centroid": [
+    -16.3,
+    -11.22,
+    18.28
+   ],
+   "colour": "#e15759",
+   "neighbours": [
+    "VA2",
+    "VC3",
+    "VC4",
+    "VM2",
+    "VP2"
+   ],
+   "vertices": [
+    1072176,
+    1134
+   ],
+   "triangles": [
+    1078980,
+    2264
+   ]
+  },
+  {
+   "label": 46,
+   "name": "VM4",
+   "side": "left",
+   "receptor": "Ir76a",
+   "volume_um3": 2239.7,
+   "centroid": [
+    -32.64,
+    -15.33,
+    24.62
+   ],
+   "colour": "#ff9da7",
+   "neighbours": [
+    "V",
+    "VA2",
+    "VA3",
+    "VA4",
+    "VC3",
+    "VM1",
+    "VP1"
+   ],
+   "vertices": [
+    1092564,
+    1324
+   ],
+   "triangles": [
+    1100508,
+    2644
+   ]
+  },
+  {
+   "label": 47,
+   "name": "VM5d",
+   "side": "left",
+   "receptor": "Or85b",
+   "volume_um3": 1904.8,
+   "centroid": [
+    -17.78,
+    -0.41,
+    0.15
+   ],
+   "colour": "#76b7b2",
+   "neighbours": [
+    "DC2",
+    "DM2",
+    "DM5",
+    "VC4",
+    "VM2",
+    "VM5v",
+    "VM7d",
+    "VM7v"
+   ],
+   "vertices": [
+    1116372,
+    1220
+   ],
+   "triangles": [
+    1123692,
+    2436
+   ]
+  },
+  {
+   "label": 48,
+   "name": "VM5v",
+   "side": "left",
+   "receptor": "Or98a",
+   "volume_um3": 1678.6,
+   "centroid": [
+    -27.41,
+    -12.11,
+    -7.26
+   ],
+   "colour": "#59a14f",
+   "neighbours": [
+    "DC2",
+    "VA2",
+    "VA6",
+    "VA7l",
+    "VA7m",
+    "VC1",
+    "VC2",
+    "VC4",
+    "VM5d"
+   ],
+   "vertices": [
+    1138308,
+    1152
+   ],
+   "triangles": [
+    1145220,
+    2300
+   ]
+  },
+  {
+   "label": 49,
+   "name": "VM7d",
+   "side": "left",
+   "receptor": "Or42a",
+   "volume_um3": 707.5,
+   "centroid": [
+    -18.01,
+    9.83,
+    4.96
+   ],
+   "colour": "#bab0ac",
+   "neighbours": [
+    "DC4",
+    "DM1",
+    "DM2",
+    "DM4",
+    "VC3",
+    "VC5",
+    "VM5d",
+    "VM7v"
+   ],
+   "vertices": [
+    1159020,
+    710
+   ],
+   "triangles": [
+    1163280,
+    1416
+   ]
+  },
+  {
+   "label": 50,
+   "name": "VM7v",
+   "side": "left",
+   "receptor": "Or59c",
+   "volume_um3": 545.4,
+   "centroid": [
+    -23.53,
+    6.57,
+    3.16
+   ],
+   "colour": "#ff9da7",
+   "neighbours": [
+    "DC2",
+    "VC3",
+    "VC4",
+    "VM5d",
+    "VM7d"
+   ],
+   "vertices": [
+    1171776,
+    602
+   ],
+   "triangles": [
+    1175388,
+    1200
+   ]
+  },
+  {
+   "label": 51,
+   "name": "VP1",
+   "side": "left",
+   "receptor": "Ir40a",
+   "volume_um3": 8566.2,
+   "centroid": [
+    -39.53,
+    2.85,
+    25.47
+   ],
+   "colour": "#4e79a7",
+   "neighbours": [
+    "DC1",
+    "DC4",
+    "DL1",
+    "DP1m",
+    "V",
+    "VC1",
+    "VC5",
+    "VL1",
+    "VM1",
+    "VM4",
+    "VP2",
+    "VP3",
+    "VP4"
+   ],
+   "vertices": [
+    1182588,
+    5852
+   ],
+   "triangles": [
+    1217700,
+    11700
+   ]
+  },
+  {
+   "label": 52,
+   "name": "VP2",
+   "side": "left",
+   "receptor": null,
+   "volume_um3": 1790.0,
+   "centroid": [
+    -18.98,
+    -0.96,
+    28.86
+   ],
+   "colour": "#edc948",
+   "neighbours": [
+    "VC3",
+    "VC5",
+    "VM1",
+    "VM3",
+    "VP1"
+   ],
+   "vertices": [
+    1287900,
+    1186
+   ],
+   "triangles": [
+    1295016,
+    2368
+   ]
+  },
+  {
+   "label": 53,
+   "name": "VP3",
+   "side": "left",
+   "receptor": null,
+   "volume_um3": 3830.3,
+   "centroid": [
+    -41.91,
+    9.22,
+    36.2
+   ],
+   "colour": "#e15759",
+   "neighbours": [
+    "VL1",
+    "VP1",
+    "VP4"
+   ],
+   "vertices": [
+    1309224,
+    1922
+   ],
+   "triangles": [
+    1320756,
+    3840
+   ]
+  },
+  {
+   "label": 54,
+   "name": "VP4",
+   "side": "left",
+   "receptor": "Ir40a",
+   "volume_um3": 3756.2,
+   "centroid": [
+    -41.28,
+    25.25,
+    24.9
+   ],
+   "colour": "#76b7b2",
+   "neighbours": [
+    "DM4",
+    "DP1l",
+    "VL1",
+    "VL2p",
+    "VP1",
+    "VP3"
+   ],
+   "vertices": [
+    1343796,
+    2970
+   ],
+   "triangles": [
+    1361616,
+    5936
+   ]
+  },
+  {
+   "label": 55,
+   "name": "D",
+   "side": "right",
+   "receptor": "Or69a",
+   "volume_um3": 1724.3,
+   "centroid": [
+    37.76,
+    12.39,
+    -23.88
+   ],
+   "colour": "#76b7b2",
+   "neighbours": [
+    "DA2",
+    "DA3",
+    "DA4l",
+    "DA4m",
+    "DC1",
+    "DL1",
+    "DL4",
+    "DL5"
+   ],
+   "vertices": [
+    1397232,
+    1160
+   ],
+   "triangles": [
+    1404192,
+    2316
+   ]
+  },
+  {
+   "label": 56,
+   "name": "DA1",
+   "side": "right",
+   "receptor": "Or67d",
+   "volume_um3": 4661.2,
+   "centroid": [
+    62.49,
+    -11.07,
+    -23.78
+   ],
+   "colour": "#f28e2b",
+   "neighbours": [
+    "DA3",
+    "DC3",
+    "DL3",
+    "DL4",
+    "VA1d"
+   ],
+   "vertices": [
+    1418088,
+    2114
+   ],
+   "triangles": [
+    1430772,
+    4224
+   ]
+  },
+  {
+   "label": 57,
+   "name": "DA2",
+   "side": "right",
+   "receptor": "Or56a",
+   "volume_um3": 1747.0,
+   "centroid": [
+    29.88,
+    -1.94,
+    -23.89
+   ],
+   "colour": "#4e79a7",
+   "neighbours": [
+    "D",
+    "DA4l",
+    "DA4m",
+    "DC1",
+    "DM6",
+    "VA6"
+   ],
+   "vertices": [
+    1456116,
+    1126
+   ],
+   "triangles": [
+    1462872,
+    2248
+   ]
+  },
+  {
+   "label": 58,
+   "name": "DA3",
+   "side": "right",
+   "receptor": "Or23a",
+   "volume_um3": 647.0,
+   "centroid": [
+    49.78,
+    2.36,
+    -28.29
+   ],
+   "colour": "#edc948",
+   "neighbours": [
+    "D",
+    "DA1",
+    "DA4l",
+    "DA4m",
+    "DL4"
+   ],
+   "vertices": [
+    1476360,
+    588
+   ],
+   "triangles": [
+    1479888,
+    1172
+   ]
+  },
+  {
+   "label": 59,
+   "name": "DA4l",
+   "side": "right",
+   "receptor": "Or43a",
+   "volume_um3": 1276.6,
+   "centroid": [
+    43.07,
+    -6.76,
+    -23.95
+   ],
+   "colour": "#b07aa1",
+   "neighbours": [
+    "D",
+    "DA2",
+    "DA3",
+    "DA4m",
+    "DC3",
+    "VA1d",
+    "VA6"
+   ],
+   "vertices": [
+    1486920,
+    868
+   ],
+   "triangles": [
+    1492128,
+    1732
+   ]
+  },
+  {
+   "label": 60,
+   "name": "DA4m",
+   "side": "right",
+   "receptor": "Or2a",
+   "volume_um3": 1554.3,
+   "centroid": [
+    38.56,
+    6.58,
+    -30.13
+   ],
+   "colour": "#bab0ac",
+   "neighbours": [
+    "D",
+    "DA2",
+    "DA3",
+    "DA4l",
+    "DC1"
+   ],
+   "vertices": [
+    1502520,
+    1168
+   ],
+   "triangles": [
+    1509528,
+    2332
+   ]
+  },
+  {
+   "label": 61,
+   "name": "DC1",
+   "side": "right",
+   "receptor": "Or19a",
+   "volume_um3": 2280.7,
+   "centroid": [
+    33.54,
+    7.39,
+    -14.65
+   ],
+   "colour": "#f28e2b",
+   "neighbours": [
+    "D",
+    "DA2",
+    "DA4m",
+    "DC2",
+    "DC4",
+    "DL1",
+    "DL5",
+    "DM3",
+    "DM6",
+    "VP1"
+   ],
+   "vertices": [
+    1523520,
+    1364
+   ],
+   "triangles": [
+    1531704,
+    2724
+   ]
+  },
+  {
+   "label": 62,
+   "name": "DC2",
+   "side": "right",
+   "receptor": "Or13a",
+   "volume_um3": 2086.1,
+   "centroid": [
+    27.78,
+    -2.34,
+    -7.48
+   ],
+   "colour": "#e15759",
+   "neighbours": [
+    "DC1",
+    "DM5",
+    "DM6",
+    "VA6",
+    "VC1",
+    "VC4",
+    "VM5d",
+    "VM5v",
+    "VM7v"
+   ],
+   "vertices": [
+    1548048,
+    1344
+   ],
+   "triangles": [
+    1556112,
+    2684
+   ]
+  },
+  {
+   "label": 63,
+   "name": "DC3",
+   "side": "right",
+   "receptor": "Or83c",
+   "volume_um3": 1997.1,
+   "centroid": [
+    47.95,
+    -11.1,
+    -10.48
+   ],
+   "colour": "#76b7b2",
+   "neighbours": [
+    "DA1",
+    "DA4l",
+    "VA1d",
+    "VA6",
+    "VC1",
+    "VC2"
+   ],
+   "vertices": [
+    1572216,
+    1264
+   ],
+   "triangles": [
+    1579800,
+    2524
+   ]
+  },
+  {
+   "label": 64,
+   "name": "DC4",
+   "side": "right",
+   "receptor": "Ir64a",
+   "volume_um3": 2236.2,
+   "centroid": [
+    27.38,
+    15.99,
+    -4.27
+   ],
+   "colour": "#edc948",
+   "neighbours": [
+    "DC1",
+    "DL5",
+    "DM3",
+    "DP1m",
+    "VM7d",
+    "VP1"
+   ],
+   "vertices": [
+    1594944,
+    1366
+   ],
+   "triangles": [
+    1603140,
+    2728
+   ]
+  },
+  {
+   "label": 65,
+   "name": "DL1",
+   "side": "right",
+   "receptor": "Or10a",
+   "volume_um3": 1736.9,
+   "centroid": [
+    49.62,
+    13.56,
+    -19.43
+   ],
+   "colour": "#e15759",
+   "neighbours": [
+    "D",
+    "DC1",
+    "DL2d",
+    "DL4",
+    "DL5",
+    "VP1"
+   ],
+   "vertices": [
+    1619508,
+    1148
+   ],
+   "triangles": [
+    1626396,
+    2292
+   ]
+  },
+  {
+   "label": 66,
+   "name": "DL2d",
+   "side": "right",
+   "receptor": null,
+   "volume_um3": 4009.5,
+   "centroid": [
+    59.86,
+    15.32,
+    -11.36
+   ],
+   "colour": "#ff9da7",
+   "neighbours": [
+    "DL1",
+    "DL2v",
+    "DL5",
+    "DP1l",
+    "DP1m"
+   ],
+   "vertices": [
+    1640148,
+    2154
+   ],
+   "triangles": [
+    1653072,
+    4304
+   ]
+  },
+  {
+   "label": 67,
+   "name": "DL2v",
+   "side": "right",
+   "receptor": null,
+   "volume_um3": 2143.7,
+   "centroid": [
+    59.69,
+    2.5,
+    -3.1
+   ],
+   "colour": "#9c755f",
+   "neighbours": [
+    "DL2d",
+    "DP1l",
+    "DP1m",
+    "VL2a"
+   ],
+   "vertices": [
+    1678896,
+    1378
+   ],
+   "triangles": [
+    1687164,
+    2752
+   ]
+  },
+  {
+   "label": 68,
+   "name": "DL3",
+   "side": "right",
+   "receptor": "Or65a",
+   "volume_um3": 1218.0,
+   "centroid": [
+    63.25,
+    4.89,
+    -25.9
+   ],
+   "colour": "#4e79a7",
+   "neighbours": [
+    "DA1",
+    "DL4"
+   ],
+   "vertices": [
+    1703676,
+    876
+   ],
+   "triangles": [
+    1708932,
+    1748
+   ]
+  },
+  {
+   "label": 69,
+   "name": "DL4",
+   "side": "right",
+   "receptor": "Or49a_Or85f",
+   "volume_um3": 620.2,
+   "centroid": [
+    52.57,
+    5.9,
+    -22.93
+   ],
+   "colour": "#59a14f",
+   "neighbours": [
+    "D",
+    "DA1",
+    "DA3",
+    "DL1",
+    "DL3"
+   ],
+   "vertices": [
+    1719420,
+    566
+   ],
+   "triangles": [
+    1722816,
+    1128
+   ]
+  },
+  {
+   "label": 70,
+   "name": "DL5",
+   "side": "right",
+   "receptor": "Or7a",
+   "volume_um3": 3337.0,
+   "centroid": [
+    37.08,
+    25.49,
+    -17.89
+   ],
+   "colour": "#59a14f",
+   "neighbours": [
+    "D",
+    "DC1",
+    "DC4",
+    "DL1",
+    "DL2d",
+    "DM3",
+    "DP1m"
+   ],
+   "vertices": [
+    1729584,
+    1784
+   ],
+   "triangles": [
+    1740288,
+    3564
+   ]
+  },
+  {
+   "label": 71,
+   "name": "DM1",
+   "side": "right",
+   "receptor": "Or42b",
+   "volume_um3": 3710.5,
+   "centroid": [
+    14.12,
+    22.42,
+    0.88
+   ],
+   "colour": "#4e79a7",
+   "neighbours": [
+    "DM2",
+    "DM3",
+    "DM4",
+    "VC3",
+    "VM7d"
+   ],
+   "vertices": [
+    1761672,
+    1954
+   ],
+   "triangles": [
+    1773396,
+    3904
+   ]
+  },
+  {
+   "label": 72,
+   "name": "DM2",
+   "side": "right",
+   "receptor": "Or22a",
+   "volume_um3": 1830.2,
+   "centroid": [
+    8.52,
+    9.99,
+    -3.83
+   ],
+   "colour": "#59a14f",
+   "neighbours": [
+    "DM1",
+    "DM5",
+    "VM5d",
+    "VM7d"
+   ],
+   "vertices": [
+    1796820,
+    1178
+   ],
+   "triangles": [
+    1803888,
+    2352
+   ]
+  },
+  {
+   "label": 73,
+   "name": "DM3",
+   "side": "right",
+   "receptor": "Or47a",
+   "volume_um3": 1118.6,
+   "centroid": [
+    20.13,
+    20.11,
+    -14.62
+   ],
+   "colour": "#9c755f",
+   "neighbours": [
+    "DC1",
+    "DC4",
+    "DL5",
+    "DM1"
+   ],
+   "vertices": [
+    1818000,
+    804
+   ],
+   "triangles": [
+    1822824,
+    1604
+   ]
+  },
+  {
+   "label": 74,
+   "name": "DM4",
+   "side": "right",
+   "receptor": "Or59b",
+   "volume_um3": 3140.5,
+   "centroid": [
+    16.09,
+    25.54,
+    10.39
+   ],
+   "colour": "#e15759",
+   "neighbours": [
+    "DM1",
+    "DP1m",
+    "VM7d",
+    "VP4"
+   ],
+   "vertices": [
+    1832448,
+    2130
+   ],
+   "triangles": [
+    1845228,
+    4256
+   ]
+  },
+  {
+   "label": 75,
+   "name": "DM5",
+   "side": "right",
+   "receptor": "Or43b",
+   "volume_um3": 1337.5,
+   "centroid": [
+    10.21,
+    -2.96,
+    -7.18
+   ],
+   "colour": "#f28e2b",
+   "neighbours": [
+    "DC2",
+    "DM2",
+    "DM6",
+    "VM2",
+    "VM5d"
+   ],
+   "vertices": [
+    1870764,
+    948
+   ],
+   "triangles": [
+    1876452,
+    1892
+   ]
+  },
+  {
+   "label": 76,
+   "name": "DM6",
+   "side": "right",
+   "receptor": "Or67a",
+   "volume_um3": 1417.2,
+   "centroid": [
+    18.7,
+    2.04,
+    -15.89
+   ],
+   "colour": "#b07aa1",
+   "neighbours": [
+    "DA2",
+    "DC1",
+    "DC2",
+    "DM5"
+   ],
+   "vertices": [
+    1887804,
+    996
+   ],
+   "triangles": [
+    1893780,
+    1988
+   ]
+  },
+  {
+   "label": 77,
+   "name": "DP1l",
+   "side": "right",
+   "receptor": "Ir75a",
+   "volume_um3": 3924.0,
+   "centroid": [
+    63.17,
+    16.87,
+    0.97
+   ],
+   "colour": "#bab0ac",
+   "neighbours": [
+    "DL2d",
+    "DL2v",
+    "DP1m",
+    "VL2a",
+    "VL2p",
+    "VP4"
+   ],
+   "vertices": [
+    1905708,
+    2016
+   ],
+   "triangles": [
+    1917804,
+    4028
+   ]
+  },
+  {
+   "label": 78,
+   "name": "DP1m",
+   "side": "right",
+   "receptor": "Ir64a",
+   "volume_um3": 4973.6,
+   "centroid": [
+    38.87,
+    27.57,
+    -1.69
+   ],
+   "colour": "#b07aa1",
+   "neighbours": [
+    "DC4",
+    "DL2d",
+    "DL2v",
+    "DL5",
+    "DM4",
+    "DP1l",
+    "VP1"
+   ],
+   "vertices": [
+    1941972,
+    2330
+   ],
+   "triangles": [
+    1955952,
+    4656
+   ]
+  },
+  {
+   "label": 79,
+   "name": "V",
+   "side": "right",
+   "receptor": "Gr21a",
+   "volume_um3": 3224.2,
+   "centroid": [
+    48.32,
+    -23.12,
+    35.0
+   ],
+   "colour": "#edc948",
+   "neighbours": [
+    "VA4",
+    "VL1",
+    "VM4",
+    "VP1"
+   ],
+   "vertices": [
+    1983888,
+    1776
+   ],
+   "triangles": [
+    1994544,
+    3548
+   ]
+  },
+  {
+   "label": 80,
+   "name": "VA1d",
+   "side": "right",
+   "receptor": "Or88a",
+   "volume_um3": 4412.2,
+   "centroid": [
+    52.83,
+    -23.96,
+    -14.05
+   ],
+   "colour": "#e15759",
+   "neighbours": [
+    "DA1",
+    "DA4l",
+    "DC3",
+    "VA1v",
+    "VA6",
+    "VC2",
+    "VL2a"
+   ],
+   "vertices": [
+    2015832,
+    2150
+   ],
+   "triangles": [
+    2028732,
+    4296
+   ]
+  },
+  {
+   "label": 81,
+   "name": "VA1v",
+   "side": "right",
+   "receptor": "Or47b",
+   "volume_um3": 5134.4,
+   "centroid": [
+    54.79,
+    -36.64,
+    -9.01
+   ],
+   "colour": "#4e79a7",
+   "neighbours": [
+    "VA1d",
+    "VA5",
+    "VL2a"
+   ],
+   "vertices": [
+    2054508,
+    2608
+   ],
+   "triangles": [
+    2070156,
+    5212
+   ]
+  },
+  {
+   "label": 82,
+   "name": "VA2",
+   "side": "right",
+   "receptor": "Or92a",
+   "volume_um3": 3773.4,
+   "centroid": [
+    19.49,
+    -23.88,
+    10.15
+   ],
+   "colour": "#4e79a7",
+   "neighbours": [
+    "VA3",
+    "VA7m",
+    "VC4",
+    "VM2",
+    "VM3",
+    "VM4",
+    "VM5v"
+   ],
+   "vertices": [
+    2101428,
+    1826
+   ],
+   "triangles": [
+    2112384,
+    3648
+   ]
+  },
+  {
+   "label": 83,
+   "name": "VA3",
+   "side": "right",
+   "receptor": "Or67b",
+   "volume_um3": 1766.7,
+   "centroid": [
+    36.69,
+    -32.87,
+    9.62
+   ],
+   "colour": "#76b7b2",
+   "neighbours": [
+    "VA2",
+    "VA4",
+    "VA5",
+    "VA7l",
+    "VA7m",
+    "VC2",
+    "VM4"
+   ],
+   "vertices": [
+    2134272,
+    1126
+   ],
+   "triangles": [
+    2141028,
+    2248
+   ]
+  },
+  {
+   "label": 84,
+   "name": "VA4",
+   "side": "right",
+   "receptor": "Or85d",
+   "volume_um3": 1247.9,
+   "centroid": [
+    43.54,
+    -25.01,
+    14.16
+   ],
+   "colour": "#e15759",
+   "neighbours": [
+    "V",
+    "VA3",
+    "VA5",
+    "VC2",
+    "VL1",
+    "VM4"
+   ],
+   "vertices": [
+    2154516,
+    918
+   ],
+   "triangles": [
+    2160024,
+    1832
+   ]
+  },
+  {
+   "label": 85,
+   "name": "VA5",
+   "side": "right",
+   "receptor": "Or49b",
+   "volume_um3": 1213.4,
+   "centroid": [
+    48.99,
+    -36.09,
+    3.28
+   ],
+   "colour": "#9c755f",
+   "neighbours": [
+    "VA1v",
+    "VA3",
+    "VA4",
+    "VA7l",
+    "VC2",
+    "VL1"
+   ],
+   "vertices": [
+    2171016,
+    924
+   ],
+   "triangles": [
+    2176560,
+    1844
+   ]
+  },
+  {
+   "label": 86,
+   "name": "VA6",
+   "side": "right",
+   "receptor": "Or67d",
+   "volume_um3": 1970.3,
+   "centroid": [
+    36.98,
+    -13.07,
+    -12.98
+   ],
+   "colour": "#ff9da7",
+   "neighbours": [
+    "DA2",
+    "DA4l",
+    "DC2",
+    "DC3",
+    "VA1d",
+    "VC1",
+    "VC2",
+    "VM5v"
+   ],
+   "vertices": [
+    2187624,
+    1232
+   ],
+   "triangles": [
+    2195016,
+    2460
+   ]
+  },
+  {
+   "label": 87,
+   "name": "VA7l",
+   "side": "right",
+   "receptor": "Or46aA",
+   "volume_um3": 636.9,
+   "centroid": [
+    38.14,
+    -32.91,
+    -2.58
+   ],
+   "colour": "#f28e2b",
+   "neighbours": [
+    "VA3",
+    "VA5",
+    "VA7m",
+    "VC2",
+    "VM5v"
+   ],
+   "vertices": [
+    2209776,
+    620
+   ],
+   "triangles": [
+    2213496,
+    1236
+   ]
+  },
+  {
+   "label": 88,
+   "name": "VA7m",
+   "side": "right",
+   "receptor": null,
+   "volume_um3": 487.6,
+   "centroid": [
+    33.98,
+    -30.44,
+    0.38
+   ],
+   "colour": "#edc948",
+   "neighbours": [
+    "VA2",
+    "VA3",
+    "VA7l",
+    "VC2",
+    "VM5v"
+   ],
+   "vertices": [
+    2220912,
+    520
+   ],
+   "triangles": [
+    2224032,
+    1036
+   ]
+  },
+  {
+   "label": 89,
+   "name": "VC1",
+   "side": "right",
+   "receptor": "Or33c",
+   "volume_um3": 1969.6,
+   "centroid": [
+    36.69,
+    -9.7,
+    4.0
+   ],
+   "colour": "#b07aa1",
+   "neighbours": [
+    "DC2",
+    "DC3",
+    "VA6",
+    "VC2",
+    "VC3",
+    "VC4",
+    "VM5v",
+    "VP1"
+   ],
+   "vertices": [
+    2230248,
+    1258
+   ],
+   "triangles": [
+    2237796,
+    2512
+   ]
+  },
+  {
+   "label": 90,
+   "name": "VC2",
+   "side": "right",
+   "receptor": "Or71a",
+   "volume_um3": 2621.6,
+   "centroid": [
+    39.83,
+    -21.83,
+    2.99
+   ],
+   "colour": "#bab0ac",
+   "neighbours": [
+    "DC3",
+    "VA1d",
+    "VA3",
+    "VA4",
+    "VA5",
+    "VA6",
+    "VA7l",
+    "VA7m",
+    "VC1",
+    "VM5v"
+   ],
+   "vertices": [
+    2252868,
+    1498
+   ],
+   "triangles": [
+    2261856,
+    2992
+   ]
+  },
+  {
+   "label": 91,
+   "name": "VC3",
+   "side": "right",
+   "receptor": "Or35a",
+   "volume_um3": 2950.3,
+   "centroid": [
+    27.21,
+    -4.29,
+    16.62
+   ],
+   "colour": "#f28e2b",
+   "neighbours": [
+    "DM1",
+    "VC1",
+    "VC4",
+    "VC5",
+    "VM3",
+    "VM4",
+    "VM7d",
+    "VM7v",
+    "VP2"
+   ],
+   "vertices": [
+    2279808,
+    1768
+   ],
+   "triangles": [
+    2290416,
+    3532
+   ]
+  },
+  {
+   "label": 92,
+   "name": "VC4",
+   "side": "right",
+   "receptor": "Or67c",
+   "volume_um3": 1561.5,
+   "centroid": [
+    23.36,
+    -9.69,
+    7.52
+   ],
+   "colour": "#9c755f",
+   "neighbours": [
+    "DC2",
+    "VA2",
+    "VC1",
+    "VC3",
+    "VM2",
+    "VM3",
+    "VM5d",
+    "VM5v",
+    "VM7v"
+   ],
+   "vertices": [
+    2311608,
+    1052
+   ],
+   "triangles": [
+    2317920,
+    2100
+   ]
+  },
+  {
+   "label": 93,
+   "name": "VC5",
+   "side": "right",
+   "receptor": "Ir41a",
+   "volume_um3": 2074.0,
+   "centroid": [
+    23.24,
+    11.21,
+    25.25
+   ],
+   "colour": "#59a14f",
+   "neighbours": [
+    "VC3",
+    "VM7d",
+    "VP1",
+    "VP2"
+   ],
+   "vertices": [
+    2330520,
+    1270
+   ],
+   "triangles": [
+    2338140,
+    2536
+   ]
+  },
+  {
+   "label": 94,
+   "name": "VL1",
+   "side": "right",
+   "receptor": "Ir75d",
+   "volume_um3": 6635.9,
+   "centroid": [
+    62.62,
+    -21.55,
+    16.38
+   ],
+   "colour": "#59a14f",
+   "neighbours": [
+    "V",
+    "VA4",
+    "VA5",
+    "VL2a",
+    "VL2p",
+    "VP1",
+    "VP3",
+    "VP4"
+   ],
+   "vertices": [
+    2353356,
+    2858
+   ],
+   "triangles": [
+    2370504,
+    5712
+   ]
+  },
+  {
+   "label": 95,
+   "name": "VL2a",
+   "side": "right",
+   "receptor": "Ir84a",
+   "volume_um3": 3948.5,
+   "centroid": [
+    64.71,
+    -15.04,
+    -0.37
+   ],
+   "colour": "#edc948",
+   "neighbours": [
+    "DL2v",
+    "DP1l",
+    "VA1d",
+    "VA1v",
+    "VL1",
+    "VL2p"
+   ],
+   "vertices": [
+    2404776,
+    1910
+   ],
+   "triangles": [
+    2416236,
+    3816
+   ]
+  },
+  {
+   "label": 96,
+   "name": "VL2p",
+   "side": "right",
+   "receptor": "Ir31a",
+   "volume_um3": 4262.5,
+   "centroid": [
+    73.25,
+    0.52,
+    9.97
+   ],
+   "colour": "#f28e2b",
+   "neighbours": [
+    "DP1l",
+    "VL1",
+    "VL2a",
+    "VP4"
+   ],
+   "vertices": [
+    2439132,
+    2008
+   ],
+   "triangles": [
+    2451180,
+    4012
+   ]
+  },
+  {
+   "label": 97,
+   "name": "VM1",
+   "side": "right",
+   "receptor": "Ir92a",
+   "volume_um3": 1128.0,
+   "centroid": [
+    15.22,
+    -11.92,
+    32.34
+   ],
+   "colour": "#bab0ac",
+   "neighbours": [
+    "VM4",
+    "VP1",
+    "VP2"
+   ],
+   "vertices": [
+    2475252,
+    840
+   ],
+   "triangles": [
+    2480292,
+    1676
+   ]
+  },
+  {
+   "label": 98,
+   "name": "VM2",
+   "side": "right",
+   "receptor": "Or43b",
+   "volume_um3": 1606.5,
+   "centroid": [
+    8.66,
+    -10.36,
+    9.34
+   ],
+   "colour": "#b07aa1",
+   "neighbours": [
+    "DM5",
+    "VA2",
+    "VC4",
+    "VM3",
+    "VM5d"
+   ],
+   "vertices": [
+    2490348,
+    1120
+   ],
+   "triangles": [
+    2497068,
+    2236
+   ]
+  },
+  {
+   "label": 99,
+   "name": "VM3",
+   "side": "right",
+   "receptor": "Or9a",
+   "volume_um3": 998.2,
+   "centroid": [
+    14.64,
+    -12.69,
+    18.23
+   ],
+   "colour": "#e15759",
+   "neighbours": [
+    "VA2",
+    "VC3",
+    "VC4",
+    "VM2",
+    "VP2"
+   ],
+   "vertices": [
+    2510484,
+    812
+   ],
+   "triangles": [
+    2515356,
+    1620
+   ]
+  },
+  {
+   "label": 100,
+   "name": "VM4",
+   "side": "right",
+   "receptor": "Ir76a",
+   "volume_um3": 1475.5,
+   "centroid": [
+    36.54,
+    -20.38,
+    22.72
+   ],
+   "colour": "#ff9da7",
+   "neighbours": [
+    "V",
+    "VA2",
+    "VA3",
+    "VA4",
+    "VC3",
+    "VM1",
+    "VP1"
+   ],
+   "vertices": [
+    2525076,
+    976
+   ],
+   "triangles": [
+    2530932,
+    1948
+   ]
+  },
+  {
+   "label": 101,
+   "name": "VM5d",
+   "side": "right",
+   "receptor": "Or85b",
+   "volume_um3": 1999.9,
+   "centroid": [
+    16.39,
+    -3.16,
+    2.04
+   ],
+   "colour": "#76b7b2",
+   "neighbours": [
+    "DC2",
+    "DM2",
+    "DM5",
+    "VC4",
+    "VM2",
+    "VM5v",
+    "VM7d",
+    "VM7v"
+   ],
+   "vertices": [
+    2542620,
+    1250
+   ],
+   "triangles": [
+    2550120,
+    2496
+   ]
+  },
+  {
+   "label": 102,
+   "name": "VM5v",
+   "side": "right",
+   "receptor": "Or98a",
+   "volume_um3": 1911.9,
+   "centroid": [
+    26.75,
+    -18.82,
+    -6.42
+   ],
+   "colour": "#59a14f",
+   "neighbours": [
+    "DC2",
+    "VA2",
+    "VA6",
+    "VA7l",
+    "VA7m",
+    "VC1",
+    "VC2",
+    "VC4",
+    "VM5d"
+   ],
+   "vertices": [
+    2565096,
+    1226
+   ],
+   "triangles": [
+    2572452,
+    2448
+   ]
+  },
+  {
+   "label": 103,
+   "name": "VM7d",
+   "side": "right",
+   "receptor": "Or42a",
+   "volume_um3": 998.7,
+   "centroid": [
+    16.08,
+    7.64,
+    9.41
+   ],
+   "colour": "#bab0ac",
+   "neighbours": [
+    "DC4",
+    "DM1",
+    "DM2",
+    "DM4",
+    "VC3",
+    "VC5",
+    "VM5d",
+    "VM7v"
+   ],
+   "vertices": [
+    2587140,
+    864
+   ],
+   "triangles": [
+    2592324,
+    1724
+   ]
+  },
+  {
+   "label": 104,
+   "name": "VM7v",
+   "side": "right",
+   "receptor": "Or59c",
+   "volume_um3": 658.4,
+   "centroid": [
+    22.62,
+    1.43,
+    5.71
+   ],
+   "colour": "#ff9da7",
+   "neighbours": [
+    "DC2",
+    "VC3",
+    "VC4",
+    "VM5d",
+    "VM7d"
+   ],
+   "vertices": [
+    2602668,
+    758
+   ],
+   "triangles": [
+    2607216,
+    1512
+   ]
+  },
+  {
+   "label": 105,
+   "name": "VP1",
+   "side": "right",
+   "receptor": "Ir40a",
+   "volume_um3": 7686.6,
+   "centroid": [
+    39.43,
+    -0.19,
+    23.7
+   ],
+   "colour": "#4e79a7",
+   "neighbours": [
+    "DC1",
+    "DC4",
+    "DL1",
+    "DP1m",
+    "V",
+    "VC1",
+    "VC5",
+    "VL1",
+    "VM1",
+    "VM4",
+    "VP2",
+    "VP3",
+    "VP4"
+   ],
+   "vertices": [
+    2616288,
+    5286
+   ],
+   "triangles": [
+    2648004,
+    10576
+   ]
+  },
+  {
+   "label": 106,
+   "name": "VP2",
+   "side": "right",
+   "receptor": null,
+   "volume_um3": 1481.2,
+   "centroid": [
+    21.63,
+    -5.05,
+    25.63
+   ],
+   "colour": "#edc948",
+   "neighbours": [
+    "VC3",
+    "VC5",
+    "VM1",
+    "VM3",
+    "VP1"
+   ],
+   "vertices": [
+    2711460,
+    1062
+   ],
+   "triangles": [
+    2717832,
+    2120
+   ]
+  },
+  {
+   "label": 107,
+   "name": "VP3",
+   "side": "right",
+   "receptor": null,
+   "volume_um3": 5579.0,
+   "centroid": [
+    49.82,
+    -0.68,
+    27.77
+   ],
+   "colour": "#e15759",
+   "neighbours": [
+    "VL1",
+    "VP1",
+    "VP4"
+   ],
+   "vertices": [
+    2730552,
+    2700
+   ],
+   "triangles": [
+    2746752,
+    5396
+   ]
+  },
+  {
+   "label": 108,
+   "name": "VP4",
+   "side": "right",
+   "receptor": "Ir40a",
+   "volume_um3": 3705.6,
+   "centroid": [
+    46.9,
+    20.3,
+    19.38
+   ],
+   "colour": "#76b7b2",
+   "neighbours": [
+    "DM4",
+    "DP1l",
+    "VL1",
+    "VL2p",
+    "VP1",
+    "VP3"
+   ],
+   "vertices": [
+    2779128,
+    3128
+   ],
+   "triangles": [
+    2797896,
+    6252
+   ]
+  }
+ ]
+}
