@@ -1177,6 +1177,8 @@ dialog.roi-identity::backdrop { background: rgba(29,31,34,.3); }
 .atlas-status { position: absolute; left: 14px; top: 10px; margin: 0; }
 .atlas-side { display: flex; flex-direction: column; gap: 8px; height: calc(100vh - 230px); min-height: 420px; }
 .atlas-views { display: flex; flex-wrap: wrap; gap: 4px; }
+.atlas-flips { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.atlas-flips .check input { width: auto; margin: 0 4px 0 0; }
 .atlas-list { overflow-y: auto; flex: 1; border-top: 1px solid var(--rule); }
 .atlas-row { display: grid; grid-template-columns: auto 1fr auto auto auto; align-items: center; gap: 6px; padding: 2px 2px; border-bottom: 1px solid var(--rule); }
 .atlas-row .atlas-name { font-weight: 500; }

@@ -11,8 +11,10 @@ const ROTATE = 0.008; // radians per pixel dragged
 const AXES = { both: [['dorsal', 'D', 'V'], ['anterior', 'A', 'P'], ['left', 'L', 'R']],
   one: [['dorsal', 'D', 'V'], ['anterior', 'A', 'P'], ['medial', 'M', 'L']] };
 const AXIS_COLOURS = ['#4e79a7', '#b07aa1', '#59a14f'];
+// the mirroring each axis has (`flip`'s keys): with both lobes, 'left' (the fly's) is M/L's
+const FLIP_OF = { dorsal: 'dv', anterior: 'ap', medial: 'ml', left: 'ml' };
 // the views to turn to: from which side it is seen, and which way is up
-const VIEWS = [['Anterior', 'anterior', 'dorsal'], ['Posterior', '-anterior', 'dorsal'], ['Dorsal', 'dorsal', 'anterior'], ['Ventral', '-dorsal', 'anterior'],
+const VIEWS = [['Anterior', 'anterior', 'dorsal'], ['Posterior', '-anterior', 'dorsal'], ['Dorsal', 'dorsal', '-anterior'], ['Ventral', '-dorsal', '-anterior'],
   ['Lateral', '-medial', 'dorsal'], ['Medial', 'medial', 'dorsal']];
 
 export class AtlasPage {
@@ -20,7 +22,8 @@ export class AtlasPage {
   constructor(h) {
     this.h = h;
     this.ready = null;
-    this.side = 'left'; // the lobes shown: 'left', 'right' or 'both'
+    this.side = 'right'; // the lobes shown: 'left', 'right' or 'both'
+    this.flip = { dv: false, ap: false, ml: false }; // the axes the lobes shown are mirrored along (`_setFlips`)
     this.hidden = new Set(); // glomeruli (by name) hidden
     this.focused = new Set(); // and focused: the others drawn nearly transparent
     this.query = '';
@@ -52,6 +55,9 @@ export class AtlasPage {
     this.camera.add(head);
     this.scene.add(this.camera);
     this.target = new THREE.Vector3();
+    this.root = new THREE.Group(); // (the glomeruli, mirrored as `flip` says)
+    this.root.matrixAutoUpdate = false;
+    this.scene.add(this.root);
     this.meshes = doc.glomeruli.map((g) => {
       const geo = new THREE.BufferGeometry();
       const q = new Int16Array(bin, g.vertices[0], g.vertices[1] * 3), pos = new Float32Array(q.length);
@@ -62,7 +68,7 @@ export class AtlasPage {
       geo.computeBoundingSphere();
       const mesh = new THREE.Mesh(geo, new THREE.MeshPhongMaterial({ color: g.colour, shininess: 25, specular: 0x222222, transparent: true }));
       mesh.userData = g;
-      this.scene.add(mesh);
+      this.root.add(mesh);
       return mesh;
     });
     this.raycaster = new THREE.Raycaster();
@@ -82,6 +88,10 @@ export class AtlasPage {
   _wire() {
     const { $ } = this.h, canvas = this.renderer.domElement;
     $('#atlas-side').addEventListener('change', (e) => this._setSide(e.target.value));
+    $('#atlas-flips').addEventListener('change', (e) => {
+      const c = e.target.closest('[data-flip]');
+      if (c) this._setFlips({ ...this.flip, [c.dataset.flip]: c.checked });
+    });
     $('#atlas-search').addEventListener('input', (e) => { this.query = e.target.value.trim().toLowerCase(); this._renderList(); });
     $('#atlas-show-all').addEventListener('click', () => { this.hidden.clear(); this._update(); });
     $('#atlas-hide-all').addEventListener('click', () => { for (const n of this._names()) this.hidden.add(n); this._update(); });
@@ -151,11 +161,49 @@ export class AtlasPage {
     this._draw();
   }
 
-  // the axes of the lobes shown (the atlas' unit vectors), with "-name" the opposite way
+  // an axis of the lobes shown as they are drawn (the atlas' unit vector, the other way if mirrored along it), with
+  // "-name" the opposite way
   _axis(name) {
-    const a = this.doc.axes[this.side], neg = name.startsWith('-'), key = name.replace('-', '');
-    const v = new this.T.Vector3(...(a[key] || a.left));
-    return neg ? v.negate() : v;
+    const key = name.replace('-', ''), v = this._atlasAxis(key);
+    return (name.startsWith('-') !== this.flip[FLIP_OF[key] || 'ml']) ? v.negate() : v;
+  }
+
+  // an axis of the lobes shown, as the atlas has it ('medial': with both lobes, the fly's left)
+  _atlasAxis(key) {
+    const a = this.doc.axes[this.side];
+    return new this.T.Vector3(...(a[key] || a.left));
+  }
+
+  // The mirrorings along the axes that, seen from dorsal with posterior up, put medial on the left and lateral on the
+  // right (of both lobes: none): of the right lobe, along A/P, as the atlas is of a fly as it is (lateral on the right
+  // is the left lobe's)
+  _defaultFlips(side) {
+    if (side === 'both') return { dv: false, ap: false, ml: false };
+    const a = this.doc.axes[side], A = new this.T.Vector3(...a.anterior), D = new this.T.Vector3(...a.dorsal);
+    const right = A.clone().negate().cross(D); // (the screen's right, seen from D with -A up)
+    return { dv: false, ap: right.dot(new this.T.Vector3(...a.medial)) > 0, ml: false };
+  }
+
+  // mirrors the glomeruli along the axes ticked, about the middle of those of the lobes shown; the arrows follow
+  _setFlips(flip) {
+    const T = this.T;
+    this.flip = { ...flip };
+    const mid = new T.Vector3(), on = this.meshes.filter((m) => this._onSide(m));
+    for (const m of on) mid.add(new T.Vector3(...m.userData.centroid));
+    mid.divideScalar(Math.max(1, on.length));
+    const mat = new T.Matrix4();
+    for (const [key, f] of Object.entries(FLIP_OF)) {
+      if (!this.flip[f] || key === (this.side === 'both' ? 'medial' : 'left')) continue;
+      const v = this._atlasAxis(key), [x, y, z] = [v.x, v.y, v.z];
+      // (a reflection through the plane through the middle across the axis: I - 2 v v')
+      mat.premultiply(new T.Matrix4().set(1 - 2 * x * x, -2 * x * y, -2 * x * z, 0, -2 * x * y, 1 - 2 * y * y, -2 * y * z, 0,
+        -2 * x * z, -2 * y * z, 1 - 2 * z * z, 0, 0, 0, 0, 1));
+    }
+    this.root.matrix.copy(new T.Matrix4().makeTranslation(mid.x, mid.y, mid.z).multiply(mat).multiply(new T.Matrix4().makeTranslation(-mid.x, -mid.y, -mid.z)));
+    this.root.matrixWorldNeedsUpdate = true;
+    this.root.updateMatrixWorld(true);
+    for (const c of this.h.$('#atlas-flips').querySelectorAll('[data-flip]')) c.checked = this.flip[c.dataset.flip];
+    this._draw();
   }
 
   // looks at the glomeruli shown from one side (an axis), with another up, at a distance they all fit in
@@ -180,8 +228,10 @@ export class AtlasPage {
       const label = { '-medial': both ? "Fly's left" : 'Lateral', medial: both ? "Fly's right" : 'Medial' }[b.dataset.view];
       if (label) b.textContent = label;
     }
+    this.h.$('#atlas-flip-ml-label').textContent = both ? 'L/R' : 'M/L';
     this._update(false);
-    this._view('anterior', 'dorsal');
+    this._setFlips(this._defaultFlips(side));
+    this._view('dorsal', '-anterior');
   }
 
   // ------------------------------------------------------------ drawing

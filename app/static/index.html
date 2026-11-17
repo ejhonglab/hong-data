@@ -741,7 +741,8 @@ try {
       <p class="lede">The glomeruli of the Grabe et al. 2016 in vivo antennal lobe atlas, in 3D. Drag to turn them (with Shift, or the
         right button: to move them), and the wheel to zoom; hover over a glomerulus for its name, and click it to focus it: the others
         shown are then drawn nearly transparent. The arrows in the corner turn with them: dorsal/ventral, anterior/posterior, and
-        medial/lateral (of both lobes: the fly's left/right).</p>
+        medial/lateral (of both lobes: the fly's left/right). A lobe starts seen from dorsal, posterior up, mirrored where needed
+        (the right lobe, along A/P) so that medial is on the left and lateral on the right; <i>Flip</i> mirrors it along any axis.</p>
     </div>
     <div class="atlas-layout">
       <div class="atlas-view" id="atlas-view">
@@ -751,7 +752,13 @@ try {
       </div>
       <aside class="atlas-side">
         <label class="field"><span>Lobes</span><select id="atlas-side">
-          <option value="left" selected>Left</option><option value="right">Right</option><option value="both">Both</option></select></label>
+          <option value="left">Left</option><option value="right" selected>Right</option><option value="both">Both</option></select></label>
+        <div class="atlas-flips" id="atlas-flips" title="Mirror the lobes shown along an axis (about their middle); the arrows follow. Each lobe starts mirrored so that, seen from dorsal with posterior up, medial is on the left and lateral on the right">
+          <span class="muted small">Flip:</span>
+          <label class="check"><input type="checkbox" data-flip="dv"> D/V</label>
+          <label class="check"><input type="checkbox" data-flip="ap"> A/P</label>
+          <label class="check"><input type="checkbox" data-flip="ml"> <span id="atlas-flip-ml-label">M/L</span></label>
+        </div>
         <div class="atlas-views" id="atlas-views" aria-label="Views"></div>
         <div class="actions">
           <button type="button" class="btn small" id="atlas-show-all">Show all</button>
