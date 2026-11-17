@@ -784,6 +784,8 @@ def extract_loop(db, state: dict, stop: Optional[threading.Event] = None) -> Non
     try:
         for ds in batches.make_extraction_datasets(db):
             log.info("dataset %s made of an extraction's signals (done before)", ds)
+        for ds in batches.finish(db):  # (a batch whose last extraction ended just before the worker stopped)
+            log.info("dataset %s made of a batch's signals (all over before)", ds)
     except Exception:  # noqa: BLE001
         log.exception("could not make datasets of the extractions done before")
     while not (stop and stop.is_set()):
