@@ -131,6 +131,9 @@ def test_signals(tmp_path, dtype):
     assert rois[0]["pixels"] == rois[0]["mask"].sum() > 0 and (rois[0]["y0"], rois[0]["x0"]) == (2, 2)
     trials = extract.read_trials(d / movies.TRIALS)
     assert [(t["start"], t["onset"], t["end"], t["odors"]) for t in trials][:2] == [(0, 4, 9, ["va @ -3"]), (10, 14, 19, ["ea @ -2"])]
+    # (a dilution written as it is, where its log10 should be, as in some flies' files: its log10)
+    assert [extract.log10_conc(c) for c in ("5e-5", 2e-4, "-3", 0, "x", None)] == [-4.3, -3.7, "-3", 0, "x", None]
+    assert extract.INVISIBLE.sub("", "IaA\u00e2\u20ac\u2039") == "IaA" == extract.INVISIBLE.sub("", "\ufeffIaA\u200b")
 
     traces = extract.plane_traces(m, rois)
     want_traces, want_stats, want_best = reference(movie, rois, trials)

@@ -53,6 +53,9 @@ Where it differs from al_analysis (notes/trace_extraction_notes.md says more of 
 - its other settings are al_analysis' current defaults, fixed (the baseline, the statistic);
   only ImageJ's ROIs, not suite2p's;
 - the other `MODES` are not al_analysis' at all;
+- an odor's ``log10_conc`` between 0 and 1 (a dilution written as it is, as in some flies' files)
+  is taken as that dilution, its log10 written (`log10_conc`), where al_analysis writes it as it is;
+  zero-width characters in an odor's name or abbreviation (`INVISIBLE`) are left out;
 - on request (option ``unmix``), the ROIs' signals unmixed from their neighbours' (`unmix`)
   are written too, beside the plain ones (`UNMIXED`), which are as without it.
 """
@@ -251,6 +254,22 @@ def plane_traces(movie: movies.Movie, rois: list[dict], progress: Optional[Calla
     return out if weights is None else (out, summed)
 
 
+# zero-width characters (and a zero-width space or BOM as UTF-8 read as Windows-1252: "â€‹", "ï»¿"), in some odors'
+# names as recorded (e.g. Sam's 2026-03 ones: "IaAâ€‹")
+INVISIBLE = re.compile("[\u200b-\u200f\u2060\ufeff]|\u00e2\u20ac[\u2039\u0152\u017d\u008b\u008c\u008d]|\u00ef\u00bb\u00bf")
+
+
+def log10_conc(c):
+    """A recorded odor's ``log10_conc``, as a log10 concentration: one between 0 and 1 (e.g. "5e-5", in some
+    flies' files) is a dilution written as it is, not its log10 (which is never above 0), so its log10 is taken,
+    to 2 decimals (5e-5: -4.3); any other as it is."""
+    try:
+        v = float(c)
+    except (TypeError, ValueError):
+        return c
+    return round(math.log10(v), 2) if 0 < v < 1 else c
+
+
 def read_trials(path: Path) -> list[dict]:
     """A recording's trials, from al_analysis' `movies.TRIALS`: each its frames (``start``,
     ``onset``: the first with odor, ``end``: its last), and its odors as al_analysis' tables
@@ -278,6 +297,10 @@ def read_trials(path: Path) -> list[dict]:
                 parts = [{"name": str(t.get("odors"))}]
         strs = []
         for o in parts:
+            o["log10_conc"] = log10_conc(o.get("log10_conc"))
+            for k in ("name", "abbrev"):  # (some files' abbreviations end in a zero-width space, another odor to a table)
+                if isinstance(o.get(k), str):
+                    o[k] = INVISIBLE.sub("", o[k]).strip()
             # (hong2p's abbreviation of it, as al_analysis' tables have; else its own, from its odor's YAML)
             own = o.get("abbrev") if isinstance(o.get("abbrev"), str) and o.get("abbrev") else o["name"]
             strs.append(olf.format_odor({**{k: v for k, v in o.items() if k != "abbrev"}, "name": olf.odor2abbrev.get(o["name"], own)}))
