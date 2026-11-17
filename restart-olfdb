@@ -7,7 +7,9 @@
 # terminal to ask at, it does not restart, unless given --stop-jobs.
 # The Admin tab's "Update and restart everything" has systemd run it, as root, with --stop-jobs
 # (deploy/olfdb-restart.service: the Admin tab has asked), and takes a last line starting
-# "restart-olfdb: not restarted" to mean it did not. DEPLOY.md, section 4.
+# "restart-olfdb: not restarted" to mean it did not. It does nothing if the site already runs the
+# code here (each container's VERSION.json of the commit checked out, the code built from not
+# changed since, no unit installed now), unless given --force. DEPLOY.md, section 4.
 set -e
 here=$(dirname "$(readlink -f "$0")")
 units=/etc/systemd/system
@@ -15,11 +17,14 @@ sudo=sudo
 if [ "$(id -u)" = 0 ]; then sudo=; fi
 
 stop_jobs=
-case "$1" in
-    "") ;;
-    --stop-jobs) stop_jobs=1 ;;
-    *) echo "usage: restart-olfdb [--stop-jobs]   (DEPLOY.md, section 4)"; exit 2 ;;
-esac
+force=
+for arg in "$@"; do
+    case "$arg" in
+        --stop-jobs) stop_jobs=1 ;;
+        --force) force=1 ;;
+        *) echo "usage: restart-olfdb [--stop-jobs] [--force]   (DEPLOY.md, section 4)"; exit 2 ;;
+    esac
+done
 
 fail() {
     echo "restart-olfdb: not restarted: $1"
@@ -114,6 +119,26 @@ install_unit olfdb-restart.path
 if [ -n "$reload" ]; then $sudo systemctl daemon-reload || fail "systemctl daemon-reload failed"; fi
 if [ -n "$new_watch" ]; then
     $sudo systemctl enable --now olfdb-restart.path || fail "could not enable olfdb-restart.path"
+fi
+
+# Whether the site already runs the code here: the commit checked out, with nothing the images
+# are built from changed or added since (git status of those paths), and every container running
+# and built of that commit, not of changed code (its VERSION.json).
+already_running() {
+    head=$(git -C "$here" rev-parse HEAD 2>/dev/null) || return 1
+    [ -z "$(git -C "$here" status --porcelain -- app config reference_data Dockerfile docker-compose.yml \
+        'requirements*.txt' manage.py deploy 2>/dev/null)" ] || return 1
+    for c in olfdb olfdb-worker olfdb-model; do
+        [ "$($sudo docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null)" = true ] || return 1
+        $sudo docker exec "$c" python -c 'import json, sys
+v = json.load(open("/srv/olfdb/VERSION.json"))
+sys.exit(0 if v.get("commit") == sys.argv[1] and not v.get("dirty") else 1)' "$head" 2>/dev/null || return 1
+    done
+}
+
+if [ -n "$docker" ] && [ -z "$force" ] && [ -z "$reload" ] && [ -z "$new_watch" ] && already_running; then
+    echo "restart-olfdb: not restarted: the site already runs this code ($(git -C "$here" log -1 --format='%h %s' | cut -c1-100)); restart-olfdb --force restarts it anyway"
+    exit 0
 fi
 
 # GB free on the disk of the path $1 (nothing if df cannot say)

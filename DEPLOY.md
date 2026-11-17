@@ -264,7 +264,10 @@ restart-olfdb
 
 `restart-olfdb` restarts the site from the code in `/opt/olfdb`: it installs the units in
 `deploy/` (`olfdb.service`, `olfdb-restart.service` and `olfdb-restart.path`) where they
-differ from those in `/etc/systemd/system` (showing how, then `daemon-reload`), builds
+differ from those in `/etc/systemd/system` (showing how, then `daemon-reload`); if the site
+already runs this code (every container's `VERSION.json` of the commit checked out, nothing it
+is built from changed or added since, no unit installed now) it stops there, saying so,
+unless given `--force`; else it builds
 the images (the site stays up meanwhile, and is left as it was if that fails; not started
 with under 20 GB free where Docker keeps them, section 1, or `OLFDB_BUILD_MIN_GB`; and it
 warns when the disk of `data/` has under 5 GB free), then
