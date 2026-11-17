@@ -91,13 +91,15 @@ export class ModelRuns {
     const b = this._baseline(), p = b?.ok ? b.plan : null;
     $('#mruns-why').replaceChildren(...(!b ? [] : !b.ok ? [msgBox('warn', `It cannot be read: ${esc(b.error)}.`)]
       : p.runnable === false ? [msgBox('warn', `<b>${esc(b.name)} cannot be run here</b>: ${p.why.map(esc).join('; ')}. Only baselines that
-          pyolfsysm's <code>fit_and_plot_mb_model</code> can make from its own settings are run.`)] : []));
+          pyolfsysm's <code>fit_and_plot_mb_model</code> can make from its own settings are run, or those saved with a rebuild archive
+          (<code>rebuild/&lt;tag&gt;/</code> beside their <code>params.csv</code>, as the KC-remapping experiment queue saves its fits).`)]
+        : p.archive ? [msgBox('info', this._archiveNote(b, p))] : []));
     // how it is tuned: what its params.csv row allows
     const tunings = p?.tunings?.length ? p.tunings : d.tunings;
     if (!tunings.includes(this.o.tuning)) this.o.tuning = tunings[0];
     $('#mruns-tuning').innerHTML = d.tunings.map((t) => `<label class="check"><input type="radio" name="mruns-tuning" value="${t}"${t === this.o.tuning ? ' checked' : ''}${tunings.includes(t)
       ? '' : ' disabled'}> ${t === 'fixed' ? `As the baseline was tuned <span class="muted">(its own threshold${p?.fixed ? ` ${(+p.fixed.fixed_thr.toPrecision(4))}` : ''} and APL weights: the same model, on this input)</span>`
-      : `Tuned again on these odors <span class="muted">(to ${p?.target != null ? `${+(p.target * 100).toPrecision(3)}% of KC–odor pairs responding, as it was` : 'its response rate'})</span>`}</label>`).join('');
+      : `Tuned again on these odors <span class="muted">(${p?.archive ? 'its threshold alone, ' : ''}to ${p?.target != null ? `${+(p.target * 100).toPrecision(3)}% of KC–odor pairs responding, as it was` : 'its response rate'})</span>`}</label>`).join('');
     // the datasets of glomeruli
     const have = new Set(d.datasets.map((x) => x.id));
     this.o.datasets = this.o.datasets.filter((i) => have.has(i));
@@ -106,6 +108,19 @@ export class ModelRuns {
       : '<span class="muted">No dataset of glomeruli is uploaded yet.</span>';
     this._renderPreview();
     this._renderLists();
+  }
+
+  // what a baseline run from its rebuild archive is (model_runs.archive_plan's `about`: its rebuild.json's)
+  _archiveNote(b, p) {
+    const { esc } = this.h, a = p.about || {}, gain = a.gain && typeof a.gain === 'object' ? a.gain : null;
+    const what = [
+      gain?.gain && gain.gain !== 1 ? `a gain of ${gain.gain} on the PN→KC weights of ${(gain.glomeruli || []).length} glomeruli (${esc((gain.glomeruli || []).join(', '))})` : '',
+      a.breadth ? 'its APL→KC weights scaled by each KC\'s breadth: its total spike count with APL off in its base model, on the 16 odors of Yang\'s APL panel (the odors here do not change it)' : '',
+      a.wiring?.shuffle ? `a re-drawn wiring (${esc(a.wiring.shuffle)}, seed ${esc(String(a.wiring.seed))})` : '',
+    ].filter(Boolean);
+    return `<b>${esc(b.name)}</b> is rebuilt from its archive (<code>${esc(p.archive)}</code>, pyolfsysm.rebuild): its PN→KC wiring and APL weights
+      as fitted${what.length ? `, with ${what.join('; ')}` : ''}. Glomeruli of its wiring that the datasets lack get no input. <i>As the baseline was tuned</i>
+      runs it at its fitted parameters; <i>tuned again</i> re-tunes its somatic threshold alone. No plots are made.`;
   }
 
   // how the datasets chosen would be scaled, and their panels (asked again for each choice)
@@ -180,6 +195,15 @@ export class ModelRuns {
         ? ' (As the datasets are now: runs made before 2026-11-16 did not record it.)' : ''}`].join('\n\n'));
   }
 
+  // of a run rebuilt from an archive: how many of the model's glomeruli had no input (which, on hover), and those of the input it lacks
+  _glomeruli(g) {
+    if (!g) return '';
+    const none = g.without_input || [], extra = g.not_in_model || [];
+    const text = [none.length ? `Of the model's ${g.model} glomeruli (its wiring's), ${none.length} had no input, the datasets not having them (they were given 0): ${none.join(', ')}.`
+      : `Every one of the model's ${g.model} glomeruli had input.`, ...(extra.length ? [`Of the input, ${extra.length} glomeruli are not in the model, so were not read: ${extra.join(', ')}.`] : [])];
+    return ` <span class="muted">(${tip(`${none.length} of its ${g.model} without input`, text.join('\n\n'))})</span>`;
+  }
+
   _renderLists() {
     const { $, esc, fmtWhen, fmtSize } = this.h, runs = this.data.runs;
     const active = runs.filter((r) => ACTIVE.has(r.status)).sort((a, b) => (a.status === 'running' ? -1 : b.status === 'running' ? 1 : a.position - b.position));
@@ -199,13 +223,13 @@ export class ModelRuns {
       <th>Result</th><th></th></tr></thead><tbody>${past.map((r) => {
     const took = r.started_at && r.finished_at ? (new Date(r.finished_at) - new Date(r.started_at)) / 1000 : null, x = r.result;
     const result = r.status === 'done' ? `${x.n_kcs.toLocaleString()} KCs × ${this._odors(r)}, ${+(x.rate * 100).toPrecision(3)}% responding;
-        input ${x.n_glomeruli} glomeruli, × ${+x.scaling.factor.toPrecision(4)} <span class="muted" title="${esc(x.scaling.said)}">(${x.scaling.method === 'hallem' ? 'by Hallem' : 'by all datasets, then Hallem'})</span>`
+        input ${x.n_glomeruli} glomeruli${this._glomeruli(x.glomeruli)}, × ${+x.scaling.factor.toPrecision(4)} <span class="muted" title="${esc(x.scaling.said)}">(${x.scaling.method === 'hallem' ? 'by Hallem' : 'by all datasets, then Hallem'})</span>`
       : `${STATUS_NAMES[r.status] || esc(r.status)}${r.error ? `: <span class="mruns-error" title="${esc(r.error)}">${esc(r.error.split('\n')[0].slice(0, 160))}${r.error.length > 160 ? '…' : ''}</span>` : ''}`;
     return `<tr data-id="${r.id}"><td>#${r.id}</td><td>${this._what(r)}</td><td>${esc(r.name)}</td><td>${r.started_at ? esc(fmtWhen(r.started_at)) : '—'}</td>
         <td>${took == null ? '—' : fmtDuration(took)}</td><td>${result}</td>
         <td class="fit-acts">${r.status === 'done' ? `${r.run ? `<a class="btn small" href="#models/${encodeURIComponent(r.run)}" title="Its KCs' spike counts to each odor, below">Show</a>` : ''}
           <a class="btn small" href="/api/models/runs/${r.id}/download?what=csv" download title="Each KC's spike count to each odor, KCs as rows, as the model wrote it">Spike counts (CSV)</a>
-          <a class="btn small" href="/api/models/runs/${r.id}/download" download title="Everything fit_and_plot_mb_model wrote (${x.plots} plots), its inputs and how they were scaled, the script that ran it, and its provenance">Everything (zip, ${fmtSize(x.bytes)})</a>` : ''}
+          <a class="btn small" href="/api/models/runs/${r.id}/download" download title="Everything the model wrote (${x.plots} plots), its inputs and how they were scaled, the script that ran it, and its provenance">Everything (zip, ${fmtSize(x.bytes)})</a>` : ''}
           <button type="button" class="btn small danger" data-act="delete">Delete</button></td></tr>`;
   }).join('')}</tbody></table>` : '';
   }

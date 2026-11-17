@@ -698,7 +698,14 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   APL weights: the same model, on this input; the default) or *tuned again on these
   odors* (to the response rate it was tuned to). A baseline with anything
   `fit_and_plot_mb_model` does not take (another experiment's own mechanism: a gain on
-  some glomeruli, a breadth exponent) cannot be run, and is listed saying which. One
+  some glomeruli, a breadth exponent) cannot be run, and is listed saying which, unless it was
+  saved with a rebuild archive (`rebuild/<its tag>/` beside its `params.csv`, as the KC-remapping
+  experiment queue saves its fits, e.g. E44's reference model and E67's breadth-2 fit): it is then
+  imported with it, and rebuilt from it by pyolfsysm.rebuild (its PN→KC wiring and APL weights as
+  fitted, the gain or breadth weighting in them; the breadth from the 16 odors of Yang's APL
+  panel, whatever odors it is run on), at its fitted parameters, or with its somatic threshold
+  alone tuned again to the response rate it was fit to. A baseline chosen before its archive was
+  saved says so, until imported again (Admin tab). One
   model is run at a time (others wait their turn, in the order asked for), with a bar of
   how far along it is (by how long the last runs took) and what it last said; it can be
   stopped. A run done is listed with its response rate and factor (hovering over its number of

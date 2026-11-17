@@ -67,16 +67,66 @@ params = mb_model.fit_and_plot_mb_model(here / "output", orn_deltas=orn_deltas, 
 print("done:", {k: v for k, v in (params or {}).items() if isinstance(v, (str, int, float, bool))})
 '''
 
+# the script that runs a run of a baseline with a rebuild archive (model_runs.archive_plan): written in its place
+REBUILD_SCRIPT = '''#!/usr/bin/env python3
+"""Runs this folder's model: a fitted model of the KC-remapping experiment queue, rebuilt from its
+archive (inputs/rebuild/: its PN->KC wiring and APL weights as fitted, and its parameters, as
+pyolfsysm.rebuild writes them), on inputs/orn_deltas.csv (ORN responses by glomerulus, as changes
+in spike rate; glomeruli of the wiring it lacks get no input), as inputs/model_kwargs.json says:
+"fixed", at its fitted parameters, or "tuned", its somatic threshold alone tuned again to the
+response rate target_rate (every other parameter as fitted). Its outputs go to output/model/
+(which must not exist: move the one from olfdb away first): spike_counts and responses (KCs x
+odors, .parquet and .csv), orn_deltas.csv (its input) and params.json.
+
+Needs olfsysm (https://github.com/ejhonglab/olfsysm: `pip install -e .` in a checkout, see its
+README), at the commit provenance.json gives (worker -> olfsysm) for the same numbers.
+"""
+import json
+from pathlib import Path
+
+from pyolfsysm import mb_model, rebuild
+
+here = Path(__file__).resolve().parent
+kwargs = json.loads((here / "inputs" / "model_kwargs.json").read_text())
+a = rebuild.load_archive(here / kwargs["archive"])
+orn_deltas = mb_model.read_orn_deltas(here / "inputs" / "orn_deltas.csv")
+out = here / "output" / "model"
+out.mkdir(parents=True)
+if kwargs["tuning"] == "fixed":
+    print("running it at its fitted parameters")
+    responses, spike_counts, _, _ = rebuild.simulate_at(a["params"], a["wiring"], a["weights"], orn_deltas, model_kws=a["model_kws"])
+    params, how = a["params"], {}
+else:
+    print(f"tuning its threshold to {kwargs['target_rate']:.4g} of KC-odor pairs responding")
+    simulate, p = rebuild.make_simulator(a["params"], a["wiring"], a["weights"], orn_deltas, model_kws=a["model_kws"])
+    t = rebuild.tune_threshold(simulate, p, target_rate=kwargs["target_rate"])
+    responses, spike_counts = t["outputs"]
+    params, how = t["params"], {"threshold_factor": t["factor"], "target_rate": kwargs["target_rate"], "at_bound": t["at_bound"]}
+for name, df in (("spike_counts", spike_counts), ("responses", responses)):
+    df.to_parquet(out / f"{name}.parquet")
+    df.to_csv(out / f"{name}.csv")
+orn_deltas.to_csv(out / "orn_deltas.csv")
+scalars = {k: v for k, v in a["model_kws"].items() if isinstance(v, (str, int, float, bool)) and k not in ("make_plots", "silent")}
+# (the glomeruli of its wiring the input lacks get none; those of the input it lacks are not read)
+cols = a["wiring"].columns
+wired = sorted(set(cols.get_level_values("glomerulus") if "glomerulus" in (cols.names or []) else cols))
+glomeruli = {"model": len(wired), "without_input": [g for g in wired if g not in set(orn_deltas.index)],
+             "not_in_model": sorted(set(orn_deltas.index) - set(wired))}
+params = {**scalars, **params, **how, "rebuilt_from": f"{a['meta'].get('experiment')}/{a['meta'].get('tag')}", "glomeruli": glomeruli}
+(out / "params.json").write_text(json.dumps(params, indent=1))
+print("done:", params)
+'''
+
 README = """Model run #{id} of olfdb: {title}
 Asked for by {name}, {created}; run {started} on {host}.
 
-The baseline model {baseline} (of {experiment}), run by pyolfsysm's fit_and_plot_mb_model on the
+The baseline model {baseline} (of {experiment}), run by {by} on the
 mean responses of the glomeruli of {datasets} (panels: {panels}), {tuned}.
 
 {scaled}
 
 Files:
-- output/model/: everything fit_and_plot_mb_model wrote. spike_counts.csv (and .parquet): each
+{archive}- output/model/: everything the model wrote. spike_counts.csv (and .parquet): each
   KC's spike count to each odor (KCs as rows); responses.csv: which are responses; params.csv and
   params.json: the model's parameters, as run; model_provenance.json: the olfsysm build, the
   commits of pyolfsysm and hong2p, the packages; orn_deltas.csv: its input, as it took it; the
@@ -122,6 +172,11 @@ try:
     checkout = mb_model.model_provenance().get("pyolfsysm")
 except Exception as e:
     checkout = {"error": str(e)}
+try:  # (the format of the rebuild archives it reads: model_runs.archive_plan)
+    from pyolfsysm import rebuild
+    rebuild_format = rebuild.ARCHIVE_FORMAT
+except Exception:
+    rebuild_format = None
 versions = {"python": platform.python_version()}
 for pkg in ("olfsysm", "hong2p", "natmix", "drosolf", "numpy", "pandas", "scipy", "xarray", "matplotlib", "seaborn", "statsmodels"):
     try:
@@ -129,7 +184,8 @@ for pkg in ("olfsysm", "hong2p", "natmix", "drosolf", "numpy", "pandas", "scipy"
     except importlib.metadata.PackageNotFoundError:
         pass
 print("CAPS " + json.dumps({"kwargs": [n for n in dict.fromkeys(names) if n not in skip and not n.startswith("_")],
-    "olfsysm": {"build": build, "checkout": checkout, "problems": list(mb_model.olfsysm_clean_problems())}, "versions": versions}, default=str))
+    "olfsysm": {"build": build, "checkout": checkout, "problems": list(mb_model.olfsysm_clean_problems())}, "rebuild": rebuild_format,
+    "versions": versions}, default=str))
 '''
 
 
@@ -140,7 +196,8 @@ def model_python() -> str:
 
 def capabilities() -> dict:
     """What this worker is: ``kwargs`` (the arguments pyolfsysm's `fit_mb_model` takes, which
-    `fit_and_plot_mb_model` passes on, with its own), ``olfsysm`` (its build and checkout, as
+    `fit_and_plot_mb_model` passes on, with its own), ``rebuild`` (the format of the rebuild archives
+    its pyolfsysm reads: `model_runs.archive_plan`; None if it reads none), ``olfsysm`` (its build and checkout, as
     pyolfsysm says them, and what is wrong with them, if anything), ``versions`` (Python and
     the packages the model uses), ``host`` and ``olfdb`` (this app's version).
 
@@ -208,23 +265,40 @@ def run(db: Database, r: dict, caps: dict) -> None:
                                              "min_odors": orn_input.MIN_ODORS, "min_points": orn_input.MIN_POINTS})
         shutil.copyfile(config.REFERENCE_DIR / orn_input.HALLEM_FILE, d / "inputs" / orn_input.HALLEM_FILE)
         _json(d / "inputs" / "baseline.json", o["baseline"])
-        _json(d / "inputs" / "model_kwargs.json", {"model": o["model"], "fixed": o["fixed"], "target_sparsity": o["target"]})
-        (d / "run.py").write_text(RUN_SCRIPT)
+        archive = o.get("archive")
+        if archive:  # (rebuilt from its archive, as imported: a copy of it in the run's folder, which run.py reads)
+            src = model_data.baseline_dir(o["baseline"]["id"]) / archive
+            if not (src / model_data.ARCHIVE_JSON).is_file():
+                raise orn_input.InputError(f"its baseline's rebuild archive ({archive}) is not in its imported copy any more: "
+                                           "import the baseline again (Admin tab), then ask for the run again")
+            shutil.copytree(src, d / "inputs" / "rebuild")
+            kwargs = {"archive": "inputs/rebuild", "tuning": o["tuning"], "target_rate": o["target"]}
+        else:
+            kwargs = {"model": o["model"], "fixed": o["fixed"], "target_sparsity": o["target"]}
+        _json(d / "inputs" / "model_kwargs.json", kwargs)
+        (d / "run.py").write_text(REBUILD_SCRIPT if archive else RUN_SCRIPT)
         datasets = []
         for i in o["datasets"]:
             ds = db.get_dataset(i)
             datasets.append({k: ds.get(k) for k in ("id", "title", "created_at", "coding_unit", "data_file", "data_sha256")}
                             | {"uploader": ds["metadata"].get("uploader_name"), "response_calc": ds.get("response_calc")})
-        how = ("with its own threshold and APL weights (fixed: the same model, on this input)" if o["fixed"]
-               else f"its threshold and APL weights tuned again, to {o['target']:.4g} of KC-odor pairs responding")
+        if archive:
+            how = ("at its fitted parameters (fixed: the same model, on this input)" if o["tuning"] == "fixed"
+                   else f"its somatic threshold alone tuned again, to {o['target']:.4g} of KC-odor pairs responding")
+        else:
+            how = ("with its own threshold and APL weights (fixed: the same model, on this input)" if o["fixed"]
+                   else f"its threshold and APL weights tuned again, to {o['target']:.4g} of KC-odor pairs responding")
         about = dict(id=run_id, title=model_runs.title(db, r), name=r["name"], created=r["created_at"], started=r["started_at"],
                      host=caps["host"], baseline=o["baseline"]["name"], experiment=o["baseline"]["experiment"],
                      datasets=", ".join(f"#{x['id']} ({x['title']})" for x in datasets), panels=", ".join(o["panels"]),
-                     tuned=how, scaled=orn_input.said(s), hallem=orn_input.HALLEM_FILE)
+                     tuned=how, scaled=orn_input.said(s), hallem=orn_input.HALLEM_FILE,
+                     by=(f"pyolfsysm.rebuild, rebuilt from its archive ({archive})" if archive else "pyolfsysm's fit_and_plot_mb_model"),
+                     archive=("- inputs/rebuild/: the baseline's rebuild archive (rebuild.json says what it is), which the model is\n"
+                              "  rebuilt from: its PN->KC wiring and APL weights as fitted, and its fitted parameters.\n") if archive else "")
         (d / "README.txt").write_text(README.format(**about))
         provenance = {"run": run_id, "asked_by": r["name"], "asked_at": r["created_at"], "started_at": r["started_at"],
                       "baseline": o["baseline"], "datasets": datasets, "panels": o["panels"], "tuning": o["tuning"],
-                      "model_kwargs": {"model": o["model"], "fixed": o["fixed"], "target_sparsity": o["target"]},
+                      "model_kwargs": kwargs, "archive": archive,
                       "scaling": {**summary, "said": orn_input.said(s)},
                       "worker": {k: caps[k] for k in ("host", "olfsysm", "versions", "olfdb")},
                       "reproduce": "move output/ away, then `python run.py`, with olfsysm at worker.olfsysm.checkout.git_hash"}
@@ -250,7 +324,7 @@ def run(db: Database, r: dict, caps: dict) -> None:
                     os.killpg(child.pid, signal.SIGKILL)
                     child.wait()
         if child.returncode != 0:
-            raise RuntimeError("fit_and_plot_mb_model did not finish (log.txt, in its download, has all it said):\n"
+            raise RuntimeError(f"{'the rebuilt model' if archive else 'fit_and_plot_mb_model'} did not finish (log.txt, in its download, has all it said):\n"
                                + "\n".join(_tail(d / LOG, LOG_TAIL)))
         seconds = time.time() - t0
 
@@ -280,7 +354,9 @@ def run(db: Database, r: dict, caps: dict) -> None:
                   "n_glomeruli": len(s["glomeruli"]), "scaling": {**summary, "said": orn_input.said(s)},
                   "files": len(files), "bytes": sum(p.stat().st_size for p in files),
                   "plots": sum(p.suffix == ".pdf" for p in files), "fixed_thr": scalars.get("fixed_thr"),
-                  "wAPLKC_scale": scalars.get("wAPLKC_scale")}
+                  "wAPLKC_scale": scalars.get("wAPLKC_scale"),
+                  # (of a run rebuilt from an archive: the model's glomeruli, those without input, those of the input not in it)
+                  "glomeruli": params.get("glomeruli") if isinstance(params.get("glomeruli"), dict) else None}
         model_runs.update(db, run_id, status="done", finished_at=model_runs.now(), result=result, progress=None)
     except Cancelled:
         shutil.rmtree(d, ignore_errors=True)

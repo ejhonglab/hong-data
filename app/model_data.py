@@ -75,6 +75,9 @@ BASELINE_RUN = "olfdb:baselines/"  # the start of the id of a run of a baseline'
 PARTIAL = ".partial"  # a baseline's files being imported (`import_baseline`), until all are
 JOB_RUN = "olfdb:runs/"  # the start of the id of the spike counts of a baseline run on datasets (model_runs.py): then <its id>/<its file>
 JOB_VIEW = "view"  # in such a run's folder: its spike counts, with a params.csv and provenance.json, as an experiment of one model
+# a fitted model's rebuild archive (pyolfsysm.rebuild's: its wiring, APL weights and fitted parameters), beside its
+# experiment's params.csv: rebuild/<its tag>/rebuild.json, imported with it, and what a run of it is made from (model_runs.py)
+ARCHIVES, ARCHIVE_JSON = "rebuild", "rebuild.json"
 
 _lock = threading.Lock()
 _scans: dict[str, tuple[tuple, dict]] = {}  # folder on the server -> (its files' sizes and times, its scan)
@@ -543,6 +546,13 @@ def _find(models: list[dict], name: Optional[str], base: Optional[str], row: int
     return next((m for m in named if m["row"] == row), named[0] if name is not None and named else None)
 
 
+def archive_of(folder: Path, m: dict) -> Optional[str]:
+    """A model's rebuild archive (`ARCHIVES`) in its experiment's folder, by its tag: its path there, or None."""
+    tag = str(m["params"].get("tag") or m.get("name") or "")
+    rel = f"{ARCHIVES}/{tag}"
+    return rel if tag and "/" not in tag and (folder / rel / ARCHIVE_JSON).is_file() else None
+
+
 def _found(s: dict, b: dict) -> tuple[Optional[dict], Optional[dict]]:
     """A baseline's experiment and model in a scan of its experiment's folder (None if not there)."""
     e = next((e for e in s["experiments"] if e["key"] == ""), None)
@@ -605,8 +615,8 @@ def add_baseline(db, body: dict, root: Path) -> tuple[int, dict]:
 def import_baseline(db, baseline_id: int, root: Path) -> tuple[int, dict]:
     """Copy a baseline's files from tensor into the data folder (`baseline_dir`, so backups have
     them), in place of any copy made before: its experiment's params.csv and provenance.json,
-    its own provenance_<tag>.json and its runs' spike count files, with what they were (size,
-    time and SHA-256) to tell drift by (`drift`). Returns (HTTP status, the baseline as in
+    its own provenance_<tag>.json, its runs' spike count files and its rebuild archive, if it has one
+    (`archive_of`), with what they were (size, time and SHA-256) to tell drift by (`drift`). Returns (HTTP status, the baseline as in
     `baselines`; or {"error"})."""
     b = next((b for b in _baseline_rows(db) if b["id"] == baseline_id), None)
     if b is None:
@@ -622,6 +632,8 @@ def import_baseline(db, baseline_id: int, root: Path) -> tuple[int, dict]:
     if m is None:
         return 404, {"error": f"no model {b['name'] or 'in row {}'.format(b['row'] + 1)} in the {PARAMS} of {b['experiment']} any more"}
     names = [n for n in (PARAMS, PROVENANCE, m["fit_provenance"]) if n and (folder / n).is_file()] + [r["file"] for r in m["runs"]]
+    if rel := archive_of(folder, m):  # (its rebuild archive, what runs of it are made from)
+        names += [f"{rel}/{f.name}" for f in sorted((folder / rel).iterdir()) if f.is_file()]
     dest, part = baseline_dir(baseline_id), config.MODEL_BASELINES_DIR / f"{baseline_id}{PARTIAL}"
     files = {}
     try:
@@ -683,6 +695,9 @@ def drift(b: dict, e: dict, m: dict, root: Path) -> list[str]:
         for n in [now_m["fit_provenance"], *(r["file"] for r in now_m["runs"])]:
             if n and n not in b["files"]:
                 out.append(f"{n}: on tensor, not imported")
+        rel = archive_of(folder, now_m)
+        if rel and not any(n.startswith(f"{rel}/") for n in b["files"]):
+            out.append(f"{rel}/: its rebuild archive, on tensor, not imported (import it again for it to be run from that)")
     for n, was in b["files"].items():
         if n in (PARAMS, PROVENANCE):
             continue
@@ -703,14 +718,15 @@ def baseline_listing(db, root: Path) -> dict:
 
     Returns:
         dict with ``baselines`` (as `baselines`, with ``ok``, ``error`` (why it is not shown),
-        ``drift`` (`drift`'s, None if not imported) and ``model``, its index in ``models``),
+        ``drift`` (`drift`'s, None if not imported), ``archive`` (its imported rebuild archive, `archive_of`'s; None
+        if it has none) and ``model``, its index in ``models``),
         ``experiments``, ``models`` (each with ``baseline``, its id) and ``columns``, as `listing`'s
         (an experiment of no folder added any more keyed ``baseline:<its id>``).
     """
     out = {"baselines": [], "experiments": {}, "models": []}
     srcs, keys, lists = sources(db), {}, {k: [] for k in LISTS}
     for b in _baseline_rows(db):
-        entry = {**{k: v for k, v in b.items() if k != "files"}, "ok": False, "error": None, "drift": None, "model": None}
+        entry = {**{k: v for k, v in b.items() if k != "files"}, "ok": False, "error": None, "drift": None, "model": None, "archive": None}
         out["baselines"].append(entry)
         src = _source_of(b["experiment"], srcs)
         if b["imported_at"] is None:
@@ -734,6 +750,7 @@ def baseline_listing(db, root: Path) -> dict:
             continue
         if b["imported_at"] is not None:
             entry["drift"] = drift(b, e, m, root)
+            entry["archive"] = archive_of(folder, m)
         sub = b["experiment"][len(src["path"]) + 1:] if src else b["experiment"]
         key = f"{src['id']}/{sub}" if src else f"baseline:{b['id']}"
         out["experiments"][key] = _listed_experiment(src, sub, e)

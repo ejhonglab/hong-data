@@ -10,8 +10,12 @@ the new odors. The datasets' responses are scaled into changes in spike rate fir
 baseline's params.csv row: pyolfsysm's `fit_and_plot_mb_model` is called with its settings
 (``base_kwargs_json``, and its other columns that are settings of it), and a baseline with
 anything else that is not off (another experiment's own mechanism: a gain, a breadth
-exponent, ...) cannot be run. What `fit_and_plot_mb_model` takes is what the model worker
-says it does (`WORKER_FILE`, written as it starts, and every `WORKER_BEAT` seconds).
+exponent, ...) cannot be run, unless it has a rebuild archive (`archive_plan`): a fitted model of
+the KC-remapping experiment queue saved as pyolfsysm.rebuild writes it (its wiring and APL weights
+as fitted, its parameters), which is then rebuilt from that, its mechanisms in those weights, and
+run at its parameters or with its threshold alone tuned again. What `fit_and_plot_mb_model`
+takes, and which archives pyolfsysm reads, is what the model worker says (`WORKER_FILE`,
+written as it starts, and every `WORKER_BEAT` seconds).
 
 Its folder (`run_dir`) has, once run:
 
@@ -77,7 +81,8 @@ def run_dir(run_id: int) -> Path:
 
 def worker() -> Optional[dict]:
     """What the model worker last said of itself (`WORKER_FILE`: ``at``, ``host``, ``kwargs``:
-    the arguments `fit_mb_model` takes, ``versions``), with ``alive`` (it said so less than
+    the arguments `fit_mb_model` takes, ``rebuild``: the format of rebuild archives its pyolfsysm reads
+    (None: none), ``versions``), with ``alive`` (it said so less than
     `WORKER_STALE` seconds ago); None if none ever did."""
     try:
         w = json.loads((root() / WORKER_FILE).read_text())
@@ -99,6 +104,24 @@ def _off(col: str, v: Any) -> bool:
     if isinstance(v, (int, float)):
         return v == 0 or v == NEUTRAL.get(col)
     return False
+
+
+def archive_plan(params: dict, rel: str, meta: dict, w: Optional[dict]) -> dict:
+    """How a baseline with a rebuild archive (`model_data.archive_of`: ``rel``, its rebuild.json ``meta``) is run, as
+    `plan` says (``archive``: ``rel``): rebuilt from it (pyolfsysm.rebuild: its wiring and APL weights as fitted, a
+    glomerulus gain or breadth weighting in them), at its fitted parameters (``fixed``) or with its somatic
+    threshold alone tuned again (``tuned``) to the response rate it was fit to (its ``operating_point``'s, else its
+    row's). Runnable by a worker (`w`) whose pyolfsysm reads that archive's format."""
+    why = []
+    if w is not None and w.get("rebuild") != meta.get("format"):
+        why.append(f"it is a rebuild archive of format {meta.get('format')}, which the model worker's pyolfsysm "
+                   + ("cannot read (it has no pyolfsysm.rebuild)" if not w.get("rebuild") else f"does not read (it reads {w['rebuild']})"))
+    op = meta.get("operating_point") if isinstance(meta.get("operating_point"), dict) else {}
+    target = next((float(v) for v in (op.get("rate_target"), *(params.get(c) for c in TARGET)) if isinstance(v, (int, float)) and _given(v)), None)
+    return {"runnable": None if w is None else not why, "why": why, "model": dict(meta.get("model_kws") or {}),
+            "fixed": {k: float(v) for k, v in (meta.get("params") or {}).items()}, "target": target,
+            "tunings": ["fixed", "tuned"] if target is not None else ["fixed"], "archive": rel,
+            "about": {k: meta.get(k) for k in ("description", "gain", "breadth", "wiring", "orn_input")}}
 
 
 def plan(params: dict, kwargs: Optional[list[str]]) -> dict:
@@ -152,6 +175,17 @@ def plan(params: dict, kwargs: Optional[list[str]]) -> dict:
             "target": target, "tunings": tunings}
 
 
+def _archive_meta(baseline_id: int, rel: Optional[str]) -> Optional[dict]:
+    """A baseline's imported rebuild archive's rebuild.json (None if it has none, or it cannot be read)."""
+    if not rel:
+        return None
+    try:
+        meta = json.loads((model_data.baseline_dir(baseline_id) / rel / model_data.ARCHIVE_JSON).read_text())
+    except (OSError, ValueError):
+        return None
+    return meta if isinstance(meta, dict) else None
+
+
 def baselines(db, tensor_root: Path) -> list[dict]:
     """The baselines chosen in the Admin tab, each with how it would be run (`plan`): ``id``,
     ``name``, ``experiment``, ``ok`` and ``error`` (as `model_data.baseline_listing`'s),
@@ -164,7 +198,9 @@ def baselines(db, tensor_root: Path) -> list[dict]:
         if b["ok"]:
             m = listing["models"][b["model"]]
             entry["params"] = m["params"]
-            entry["plan"] = plan(m["params"], w["kwargs"] if w else None)
+            meta = _archive_meta(b["id"], b.get("archive"))
+            entry["plan"] = (archive_plan(m["params"], b["archive"], meta, w) if meta is not None
+                             else plan(m["params"], w["kwargs"] if w else None))
         out.append(entry)
     return out
 
@@ -245,7 +281,9 @@ def options(db, body: dict, tensor_root: Path) -> dict:
         raise RunError("choose at least one of its panels")
     return {"baseline": {k: b[k] for k in ("id", "name", "experiment", "row", "params")}, "datasets": ids,
             "panels": [x for x in have if x in panels], "tuning": tuning, "model": p["model"],
-            "fixed": p["fixed"] if tuning == "fixed" else None, "target": p["target"] if tuning == "tuned" else None}
+            "fixed": p["fixed"] if tuning == "fixed" else None, "target": p["target"] if tuning == "tuned" else None,
+            # (a baseline run from its rebuild archive: which, in its imported copy; the worker copies it into the run's folder)
+            "archive": p.get("archive")}
 
 
 def create(db, name: str, ip: Optional[str], opts: dict) -> dict:

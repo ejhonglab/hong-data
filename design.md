@@ -554,6 +554,15 @@ between the frontend and the server. Using the app is described in
   revision is refused (409) rather than written over someone else's; deleting the copy
   keeps the `.json` beside it, so that revisions never repeat. No login, so who saved is
   the name set in Settings, if any, and the IP address, as for fits.
+- **Fitted models of the KC-remapping experiment queue are run from rebuild archives, not
+  rebuilt from their parameters** (`model_runs.archive_plan`, `model_worker.REBUILD_SCRIPT`,
+  pyolfsysm.rebuild). Their mechanisms (a glomerulus gain, breadth-weighted APL weights, an
+  APL→PN cap) are Python glue in the queue's E10_joint_fit.py that builds the weight arrays
+  `fit_mb_model` takes, from data in the queue's shared folder; so the queue saves each fit's
+  arrays and parameters as an archive beside its params.csv, checked to reproduce its spike
+  counts exactly, and olfdb imports that with the baseline and runs it with pyolfsysm.rebuild
+  (`simulate_at`; tuned: `tune_threshold`, the threshold alone). olfdb then knows nothing of
+  the mechanisms, and any fit the queue can archive can be run.
 - **The AL atlas tab's meshes are made once, offline, and served as static files**
   (`static/atlas/grabe2016.json` and `.bin`, 2.8 MB, made by `make_grabe2016.py` beside them from
   al_atlas' `labels.tif` at the commit the Dockerfile pins, its checksum checked). The web image has

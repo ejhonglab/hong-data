@@ -81,6 +81,43 @@ def fit_and_plot_mb_model(plot_dir, *, try_cache=True, plot_dirname=None, orn_de
     return params
 '''
 
+# and of its pyolfsysm.rebuild: a model rebuilt from an archive, its spike counts falling with its threshold
+FAKE_REBUILD = '''
+import json
+from pathlib import Path
+
+import pandas as pd
+
+ARCHIVE_FORMAT = "pyolfsysm.rebuild/1"
+
+
+def load_archive(path, verify=True):
+    meta = json.loads((Path(path) / "rebuild.json").read_text())
+    return {"params": meta["params"], "wiring": pd.read_parquet(Path(path) / "wPNKC.parquet"), "weights": {}, "model_kws": meta["model_kws"],
+            "meta": meta, "path": Path(path)}
+
+
+def _run(orn_deltas, thr):
+    odors = orn_deltas.columns.get_level_values("odor")
+    index = pd.MultiIndex.from_arrays([[10, 11, 12, 13], ["ab", "g", "ab", "g"]], names=["kc_id", "kc_type"])
+    counts = pd.DataFrame([[i * 200.0 / thr] * len(odors) for i in range(4)], index=index, columns=pd.Index(odors, name="odor"))
+    return counts >= 2, counts
+
+
+def simulate_at(params, wiring, weights, orn_deltas, *, model_kws=None, apl_off=False):
+    responses, counts = _run(orn_deltas, params["fixed_thr"])
+    return responses, counts, wiring, dict(params)
+
+
+def make_simulator(params, wiring, weights, orn_deltas, *, model_kws=None):
+    return (lambda p: _run(orn_deltas, p["fixed_thr"])), dict(params)
+
+
+def tune_threshold(simulate, params, *, target_rate=None, target_n=None, **kw):
+    p = dict(params, fixed_thr=params["fixed_thr"] * 2)
+    return {"params": p, "factor": 2.0, "at_bound": False, "outputs": simulate(p), "rate": target_rate}
+'''
+
 
 @pytest.fixture
 def env(main, root, tmp_path, monkeypatch):  # noqa: F811
@@ -93,6 +130,7 @@ def env(main, root, tmp_path, monkeypatch):  # noqa: F811
     (fake / "pyolfsysm").mkdir(parents=True)
     (fake / "pyolfsysm" / "__init__.py").write_text("")
     (fake / "pyolfsysm" / "mb_model.py").write_text(FAKE_MB_MODEL)
+    (fake / "pyolfsysm" / "rebuild.py").write_text(FAKE_REBUILD)
     (fake / "olfsysm.py").write_text("def build_info():\n    return {'git_hash': 'abc123', 'cpp_dirty': 0, 'git_diff': ''}\n")
     monkeypatch.setenv("PYTHONPATH", str(fake))
     monkeypatch.setenv("OLFDB_MODEL_PYTHON", sys.executable)
@@ -328,6 +366,59 @@ def test_runs(env, root, tmp_path):  # noqa: F811
     assert call(env.model_runs_delete, path_params={"id": r1["id"]}) == (200, {"deleted": True}) and not d.exists()
     assert call(env.models_run, params={"id": listed["run"]})[0] == 404
     assert call(env.model_runs_download, path_params={"id": r1["id"]})[0] == 404
+
+
+def test_archive(env, root, tmp_path):  # noqa: F811
+    """A baseline with mechanisms fit_and_plot_mb_model does not take, saved with a rebuild archive: once imported with
+    it, rebuilt from it and run at its fitted parameters, or with its threshold alone tuned again."""
+    db = env.db
+    row = {**ROW, "tag": "gained", "variant": "gained", "gain": 1.5, "gain_glomeruli": "DM2", "k": 2.0, "target_rate": 0.05}
+    bid = baseline(env, root, row, "E44")
+    a = add(db, tmp_path, "megamat", H_ODORS)
+    caps = model_worker.capabilities()
+    model_worker._say(caps)
+    assert caps["rebuild"] == "pyolfsysm.rebuild/1"
+    plan = lambda: next(b for b in call(env.model_runs_list)[1]["baselines"] if b["id"] == bid)["plan"]  # noqa: E731
+    assert plan()["runnable"] is False and "archive" not in plan()
+    # its archive on tensor: not run from until imported again (said so)
+    arch = root / "tom/model_outputs/E44/rebuild/gained"
+    arch.mkdir(parents=True)
+    pd.DataFrame({"DM2": [1.0]}).to_parquet(arch / "wPNKC.parquet")
+    meta = {"format": "pyolfsysm.rebuild/1", "params": {"fixed_thr": 200.0, "wAPLKC_scale": 0.2, "wKCKC_scale": 10.0},
+            "model_kws": {"claw_thr": 40.0, "n_spikes_for_response": 2, "silent": True}, "operating_point": {"rate_target": 0.068},
+            "gain": {"gain": 1.5, "glomeruli": ["DM2"]}, "breadth": {"exponent": 2.0}, "wiring": {"shuffle": None},
+            "experiment": "E44", "tag": "gained", "description": "a gained model"}
+    (arch / "rebuild.json").write_text(json.dumps(meta))
+    b = model_data.baseline_listing(db, root)["baselines"][0]
+    assert b["archive"] is None and any(x.startswith("rebuild/gained/: its rebuild archive") for x in b["drift"])
+    assert call(env.admin_models_baseline_import, body={}, path_params={"id": bid})[0] == 200
+    p = plan()
+    assert p["runnable"] and p["archive"] == "rebuild/gained" and p["tunings"] == ["fixed", "tuned"] and p["target"] == 0.068
+    assert p["fixed"]["wKCKC_scale"] == 10.0 and p["about"]["gain"]["glomeruli"] == ["DM2"]
+    assert (model_data.baseline_dir(bid) / "rebuild/gained/rebuild.json").is_file() and not model_data.baseline_listing(db, root)["baselines"][0]["drift"]
+    # a worker whose pyolfsysm reads no archives: not runnable, said why
+    model_worker._say({**caps, "rebuild": None})
+    assert plan()["runnable"] is False and "no pyolfsysm.rebuild" in plan()["why"][0]
+    model_worker._say(caps)
+    # run fixed, then tuned: rebuilt from its copy in the run's folder
+    for tuning, thr in (("fixed", 200.0), ("tuned", 400.0)):
+        status, r = call(env.model_runs_create, body={"name": "Ann", "baseline": bid, "datasets": [a], "tuning": tuning})
+        assert status == 201 and r["options"]["archive"] == "rebuild/gained", r
+        model_worker.run(db, model_runs.claim(db), caps)
+        done = model_runs.get(db, r["id"])
+        assert done["status"] == "done", done["error"]
+        d = model_runs.run_dir(r["id"])
+        assert (d / "inputs/rebuild/rebuild.json").is_file() and "rebuild.load_archive" in (d / "run.py").read_text()
+        kw = json.loads((d / "inputs/model_kwargs.json").read_text())
+        assert kw == {"archive": "inputs/rebuild", "tuning": tuning, "target_rate": 0.068 if tuning == "tuned" else None}
+        res = done["result"]
+        assert res["fixed_thr"] == thr and res["n_kcs"] == 4 and res["plots"] == 0 and res["rate"] == (0.5 if thr == 200 else 0.0)
+        params = json.loads((d / "output/model/params.json").read_text())
+        assert params["rebuilt_from"] == "E44/gained" and params["claw_thr"] == 40.0 and "silent" not in params
+        # (its wiring's glomeruli, DM2 alone here: none without input; the datasets' others not in it)
+        assert res["glomeruli"] == {"model": 1, "without_input": [], "not_in_model": sorted(set(GLOMS) - {"DM2"})}
+        assert "rebuilt from its archive (rebuild/gained)" in (d / "README.txt").read_text() and json.loads((d / "provenance.json").read_text())["archive"] == "rebuild/gained"
+        assert (tuning == "tuned") == ("threshold_factor" in params)
 
 
 def test_run_failed_and_interrupted(env, root, tmp_path):  # noqa: F811
