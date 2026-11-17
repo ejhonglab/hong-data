@@ -841,7 +841,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   then says so too, and `missing_odors.csv` in its download lists each odor of the model,
   and whether the fly has it). *Predict all flies it was not trained on* asks for the
   model's predictions of every fly in the menu but those it was fit to (those held out,
-  those with ROIs it was not fit to, those without ROIs), keeping those it made before; a
+  those with ROIs it was not fit to, those without ROIs; with *only my flies* ticked, the
+  default, only yours: of the datasets you uploaded and in your folders on tensor, by the
+  name in Settings), keeping those it made before; a
   bar above the one fly's says how many are over, and below it which flies lacked which
   odors, and which failed. *Extract signals* can then extract the signals of all of a
   batch's flies at once (*All the flies of a batch of predictions*, with its settings),

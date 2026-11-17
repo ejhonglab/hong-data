@@ -114,6 +114,7 @@ export class PredictPanel {
     steps.addEventListener('change', () => this._refineChecked());
     $('#predict-start').addEventListener('click', () => this.start());
     $('#predict-all').addEventListener('click', () => this.startAll());
+    $('#predict-all-mine').addEventListener('change', () => this._renderBatch());
     $('#predict-batch').addEventListener('click', (e) => { if (e.target.closest('[data-act=forget-batch]')) this._forgetBatch(+e.target.closest('[data-batch]').dataset.batch); });
     this.missing = new Map(); // `${fit}|${dir}` -> what the model's odors the fly lacks are (/api/predictions/missing), or a promise of it
     $('#predict-view').addEventListener('click', () => { const p = this._pair(); if (p) this.view(p); });
@@ -300,9 +301,18 @@ export class PredictPanel {
 
   // the flies of the menu the model chosen was not trained on (its held-out ones, those with ROIs it was not fit to, those without):
   // what Predict all asks for
+  // (with "only my flies" ticked, the default: only those of whoever is named in Settings, `_isMine`)
   _untrained() {
-    const m = this._model();
-    return m ? this.listed.filter((f) => f.raw_dir && !m.train.includes(this._name(f))) : [];
+    const m = this._model(), mine = this.h.$('#predict-all-mine').checked;
+    return m ? this.listed.filter((f) => f.raw_dir && !m.train.includes(this._name(f)) && (!mine || this._isMine(f))) : [];
+  }
+
+  // whether a fly of the menu is of whoever is named in Settings: of a dataset they uploaded, or in their folders on tensor
+  _isMine(f) {
+    const name = this.h.getName().trim().toLowerCase();
+    if (!name) return false;
+    return (f.datasets || []).some((d) => (d.uploader || '').trim().toLowerCase() === name)
+      || (this.mine.name.trim().toLowerCase() === name && this.mine.flies.some((x) => trim(x.dir) === trim(f.dir)));
   }
 
   // A yellow warning if the fly chosen lacks odors the model was fit with: how many, and which (asked of the server once a fly and model)
@@ -326,7 +336,7 @@ export class PredictPanel {
     const b = m && (this.data?.batches || []).find((x) => x.fit_id === m.id);
     const untrained = this._untrained().length;
     $('#predict-all').disabled = !(m && untrained && this.h.getName());
-    $('#predict-all').textContent = `Predict all ${untrained || ''} flies it was not trained on`.replace('  ', ' ');
+    $('#predict-all').textContent = `Predict all ${untrained || ''} ${$('#predict-all-mine').checked ? 'of my flies' : 'flies'} it was not trained on`.replace('  ', ' ');
     if (!b) { box.replaceChildren(); return; }
     const ps = b.ids.map((id) => this.data.predictions.find((p) => p.id === id)).filter(Boolean);
     const over = ps.filter((p) => !ACTIVE.has(p.status)).length, failed = ps.filter((p) => p.status === 'failed' || p.status === 'interrupted');

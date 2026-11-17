@@ -512,6 +512,7 @@ table.diff .old { color: var(--danger); text-decoration: line-through; }
 table.diff .new { color: var(--ok); }
 .actions .check { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-muted); }
 .actions .check input { width: 200px; }
+.actions .check input[type=checkbox] { width: auto; margin: 0; }
 .sync-history { margin-top: 24px; }
 .sync-history summary { cursor: pointer; color: var(--ink-muted); margin-bottom: 8px; }
 .tab-badge { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #d08a00; margin-left: 5px; vertical-align: super; }
