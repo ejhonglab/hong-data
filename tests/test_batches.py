@@ -109,9 +109,34 @@ def test_joined_dataset(main, tensor, monkeypatch):  # noqa: F811
     listed = {x["id"]: x for x in call(main.datasets_list)[1]["datasets"]}
     assert listed[made[0]]["temporary"]["by"] == "Bob" and all(x.get("temporary") is None for i, x in listed.items() if i != made[0])
     assert batches.get(db, b["id"])["extract"]["dataset_id"] == made[0]
+    # (a batch's extractions: no dataset each of their own)
+    assert batches.in_batch(db, xs[0]["id"]) and batches.make_extraction_datasets(db) == [] and "dataset" not in (extract.get(db, xs[0]["id"])["result"] or {})
     # not a dataset whose flies the AL segmentation tab lists
     assert all(f["datasets"][0]["id"] != made[0] for f in roi_training.inventory(db, config.TENSOR_ROOT, [])["flies"])
     # deleted only by whoever asked for it (or the Admin tab), and only a temporary one
     delete = lambda i, name: call(main.dataset_temporary_delete, method="DELETE", path_params={"ds_id": i}, query={"name": name})  # noqa: E731
     assert delete(made[0], "Cy")[0] == 403 and delete(made[0], "")[0] == 403 and delete(1, "Ann")[0] == 403 and delete(999, "Bob")[0] == 404
     assert delete(made[0], "bob")[0] == 200 and db.get_dataset(made[0]) is None
+
+
+def test_extraction_dataset(main, tensor):  # noqa: F811
+    """One fly's extraction (not a batch's), once done: a temporary dataset of its own, said with it; one with no ROIs named
+    as glomeruli: none, said why; each once."""
+    db = main.db
+    of = {"fly_dir": str(tensor / FLIES[0][0]), "raw_dir": None, "fly": "ann_2024-01-01_1", "rois": {"kind": "own"}, "bytes": 1}
+    x, y, z = (extract.create(db, of, extract.options({}), "Cy", None) for _ in range(3))
+    for e in (x, y):
+        extract.out_dir(e["id"]).mkdir(parents=True, exist_ok=True)
+        extract.update(db, e["id"], status="done", result={"rois": 3})
+    responses_table(1, GLOMS[:3]).to_csv(extract.out_dir(x["id"]) / "responses_glomeruli.csv")
+    made = batches.make_extraction_datasets(db)
+    assert len(made) == 1 and batches.make_extraction_datasets(db) == []  # (z not done; y has no glomeruli: said, not tried again)
+    assert extract.get(db, x["id"])["result"] == {"rois": 3, "dataset": made[0]}
+    assert "named as a glomerulus" in extract.get(db, y["id"])["result"]["dataset_error"] and not extract.get(db, z["id"])["result"]
+    d = db.get_dataset(made[0])
+    t = batches.temporary_of(d)
+    assert t["by"] == "Cy" and t["extraction"] == x["id"] and t["fly"] == "ann_2024-01-01_1" and t["fit"] is None and "batch" not in t
+    assert d["title"].startswith("[temporary]") and d["n_flies"] == 1 and d["n_units"] == 3 and d["indicator"] == "unknown"
+    assert (config.DATASETS_DIR / str(made[0]) / f"extraction_{x['id']}_responses.csv").is_file() and "its own ROIs" in d["notes"]
+    delete = lambda i, name: call(main.dataset_temporary_delete, method="DELETE", path_params={"ds_id": i}, query={"name": name})  # noqa: E731
+    assert delete(made[0], "Bob")[0] == 403 and delete(made[0], "cy")[0] == 200

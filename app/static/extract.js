@@ -422,7 +422,9 @@ export class ExtractPanel {
       const got = r ? `${r.rois} ROIs <span class="muted">(${r.glomeruli} named as glomeruli; ${r.roi_planes} outlines)</span>,
         ${r.recordings.length} recording${r.recordings.length === 1 ? '' : 's'}
         <span class="muted" title="${esc(r.recordings.map((c) => `${c.name}: ${c.panel}, ${c.trials} trials`).join('\n'))}">(${
-        esc([...new Set(r.recordings.map((c) => c.panel))].join(', '))})</span>, in ${fmtDuration(r.seconds)}` : '—';
+        esc([...new Set(r.recordings.map((c) => c.panel))].join(', '))})</span>, in ${fmtDuration(r.seconds)}${r.dataset != null
+          ? `; <a href="#browse/${r.dataset}" title="Its ROIs named as glomeruli, as a temporary dataset (yours to delete in Browse, if you asked for it)">dataset #${r.dataset}</a>`
+          : r.dataset_error ? ` <span class="muted" title="${esc(r.dataset_error)}">(no dataset)</span>` : ''}` : '—';
       return `<tr data-id="${x.id}"><td title="${esc(x.tensor_dir || x.fly_dir)}">${esc(x.fly)}</td><td>${esc(this._rois(x))}</td>
         <td title="${esc(modes[x.options.mode] || '')}">${esc({ best_plane: 'best plane, per recording', best_plane_fly: 'best plane, per fly',
         all_planes: 'all voxels', weighted: 'weighted by noise' }[x.options.mode] || x.options.mode)}${x.options.unmix

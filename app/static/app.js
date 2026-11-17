@@ -3217,13 +3217,14 @@ class Browse {
     const mine = (d) => d.temporary && me && String(d.temporary.by || '').toLowerCase() === me;
     const item = (d) => `<div class="ds-item${shown(d) ? ' active' : ''}">
         <input type="checkbox" class="pick" data-id="${d.id}" aria-label="Select dataset #${d.id} for download">
-        ${mine(d) ? `<button type="button" class="ds-temp-x" data-temp-del="${d.id}" title="Delete this temporary dataset (yours: made of a batch's signals)" aria-label="Delete temporary dataset #${d.id}">×</button>` : ''}
+        ${mine(d) ? `<button type="button" class="ds-temp-x" data-temp-del="${d.id}" title="Delete this temporary dataset (yours: made of extracted signals)" aria-label="Delete temporary dataset #${d.id}">×</button>` : ''}
         <button type="button" class="list-item" data-id="${d.id}">
           <span class="t">${datasetName(d)}</span>
           ${panelsLine(d, this.group)}
           <span class="s">${fliesText(d)}, ${d.n_units.toLocaleString()} ROIs, ${d.n_odors} odors${lastFlyText(d)}</span>
           <span class="s">#${d.id}, ${esc(d.uploader_name)}${d.recording_system ? ', ' + esc(d.recording_system) : ''}${uploadedText(d, this.group)}${calcsText(d)}</span>
-          ${d.temporary ? `<span class="ds-temp">temporary: the signals of batch #${d.temporary.batch}'s predictions, ${esc(d.temporary.by)}'s</span>` : ''}
+          ${d.temporary ? `<span class="ds-temp">temporary: the signals of ${d.temporary.batch != null ? `batch #${d.temporary.batch}'s predictions`
+    : `extraction #${d.temporary.extraction}${d.temporary.fly ? ` (${esc(d.temporary.fly)})` : ''}`}, ${esc(d.temporary.by)}'s</span>` : ''}
         </button>
       </div>`;
     const groupHead = (label, ds) => `<div class="list-group"><label><input type="checkbox" class="pick-group" data-ids="${ds.map((d) => d.id).join(',')}"

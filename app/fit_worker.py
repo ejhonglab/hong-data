@@ -778,7 +778,14 @@ def run_extraction(db, e: dict) -> None:
 def extract_loop(db, state: dict, stop: Optional[threading.Event] = None) -> None:
     """Runs the extractions asked for, one at a time, beside fits and predictions (they need no
     GPU, and little but reading a fly's movies), until `stop` is set, if given.
-    ``state["extraction"]``: the one running."""
+    ``state["extraction"]``: the one running. Each done becomes a temporary dataset (one fly's:
+    `batches.make_extraction_datasets`; a batch's, all joined, once all are over: `batches.finish`),
+    as do those done before that was so, as it starts."""
+    try:
+        for ds in batches.make_extraction_datasets(db):
+            log.info("dataset %s made of an extraction's signals (done before)", ds)
+    except Exception:  # noqa: BLE001
+        log.exception("could not make datasets of the extractions done before")
     while not (stop and stop.is_set()):
         try:
             e = extract.claim(db)
@@ -794,7 +801,9 @@ def extract_loop(db, state: dict, stop: Optional[threading.Event] = None) -> Non
             run_extraction(db, e)
         except Exception:  # noqa: BLE001 (said in its record; the thread goes on)
             log.exception("extraction %s", e["id"])
-        try:  # (a batch's signals all extracted: joined into a dataset)
+        try:  # (one fly's signals: a dataset of their own; a batch's all extracted: joined into a dataset)
+            for ds in batches.make_extraction_datasets(db, [e["id"]]):
+                log.info("dataset %s made of extraction %s's signals", ds, e["id"])
             for ds in batches.finish(db):
                 log.info("dataset %s made of a batch's signals", ds)
         except Exception:  # noqa: BLE001

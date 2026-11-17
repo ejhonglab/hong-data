@@ -848,7 +848,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   odors, and which failed. *Extract signals* can then extract the signals of all of a
   batch's flies at once (*All the flies of a batch of predictions*, with its settings),
   joined, once all are over, into one dataset listed in Browse as temporary: whoever
-  asked for it can delete it there with its ×, as can the Admin tab. *View the ROIs* opens them in the movie player, on the
+  asked for it can delete it there with its ×, as can the Admin tab. The signals of one
+  fly extracted become a temporary dataset of their own as soon as they are done (its ROIs
+  named as glomeruli, as an upload takes them), linked from the extraction in the list
+  (one that cannot be, e.g. with odors an upload refuses, says why on hover). *View the ROIs* opens them in the movie player, on the
   fly's average image (as the model saw it) and its motion-corrected movies: only the ROIs
   of the plane shown, those predicted and the fly's own (if it has them) in two colours,
   each shown or not (and of refined ones, the model's own before refinement, in a third,

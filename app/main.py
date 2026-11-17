@@ -1794,7 +1794,8 @@ async def extractions_batch(request: Request) -> Response:
 
 
 async def dataset_temporary_delete(request: Request) -> Response:
-    """Deletes a temporary dataset (one made of a batch's signals, `batches.make_dataset`) as whoever asked for
+    """Deletes a temporary dataset (one made of extracted signals: a batch's, `batches.make_dataset`, or one fly's,
+    `batches.extraction_dataset`) as whoever asked for
     it (``?name=``, as set in Settings), as the Admin tab deletes datasets. 403 for one not temporary, or not theirs."""
     ds_id = int(request.path_params["ds_id"])
     d = await run_in_threadpool(db.get_dataset, ds_id)

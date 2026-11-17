@@ -2,7 +2,9 @@
 once in the AL segmentation tab (held-out flies, flies without ROIs of their own, flies of
 whoever is named in Settings), followed together; and the signals of all of their ROIs extracted
 at once (`extract`), joined into one temporary dataset that whoever asked for it (or the Admin
-tab) can delete.
+tab) can delete. The signals of an extraction of one fly (not a batch's) become a temporary
+dataset of their own too, as soon as they are done (`make_extraction_datasets`), so that every
+extraction can be seen in Browse.
 
 A batch is a row of ``prediction_batches``: its fit, who asked and when, its predictions (their
 ids: each fly's, made now, or done before by the same model and kept), and once its signals are
@@ -22,7 +24,9 @@ from typing import Optional
 
 from . import config, extract, predictions
 
-TEMPORARY = "temporary"  # a dataset's metadata key: {by, at, batch, fit} for one made of a batch's signals
+# a dataset's metadata key: {by, at, fit, extractions, and batch, or extraction and fly} for one made of a batch's signals,
+# or of one extraction's (`extraction_dataset`)
+TEMPORARY = "temporary"
 
 
 def now() -> str:
@@ -177,33 +181,82 @@ def make_dataset(db, b: dict, exts: list[dict]) -> int:
     their ``responses_glomeruli.csv`` joined (`joined_table`), as an upload of it would be, its metadata
     `TEMPORARY` saying whose it is; the indicator and driver of the datasets the model was fit to, where
     all say the same ("unknown" otherwise)."""
-    from .ingest import load_file
-    from .metadata import Metadata, dataset_title, generate_readme
-
     paths = [extract.out_dir(e["id"]) / "responses_glomeruli.csv" for e in exts]
     paths = [p for p in paths if p.is_file()]
     if not paths:
         raise ValueError("none of its extractions has ROIs named as glomeruli")
+    return _temporary(db, paths, f"batch_{b['id']}_responses.csv", b["extract"]["by"], b["fit_id"],
+                      {"batch": b["id"], "extractions": [e["id"] for e in exts]},
+                      f"Temporary: the signals of batch {b['id']}'s predictions (fit #{b['fit_id']}'s model) of {len(paths)} flies, "
+                      f"extracted in the AL segmentation tab, joined. Whoever asked for it ({b['extract']['by']}), or the Admin tab, can delete it.")
+
+
+def in_batch(db, ext_id: int) -> bool:
+    """Whether an extraction is one of a batch's (whose signals are joined into a dataset of their own: `finish`)."""
+    return any(ext_id in ((b["extract"] or {}).get("ids") or []) for b in all_batches(db))
+
+
+def extraction_dataset(db, e: dict) -> int:
+    """A temporary dataset of the signals of one extraction done (not a batch's), as a batch's is made
+    (`make_dataset`): its ROIs named as glomeruli, as an upload of them would be.
+
+    Raises:
+        ValueError: if none of its ROIs is named as a glomerulus, or its fly has no date and number.
+    """
+    path = extract.out_dir(e["id"]) / "responses_glomeruli.csv"
+    if not path.is_file():
+        raise ValueError("none of its ROIs is named as a glomerulus (a dataset takes only those)")
+    kind = (e.get("rois") or {}).get("kind")
+    fit = (e.get("rois") or {}).get("fit")
+    what = {"own": "its own ROIs", "predicted": f"fit #{fit}'s predicted ROIs", "edited": f"fit #{fit}'s predicted ROIs, as edited"}.get(kind, "its ROIs")
+    return _temporary(db, [path], f"extraction_{e['id']}_responses.csv", e["name"], fit,
+                      {"extraction": e["id"], "fly": e["fly"], "extractions": [e["id"]]},
+                      f"Temporary: the signals of {e['fly']}'s {what}, extracted in the AL segmentation tab (extraction #{e['id']}). "
+                      f"Whoever asked for it ({e['name']}), or the Admin tab, can delete it.")
+
+
+def make_extraction_datasets(db, ids: Optional[list[int]] = None) -> list[int]:
+    """Makes the temporary dataset of each extraction done (of `ids`; else every one) that is not a batch's and has
+    none yet, nor was said to have none (its result's ``dataset``, or ``dataset_error``: why not, kept). Returns the
+    datasets made. (Run by the fit worker after each extraction, and as it starts, for those made before.)"""
+    made = []
+    for e in (extract.get(db, i) for i in ids) if ids is not None else extract.all_extractions(db):
+        if e is None or e["status"] != "done" or not e["result"] or "dataset" in e["result"] or "dataset_error" in e["result"] or in_batch(db, e["id"]):
+            continue
+        try:
+            ds_id = extraction_dataset(db, e)
+            extract.update(db, e["id"], result={**e["result"], "dataset": ds_id})
+            made.append(ds_id)
+        except Exception as err:  # noqa: BLE001 (said with the extraction)
+            extract.update(db, e["id"], result={**e["result"], "dataset_error": str(err) if isinstance(err, ValueError) else f"{type(err).__name__}: {err}"})
+    return made
+
+
+def _temporary(db, paths: list[Path], file_name: str, by: str, fit_id: Optional[int], about: dict, notes: str) -> int:
+    """A temporary dataset of extractions' ``responses_glomeruli.csv`` (`paths`), joined (`joined_table`), as an
+    upload of it would be, named `file_name`, its metadata `TEMPORARY` saying whose it is (`by`) and what of
+    (`about`); the indicator and driver of the datasets fit `fit_id`'s model was fit to, where all say the same
+    ("unknown" otherwise, and without a fit)."""
+    from .ingest import load_file
+    from .metadata import Metadata, dataset_title, generate_readme
+
     table = joined_table(paths)
     config.TMP_DIR.mkdir(parents=True, exist_ok=True)
     tmp = Path(tempfile.mkdtemp(dir=config.TMP_DIR))
     try:
-        data = tmp / f"batch_{b['id']}_responses.csv"
+        data = tmp / file_name
         table.to_csv(data)
         parsed = load_file(data)
         from . import fits
 
         # (the indicator and driver of the datasets the model was fit to, where they all say the same)
-        fit = fits.get(db, b["fit_id"]) or {}
+        fit = (fits.get(db, fit_id) if fit_id is not None else None) or {}
         ds = set(((fit.get("flies") or {}).get("datasets")) or [])
         metas = [d for d in db.list_datasets() if d["id"] in ds]
         one = lambda k: (lambda vs: vs.pop() if len(vs) == 1 else "unknown")({m[k] for m in metas if m.get(k)})  # noqa: E731
-        m = Metadata(uploader_name=b["extract"]["by"], indicator=one("indicator"), driver=one("driver"), coding_unit="glomeruli",
-                     notes=f"Temporary: the signals of batch {b['id']}'s predictions (fit #{b['fit_id']}'s model) of {len(paths)} flies, "
-                           f"extracted in the AL segmentation tab, joined. Whoever asked for it ({b['extract']['by']}), or the Admin tab, can delete it.")
+        m = Metadata(uploader_name=by, indicator=one("indicator"), driver=one("driver"), coding_unit="glomeruli", notes=notes)
         summary = parsed.summary()
-        meta = {**m.model_dump(), TEMPORARY: {"by": b["extract"]["by"], "at": now(), "batch": b["id"], "fit": b["fit_id"],
-                                               "extractions": [e["id"] for e in exts]}}
+        meta = {**m.model_dump(), TEMPORARY: {"by": by, "at": now(), "fit": fit_id, **about}}
         import hashlib
 
         sha = hashlib.sha256(data.read_bytes()).hexdigest()
@@ -224,7 +277,7 @@ def make_dataset(db, b: dict, exts: list[dict]) -> int:
 
 
 def temporary_of(d: dict) -> Optional[dict]:
-    """A dataset's `TEMPORARY` (whose it is), if it is one made of a batch's signals."""
+    """A dataset's `TEMPORARY` (whose it is), if it is one made of a batch's signals, or of one extraction's."""
     return (d.get("metadata") or {}).get(TEMPORARY) or (json.loads(d["temporary"]) if isinstance(d.get("temporary"), str) else d.get("temporary"))
 
 
