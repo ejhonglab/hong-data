@@ -56,6 +56,7 @@ KIND = ("stack", "scored")  # what its time depends on, beside its device (`_kin
 GUESSES = {"GPU": 120.0, "CPU": 900.0}  # seconds one takes, until one is done on that device to estimate from
 
 
+MISSING = "missing_odors.csv"  # in a prediction's folder: each odor of its model, and whether its fly has it (`write_missing`)
 EDITED = "pred-edited"  # in the names of a prediction's ROIs as edited in the viewer (`save_edited`)
 MAX_EDITED_ROIS, MAX_EDITED_POINTS = 5000, 1_000_000
 _edit_lock = threading.Lock()  # (the web server is one process)
@@ -464,6 +465,52 @@ def user_flies(dirs: dict, root: Path) -> list[dict]:
             for k, r in zip(keys, rois) if r is not None]
 
 
+# ------------------------------------------------------- the model's odors a fly lacks
+
+def model_odors(fit_id: int) -> dict:
+    """A fit's model's odors (``odors``), those Cellpose's images are made from (``image_odors``) and
+    how its training flies' odors were recorded (``aliases``: as recorded -> as the model names it).
+
+    Raises:
+        FileNotFoundError: if the fit has no model.
+    """
+    m = json.loads((fits.fit_dir(fit_id) / "model" / "model.json").read_text())
+    img = (m.get("options") or {}).get("image_odors")
+    return {"odors": m["odors"], "image_odors": m["odors"] if img is None else [o for o in m["odors"] if o in set(img)],
+            "aliases": m.get("aliases") or {}}
+
+
+def fly_missing(fit_id: int, fly_dir: Path, index) -> dict:
+    """The odors of fit `fit_id`'s model that a fly lacks, as a prediction would find them
+    (al-diag-seg's ``load_fly``: of its recordings with their odors' mean dF/F, those more than half of
+    whose odors are the model's, each odor named as the model's training flies had it recorded, else as
+    the odor table names it): ``odors`` (how many the model has), ``missing`` (those the fly lacks, in
+    the model's order), ``missing_image_odors`` (of those, the ones Cellpose's images are made from) and
+    ``recordings`` (those read)."""
+    mo = model_odors(fit_id)
+    want, have, used = set(mo["odors"]), set(), []
+    for r in tensor._subdirs(fly_dir):
+        if not (roi_training._is_file(r / roi_training.TRIALMEAN) and roi_training._is_file(r / roi_training.TRIALS)):
+            continue
+        names = [mo["aliases"].get(o["recorded"], o["odor"]) for o in roi_training.recording_odors(r / roi_training.TRIALS, index) or []]
+        if names and sum(n in want for n in names) > len(names) / 2:
+            have |= set(names)
+            used.append(r.name)
+    missing = [o for o in mo["odors"] if o not in have]
+    return {"odors": len(mo["odors"]), "missing": missing, "missing_image_odors": [o for o in mo["image_odors"] if o in set(missing)],
+            "recordings": used}
+
+
+def write_missing(d: Path, odors: list[str], have: list[str], image_odors: list[str]) -> None:
+    """A prediction's `MISSING`: each odor of its model, whether its fly has it, and whether Cellpose's images are made from it."""
+    import csv
+
+    with open(d / MISSING, "w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["odor", "fly_has_it", "in_cellpose_images"])
+        w.writerows([o, "yes" if o in set(have) else "no", "yes" if o in set(image_odors) else "no"] for o in odors)
+
+
 # ------------------------------------------------------------------- listing
 
 def models(all_fits: list[dict]) -> list[dict]:
@@ -476,7 +523,7 @@ def models(all_fits: list[dict]) -> list[dict]:
         fl = f["flies"] or {}
         out.append({"id": f["id"], "name": f["name"], "created_at": f["created_at"], "finished_at": f["finished_at"],
                     "options": f["options"], "train": fl.get("train", []), "held_out": fl.get("held_out", []),
-                    "mean": (f["result"] or {}).get("mean")})
+                    "mean": (f["result"] or {}).get("mean"), "odors": fl.get("odors")})
     return out
 
 
@@ -486,7 +533,8 @@ def listing(db, root_: Path) -> dict:
     miss, if one was asked for: `nmf_check.state`), ``refine`` and ``refinable`` (its ROIs'
     refinement: `refinement.listing_fields`), and those queued or running with ``eta``:
     when it should end, see `estimate`), the models to predict with (`models`), the fit worker,
-    where tensor is on the server, and ``expected``: the same of a prediction asked for now."""
+    where tensor is on the server, ``expected``: the same of a prediction asked for now, and
+    ``batches`` (`batches.listing`)."""
     from . import nmf_check, refinement  # (they import this module)
 
     all_fits = fits.all_fits(db)
@@ -499,7 +547,10 @@ def listing(db, root_: Path) -> dict:
                       "nmf": nmf_check.state(db, p), **refinement.listing_fields(p)})
     worker = fits.worker_status(db)
     new = estimate(preds, bool(worker.get("gpu")), any(f["status"] == "running" for f in all_fits))
-    return {"predictions": preds, "models": models(all_fits), "worker": worker, "tensor_root": str(root_), "expected": new}
+    from . import batches  # (it imports this module)
+
+    return {"predictions": preds, "models": models(all_fits), "worker": worker, "tensor_root": str(root_), "expected": new,
+            "batches": batches.listing(db)}
 
 
 def view(db, pred_id: int) -> Optional[dict]:

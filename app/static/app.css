@@ -386,6 +386,15 @@ dialog.refine-dialog .predict-clean { margin: 10px 0; }
 #extract-window-note { margin-top: 0; min-height: 1.4em; }
 .predict-pair { margin-top: 8px; }
 .predictions-table td.acts { white-space: nowrap; }
+.predict-batch-bar { width: 100%; height: 10px; margin: 4px 0; }
+.predict-one-bar { width: 100%; height: 8px; margin-top: 4px; }
+.predict-batch-flies { margin: 4px 0 0; padding-left: 18px; font-size: 12.5px; }
+.extract-batch { margin: 10px 0; }
+.extract-batch > summary { cursor: pointer; font-weight: 500; }
+.ds-item { position: relative; }
+.ds-temp-x { position: absolute; top: 4px; right: 4px; border: 0; background: none; color: var(--danger); font-size: 16px; line-height: 1; cursor: pointer; padding: 2px 6px; }
+.ds-temp-x:hover { background: var(--surface-2); border-radius: 4px; }
+.ds-temp { font-size: 11px; color: var(--warn); }
 .predictions-table .acts-grid { display: grid; grid-template-columns: repeat(2, auto); gap: 4px; justify-content: start; }
 .predictions-table .acts-grid > .btn { justify-content: center; text-align: center; }
 .fit-zip { margin: 4px 0 8px; padding-left: 20px; }

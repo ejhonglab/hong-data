@@ -829,7 +829,17 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   glomerulus, each kind al-diag-seg makes, the fly's average image, and `provenance.json`
   (the model and its fit, the fly's files read with their sizes and times, the software,
   who asked). Asked for again, of the same model and fly, it asks whether to view those or
-  make them again, replacing them. *View the ROIs* opens them in the movie player, on the
+  make them again, replacing them. A fly that lacks diagnostic odors the model was
+  trained with is said to, in yellow, with which, as soon as it is chosen (its prediction
+  then says so too, and `missing_odors.csv` in its download lists each odor of the model,
+  and whether the fly has it). *Predict all flies it was not trained on* asks for the
+  model's predictions of every fly in the menu but those it was fit to (those held out,
+  those with ROIs it was not fit to, those without ROIs), keeping those it made before; a
+  bar above the one fly's says how many are over, and below it which flies lacked which
+  odors, and which failed. *Extract signals* can then extract the signals of all of a
+  batch's flies at once (*All the flies of a batch of predictions*, with its settings),
+  joined, once all are over, into one dataset listed in Browse as temporary: whoever
+  asked for it can delete it there with its ×, as can the Admin tab. *View the ROIs* opens them in the movie player, on the
   fly's average image (as the model saw it) and its motion-corrected movies: only the ROIs
   of the plane shown, those predicted and the fly's own (if it has them) in two colours,
   each shown or not (and of refined ones, the model's own before refinement, in a third,

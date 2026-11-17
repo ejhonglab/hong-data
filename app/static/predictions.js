@@ -113,6 +113,9 @@ export class PredictPanel {
     steps.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));
     steps.addEventListener('change', () => this._refineChecked());
     $('#predict-start').addEventListener('click', () => this.start());
+    $('#predict-all').addEventListener('click', () => this.startAll());
+    $('#predict-batch').addEventListener('click', (e) => { if (e.target.closest('[data-act=forget-batch]')) this._forgetBatch(+e.target.closest('[data-batch]').dataset.batch); });
+    this.missing = new Map(); // `${fit}|${dir}` -> what the model's odors the fly lacks are (/api/predictions/missing), or a promise of it
     $('#predict-view').addEventListener('click', () => { const p = this._pair(); if (p) this.view(p); });
     $('#predict-list').addEventListener('click', (e) => this._action(e));
   }
@@ -126,7 +129,8 @@ export class PredictPanel {
     this.timer = setInterval(() => {
       if (this.h.$('#tab-al-segmentation').hidden) return;
       n += 1;
-      const busy = this.data?.predictions.some((p) => ACTIVE.has(p.status) || ACTIVE.has(p.nmf?.status) || ACTIVE.has(p.refine?.status));
+      const busy = this.data?.predictions.some((p) => ACTIVE.has(p.status) || ACTIVE.has(p.nmf?.status) || ACTIVE.has(p.refine?.status))
+        || (this.data?.batches || []).some((b) => b.extract?.status === 'running');
       if (busy || n % 10 === 0) this.refresh();
     }, 3000);
   }
@@ -265,8 +269,10 @@ export class PredictPanel {
     }
     if (p.status === 'running') {
       const pr = p.progress || {};
+      const t0 = Date.parse(p.started_at), t1 = p.eta?.ends_at ? Date.parse(p.eta.ends_at) : NaN;
+      const frac = Number.isFinite(t1) && t1 > t0 ? Math.min(0.99, (Date.now() - t0) / (t1 - t0)) : null;
       return `Running: ${esc(STAGE_NAMES[pr.stage] || 'starting')}${pr.device ? `, on the ${esc(pr.device)}` : ''}, since ${esc(fmtWhen(p.started_at))}
-        (asked for by <b>${esc(p.name)}</b>).${this._eta(p)}`;
+        (asked for by <b>${esc(p.name)}</b>).${this._eta(p)}<progress class="predict-one-bar" max="1"${frac == null ? '' : ` value="${frac}"`}></progress>`;
     }
     if (p.status !== 'done') {
       return `${STATUS_NAMES[p.status] || esc(p.status)} ${esc(fmtWhen(p.finished_at))} (asked for by <b>${esc(p.name)}</b>)${p.error
@@ -292,8 +298,75 @@ export class PredictPanel {
       ? `, after the ${fmtDuration(wait)} those asked for before have left` : ''} (${this._from(e)}).`;
   }
 
+  // the flies of the menu the model chosen was not trained on (its held-out ones, those with ROIs it was not fit to, those without):
+  // what Predict all asks for
+  _untrained() {
+    const m = this._model();
+    return m ? this.listed.filter((f) => f.raw_dir && !m.train.includes(this._name(f))) : [];
+  }
+
+  // A yellow warning if the fly chosen lacks odors the model was fit with: how many, and which (asked of the server once a fly and model)
+  async _renderMissing() {
+    const { $, esc, msgBox, api } = this.h, m = this._model(), fly = this._fly(), box = $('#predict-missing');
+    if (!m || !fly) { box.replaceChildren(); return; }
+    const key = `${m.id}|${fly.dir}`;
+    if (!this.missing.has(key)) this.missing.set(key, api(`/api/predictions/missing?fit=${m.id}&dir=${encodeURIComponent(fly.dir)}`).catch(() => null));
+    const r = await this.missing.get(key);
+    if (key !== `${this._model()?.id}|${this._fly()?.dir}`) return;
+    if (!r || !r.missing.length) { box.replaceChildren(); return; }
+    const img = r.missing_image_odors.length;
+    box.replaceChildren(msgBox('warn', `This fly lacks <b>${r.missing.length}</b> of the ${r.odors} diagnostic odors fit #${m.id}'s model was trained with:
+      ${r.missing.map(esc).join(', ')}. Its ROIs would be joined and named by those it has${img ? `, and found from images of ${img} fewer odor${img === 1 ? '' : 's'}
+      than Cellpose was trained on, so fewer may be found` : ''}${r.odors - r.missing.length < 3 ? '; it has under 3 of them, too few to predict' : ''}.`));
+  }
+
+  // The last batch of the model chosen (Predict all): a bar of its flies done, and of each fly done the model's odors it lacked, and those that failed
+  _renderBatch() {
+    const { $, esc, msgBox } = this.h, m = this._model(), box = $('#predict-batch');
+    const b = m && (this.data?.batches || []).find((x) => x.fit_id === m.id);
+    const untrained = this._untrained().length;
+    $('#predict-all').disabled = !(m && untrained && this.h.getName());
+    $('#predict-all').textContent = `Predict all ${untrained || ''} flies it was not trained on`.replace('  ', ' ');
+    if (!b) { box.replaceChildren(); return; }
+    const ps = b.ids.map((id) => this.data.predictions.find((p) => p.id === id)).filter(Boolean);
+    const over = ps.filter((p) => !ACTIVE.has(p.status)).length, failed = ps.filter((p) => p.status === 'failed' || p.status === 'interrupted');
+    const lacking = ps.filter((p) => p.status === 'done' && p.result?.missing_odors?.length);
+    const head = `Batch of ${ps.length} flies asked for by <b>${esc(b.name)}</b> ${esc(this.h.fmtWhen(b.created_at))}: <b>${over}</b> of ${ps.length} over${
+      failed.length ? `, ${failed.length} failed` : ''}. <button type="button" class="link" data-act="forget-batch" title="Forget this batch (its predictions stay)">forget it</button>`;
+    const bar = `<progress class="predict-batch-bar" max="${ps.length}" value="${over}"></progress>`;
+    const lack = lacking.length ? `<p class="small">Of the flies done, ${lacking.length} lacked diagnostic odors the model was trained with (each prediction's
+      <code>missing_odors.csv</code>, in its download, lists them):</p><ul class="predict-batch-flies">${lacking.map((p) => `<li><b>${esc(p.fly)}</b>: ${
+      p.result.missing_odors.length} of ${p.result.model_odors} (${p.result.missing_odors.map(esc).join(', ')})</li>`).join('')}</ul>` : '';
+    const fail = failed.length ? `<p class="small">Failed:</p><ul class="predict-batch-flies">${failed.map((p) => `<li><b>${esc(p.fly)}</b>: ${esc(p.error || p.status)}</li>`).join('')}</ul>` : '';
+    const kind = lacking.length || failed.length ? 'warn' : over === ps.length ? 'ok' : 'info';
+    const el = msgBox(kind, head + bar + lack + fail);
+    el.dataset.batch = b.id;
+    box.replaceChildren(el);
+  }
+
+  async startAll() {
+    const { $, api, msgBox, esc } = this.h, m = this._model(), name = this.h.getName(), flies = this._untrained();
+    if (!m || !name || !flies.length) return;
+    $('#predict-all').disabled = true;
+    try {
+      const b = await api('/api/predictions/batch', { method: 'POST', json: { name, fit: m.id, flies: flies.map((f) => ({ dir: f.dir, raw_dir: f.raw_dir })),
+        ...this._cleanOptions() } });
+      if (b.left_out.length) $('#predict-status').replaceChildren(msgBox('warn', `Left out, not found: ${b.left_out.map((x) => `${esc(x.dir)} (${esc(x.why)})`).join('; ')}`));
+    } catch (e) {
+      $('#predict-batch').replaceChildren(msgBox('error', `Could not ask for them: ${esc(e.message)}`));
+    }
+    await this.refresh();
+  }
+
+  async _forgetBatch(id) {
+    try { await this.h.api(`/api/predictions/batches/${id}`, { method: 'DELETE' }); } catch { /* (listed again below) */ }
+    await this.refresh();
+  }
+
   _renderPair() {
     const { $, msgBox } = this.h;
+    this._renderMissing();
+    this._renderBatch();
     $('#predict-paths').hidden = $('#predict-fly').value !== OTHER;
     const p = this._pair(), m = this._model(), fly = this._fly();
     $('#predict-view').disabled = !(p && p.status === 'done');

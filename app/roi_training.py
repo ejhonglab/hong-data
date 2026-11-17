@@ -318,6 +318,8 @@ def inventory(db, root: Path, bases: list[Path]) -> dict:
     skipped = []
     for d in candidates(db):
         ds = db.get_dataset(d["id"])
+        if ds["metadata"].get("temporary"):  # (signals of predictions joined, batches.py: no fly's ROIs of its own)
+            continue
         about = {"id": ds["id"], "title": ds["title"], "uploader": ds["uploader_name"]}
         found = {k: tensor.find_data(ds["metadata"].get(f"{k}_data_path"), root, bases) for k in ("raw", "mocorr")}
         if not (found["mocorr"]["status"] == "ok" and found["mocorr"]["is_dir"]):

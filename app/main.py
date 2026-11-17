@@ -39,7 +39,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from . import (backup, bundle_import, chemprops, compare, config, dilution, export, extract, filelog, fits, headspace, lotus,
-               lotus_import, matrix_download, merge, metacyc, metacyc_import, model_data, model_runs, nmf_check, orn_input, movies, odormeta, permalinks,
+               batches, lotus_import, matrix_download, merge, metacyc, metacyc_import, model_data, model_runs, nmf_check, orn_input, movies, odormeta, permalinks,
                predictions, refinement, reference, roi_training, sandbox, tensor, thorimage, trial_dff, vcf, version, yamlcheck)
 from .db import PANEL_RENAMES, PROPERTY_COLUMNS, Database, rename_panel
 from .glomeruli import GLOMERULI, load_glomeruli
@@ -1704,6 +1704,108 @@ async def predictions_create(request: Request) -> Response:
     except ValueError as e:
         return json_error(400, str(e))
     return JSONResponse(p, status_code=201 if queued else 200)
+
+
+async def predictions_missing(request: Request) -> Response:
+    """The odors of a fit's model a fly lacks (``?fit=&dir=``: the fly's motion-corrected data folder, from the
+    top of tensor or absolute): `predictions.fly_missing`. 400 for a fit with no model or a fly not found."""
+    q = request.query_params
+
+    def run():
+        fit_id = int(q.get("fit", ""))
+        found = tensor.find_data(q.get("dir"), config.TENSOR_ROOT, [Path(p) for p in sandbox.folders()])
+        if found["status"] != "ok" or not found["is_dir"]:
+            raise ValueError(f"its motion-corrected data folder: {found.get('error') or 'not a folder'}")
+        return predictions.fly_missing(fit_id, Path(os.path.realpath(found["path"])), odormeta.OdorIndex(db.list_odors()))
+
+    try:
+        return JSONResponse(await run_in_threadpool(run))
+    except FileNotFoundError:
+        return json_error(400, "that fit has no model")
+    except (ValueError, KeyError) as e:
+        return json_error(400, str(e))
+
+
+async def predictions_batch(request: Request) -> Response:
+    """Asks for a fit's model's predictions of many flies at once (`batches.create`): {"name" (as for a
+    prediction), "fit", "flies": [{"dir", "raw_dir"}] (as for one), and how their ROIs are cleaned
+    (`predictions.options`)}. 201 with the batch; a fly not found is left out, said in ``left_out``."""
+    body = await request.json()
+    if not isinstance(body, dict) or not isinstance(body.get("flies"), list) or len(body["flies"]) > 1000:
+        return json_error(400, "flies: a list of {dir, raw_dir}")
+    name = _user_name(body.get("name"))
+    if not name:
+        return json_error(422, "say who you are: enter your first name in Settings")
+    if first_name_problem(name):
+        return json_error(422, "the name must be a first name alone, with no spaces (e.g. Ann)")
+
+    def run():
+        fit_id = int(body.get("fit"))
+        f = fits.get(db, fit_id)
+        if f is None or f["status"] != "done" or not (fits.fit_dir(fit_id) / "model" / "model.json").is_file():
+            raise ValueError(f"fit #{fit_id} has no model to predict with")
+        bases = [Path(p) for p in sandbox.folders()]
+        located, left = [], []
+        for x in body["flies"]:
+            try:
+                located.append(predictions.locate((x or {}).get("dir"), (x or {}).get("raw_dir"), config.TENSOR_ROOT, bases))
+            except ValueError as e:
+                left.append({"dir": (x or {}).get("dir"), "why": str(e)})
+        b = batches.create(db, fit_id, located, name, _client_ip(request), predictions.options(body))
+        return {**b, "left_out": left}
+
+    try:
+        return JSONResponse(await run_in_threadpool(run), status_code=201)
+    except (ValueError, TypeError) as e:
+        return json_error(400, str(e))
+
+
+async def predictions_batch_delete(request: Request) -> Response:
+    """Forgets a batch (its predictions, extractions and dataset stay)."""
+    done = await run_in_threadpool(batches.delete, db, request.path_params["id"])
+    return JSONResponse({"deleted": True}) if done else json_error(404, "no such batch")
+
+
+async def extractions_batch(request: Request) -> Response:
+    """The signals of the ROIs of every prediction of a batch done, extracted and then joined into a temporary
+    dataset (`batches.extract_all`): {"name", "batch", "rois": "predicted" or "edited", and the options of an
+    extraction (`extract.options`)}. 201 with the batch; 404 for no such batch; 400 as `extract.options`, or for
+    one with none done or its signals already being extracted."""
+    body = await request.json()
+    if not isinstance(body, dict):
+        return json_error(400, "expected a JSON object")
+    name = _user_name(body.get("name"))
+    if not name:
+        return json_error(422, "say who you are: enter your first name in Settings")
+    if first_name_problem(name):
+        return json_error(422, "the name must be a first name alone, with no spaces (e.g. Ann)")
+
+    def run():
+        rois = body.get("rois") if body.get("rois") in ("predicted", "edited") else "predicted"
+        return batches.extract_all(db, int(body.get("batch")), rois, extract.options(body), name, _client_ip(request),
+                                   config.TENSOR_ROOT, [Path(p) for p in sandbox.folders()])
+
+    try:
+        return JSONResponse(await run_in_threadpool(run), status_code=201)
+    except LookupError as e:
+        return json_error(404, str(e))
+    except (ValueError, TypeError) as e:
+        return json_error(400, str(e))
+
+
+async def dataset_temporary_delete(request: Request) -> Response:
+    """Deletes a temporary dataset (one made of a batch's signals, `batches.make_dataset`) as whoever asked for
+    it (``?name=``, as set in Settings), as the Admin tab deletes datasets. 403 for one not temporary, or not theirs."""
+    ds_id = int(request.path_params["ds_id"])
+    d = await run_in_threadpool(db.get_dataset, ds_id)
+    if d is None:
+        return json_error(404, "dataset not found")
+    t = batches.temporary_of(d)
+    name = _user_name(request.query_params.get("name"))
+    if not t or not name or name.casefold() != str(t.get("by") or "").casefold():
+        return json_error(403, "only a temporary dataset, by whoever asked for it (or in the Admin tab)")
+    status, result = await run_in_threadpool(_delete_dataset, ds_id)
+    return JSONResponse(result, status_code=status)
 
 
 async def predictions_delete(request: Request) -> Response:
@@ -4156,6 +4258,11 @@ routes = [
     Route("/api/fits/{id:int}/download", fits_download),
     Route("/api/predictions", predictions_list),
     Route("/api/predictions", predictions_create, methods=["POST"]),
+    Route("/api/predictions/missing", predictions_missing),
+    Route("/api/predictions/batch", predictions_batch, methods=["POST"]),
+    Route("/api/predictions/batches/{id:int}", predictions_batch_delete, methods=["DELETE"]),
+    Route("/api/extractions/batch", extractions_batch, methods=["POST"]),
+    Route("/api/datasets/{ds_id:int}/temporary", dataset_temporary_delete, methods=["DELETE"]),
     Route("/api/predictions/{id:int}", predictions_delete, methods=["DELETE"]),
     Route("/api/predictions/{id:int}/log", predictions_log),
     Route("/api/predictions/{id:int}/view", predictions_view),

@@ -42,7 +42,7 @@ from importlib import metadata
 from pathlib import Path
 from typing import Optional
 
-from . import config, extract, filelog, fits, nmf_check, odormeta, predictions, refinement, roi_training, sandbox, version
+from . import batches, config, extract, filelog, fits, nmf_check, odormeta, predictions, refinement, roi_training, sandbox, version
 from .db import Database
 from .glomeruli import load_glomeruli
 
@@ -381,6 +381,8 @@ average.tif         the fly's average image, as the model saw it
                     (only once they were edited in the tab's viewer) {fly}_RoiSet.zip's ROIs as edited there: their
                     outlines simplified, and points of them moved, added or deleted; and when, by whom, by how many
                     pixels simplified. {fly}_RoiSet.zip stays as predicted
+missing_odors.csv   each odor of the model: whether the fly has it, and whether Cellpose's images are made from it
+                    (a fly without some is joined and named by those it has)
 {scores}provenance.json    the model (its fit, its flies, the al-diag-seg that made it), the fly's files read (with
                     their sizes and when they were modified), the software that predicted, and who asked
 log.txt             what it printed
@@ -553,6 +555,7 @@ def run_prediction(db, p: dict, on_gpu: bool, why_cpu: Optional[str] = None) -> 
                 n = len(np.unique(pr["labels"][final])) - 1
                 named = sorted({v[0] for v in ids.values() if v[0]})
             shutil.copyfile(d / f"{name}_{final}_RoiSet.zip", d / f"{name}_RoiSet.zip")
+            predictions.write_missing(d, list(model.odors), list(f["odors"]), model.image_odors())
             am.write_volume(d / predictions.AVERAGE, f["average"].astype(np.float32))
             if cellprob is not None:  # (what a refinement's core goes by)
                 am.write_volume(d / f"{name}_{refinement.CELLPROB}.tif", np.asarray(cellprob, np.float32))
@@ -791,6 +794,11 @@ def extract_loop(db, state: dict, stop: Optional[threading.Event] = None) -> Non
             run_extraction(db, e)
         except Exception:  # noqa: BLE001 (said in its record; the thread goes on)
             log.exception("extraction %s", e["id"])
+        try:  # (a batch's signals all extracted: joined into a dataset)
+            for ds in batches.finish(db):
+                log.info("dataset %s made of a batch's signals", ds)
+        except Exception:  # noqa: BLE001
+            log.exception("could not join a batch's signals")
         finally:
             _free_ram()
             state["extraction"] = None

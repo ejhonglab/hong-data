@@ -3148,6 +3148,22 @@ class Browse {
 
   invalidate() { this.datasets = null; this.cache.clear(); }
 
+  // Deletes a temporary dataset of whoever is named in Settings (made of a batch's signals), once that is confirmed
+  async _deleteTemporary(id) {
+    const d = this.datasets.find((x) => x.id === id);
+    if (!d) return;
+    $('#delete-confirm-q').textContent = `Delete the temporary dataset #${id}, “${d.title}”?`;
+    $('#delete-confirm-detail').textContent = 'It is gone from the site at once, for everyone (its files are kept on the server, as the Admin tab keeps those it deletes). The extractions it was made of stay.';
+    $('#delete-confirm-warn').replaceChildren();
+    if (await askDialog($('#delete-confirm')) !== 'delete') return;
+    try {
+      await api(`/api/datasets/${id}/temporary?name=${encodeURIComponent(settings.current().name || '')}`, { method: 'DELETE' });
+    } catch (e) { $('#dataset-list').prepend(msgBox('error', `#${id} was not deleted: ${esc(e.message)}`)); return; }
+    this.forget(id);
+    if (this.selected === id) location.hash = '#browse';
+    this.load();
+  }
+
   // a dataset deleted (in the Admin tab)
   forget(id) {
     this.invalidate();
@@ -3197,13 +3213,17 @@ class Browse {
     const datasets = this._unitFilter().map((d) => listedAs(d, (id) => this.picked.has(id)));
     // (an entry of several calculations is the one shown whichever of them it is)
     const shown = (d) => this.selected === d.id || !!d.calcs?.some((c) => c.id === this.selected);
+    const me = (settings.current().name || '').trim().toLowerCase();
+    const mine = (d) => d.temporary && me && String(d.temporary.by || '').toLowerCase() === me;
     const item = (d) => `<div class="ds-item${shown(d) ? ' active' : ''}">
         <input type="checkbox" class="pick" data-id="${d.id}" aria-label="Select dataset #${d.id} for download">
+        ${mine(d) ? `<button type="button" class="ds-temp-x" data-temp-del="${d.id}" title="Delete this temporary dataset (yours: made of a batch's signals)" aria-label="Delete temporary dataset #${d.id}">×</button>` : ''}
         <button type="button" class="list-item" data-id="${d.id}">
           <span class="t">${datasetName(d)}</span>
           ${panelsLine(d, this.group)}
           <span class="s">${fliesText(d)}, ${d.n_units.toLocaleString()} ROIs, ${d.n_odors} odors${lastFlyText(d)}</span>
           <span class="s">#${d.id}, ${esc(d.uploader_name)}${d.recording_system ? ', ' + esc(d.recording_system) : ''}${uploadedText(d, this.group)}${calcsText(d)}</span>
+          ${d.temporary ? `<span class="ds-temp">temporary: the signals of batch #${d.temporary.batch}'s predictions, ${esc(d.temporary.by)}'s</span>` : ''}
         </button>
       </div>`;
     const groupHead = (label, ds) => `<div class="list-group"><label><input type="checkbox" class="pick-group" data-ids="${ds.map((d) => d.id).join(',')}"
@@ -3211,6 +3231,7 @@ class Browse {
     list.innerHTML = datasetGroups(datasets, this.group).map((g) => `<div class="list-section${g.diag ? ' diag' : ''}">`
       + groupHead(g.label, g.datasets) + g.datasets.map(item).join('') + '</div>').join('');
     $$('.list-item', list).forEach((b) => b.addEventListener('click', () => { location.hash = `#browse/${b.dataset.id}`; }));
+    $$('[data-temp-del]', list).forEach((b) => b.addEventListener('click', () => this._deleteTemporary(+b.dataset.tempDel)));
     this._syncPicks();
   }
 
@@ -8564,10 +8585,11 @@ class RoiTrainingPage {
     this.fits = new FitsPanel({ $, esc, api, msgBox, askDialog, fmtWhen, fmtSize, getName: () => settings.current().name,
       flies: () => this.data?.flies || null });
     this.predict = new PredictPanel({ $, esc, api, msgBox, askDialog, fmtWhen, getName: () => settings.current().name,
-      player: () => player, flies: () => this.data?.flies || null, onData: () => this.extract?.predictionsChanged(),
+      player: () => player, flies: () => this.data?.flies || null, onData: () => { this.extract?.predictionsChanged(); this.extract?.renderBatches(); },
       onMine: () => { if (this.extract?.data) this.extract.renderFlies(); } });
     this.extract = new ExtractPanel({ $, esc, api, msgBox, askDialog, fmtWhen, getName: () => settings.current().name,
-      flies: () => this.data?.flies || null, mine: () => this.predict.mine, predictions: () => this.predict.data?.predictions || null });
+      flies: () => this.data?.flies || null, mine: () => this.predict.mine, predictions: () => this.predict.data?.predictions || null,
+      batches: () => this.predict.data?.batches || null, refreshBatches: () => this.predict.refresh() });
   }
 
   async load(again = false) {

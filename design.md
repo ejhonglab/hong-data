@@ -435,6 +435,23 @@ between the frontend and the server. Using the app is described in
   and the next take, less its time in it; those from before stages were kept count by when
   they started and finished. One waiting starts when those before it end (one runs at a
   time), on the device it would get now. With none done on a device, a guess, said to be.
+- **A batch of predictions is many predictions, followed together, and its signals one
+  temporary dataset** (`batches.py`). Predict all asks for the model's prediction of each
+  fly of the menu it was not trained on, as one would be asked for (one done before by the
+  same model is kept; one that failed is made again), and a row of `prediction_batches`
+  keeps their ids, so the tab shows how many are over from the predictions themselves. The
+  odors each fly lacks are found before (`predictions.fly_missing`: as al-diag-seg's
+  `load_fly` will, from the fly's recordings' trial files alone, without reading a movie)
+  and kept after (`missing_odors.csv` in the prediction's folder). Its signals are as many
+  extractions, asked for at once; the fit worker, after each extraction, joins those of a
+  batch once all are over (`batches.finish`): their `responses_glomeruli.csv`, which the
+  Upload tab takes, side by side (rows of the same panel, odors and repeat as one, a fly's
+  odors padded with solvent to the most any has), stored as an upload would be but with
+  `temporary` in its metadata (who asked, the batch, the fit, the extractions), its
+  indicator and driver those of the datasets the model was fit to where they agree. Such a
+  dataset is never one whose flies the tab lists; whoever asked for it may delete it
+  (`DELETE /api/datasets/{id}/temporary`, by the name set in Settings, as no one logs in),
+  as may the Admin tab, by its usual deletion.
 - **A model can take in an odor that some flies lack, at no cost to those flies** (`fits.with_odors`,
   al-diag-seg's `Options.image_odors`, `identity.template_for`). A model's odors were those every
   fly of the tab shared (21 of the 86 flies', once geosmin was one odor), and a fly had to have
@@ -2026,6 +2043,7 @@ app/predictions.py predictions of flies' glomerulus ROIs by fits' models: record
                    estimates, the viewer's images, their ROIs as edited there, downloads
 app/refinement.py  a prediction's ROIs refined (split, trimmed, kept apart: al-diag-seg's Model.refine), with it or
                    after, from what it kept: state, undoing one, what was done to each ROI, scores before and after
+app/batches.py     batches of predictions: many flies at once, the odors each lacked, their signals joined into a temporary dataset
 app/nmf_check.py   glomeruli a prediction's ROIs miss, looked for in the fly's movies (al-diag-seg's alseg.nmf):
                    the look's state, what it found, ROIs' names with candidates merged in, and what the web
                    server asks of the fit worker meanwhile
@@ -2252,6 +2270,13 @@ POST   /api/predictions                     ask for one: {name, fit, dir, raw_di
                                             and its refinement: clean, clean_params, split};
                                             409 with the one there is of that model and fly, unless overwrite
 DELETE /api/predictions/{id}                delete one and its files (409 while it runs, or is refined)
+GET    /api/predictions/missing?fit=&dir=   the odors of a fit's model a fly lacks (predictions.fly_missing)
+POST   /api/predictions/batch               ask for a model's predictions of many flies: {name, fit, flies: [{dir, raw_dir}],
+                                            and how their ROIs are cleaned}; 201 with the batch (batches.py)
+DELETE /api/predictions/batches/{id}        forget a batch (its predictions stay)
+POST   /api/extractions/batch               the signals of all of a batch's flies, then joined into a temporary dataset:
+                                            {name, batch, rois: predicted | edited, and an extraction's options}
+DELETE /api/datasets/{id}/temporary?name=   delete a temporary dataset, as whoever asked for it
 GET    /api/predictions/{id}/log            its log
 GET    /api/predictions/{id}/view           what the movie player shows of one done: the fly's images, each with
                                             the ROIs predicted and the fly's own; and the predicted ROIs as edited

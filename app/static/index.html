@@ -533,7 +533,10 @@ try {
       <div class="actions">
         <button type="button" class="btn primary" id="predict-start">Predict its ROIs</button>
         <button type="button" class="btn" id="predict-view" disabled>View the ROIs</button>
+        <button type="button" class="btn" id="predict-all" disabled title="Predicts, with the model chosen and the cleaning above, every fly in the menu it was not trained on: those held out of it, those with ROIs it was not fit to, and those without ROIs. One this model has predicted already is kept as it is (one that failed is predicted again).">Predict all flies it was not trained on</button>
       </div>
+      <div id="predict-missing" aria-live="polite"></div>
+      <div id="predict-batch" aria-live="polite"></div>
       <div id="predict-status" aria-live="polite"></div>
       <div id="predict-list"></div>
     </div>
@@ -590,6 +593,20 @@ try {
         <button type="button" class="btn primary" id="extract-start">Extract its signals</button>
       </div>
       <div id="extract-status" aria-live="polite"></div>
+      <details class="extract-batch" id="extract-batch-box">
+        <summary>All the flies of a batch of predictions, joined into a temporary dataset</summary>
+        <p class="small muted">The signals of every fly a batch predicted (<i>Predict all flies it was not trained on</i>, above), with the
+          settings above, each extracted as for one fly; once all are over, their ROIs named as glomeruli are joined into one dataset,
+          listed in Browse as temporary: whoever asked for it can delete it there (its ×), as can the Admin tab.</p>
+        <div class="grid predict-options">
+          <label class="field"><span>Batch</span><select id="extract-batch"></select></label>
+          <label class="field"><span>ROIs</span><select id="extract-batch-rois">
+            <option value="predicted">as predicted</option>
+            <option value="edited">as edited in the viewer, where they were (else as predicted)</option></select></label>
+        </div>
+        <div class="actions"><button type="button" class="btn" id="extract-batch-start" disabled>Extract them all, and join them</button></div>
+        <div id="extract-batch-status" aria-live="polite"></div>
+      </details>
       <div id="extract-list"></div>
     </div>
 

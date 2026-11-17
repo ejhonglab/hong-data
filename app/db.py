@@ -265,6 +265,16 @@ CREATE TABLE IF NOT EXISTS predictions (  -- glomerulus ROIs a fit's model predi
     refine_json TEXT,                  -- who asked for that and when, how, how far it is, what it made
     UNIQUE (fit_id, fly_dir)
 );
+CREATE TABLE IF NOT EXISTS prediction_batches (  -- one model's predictions of many flies, asked for at once (batches.py)
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fit_id INTEGER NOT NULL,
+    name TEXT NOT NULL,                -- who asked
+    ip TEXT,
+    created_at TEXT NOT NULL,
+    ids_json TEXT NOT NULL,            -- its predictions' ids
+    options_json TEXT,                 -- how their ROIs are cleaned (predictions.options)
+    extract_json TEXT                  -- the signals of all of them asked for: extractions, who, status, the dataset made
+);
 CREATE TABLE IF NOT EXISTS worker_calls (  -- quick things the web server asks of the fit worker, which has al-diag-seg, and waits for (nmf_check.call)
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL,
@@ -371,7 +381,10 @@ def _parsed(d: dict) -> dict:
     """A dataset's row with ``data_files``: [{name, sha256}] of each of its data files (its
     one, ``data_file``, if not several), and ``manipulations`` (`metadata.Metadata`'s: [] for none)."""
     files = json.loads(d["data_files"]) if d.get("data_files") else [{"name": d["data_file"], "sha256": d["data_sha256"]}]
-    return {**d, "data_files": files, "manipulations": json.loads(d["manipulations"]) if d.get("manipulations") else []}
+    out = {**d, "data_files": files, "manipulations": json.loads(d["manipulations"]) if d.get("manipulations") else []}
+    if "temporary" in d:  # (one made of a batch's signals, batches.py: whose it is)
+        out["temporary"] = json.loads(d["temporary"]) if d["temporary"] else None
+    return out
 
 
 def _metadata_columns(metadata: dict) -> dict:
@@ -594,7 +607,8 @@ class Database:
             rows = con.execute(
                 """SELECT id, created_at, title, uploader_name, indicator, driver, coding_unit, panel_names,
                           recording_system, manipulations, response_calc, n_flies, n_units, n_trials, n_odors, repeats_min, repeats_max,
-                          first_fly_date, last_fly_date, roi_kind, data_file, data_sha256, data_files
+                          first_fly_date, last_fly_date, roi_kind, data_file, data_sha256, data_files,
+                          json_extract(metadata_json, '$.temporary') AS temporary
                    FROM datasets ORDER BY last_fly_date DESC, id DESC"""
             ).fetchall()
             panels = con.execute("SELECT dataset_id, panel, source FROM dataset_panels ORDER BY rowid").fetchall()

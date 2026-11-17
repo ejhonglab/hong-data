@@ -107,6 +107,8 @@ export class ExtractPanel {
     $('#extract-mode').addEventListener('change', () => this._renderMode());
     $('#extract-unmix').addEventListener('change', () => this._renderUnmix());
     $('#extract-start').addEventListener('click', () => this.start());
+    $('#extract-batch-start').addEventListener('click', () => this.startBatch());
+    $('#extract-batch').addEventListener('change', () => this.renderBatches());
     $('#extract-list').addEventListener('click', (e) => this._action(e));
   }
 
@@ -164,6 +166,41 @@ export class ExtractPanel {
   _predictions() { return (this.h.predictions() || []).filter((p) => p.status === 'done'); }
 
   // the predictions were asked of the server again: the menus made again, if what they say of them changed
+  // Batches of predictions (Predict all), to extract all of their flies' signals and join them: the menu of those with any done, and
+  // of the one chosen, how its extraction is going, and the dataset it made
+  renderBatches() {
+    const { $, esc, msgBox, fmtWhen } = this.h, bs = (this.h.batches?.() || []).filter((b) => (b.counts.done || 0) > 0);
+    const sel = $('#extract-batch'), had = sel.value;
+    sel.innerHTML = bs.length ? bs.map((b) => `<option value="${b.id}">Batch #${b.id}: fit #${b.fit_id}'s, ${b.counts.done} of ${b.ids.length} flies predicted,
+      ${esc(b.name)}'s, ${esc(fmtWhen(b.created_at))}</option>`).join('') : '<option value="">No batch of predictions has any done yet</option>';
+    if (bs.some((b) => String(b.id) === had)) sel.value = had;
+    const b = bs.find((x) => String(x.id) === sel.value), x = b?.extract;
+    $('#extract-batch-start').disabled = !b || !this.h.getName() || x?.status === 'running';
+    const out = $('#extract-batch-status');
+    if (!x) { out.replaceChildren(); return; }
+    const n = x.ids.length, c = x.counts || {}, over = n - (c.queued || 0) - (c.running || 0);
+    out.replaceChildren(x.status === 'running' ? msgBox('info', `Extracting the signals of ${n} flies (asked for by <b>${esc(x.by)}</b>): ${over} of ${n} over${
+      c.failed ? `, ${c.failed} failed` : ''}. Once all are, they are joined into a temporary dataset.<progress class="predict-batch-bar" max="${n}" value="${over}"></progress>`)
+      : x.status === 'done' ? msgBox('ok', `The signals of ${x.done} of its ${n} flies are joined into the temporary dataset <a href="#browse/${x.dataset_id}">#${x.dataset_id}</a>
+        (whoever asked for it, ${esc(x.by)}, can delete it in Browse: its ×).`)
+        : msgBox('error', `They could not be joined into a dataset: ${esc(x.error || 'not known why')}.`));
+  }
+
+  async startBatch() {
+    const { $, api, msgBox, esc } = this.h, name = this.h.getName(), batch = +$('#extract-batch').value;
+    if (!name || !batch) return;
+    $('#extract-batch-start').disabled = true;
+    const unmix = $('#extract-unmix').value, win = $('#extract-window').value;
+    try {
+      await api('/api/extractions/batch', { method: 'POST', json: { name, batch, rois: $('#extract-batch-rois').value, mode: $('#extract-mode').value,
+        ...(win ? { window: +win } : {}), ...(unmix ? { unmix } : {}) } });
+    } catch (e) {
+      $('#extract-batch-status').replaceChildren(msgBox('error', `Could not ask for them: ${esc(e.message)}`));
+    }
+    await this.h.refreshBatches?.();
+    await this.refresh();
+  }
+
   predictionsChanged() {
     const sig = JSON.stringify(this._predictions().map((p) => [p.id, p.finished_at, p.edited?.revision]));
     if (sig === this.predSig) return;
