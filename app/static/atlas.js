@@ -27,6 +27,7 @@ export class AtlasPage {
     this.hidden = new Set(); // glomeruli (by name) hidden
     this.focused = new Set(); // and focused: the others drawn nearly transparent
     this.query = '';
+    this.under = null; // the glomerulus under the pointer, which Space shows or hides: { name, from: 'view' | 'list', at (the pointer, of the view) }
   }
 
   // when the tab is shown: made the first time (three.js and the atlas read), else drawn at its size now
@@ -127,7 +128,25 @@ export class AtlasPage {
       }
       drag = null;
     });
-    canvas.addEventListener('pointerleave', () => { $('#atlas-tip').hidden = true; });
+    canvas.addEventListener('pointerleave', () => {
+      $('#atlas-tip').hidden = true;
+      if (this.under?.from === 'view') this.under = null;
+    });
+    // Space: the glomerulus under the pointer hidden (in the view: so the one behind it comes next), or shown or hidden (in the list)
+    $('#atlas-list').addEventListener('mouseover', (e) => {
+      const row = e.target.closest('[data-name]');
+      this.under = row ? { name: row.dataset.name, from: 'list' } : null;
+    });
+    $('#atlas-list').addEventListener('mouseleave', () => { if (this.under?.from === 'list') this.under = null; });
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== ' ' || e.ctrlKey || e.metaKey || e.altKey || $('#tab-al-atlas').hidden || !this.under
+        || e.target.closest?.('input, textarea, select, [contenteditable]')) return;
+      e.preventDefault();
+      const { name, from, at } = this.under;
+      if (this.hidden.has(name)) this.hidden.delete(name); else this.hidden.add(name);
+      this._update();
+      if (from === 'view' && at) this._hover(at); // (now the one behind it, if any)
+    });
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
       const off = this.camera.position.clone().sub(this.target), d = off.length() * Math.exp(e.deltaY * 0.0012);
@@ -356,6 +375,7 @@ export class AtlasPage {
 
   _hover(e) {
     const { $, esc } = this.h, tip = $('#atlas-tip'), g = this._pick(e);
+    this.under = g ? { name: g.name, from: 'view', at: { clientX: e.clientX, clientY: e.clientY } } : null;
     if (!g) { tip.hidden = true; return; }
     const r = $('#atlas-view').getBoundingClientRect();
     tip.innerHTML = `<b>${esc(g.name)}</b> <span class="muted">${esc(g.side)} lobe${g.receptor ? ` · ${esc(g.receptor)}` : ''} · ${Math.round(g.volume_um3)} µm³</span>`;

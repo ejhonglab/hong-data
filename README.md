@@ -1055,7 +1055,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   or both. A lobe opens seen from dorsal with posterior up, mirrored where needed so that medial is on
   the left and lateral on the right (the right lobe along A/P; the left as it is); *Flip* mirrors it
   along D/V, A/P or M/L (of both lobes: L/R), and the arrows follow.
-  Each glomerulus in the list can be hidden or focused (also by clicking it in the view): while
+  Each glomerulus in the list can be hidden or focused (also by clicking it in the view; Space
+  hides the one under the pointer, peeling them away, and over one in the list shows or hides it): while
   any are focused, the others shown are drawn nearly transparent. Neighbouring glomeruli are
   coloured apart. Arrows in the corner turn with the view, showing where dorsal/ventral,
   anterior/posterior and medial/lateral (with both lobes: the fly's left/right) are.
