@@ -844,8 +844,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   those with ROIs it was not fit to, those without ROIs; with *only my flies* ticked, the
   default, only yours: of the datasets you uploaded and in your folders on tensor, by the
   name in Settings), keeping those it made before; a
-  bar above the one fly's says how many are over, and below it which flies lacked which
-  odors, and which failed. *Extract signals* can then extract the signals of all of a
+  bar above the one fly's says how many are over, and below it, folded away (opened by
+  itself when the batch ends while the page is open), which flies lacked which odors, and
+  which failed. In the lists of predictions and of signals extracted, a batch's are folded
+  into one row (with how many are of each status), opened by a click. *Extract signals* can then extract the signals of all of a
   batch's flies at once (*All the flies of a batch of predictions*, with its settings),
   joined, once all are over, into one dataset listed in Browse as temporary: whoever
   asked for it can delete it there with its ×, as can the Admin tab. The signals of one

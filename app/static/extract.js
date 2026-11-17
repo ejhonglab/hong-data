@@ -6,6 +6,7 @@
 // neighbouring ROIs' signals are unmixed too: unmix.py), and every extraction made, to download.
 
 import { fmtDuration } from './fits.js';
+import { batchGroups } from './predictions.js';
 import { FlyMenu } from './flymenu.js';
 import { tip } from './tips.js';
 
@@ -94,6 +95,7 @@ export class ExtractPanel {
   constructor(h) {
     this.h = h;
     this.data = null; // as from /api/extractions
+    this.openBatches = new Set(); // batches whose extractions are shown in the list (`batchGroups`)
     this.timer = null;
     const { $ } = h;
     this.listed = new Map(); // the menu's flies, by folder (`_flies`)
@@ -408,9 +410,14 @@ export class ExtractPanel {
   // every extraction, newest first
   _renderList() {
     const { $, esc, fmtWhen } = this.h, xs = this.data.extractions, alive = this.data.worker?.alive;
+    // (the batch of predictions each is of, if any: the newest whose signals it is)
+    const batchOf = new Map();
+    for (const b of [...(this.h.batches?.() || [])].reverse()) {
+      for (const id of b.extract?.ids || []) batchOf.set(id, { id: b.id, label: `Batch #${b.id}'s signals (fit #${b.fit_id}'s predictions), asked for by <b>${esc(b.extract.by || '?')}</b>${b.extract.at ? ` ${esc(fmtWhen(b.extract.at))}` : ''}` });
+    }
     const modes = this.data.modes;
     $('#extract-list').innerHTML = !xs.length ? '' : `<h3>Signals extracted</h3><table class="odor-table predictions-table"><thead><tr>
-      <th>Fly</th><th>ROIs</th><th>Of several planes</th><th>Response window</th><th>Asked for by</th><th>When</th><th>Status</th><th>Signals</th><th></th></tr></thead><tbody>${xs.map((x) => {
+      <th>Fly</th><th>ROIs</th><th>Of several planes</th><th>Response window</th><th>Asked for by</th><th>When</th><th>Status</th><th>Signals</th><th></th></tr></thead><tbody>${batchGroups(xs, (x) => batchOf.get(x.id) || null, (x) => {
       const r = x.result, pr = x.progress || {};
       const left = x.eta && alive ? ` <span class="muted" title="${esc(this._from(x.eta))}">· ${x.eta.until >= 1
         ? `about ${fmtDuration(x.eta.until)} left` : 'ending any moment'}</span>` : '';
@@ -434,7 +441,7 @@ export class ExtractPanel {
         <td class="acts">${x.status === 'done' ? `<a class="btn small" href="/api/extractions/${x.id}/download" download>Download</a>` : ''}
           ${x.status !== 'queued' ? `<a class="btn small" href="/api/extractions/${x.id}/log" target="_blank" rel="noopener">Log</a>` : ''}
           ${x.status !== 'running' ? '<button type="button" class="btn small danger" data-act="delete">Delete</button>' : ''}</td></tr>`;
-    }).join('')}</tbody></table>`;
+    }, this.openBatches, 9, (x) => (STATUS_NAMES[x.status] || x.status).toLowerCase())}</tbody></table>`;
   }
 
   async start() {
@@ -458,6 +465,12 @@ export class ExtractPanel {
   async _action(e) {
     const b = e.target.closest('[data-act]');
     if (!b) return;
+    if (b.dataset.act === 'batch-toggle') {
+      const k = +b.dataset.batchId;
+      if (this.openBatches.has(k)) this.openBatches.delete(k); else this.openBatches.add(k);
+      this._renderList();
+      return;
+    }
     const id = Number(b.closest('[data-id]').dataset.id), x = this.data.extractions.find((y) => y.id === id);
     const { $, api, msgBox, esc, askDialog } = this.h;
     if (b.dataset.act === 'delete') {

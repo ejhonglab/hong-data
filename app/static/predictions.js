@@ -89,6 +89,26 @@ function refineTable(r, esc) {
 }
 const trim = (s) => (s || '').trim().replace(/\/+$/, '');
 
+// The rows of a list (`items`, newest first: `row(item)` each one's) grouped by the batch each is of (`batchOf(item)`: { id,
+// label }, or null): a batch's rows after a row of its own, where its newest would be, which opens or folds them (`open`: the
+// batches open; folded by default), saying how many there are of each status (`statusOf`); the others as they are
+export function batchGroups(items, batchOf, row, open, cols, statusOf) {
+  const seen = new Set(), out = [];
+  for (const it of items) {
+    const b = batchOf(it);
+    if (!b) { out.push(row(it)); continue; }
+    if (seen.has(b.id)) continue;
+    seen.add(b.id);
+    const members = items.filter((x) => batchOf(x)?.id === b.id), on = open.has(b.id), counts = {};
+    for (const m of members) counts[statusOf(m)] = (counts[statusOf(m)] || 0) + 1;
+    out.push(`<tr class="batch-head"><td colspan="${cols}"><button type="button" class="link" data-act="batch-toggle" data-batch-id="${b.id}"
+      aria-expanded="${on}">${on ? '▾' : '▸'} ${b.label}</button> <span class="muted">(${members.length}: ${Object.entries(counts)
+      .map(([k, n]) => `${n} ${k}`).join(', ')})</span></td></tr>`);
+    out.push(...members.map((m) => row(m).replace(/<tr(?=[\s>])/g, `<tr data-in-batch="${b.id}"${on ? '' : ' hidden'}`)));
+  }
+  return out.join('');
+}
+
 export class PredictPanel {
   // helpers: { $, esc, api, msgBox, askDialog, fmtWhen, getName (the name in Settings, '' if none),
   // player (the movie player), flies (the tab's flies, as from /api/roi_training; null until found) }
@@ -116,6 +136,12 @@ export class PredictPanel {
     $('#predict-all').addEventListener('click', () => this.startAll());
     $('#predict-all-mine').addEventListener('change', () => this._renderBatch());
     $('#predict-batch').addEventListener('click', (e) => { if (e.target.closest('[data-act=forget-batch]')) this._forgetBatch(+e.target.closest('[data-batch]').dataset.batch); });
+    this.batchSeen = new Map(); // batch id -> { over, open }: whether its flies' details are shown (`_renderBatch`)
+    this.openBatches = new Set(); // batches whose predictions are shown in the list (`batchGroups`)
+    $('#predict-batch').addEventListener('toggle', (e) => {
+      const d = e.target.closest?.('.predict-batch-more'), id = +e.target.closest?.('[data-batch]')?.dataset.batch;
+      if (d && this.batchSeen.has(id)) this.batchSeen.get(id).open = d.open;
+    }, true);
     this.missing = new Map(); // `${fit}|${dir}` -> what the model's odors the fly lacks are (/api/predictions/missing), or a promise of it
     $('#predict-view').addEventListener('click', () => { const p = this._pair(); if (p) this.view(p); });
     $('#predict-list').addEventListener('click', (e) => this._action(e));
@@ -349,7 +375,14 @@ export class PredictPanel {
       p.result.missing_odors.length} of ${p.result.model_odors} (${p.result.missing_odors.map(esc).join(', ')})</li>`).join('')}</ul>` : '';
     const fail = failed.length ? `<p class="small">Failed:</p><ul class="predict-batch-flies">${failed.map((p) => `<li><b>${esc(p.fly)}</b>: ${esc(p.error || p.status)}</li>`).join('')}</ul>` : '';
     const kind = lacking.length || failed.length ? 'warn' : over === ps.length ? 'ok' : 'info';
-    const el = msgBox(kind, head + bar + lack + fail);
+    // (which flies lacked odors and which failed: folded away, unless it was opened, or the batch ended while the page was open)
+    const all = over === ps.length, seen = this.batchSeen.get(b.id);
+    if (!seen) this.batchSeen.set(b.id, { over: all, open: false });
+    else if (!seen.over && all) Object.assign(seen, { over: true, open: true });
+    else seen.over = all;
+    const more = lack || fail ? `<details class="predict-batch-more"${this.batchSeen.get(b.id).open ? ' open' : ''}><summary class="small">${[
+      lacking.length ? `${lacking.length} lacked diagnostic odors` : '', failed.length ? `${failed.length} failed` : ''].filter(Boolean).join(', ')}: which</summary>${lack}${fail}</details>` : '';
+    const el = msgBox(kind, head + bar + more);
     el.dataset.batch = b.id;
     box.replaceChildren(el);
   }
@@ -389,10 +422,15 @@ export class PredictPanel {
   // every prediction, newest first
   _renderList() {
     const { $, esc, fmtWhen } = this.h, ps = this.data.predictions;
+    // (the batch each is of: the newest it is in)
+    const batchOf = new Map();
+    for (const b of [...(this.data.batches || [])].reverse()) {
+      for (const id of b.ids) batchOf.set(id, { id: b.id, label: `Batch #${b.id}: fit #${b.fit_id}'s predictions, asked for by <b>${esc(b.name)}</b> ${esc(fmtWhen(b.created_at))}` });
+    }
     $('#predict-list').innerHTML = !ps.length ? '' : `<h3>Predictions</h3><table class="odor-table predictions-table"><thead><tr>
       <th>Fly</th><th>Model</th><th>Asked for by</th><th>When</th><th>Status</th><th>ROIs <span class="muted">(named; ${scoreTip('found', 'found')}, ${scoreTip('right', 'right')}, ${scoreTip('dice', 'Dice')}, ${scoreTip('named', 'name correct')})</span></th>
       <th title="Its ROIs kept from their neighbors: split where an outline holds two glomeruli, trimmed, kept apart. Show: their scores before and after">Refinement</th>
-      <th></th></tr></thead><tbody>${ps.map((p) => {
+      <th></th></tr></thead><tbody>${batchGroups(ps, (p) => batchOf.get(p.id) || null, (p) => {
       const r = p.result, s = r?.scores;
       const rois = r ? `${r.n} <span class="muted">(${r.named.length} named)</span>${s ? ` <span class="muted">· ${both(s, 'recall')}, ${both(s, 'precision')},
         ${both(s, 'dice', num2)}, ${s.named_of ? pct(s.named / s.named_of) : '—'}</span>` : ''}${
@@ -411,7 +449,7 @@ export class PredictPanel {
           ${p.status !== 'queued' ? `<a class="btn small" href="/api/predictions/${p.id}/log" target="_blank" rel="noopener">Log</a>` : ''}
           ${p.status !== 'running' ? '<button type="button" class="btn small danger" data-act="delete">Delete</button>' : ''}</div></td></tr>${
         this.shown.has(p.id) && p.refine?.status === 'done' ? `<tr class="refine-details" data-id="${p.id}"><td colspan="8">${this._refineHtml(p, true)}</td></tr>` : ''}`;
-    }).join('')}</tbody></table>`;
+    }, this.openBatches, 8, (p) => (STATUS_NAMES[p.status] || p.status).toLowerCase())}</tbody></table>`;
   }
 
   // a prediction's Refinement cell in the list: Show (its scores), once refined; how it is, while it is being; else Refine
@@ -580,6 +618,12 @@ alseg-predict ${fit}/model --fly /local/tensor/Ann/analysis/2026-03-31/1 \\
   async _action(e) {
     const b = e.target.closest('[data-act]');
     if (!b) return;
+    if (b.dataset.act === 'batch-toggle') {
+      const k = +b.dataset.batchId;
+      if (this.openBatches.has(k)) this.openBatches.delete(k); else this.openBatches.add(k);
+      this._renderList();
+      return;
+    }
     const id = Number(b.closest('[data-id]').dataset.id), p = this.data.predictions.find((x) => x.id === id);
     const { $, api, msgBox, esc, askDialog } = this.h;
     if (b.dataset.act === 'view') { this.view(p); return; }
