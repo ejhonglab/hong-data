@@ -110,7 +110,7 @@ export class AtlasPage {
     let drag = null;
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     canvas.addEventListener('pointerdown', (e) => {
-      drag = { x: e.clientX, y: e.clientY, pan: e.shiftKey || e.button === 2, moved: 0 };
+      drag = { x: e.clientX, y: e.clientY, pan: e.shiftKey || e.button === 2, roll: e.ctrlKey || e.metaKey, moved: 0 };
       try { canvas.setPointerCapture(e.pointerId); } catch { /* (a pointer no longer down) */ }
     });
     canvas.addEventListener('pointermove', (e) => {
@@ -119,7 +119,9 @@ export class AtlasPage {
       drag.x = e.clientX;
       drag.y = e.clientY;
       drag.moved += Math.abs(dx) + Math.abs(dy);
-      if (drag.pan) this._pan(dx, dy); else this._turn(dx, dy);
+      if (drag.roll) this._roll(e.clientX - dx, e.clientY - dy, e.clientX, e.clientY);
+      else if (drag.pan) this._pan(dx, dy);
+      else this._turn(dx, dy);
     });
     canvas.addEventListener('pointerup', (e) => {
       if (drag && drag.moved < 4 && e.button === 0) {
@@ -157,6 +159,17 @@ export class AtlasPage {
   }
 
   // turns the view about the middle: across the screen about the camera's up, up and down about its right
+  // turns the view about the axis it looks down (with Ctrl or ⌘ held): by the angle the pointer went round the view's middle,
+  // from (x0, y0) to (x1, y1), the glomeruli following it
+  _roll(x0, y0, x1, y1) {
+    const r = this.renderer.domElement.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const a = Math.atan2(y1 - cy, x1 - cx) - Math.atan2(y0 - cy, x0 - cx);
+    const axis = this.camera.position.clone().sub(this.target).normalize();
+    this.camera.up.applyQuaternion(new this.T.Quaternion().setFromAxisAngle(axis, a)).normalize();
+    this.camera.lookAt(this.target);
+    this._draw();
+  }
+
   _turn(dx, dy) {
     const T = this.T, cam = this.camera, off = cam.position.clone().sub(this.target);
     const right = new T.Vector3().crossVectors(cam.up, off).normalize();

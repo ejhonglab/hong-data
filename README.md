@@ -1057,7 +1057,7 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   *Fit a model* says what such a download has, and how to install al-diag-seg and run a
   model on a fly (the versions the fit worker has filled in).
 - **AL atlas**: the 108 glomeruli (54 per lobe) of the Grabe et al. 2016 in vivo atlas in 3D:
-  drag to turn them (Shift or the right button: to move them), the wheel to zoom, and buttons to
+  drag to turn them (Shift or the right button: to move them; Ctrl: round the axis looked down), the wheel to zoom, and buttons to
   look from each side (anterior, dorsal, lateral, ...). Choose the right lobe (the default), the left
   or both. A lobe opens seen from dorsal with posterior up, mirrored where needed so that medial is on
   the left and lateral on the right (the right lobe along A/P; the left as it is); *Flip* mirrors it
