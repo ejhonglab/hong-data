@@ -119,6 +119,8 @@ CREATE TABLE IF NOT EXISTS responses (
     PRIMARY KEY (unit_id, trial_id)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS responses_dataset ON responses(dataset_id);
+-- (without it, deleting a dataset scanned all of responses once per trial deleted: hours, for one of thousands of trials)
+CREATE INDEX IF NOT EXISTS responses_trial ON responses(trial_id);
 CREATE TABLE IF NOT EXISTS matrices (
     dataset_id INTEGER PRIMARY KEY REFERENCES datasets(id) ON DELETE CASCADE,
     n_units INTEGER NOT NULL,
@@ -881,6 +883,7 @@ class Database:
         """
         when = when or dt.datetime.now().isoformat(timespec="seconds")
         with self.connect() as con:
+            con.execute("PRAGMA cache_size = -262144")  # (256 MB: a big one's millions of responses deleted in half the time)
             if permalink_keys is not None:
                 con.execute("UPDATE permalinks SET keys_json = ? WHERE dataset_id = ?", (json.dumps(permalink_keys), ds_id))
             con.execute("UPDATE permalinks SET dataset_id = NULL, orphaned_at = ?, updated_at = ? WHERE dataset_id = ?",

@@ -3166,9 +3166,20 @@ class Browse {
     $('#delete-confirm-detail').textContent = 'It is gone from the site at once, for everyone (its files are kept on the server, as the Admin tab keeps those it deletes). The extractions it was made of stay.';
     $('#delete-confirm-warn').replaceChildren();
     if (await askDialog($('#delete-confirm')) !== 'delete') return;
+    // (one of millions of responses takes a minute or so: said meanwhile, where it was asked)
+    const where = this.selected === id ? $('#ds-temp-msg') : $('#dataset-list');
+    const wait = msgBox('info', `Deleting #${id}… (a big one takes a minute or so)`);
+    where.prepend(wait);
+    wait.scrollIntoView({ block: 'nearest' });
+    const buttons = [...$$(`[data-temp-del="${id}"]`), ...(this.selected === id ? [$('#ds-temp-delete')] : [])];
+    buttons.forEach((b) => { b.disabled = true; });
     try {
       await api(`/api/datasets/${id}/temporary?name=${encodeURIComponent(settings.current().name || '')}`, { method: 'DELETE' });
-    } catch (e) { $('#dataset-list').prepend(msgBox('error', `#${id} was not deleted: ${esc(e.message)}`)); return; }
+    } catch (e) {
+      wait.replaceWith(msgBox('error', `#${id} was not deleted: ${esc(e.message)}`));
+      return;
+    } finally { buttons.forEach((b) => { b.disabled = false; }); }
+    wait.remove();
     this.forget(id);
     if (this.selected === id) location.hash = '#browse';
     this.load();
