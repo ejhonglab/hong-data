@@ -871,7 +871,8 @@ class Database:
             con.execute("UPDATE datasets SET readme_md = ?, readme_edited = 1 WHERE id = ?", (readme_md, ds_id))
 
     def delete_dataset(self, ds_id: int, before_commit: Optional[Callable[[], None]] = None,
-                       permalink_keys: Optional[dict] = None, when: Optional[str] = None) -> bool:
+                       permalink_keys: Optional[dict] = None, when: Optional[str] = None,
+                       progress: Optional[Callable[[int, int], None]] = None) -> bool:
         """Delete a dataset and all its rows, its permalink (if any) orphaned; False if there
         is no such dataset.
 
@@ -880,10 +881,20 @@ class Database:
                 nothing is deleted if it raises.
             permalink_keys: what its permalink keeps of it (`permalinks.dataset_keys`), as it
                 is deleted; `when`: then.
+            progress: called with (ROIs whose responses are deleted, of how many) as they are
+                (a few hundred at a time: millions of responses take half a minute or so).
         """
         when = when or dt.datetime.now().isoformat(timespec="seconds")
         with self.connect() as con:
             con.execute("PRAGMA cache_size = -262144")  # (256 MB: a big one's millions of responses deleted in half the time)
+            units = [r[0] for r in con.execute("SELECT id FROM units WHERE dataset_id = ? ORDER BY id", (ds_id,))]
+            for i in range(0, len(units), 200):  # (its responses before it, as the cascade would, but saying how far it is)
+                if progress:
+                    progress(i, len(units))
+                chunk = units[i:i + 200]
+                con.execute(f"DELETE FROM responses WHERE unit_id IN ({','.join('?' * len(chunk))})", chunk)
+            if progress:
+                progress(len(units), len(units))
             if permalink_keys is not None:
                 con.execute("UPDATE permalinks SET keys_json = ? WHERE dataset_id = ?", (json.dumps(permalink_keys), ds_id))
             con.execute("UPDATE permalinks SET dataset_id = NULL, orphaned_at = ?, updated_at = ? WHERE dataset_id = ?",

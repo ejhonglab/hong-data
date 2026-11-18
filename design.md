@@ -2286,6 +2286,7 @@ DELETE /api/predictions/batches/{id}        forget a batch (its predictions stay
 POST   /api/extractions/batch               the signals of all of a batch's flies, then joined into a temporary dataset:
                                             {name, batch, rois: predicted | edited, and an extraction's options}
 DELETE /api/datasets/{id}/temporary?name=   delete a temporary dataset, as whoever asked for it
+GET    /api/datasets/{id}/deleting          how far its deletion is: {done, total} ROIs' responses (404: not being deleted)
 GET    /api/predictions/{id}/log            its log
 GET    /api/predictions/{id}/view           what the movie player shows of one done: the fly's images, each with
                                             the ROIs predicted and the fly's own; and the predicted ROIs as edited

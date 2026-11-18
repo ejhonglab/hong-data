@@ -3166,23 +3166,70 @@ class Browse {
     $('#delete-confirm-detail').textContent = 'It is gone from the site at once, for everyone (its files are kept on the server, as the Admin tab keeps those it deletes). The extractions it was made of stay.';
     $('#delete-confirm-warn').replaceChildren();
     if (await askDialog($('#delete-confirm')) !== 'delete') return;
-    // (one of millions of responses takes a minute or so: said meanwhile, where it was asked)
-    const where = this.selected === id ? $('#ds-temp-msg') : $('#dataset-list');
-    const wait = msgBox('info', `Deleting #${id}… (a big one takes a minute or so)`);
-    where.prepend(wait);
-    wait.scrollIntoView({ block: 'nearest' });
-    const buttons = [...$$(`[data-temp-del="${id}"]`), ...(this.selected === id ? [$('#ds-temp-delete')] : [])];
-    buttons.forEach((b) => { b.disabled = true; });
+    // (one of millions of responses takes half a minute or so: a bar on it meanwhile, `_showDeleting`)
+    d.deleting = { done: 0, total: 0 };
+    (this._asked ||= new Set()).add(id);
+    this._showDeleting(id);
     try {
       await api(`/api/datasets/${id}/temporary?name=${encodeURIComponent(settings.current().name || '')}`, { method: 'DELETE' });
     } catch (e) {
-      wait.replaceWith(msgBox('error', `#${id} was not deleted: ${esc(e.message)}`));
+      delete d.deleting;
+      this._asked.delete(id);
+      this._showDeleting(id);
+      (this.selected === id ? $('#ds-temp-msg') : $('#dataset-list')).prepend(msgBox('error', `#${id} was not deleted: ${esc(e.message)}`));
       return;
-    } finally { buttons.forEach((b) => { b.disabled = false; }); }
-    wait.remove();
+    }
+    delete d.deleting;
+    this._asked.delete(id);
+    this._showDeleting(id);
     this.forget(id);
     if (this.selected === id) location.hash = '#browse';
     this.load();
+  }
+
+  // A dataset being deleted (its `deleting`, {done, total}: as listed, or as this page asked): a red bar across the top of
+  // it in the list and on its page, its delete buttons disabled, followed (/deleting) until it is gone; none once it is not
+  _showDeleting(id) {
+    const d = (this.datasets || []).find((x) => x.id === id);
+    const p = d?.deleting;
+    const frac = p?.total ? p.done / p.total : 0;
+    const label = p ? `Deleting… ${p.total ? `${Math.round(frac * 100)}% (${p.done.toLocaleString()} of ${p.total.toLocaleString()} ROIs' responses)` : ''}` : '';
+    const bar = () => Object.assign(document.createElement('div'), { className: 'ds-del-bar', title: label,
+      innerHTML: `<progress max="1" value="${frac}" aria-label="${esc(label)}"></progress><span>${esc(label)}</span>` });
+    $$(`.ds-item[data-ds="${id}"]`).forEach((it) => {
+      it.querySelector('.ds-del-bar')?.remove();
+      if (p) it.prepend(bar());
+      it.classList.toggle('deleting', !!p);
+    });
+    if (this.selected === id || $('#ds-head-del')?.dataset.ds === String(id)) {
+      $('#ds-head-del')?.remove();
+      if (p && this.selected === id) {
+        const b = Object.assign(bar(), { id: 'ds-head-del' });
+        b.dataset.ds = id;
+        $('#ds-title').before(b);
+      }
+    }
+    $$(`[data-temp-del="${id}"]`).forEach((b) => { b.disabled = !!p; });
+    if (this.selected === id) $('#ds-temp-delete').disabled = !!p;
+    if (p && !this._deletingPoll) this._deletingPoll = setTimeout(() => this._pollDeleting(), 400);
+  }
+
+  async _pollDeleting() {
+    this._deletingPoll = null;
+    const being = (this.datasets || []).filter((d) => d.deleting);
+    let gone = false;
+    for (const d of being) {
+      try {
+        d.deleting = await api(`/api/datasets/${d.id}/deleting`);
+      } catch (e) {
+        if (e.status !== 404) continue;
+        if (!this._asked?.has(d.id)) gone = true; // (one this page did not ask to delete: the list again, without it)
+        continue;
+      }
+      if (d.deleting) this._showDeleting(d.id);
+    }
+    if (gone) { this.invalidate(); this.load(); return; }
+    if (being.some((d) => d.deleting) && !this._deletingPoll) this._deletingPoll = setTimeout(() => this._pollDeleting(), 400);
   }
 
   // a dataset deleted (in the Admin tab)
@@ -3236,7 +3283,7 @@ class Browse {
     const shown = (d) => this.selected === d.id || !!d.calcs?.some((c) => c.id === this.selected);
     const me = (settings.current().name || '').trim().toLowerCase();
     const mine = (d) => d.temporary && me && String(d.temporary.by || '').toLowerCase() === me;
-    const item = (d) => `<div class="ds-item${shown(d) ? ' active' : ''}">
+    const item = (d) => `<div class="ds-item${shown(d) ? ' active' : ''}" data-ds="${d.id}">
         <input type="checkbox" class="pick" data-id="${d.id}" aria-label="Select dataset #${d.id} for download">
         ${d.temporary ? `<button type="button" class="ds-temp-x${mine(d) ? '' : ' theirs'}" data-temp-del="${d.id}" aria-label="Delete temporary dataset #${d.id}"
           title="${mine(d) ? 'Delete this temporary dataset (yours: made of extracted signals)' : `${esc(d.temporary.by)}'s temporary dataset: only they can delete it (as named in Settings)`}">×</button>` : ''}
@@ -3255,6 +3302,7 @@ class Browse {
       + groupHead(g.label, g.datasets) + g.datasets.map(item).join('') + '</div>').join('');
     $$('.list-item', list).forEach((b) => b.addEventListener('click', () => { location.hash = `#browse/${b.dataset.id}`; }));
     $$('[data-temp-del]', list).forEach((b) => b.addEventListener('click', () => this._deleteTemporary(+b.dataset.tempDel)));
+    this.datasets.filter((d) => d.deleting).forEach((d) => this._showDeleting(d.id));
     this._syncPicks();
   }
 
@@ -3285,6 +3333,7 @@ class Browse {
     $('#ds-title').textContent = d.title;
     $('#ds-temp-delete').hidden = !d.metadata?.temporary;
     $('#ds-temp-msg').replaceChildren();
+    this._showDeleting(id);
     const md = d.metadata;
     const bits = [`uploaded by ${d.uploader_name} on ${fmtDay(d.created_at)}`];
     if (md.genotype) bits.push(md.genotype);

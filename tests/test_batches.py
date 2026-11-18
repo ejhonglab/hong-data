@@ -125,6 +125,7 @@ def test_joined_dataset(main, tensor, monkeypatch):  # noqa: F811
     delete = lambda i, name: call(main.dataset_temporary_delete, method="DELETE", path_params={"ds_id": i}, query={"name": name})  # noqa: E731
     assert delete(made[0], "Cy")[0] == 403 and delete(made[0], "")[0] == 403 and delete(1, "Ann")[0] == 403 and delete(999, "Bob")[0] == 404
     assert delete(made[0], "bob")[0] == 200 and db.get_dataset(made[0]) is None
+    assert main._deleting == {} and call(main.dataset_deleting, path_params={"ds_id": made[0]})[0] == 404
 
 
 def test_extraction_dataset(main, tensor):  # noqa: F811
@@ -155,4 +156,8 @@ def test_extraction_dataset(main, tensor):  # noqa: F811
     assert batches.temporary_of(d) == t and d["title"] == f"[temporary] extraction #{x['id']} (ann_2024-01-01_1): unknown > GCaMP6f (glomeruli)"
     assert (config.DATASETS_DIR / str(made[0]) / f"extraction_{x['id']}_responses.csv").is_file() and "its own ROIs" in d["notes"]
     delete = lambda i, name: call(main.dataset_temporary_delete, method="DELETE", path_params={"ds_id": i}, query={"name": name})  # noqa: E731
-    assert delete(made[0], "Bob")[0] == 403 and delete(made[0], "cy")[0] == 200
+    assert delete(made[0], "Bob")[0] == 403
+    # (how far it is, said as its responses are deleted)
+    calls = []
+    assert db.delete_dataset(made[0], progress=lambda done, total: calls.append((done, total)))
+    assert calls[0] == (0, 3) and calls[-1] == (3, 3) and db.get_dataset(made[0]) is None and delete(made[0], "cy")[0] == 404

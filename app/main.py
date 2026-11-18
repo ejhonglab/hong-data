@@ -946,7 +946,8 @@ async def datasets_list(request: Request) -> Response:
     otherwise, each with its default (`Database.default_calculations`), the one listed."""
     rows = await run_in_threadpool(db.list_datasets)
     sets = await run_in_threadpool(db.default_calculations, rows)
-    return JSONResponse({"datasets": [{**d, "created_at": _aware(d["created_at"])} for d in rows], "calculations": sets})
+    return JSONResponse({"datasets": [{**d, "created_at": _aware(d["created_at"]), **({"deleting": _deleting[d["id"]]} if d["id"] in _deleting else {})}
+                                      for d in rows], "calculations": sets})
 
 
 def _readme_path(ds_id: int) -> Path:
@@ -1792,6 +1793,13 @@ async def extractions_batch(request: Request) -> Response:
         return json_error(404, str(e))
     except (ValueError, TypeError) as e:
         return json_error(400, str(e))
+
+
+async def dataset_deleting(request: Request) -> Response:
+    """How far a dataset being deleted is: ``done`` of ``total``, its ROIs whose responses are deleted (``total``
+    0 until it has counted them). 404 for one not being deleted (deleted by now, or never asked)."""
+    p = _deleting.get(int(request.path_params["ds_id"]))
+    return JSONResponse(p) if p is not None else json_error(404, "not being deleted")
 
 
 async def dataset_temporary_delete(request: Request) -> Response:
@@ -3726,9 +3734,21 @@ async def admin_host(request: Request) -> Response:
     return JSONResponse(await run_in_threadpool(_host))
 
 
+_deleting: dict[int, dict] = {}  # datasets being deleted: {"done", "total"} of their ROIs' responses (`dataset_deleting`)
+
+
 def _delete_dataset(ds_id: int) -> tuple[int, dict]:
     """Delete a dataset from the database, its folder moved to data/deleted/<id>/ (from
-    where it could be uploaded again) as part of it: (status, response)."""
+    where it could be uploaded again) as part of it: (status, response). How far it is, in
+    `_deleting` meanwhile."""
+    _deleting[ds_id] = {"done": 0, "total": 0}
+    try:
+        return _delete_dataset_now(ds_id)
+    finally:
+        _deleting.pop(ds_id, None)
+
+
+def _delete_dataset_now(ds_id: int) -> tuple[int, dict]:
     src = config.DATASETS_DIR / str(ds_id)
     dest = config.DELETED_DIR / str(ds_id)
     if dest.exists():  # put there by hand
@@ -3748,8 +3768,8 @@ def _delete_dataset(ds_id: int) -> tuple[int, dict]:
         keys = permalinks.dataset_keys(d, m) if d and m else None
     try:
         with _readme_lock:  # not while its README is being overwritten
-            if not db.delete_dataset(ds_id, before_commit=move, permalink_keys=keys,
-                                     when=dt.datetime.now().isoformat(timespec="seconds")):
+            if not db.delete_dataset(ds_id, before_commit=move, permalink_keys=keys, when=dt.datetime.now().isoformat(timespec="seconds"),
+                                     progress=lambda done, total: _deleting.__setitem__(ds_id, {"done": done, "total": total})):
                 return 404, {"error": "dataset not found"}
     except OSError as e:
         return 500, {"error": f"its folder could not be moved to {dest.parent}, so nothing was deleted ({e})"}
@@ -4265,6 +4285,7 @@ routes = [
     Route("/api/predictions/batches/{id:int}", predictions_batch_delete, methods=["DELETE"]),
     Route("/api/extractions/batch", extractions_batch, methods=["POST"]),
     Route("/api/datasets/{ds_id:int}/temporary", dataset_temporary_delete, methods=["DELETE"]),
+    Route("/api/datasets/{ds_id:int}/deleting", dataset_deleting),
     Route("/api/predictions/{id:int}", predictions_delete, methods=["DELETE"]),
     Route("/api/predictions/{id:int}/log", predictions_log),
     Route("/api/predictions/{id:int}/view", predictions_view),
