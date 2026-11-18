@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from app import batches, config, extract, fits, predictions, roi_training
+from app import batches, config, export, extract, fits, predictions, roi_training
 from tests.test_fits import GLOMS, NAMES, ODORS, call, data, tensor  # noqa: F401 (fixtures)
 from tests.test_tensor import main, root  # noqa: F401 (fixtures)
 
@@ -104,7 +104,15 @@ def test_joined_dataset(main, tensor, monkeypatch):  # noqa: F811
     assert batches.finish(db) == []
     d = db.get_dataset(made[0])
     t = batches.temporary_of(d)
-    assert t["by"] == "Bob" and t["batch"] == b["id"] and d["title"].startswith("[temporary]") and d["n_flies"] == 2 and d["n_units"] == 6
+    assert t["by"] == "Bob" and t["batch"] == b["id"] and d["n_flies"] == 2 and d["n_units"] == 6
+    # titled by what it was made of, not its panels (a batch's can have hundreds), its README too, and its downloads
+    assert d["title"] == f"[temporary] batch #{b['id']}, fit #{b['fit_id']}: {d['driver']} > {d['indicator']} (glomeruli)", d["title"]
+    assert d["readme_md"].startswith(f"# {d['title']}\n")
+    assert export.dataset_stem(d, db.get_matrix_arrays(made[0])["trials"]).startswith(f"temporary-batch-{b['id']}_bob_glomeruli")
+    # one titled as they were before (by its panels): retitled, once
+    db.update_metadata(made[0], d["metadata"], "[temporary] p1, p2: x > y (glomeruli)", "# [temporary] p1, p2\nrest")
+    assert batches.retitle(db) == [made[0]] and batches.retitle(db) == []
+    assert db.get_dataset(made[0])["title"] == d["title"] and db.get_dataset(made[0])["readme_md"] == f"# {d['title']}\nrest"
     assert d["uploader_name"] == "Bob" and (config.DATASETS_DIR / str(made[0]) / f"batch_{b['id']}_responses.csv").is_file()
     listed = {x["id"]: x for x in call(main.datasets_list)[1]["datasets"]}
     assert listed[made[0]]["temporary"]["by"] == "Bob" and all(x.get("temporary") is None for i, x in listed.items() if i != made[0])
@@ -136,7 +144,15 @@ def test_extraction_dataset(main, tensor):  # noqa: F811
     d = db.get_dataset(made[0])
     t = batches.temporary_of(d)
     assert t["by"] == "Cy" and t["extraction"] == x["id"] and t["fly"] == "ann_2024-01-01_1" and t["fit"] is None and "batch" not in t
-    assert d["title"].startswith("[temporary]") and d["n_flies"] == 1 and d["n_units"] == 3 and d["indicator"] == "unknown"
+    assert d["title"] == f"[temporary] extraction #{x['id']} (ann_2024-01-01_1): unknown > unknown (glomeruli)", d["title"]
+    assert d["n_flies"] == 1 and d["n_units"] == 3 and d["indicator"] == "unknown"
+    # edited: still temporary (whose it is kept), titled so
+    base = d["metadata"]
+    md = {k: v for k, v in base.items() if k != batches.TEMPORARY}
+    r = call(main.dataset_metadata_save, body={"metadata": {**md, "indicator": "GCaMP6f"}, "base": base}, path_params={"ds_id": made[0]})
+    assert r[0] == 200, r
+    d = db.get_dataset(made[0])
+    assert batches.temporary_of(d) == t and d["title"] == f"[temporary] extraction #{x['id']} (ann_2024-01-01_1): unknown > GCaMP6f (glomeruli)"
     assert (config.DATASETS_DIR / str(made[0]) / f"extraction_{x['id']}_responses.csv").is_file() and "its own ROIs" in d["notes"]
     delete = lambda i, name: call(main.dataset_temporary_delete, method="DELETE", path_params={"ds_id": i}, query={"name": name})  # noqa: E731
     assert delete(made[0], "Bob")[0] == 403 and delete(made[0], "cy")[0] == 200

@@ -788,6 +788,11 @@ def extract_loop(db, state: dict, stop: Optional[threading.Event] = None) -> Non
             log.info("dataset %s made of a batch's signals (all over before)", ds)
     except Exception:  # noqa: BLE001
         log.exception("could not make datasets of the extractions done before")
+    try:
+        for ds in batches.retitle(db):
+            log.info("temporary dataset %s retitled (by what it was made of, not its panels)", ds)
+    except Exception:  # noqa: BLE001
+        log.exception("could not retitle temporary datasets")
     while not (stop and stop.is_set()):
         try:
             e = extract.claim(db)

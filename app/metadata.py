@@ -185,24 +185,27 @@ def _power_str(m: Metadata) -> Optional[str]:
     return s
 
 
-def dataset_title(m: Metadata, summary: dict) -> str:
+def dataset_title(m: Metadata, summary: dict, lead: Optional[str] = None) -> str:
     """``<panels>: <driver> > <indicator> (<coding unit>)[ [<manipulations>]][, <response
     calculation>]``: the calculation as written (math too), so that the same recordings
-    calculated otherwise are told apart by name."""
+    calculated otherwise are told apart by name. `lead`, if given, in place of the panels
+    (a temporary dataset's: what it was made of, `batches.title_lead`)."""
     panels = m.panel_names or summary.get("panel_names") or []
-    panel_part = ", ".join(panels) if panels else "odor panel"
+    panel_part = lead or (", ".join(panels) if panels else "odor panel")
     manipulations = f" [{manipulations_text(m.manipulations)}]" if m.manipulations else ""
     calc = f", {' '.join(m.response_calc.split())}" if m.response_calc else ""
     return f"{panel_part}: {m.driver} > {m.indicator} ({m.coding_unit}){manipulations}{calc}"
 
 
-def generate_readme(m: Metadata, summary: dict, files: dict[str, Any], *, created_at: Optional[dt.datetime] = None) -> str:
+def generate_readme(m: Metadata, summary: dict, files: dict[str, Any], *, created_at: Optional[dt.datetime] = None,
+                    title: Optional[str] = None) -> str:
     """Concise README.md for a dataset.
 
     ``files`` keys: data_files (the data files: [{name, sha256 (hex)}], their data
     combined if several), or data and sha256 (of one); odor_yamls (list of names),
     experiment_xml (name or None), and optionally sources (file name -> the path on tensor
-    it was copied from).
+    it was copied from). `title`, if given, in place of `dataset_title`'s (a temporary
+    dataset's).
     """
     created_at = created_at or dt.datetime.now()
     flies = summary.get("flies", [])
@@ -219,7 +222,7 @@ def generate_readme(m: Metadata, summary: dict, files: dict[str, Any], *, create
     roi_kind = summary.get("roi_kind", "")
     roi_word = {"glomeruli": "glomerulus ROIs", "integers": "numbered ROIs", "mixed": "ROIs"}.get(roi_kind, "ROIs")
 
-    lines = [f"# {dataset_title(m, summary)}", ""]
+    lines = [f"# {title or dataset_title(m, summary)}", ""]
     lines.append(
         f"Mean responses of {m.coding_unit} ({roi_word}) to {summary.get('n_odors', '?')} odors "
         f"{flies_part}; "

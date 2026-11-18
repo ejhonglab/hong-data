@@ -3045,6 +3045,7 @@ class Browse {
     $('#ds-calc').addEventListener('click', (e) => { if (e.target.closest('[data-act=default]')) this._setDefaultCalc(); });
     $$('#tab-browse .seg button').forEach((b) => b.addEventListener('click', () => { this.group = b.dataset.group; LS.set('olfdb.browse_group', this.group); this.renderList(); }));
     $('#browse-unit').addEventListener('change', (e) => { this.unit = e.target.value; LS.set('olfdb.browse_unit', this.unit); this.renderList(); });
+    $('#ds-temp-delete').addEventListener('click', () => this._deleteTemporary(this.selected));
     $('#ds-readme-toggle').addEventListener('click', () => {
       const p = $('#ds-readme');
       p.hidden = !p.hidden;
@@ -3148,10 +3149,19 @@ class Browse {
 
   invalidate() { this.datasets = null; this.cache.clear(); }
 
-  // Deletes a temporary dataset of whoever is named in Settings (made of a batch's signals), once that is confirmed
+  // Deletes a temporary dataset of whoever is named in Settings (made of extracted signals), once that is confirmed;
+  // one of someone else's (or with no name in Settings) says whose it is instead
   async _deleteTemporary(id) {
-    const d = this.datasets.find((x) => x.id === id);
-    if (!d) return;
+    const d = (this.datasets || []).find((x) => x.id === id);
+    if (!d?.temporary) return;
+    const by = String(d.temporary.by || '');
+    if (by.toLowerCase() !== (settings.current().name || '').trim().toLowerCase()) {
+      const box = msgBox('error', `#${id} is ${esc(by)}'s temporary dataset: only ${esc(by)} can delete it (with that name in
+        <a href="#settings">Settings</a>${settings.current().name ? `, not ${esc(settings.current().name)}` : ''}), or an admin, in the Admin tab.`);
+      (this.selected === id ? $('#ds-temp-msg') : $('#dataset-list')).prepend(box);
+      box.scrollIntoView({ block: 'nearest' });
+      return;
+    }
     $('#delete-confirm-q').textContent = `Delete the temporary dataset #${id}, “${d.title}”?`;
     $('#delete-confirm-detail').textContent = 'It is gone from the site at once, for everyone (its files are kept on the server, as the Admin tab keeps those it deletes). The extractions it was made of stay.';
     $('#delete-confirm-warn').replaceChildren();
@@ -3217,7 +3227,8 @@ class Browse {
     const mine = (d) => d.temporary && me && String(d.temporary.by || '').toLowerCase() === me;
     const item = (d) => `<div class="ds-item${shown(d) ? ' active' : ''}">
         <input type="checkbox" class="pick" data-id="${d.id}" aria-label="Select dataset #${d.id} for download">
-        ${mine(d) ? `<button type="button" class="ds-temp-x" data-temp-del="${d.id}" title="Delete this temporary dataset (yours: made of extracted signals)" aria-label="Delete temporary dataset #${d.id}">×</button>` : ''}
+        ${d.temporary ? `<button type="button" class="ds-temp-x${mine(d) ? '' : ' theirs'}" data-temp-del="${d.id}" aria-label="Delete temporary dataset #${d.id}"
+          title="${mine(d) ? 'Delete this temporary dataset (yours: made of extracted signals)' : `${esc(d.temporary.by)}'s temporary dataset: only they can delete it (as named in Settings)`}">×</button>` : ''}
         <button type="button" class="list-item" data-id="${d.id}">
           <span class="t">${datasetName(d)}</span>
           ${panelsLine(d, this.group)}
@@ -3261,6 +3272,8 @@ class Browse {
     } catch (e) { $('#ds-title').textContent = 'Could not load this dataset'; $('#ds-sub').textContent = e.message; return; }
     if (this.selected !== id) return;
     $('#ds-title').textContent = d.title;
+    $('#ds-temp-delete').hidden = !d.metadata?.temporary;
+    $('#ds-temp-msg').replaceChildren();
     const md = d.metadata;
     const bits = [`uploaded by ${d.uploader_name} on ${fmtDay(d.created_at)}`];
     if (md.genotype) bits.push(md.genotype);

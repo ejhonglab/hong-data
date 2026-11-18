@@ -1236,7 +1236,8 @@ def _save_metadata(ds_id: int, values: Any, base: dict, proceed: Optional[str] =
                     if proceed != to:
                         return 409, {"ok": False, "errors": [], "permalink_change": {"from": link["slug"], "to": to}}
                     rename = to
-        title = dataset_title(m, d["summary"])
+        t = batches.temporary_of(d)
+        title = dataset_title(m, d["summary"], batches.title_lead(t) if t else None)
         folder = config.DATASETS_DIR / str(ds_id)
         try:
             saved = json.loads((folder / "metadata.json").read_text(encoding="utf-8"))
@@ -1246,8 +1247,8 @@ def _save_metadata(ds_id: int, values: Any, base: dict, proceed: Optional[str] =
         if not d["readme_edited"]:  # (one generated at upload follows them; one edited by hand is left alone)
             files = {"data_files": d["data_files"], "odor_yamls": d["odor_yaml_files"], "experiment_xml": d.get("experiment_xml_file"),
                      "sources": (saved or {}).get("tensor_sources") or {}}
-            readme = generate_readme(m, d["summary"], files, created_at=dt.datetime.fromisoformat(d["created_at"]))
-        db.update_metadata(ds_id, new, title, readme)
+            readme = generate_readme(m, d["summary"], files, created_at=dt.datetime.fromisoformat(d["created_at"]), title=title)
+        db.update_metadata(ds_id, {**new, batches.TEMPORARY: t} if t else new, title, readme)  # (still temporary: whose it is kept)
         if link:  # (what it keeps of the dataset, as it is now)
             when = dt.datetime.now().isoformat(timespec="seconds")
             keys = permalinks.dataset_keys(db.get_dataset(ds_id), db.get_matrix_arrays(ds_id))

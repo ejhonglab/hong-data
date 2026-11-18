@@ -396,6 +396,7 @@ dialog.refine-dialog .predict-clean { margin: 10px 0; }
 .ds-item { position: relative; }
 .ds-temp-x { position: absolute; top: 4px; right: 4px; border: 0; background: none; color: var(--danger); font-size: 16px; line-height: 1; cursor: pointer; padding: 2px 6px; }
 .ds-temp-x:hover { background: var(--surface-2); border-radius: 4px; }
+.ds-temp-x.theirs { color: var(--ink-muted); }
 .ds-temp { font-size: 11px; color: var(--warn); }
 .predictions-table .acts-grid { display: grid; grid-template-columns: repeat(2, auto); gap: 4px; justify-content: start; }
 .predictions-table .acts-grid > .btn { justify-content: center; text-align: center; }

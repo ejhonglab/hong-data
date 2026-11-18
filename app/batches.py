@@ -260,9 +260,11 @@ def _temporary(db, paths: list[Path], file_name: str, by: str, fit_id: Optional[
         import hashlib
 
         sha = hashlib.sha256(data.read_bytes()).hexdigest()
-        readme = generate_readme(m, summary, {"data_files": [{"name": data.name, "sha256": sha}], "odor_yamls": [], "experiment_xml": None, "sources": {}})
+        title = dataset_title(m, summary, title_lead(meta[TEMPORARY]))
+        readme = generate_readme(m, summary, {"data_files": [{"name": data.name, "sha256": sha}], "odor_yamls": [], "experiment_xml": None, "sources": {}},
+                                 title=title)
 
-        ds_id = db.insert_dataset(created_at=dt.datetime.now().isoformat(timespec="seconds"), title=f"[temporary] {dataset_title(m, summary)}",
+        ds_id = db.insert_dataset(created_at=dt.datetime.now().isoformat(timespec="seconds"), title=title,
                                   metadata=meta, readme_md=readme, readme_edited=False, data_file=data.name, data_format=parsed.source_format,
                                   data_sha256=sha, odor_yaml_files=[], experiment_xml_file=None,
                                   experiment_xml_info=None, summary=summary, units=parsed.units, trials=parsed.trials, values=parsed.values)
@@ -274,6 +276,39 @@ def _temporary(db, paths: list[Path], file_name: str, by: str, fit_id: Optional[
         return ds_id
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def title_lead(t: dict) -> str:
+    """What a temporary dataset's title starts with, in place of its panels (which, of a batch's, can be
+    hundreds): what it was made of, ``[temporary] batch #1, fit #9`` or ``[temporary] extraction #3
+    (<fly>), fit #7``."""
+    what = f"batch #{t['batch']}" if t.get("batch") is not None else f"extraction #{t.get('extraction')}" + (f" ({t['fly']})" if t.get("fly") else "")
+    return f"[temporary] {what}" + (f", fit #{t['fit']}" if t.get("fit") is not None else "")
+
+
+def retitle(db) -> list[int]:
+    """Gives each temporary dataset titled as they were before `title_lead` (its panels, all of them) the title
+    it would be made with now, and its README (if not edited by hand) that title too. Returns those retitled."""
+    from .metadata import Metadata, dataset_title
+
+    done = []
+    for row in db.list_datasets():
+        d = db.get_dataset(row["id"])
+        t = d and temporary_of(d)
+        if not t:
+            continue
+        meta = d["metadata"]
+        m = Metadata(**{k: v for k, v in meta.items() if k in Metadata.model_fields})
+        title = dataset_title(m, d["summary"], title_lead(t))
+        if d["title"] == title:
+            continue
+        readme = None
+        if not d["readme_edited"] and (d.get("readme_md") or "").startswith("# "):
+            readme = f"# {title}" + d["readme_md"][d["readme_md"].index("\n"):] if "\n" in d["readme_md"] else f"# {title}\n"
+            (config.DATASETS_DIR / str(d["id"]) / "README.md").write_text(readme, encoding="utf-8")
+        db.update_metadata(d["id"], meta, title, readme)
+        done.append(d["id"])
+    return done
 
 
 def temporary_of(d: dict) -> Optional[dict]:

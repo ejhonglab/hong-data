@@ -144,7 +144,8 @@ def dataset_stem(d: dict, trials: list[dict]) -> str:
     the last fly>``.
 
     Panels are those in the data (or, without a panel level, those entered at upload),
-    sorted, leaving out diagnostic panels (`is_diagnostic_panel`) unless there are only those. The uploader's
+    sorted, leaving out diagnostic panels (`is_diagnostic_panel`) unless there are only those;
+    a temporary dataset's (`batches.TEMPORARY`), what it was made of instead. The uploader's
     name is lowercased, without periods. Manipulations are each ``<key>-<value>`` (or the
     key alone). The response calculation, if given, tells apart the same recordings
     calculated otherwise (its math as its letters: ``$\\Delta F/F$``, ``Delta-FF``). Each
@@ -155,6 +156,8 @@ def dataset_stem(d: dict, trials: list[dict]) -> str:
         trials: as returned by `Database.get_matrix_arrays`.
     """
     panels = main_panels(list(dict.fromkeys(t["panel"] for t in trials if t["panel"])) or d["metadata"].get("panel_names") or [])
+    if tmp := d["metadata"].get("temporary"):  # (what it was made of, as its title says: a batch's can have hundreds of panels)
+        panels = [f"temporary-batch-{tmp['batch']}" if tmp.get("batch") is not None else f"temporary-extraction-{tmp.get('extraction')}"]
     manipulations = [m["key"] if m.get("value") is None else f"{m['key']}-{m['value']}" for m in d.get("manipulations") or []]
     parts = [*sorted(panels, key=str.casefold), d["uploader_name"].lower().replace(".", ""), d["coding_unit"],
              *manipulations, d.get("response_calc") or "", d["last_fly_date"] or ""]

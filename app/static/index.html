@@ -248,6 +248,7 @@ try {
               <h2 id="ds-title"></h2>
               <p class="muted" id="ds-sub"></p>
               <div class="ds-permalink" id="ds-permalink"></div>
+              <div id="ds-temp-msg"></div>
             </div>
             <!-- how its responses were calculated, right of its title (under it, where they do not fit): with other calculations of its recordings, a menu of them, and a button to make the one shown their default (app.js, Browse._showCalc) -->
             <div class="ds-calc" id="ds-calc"></div>
@@ -270,6 +271,7 @@ try {
               <button type="button" class="btn" id="ds-odors-toggle" aria-expanded="false">Odors</button>
               <button type="button" class="btn" id="ds-readme-toggle" aria-expanded="false">README</button>
               <button type="button" class="btn" id="ds-edit-toggle" aria-expanded="false">Edit</button>
+              <button type="button" class="btn danger" id="ds-temp-delete" title="Delete this temporary dataset (made of extracted signals: whoever asked for them can)" hidden>Delete</button>
               <details class="menu menu-right" id="ds-download">
                 <summary class="btn">Download</summary>
                 <div class="menu-list">
