@@ -400,3 +400,25 @@ def test_download(main, outputs, odor_table, tmp_path, monkeypatch):  # noqa: F8
     assert r.status_code == 200 and f'filename="{stem}_files.zip"' in r.headers["content-disposition"] and zipfile.is_zipfile(r.path)
     assert post(main.models_run_download, {"id": "tom/model_outputs/stray_on_spike_counts.parquet", "format": "wide"}).status_code == 404
     assert post(main.models_run_download, {"id": run_id, "format": "wide", "rows": [6]}).status_code == 422
+
+
+def test_baseline_summaries(main, outputs, copies, tmp_path, monkeypatch):  # noqa: F811
+    """Each baseline is listed with how its model was made (`model_data.baseline_summary`), by its experiment's path
+    and name, else its folder's last part and name; and the repository's texts are those of the baselines the site has."""
+    shipped = json.loads(model_data.SUMMARIES.read_text())["summaries"]
+    for key in ("E13_bouton_coincidence/bouton_base", "E44_operating_point/thr40_gain1.5_rate0.068_k2_cap3",
+                "E67_apl_effect_fits/rate0.068_aplboth_k2_cap3", "olfdb_baselines/bouton_base",
+                "olfdb_baselines/uniform_glomeruli_claws_uniform_apl", "olfdb_baselines/shuffled_connectome_pairs_kept_seed0",
+                "olfdb_baselines/shuffled_connectome_pairs_broken_seed0"):
+        assert isinstance(shipped[key], str) and 20 < len(shipped[key].split()) < 160, key
+    f = tmp_path / "summaries.json"
+    f.write_text(json.dumps({"summaries": {"E1_apl/k0": "By folder.", "tom/model_outputs/E2_gain/f2": "By path.\n\nTwo paragraphs."}}))
+    monkeypatch.setattr(model_data, "SUMMARIES", f)
+    assert model_data.baseline_summary("x/E1_apl", "k0") == "By folder." and model_data.baseline_summary("x/E1_apl", None) is None
+    sid = call(main.admin_models_add, body={"path": "tom/model_outputs"})[1]["id"]
+    for exp, row in (("E1_apl", 1), ("E2_gain", 0), ("E1_apl", 2)):
+        assert call(main.admin_models_baseline_add, body={"experiment": f"{sid}/{exp}", "row": row})[0] == 200
+    out = call(main.models_baselines)[1]
+    assert [b["summary"] for b in out["baselines"]] == ["By folder.", "By path.\n\nTwo paragraphs.", None]
+    f.write_text("not JSON")
+    assert [b["summary"] for b in call(main.models_baselines)[1]["baselines"]] == [None, None, None]

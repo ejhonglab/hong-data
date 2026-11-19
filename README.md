@@ -691,7 +691,11 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   settings: hundreds). The baseline models (chosen in the Admin tab) come first, in a table
   of their own with the `params.csv` parameters they have, loaded before the rest: as
   imported into the site when chosen, with a warning saying how their files on tensor
-  differ from that, if they do.
+  differ from that, if they do. Each one's *Summary* button says, in a few sentences, how
+  its model was made (the texts are kept in `app/baseline_summaries.json`). The reference
+  models among them (the KC-remapping queue's bouton base and its controls: random
+  wiring with flat APL weights, the connectome shuffled) are made by
+  `scripts/make_baseline_models.py`, with pyolfsysm.
   *Run a baseline model on ORN data*, under them, runs one on datasets of glomeruli: choose
   the baseline, the datasets (several are taken as one: the mean of theirs) and which of
   their panels' odors the model is run on (all but diagnostic panels, unless chosen). Each

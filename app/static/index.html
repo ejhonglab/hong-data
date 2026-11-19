@@ -1296,9 +1296,10 @@ try {
       <div class="step" id="models-base-step" hidden>
         <div class="step-head"><h2>Baseline models <span class="muted" id="models-base-count"></span></h2></div>
         <p class="muted small">Chosen in the <a href="#admin">Admin tab</a> (under <i>Model data</i>), with the parameters of their
-          <code>params.csv</code> that they have. Shown as imported into olfdb when chosen (so backups have them), and in the table of every model too, as on tensor.</p>
+          <code>params.csv</code> that they have; <i>Summary</i> says in a few sentences how each was made. Shown as imported into olfdb when chosen (so backups have them), and in the table of every model too, as on tensor.</p>
         <div id="models-base-status"></div>
         <div id="models-base-table" class="models-table-wrap models-base-wrap"></div>
+        <div id="models-base-summary" class="models-base-summary" aria-live="polite" hidden></div>
       </div>
       <div class="step" id="model-runs-step" hidden>
         <div class="step-head"><h2>Run a baseline model on ORN data</h2></div>

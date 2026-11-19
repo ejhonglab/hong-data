@@ -61,6 +61,7 @@ export class ModelsPage {
     this.current = null; // the run shown: {id, model, run, label}
     this.openId = null; // the run opened (its row marked in the tables), shown once loaded
     this._seq = 0;
+    this.summaryOf = null; // the baseline (id) whose summary is shown below their table
     this.viewer = null;
     this.o = { hideSame: false, allKeys: false, sort: { col: null, dir: 1 }, ...h.LS.get(KEY, {}) };
     this.find = ''; // what the rows shown have, as typed
@@ -86,6 +87,13 @@ export class ModelsPage {
           this.o.sort = { col, dir: s.col === col ? -s.dir : 1 };
           this._save();
           this.render();
+          return;
+        }
+        const sum = e.target.closest('[data-summary]');
+        if (sum) {
+          const sid = +sum.dataset.summary;
+          this.summaryOf = this.summaryOf === sid ? null : sid;
+          this.renderBase();
           return;
         }
         const b = e.target.closest('[data-run]');
@@ -223,14 +231,14 @@ export class ModelsPage {
   }
 
   // a model's row: its runs, and its values of cols (of those from c0 to c1 alone, if given: the
-  // others stood in for by a cell as wide)
-  _row(d, m, cols, i = null, c0 = 0, c1 = cols.length - 1) {
+  // others stood in for by a cell as wide); lead: a first cell's HTML (the baselines' Summary button)
+  _row(d, m, cols, i = null, c0 = 0, c1 = cols.length - 1, lead = '') {
     const { esc } = this.h, open = this.openId;
     const runs = m.runs.length ? m.runs.map((r) => `<button type="button" class="btn small${r.id === open ? ' primary' : ''}" data-run="${esc(r.id)}"
       title="${esc(`Open ${r.file}`)}">${esc(r.label || 'spike counts')}</button>`).join('')
       : '<span class="muted small" title="No spike count file of it was found">none</span>';
     const cells = cols.slice(c0, c1 + 1).map((c) => this._cell(d, m, c)).join('');
-    return `<tr${i != null ? ` data-i="${i}"` : ''}${m.runs.some((r) => r.id === open) ? ' class="hl"' : ''}><td class="model-runs">${runs}</td>`
+    return `<tr${i != null ? ` data-i="${i}"` : ''}${m.runs.some((r) => r.id === open) ? ' class="hl"' : ''}>${lead}<td class="model-runs">${runs}</td>`
       + `${c0 > 0 ? `<td colspan="${c0}"></td>` : ''}${cells}${c1 < cols.length - 1 ? `<td colspan="${cols.length - 1 - c1}"></td>` : ''}</tr>`;
   }
 
@@ -261,8 +269,25 @@ export class ModelsPage {
     $('#models-base-count').textContent = b.models.length > 1 ? `${b.models.length}` : '';
     if (!b.models.length) { $('#models-base-table').replaceChildren(); return; }
     const cols = [EXP, ...b.columns.filter((c) => (c === 'generated' || b.paramCols.has(c)) && b.models.some((m) => this._value(b, m, c) != null))];
-    $('#models-base-table').innerHTML = `<table class="odor-table models-table"><thead><tr><th>Open</th>${this._head(cols, false)}</tr></thead>
-      <tbody>${b.models.map((m) => this._row(b, m, cols)).join('')}</tbody></table>`;
+    const byId = new Map(b.baselines.map((x) => [x.id, x]));
+    const lead = (m) => {
+      const x = byId.get(m.baseline), on = x && this.summaryOf === x.id;
+      return `<td class="model-summary">${x?.summary ? `<button type="button" class="btn small${on ? ' primary' : ''}" data-summary="${x.id}"
+        aria-expanded="${on}" title="How ${esc(x.name ?? 'this model')} was made">Summary</button>` : '<span class="muted small" title="No summary of it is kept">none</span>'}</td>`;
+    };
+    $('#models-base-table').innerHTML = `<table class="odor-table models-table"><thead><tr><th>Summary</th><th>Open</th>${this._head(cols, false)}</tr></thead>
+      <tbody>${b.models.map((m) => this._row(b, m, cols, null, 0, cols.length - 1, lead(m))).join('')}</tbody></table>`;
+    this._showSummary();
+  }
+
+  // the summary of the baseline whose Summary button was pressed (pressed again: hidden), below their table
+  _showSummary() {
+    const { $, esc } = this.h, x = this.base?.baselines.find((y) => y.id === this.summaryOf && y.summary);
+    const box = $('#models-base-summary');
+    box.hidden = !x;
+    if (!x) { box.replaceChildren(); return; }
+    box.innerHTML = `<h3><code>${esc(x.name ?? `row ${x.row + 1}`)}</code> <span class="muted small">of <code>${esc(x.experiment)}</code></span></h3>`
+      + x.summary.split(/\n\s*\n/).map((t) => `<p>${esc(t.trim())}</p>`).join('');
   }
 
   // a column's width in characters: its name's, or its longest value's, up to MAX_CH (each value

@@ -712,7 +712,18 @@ between the frontend and the server. Using the app is described in
   by its experiment's folder on tensor, its tag (or variant), base (E14's models of two
   bases share tags) and row (E35 has two rows of one tag), not by the folder's id or the
   row alone, so it survives the folder being deleted and added again, and rows added
-  before it.
+  before it. Each is listed with a few sentences in plain words of how its model was made
+  (`model_data.baseline_summary`, shown by its *Summary* button), kept in the repository
+  (`app/baseline_summaries.json`, by its experiment's folder and name) rather than in the
+  database or on tensor: they are written with the models, and a folder of model data
+  carries none of them.
+- **Reference models are made by a script of the repository, with pyolfsysm's definitions**
+  (`scripts/make_baseline_models.py`, run where olfsysm is, e.g. the KC-remapping queue's
+  venv: not by the site): the queue's bouton base again and its controls
+  (`pyolfsysm.baselines`), each tuned with APL on and run with APL output off, written to a
+  folder laid out as the queue's archive (a `params.csv` row per model whose
+  `base_kwargs_json` and columns are its every setting, so the model worker runs it as
+  made), and chosen as baselines through the Admin API (`--register`).
 - **Baseline models are run on datasets by a worker of their own, one at a time**
   (`model_runs.py`, `model_worker.py`, `orn_input.py`): a `model_runs` row per run, claimed
   only while none is running (`model_runs.claim`), by a third container (the Dockerfile's
@@ -2079,6 +2090,9 @@ app/unmix.py       its option unmix: neighbouring ROIs' signals unmixed (footpri
                    the weights reading each ROI's own light out of the movie, guards)
 app/model_data.py  model data for the Models tab: folders of model outputs on tensor, scanned into a table of
                    models (params.csv rows, provenance.json keys), their spike count files matched, a run read
+app/baseline_summaries.json  how each baseline model was made, a few sentences each (model_data.baseline_summary)
+scripts/make_baseline_models.py  the reference baseline models (the bouton base and its controls) made with pyolfsysm,
+                   laid out as the KC-remapping archive, and chosen as baselines on a site
 app/metadata.py    form model (pydantic) and README.md generation
 app/db.py          SQLite schema and queries
 app/reference.py   reference datasets: built-in and added ones, reading them, matching their chemicals
@@ -2357,7 +2371,8 @@ GET    /api/models                          every model of the folders of model 
                                             parameters, runs) and files of none; gzipped (~1.2 MB → ~100 kB)
 GET    /api/models/baselines                the models chosen as baselines, as /api/models has them (with
                                             whether each is found, and why not), as imported (with how
-                                            their files on tensor differ: "drift"), else read on tensor
+                                            their files on tensor differ: "drift"), else read on tensor;
+                                            each with "summary": how its model was made (or null)
 GET    /api/models/run?id=<path on tensor>  a run's spike counts: KCs (labels, types) × odors (matched to
                                             the odor table), float32 base64, and its provenance.json; of a
                                             baseline's copy (id olfdb:baselines/<id>/<file>), with

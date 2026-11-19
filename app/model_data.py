@@ -34,6 +34,8 @@ Models chosen in the Admin tab are baselines (`add_baseline`; the ``model_baseli
 first in their own table (`baseline_listing`). Their files are imported when chosen (copied into the
 data folder, so backups have them: `import_baseline`), and shown as imported, with how the files on
 tensor they were imported from differ from them now (`drift`), each time they are listed or opened.
+Each is listed with a few sentences in plain words of how its model was made (`baseline_summary`, from
+`SUMMARIES`, kept in the repository by its experiment's folder and name), shown by its Summary button.
 """
 from __future__ import annotations
 
@@ -78,6 +80,8 @@ JOB_VIEW = "view"  # in such a run's folder: its spike counts, with a params.csv
 # a fitted model's rebuild archive (pyolfsysm.rebuild's: its wiring, APL weights and fitted parameters), beside its
 # experiment's params.csv: rebuild/<its tag>/rebuild.json, imported with it, and what a run of it is made from (model_runs.py)
 ARCHIVES, ARCHIVE_JSON = "rebuild", "rebuild.json"
+# how each baseline's model was made, in a few sentences (`baseline_summary`): {"summaries": {"<its experiment's folder>/<its name>": text}}
+SUMMARIES = Path(__file__).with_name("baseline_summaries.json")
 
 _lock = threading.Lock()
 _scans: dict[str, tuple[tuple, dict]] = {}  # folder on the server -> (its files' sizes and times, its scan)
@@ -710,6 +714,23 @@ def drift(b: dict, e: dict, m: dict, root: Path) -> list[str]:
     return out
 
 
+def baseline_summary(experiment: str, name: Optional[str]) -> Optional[str]:
+    """How a baseline's model was made, in a few sentences of plain words (paragraphs apart by a blank line), from
+    `SUMMARIES`: by its experiment's path on tensor and its name (``<path>/<name>``), else by the last folder of
+    that path (``E13_bouton_coincidence/bouton_base``), so a folder moved on tensor keeps its texts. None if it has none."""
+    try:
+        texts = json.loads(SUMMARIES.read_text())["summaries"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if name is None or not isinstance(texts, dict):
+        return None
+    path = str(experiment).rstrip("/")
+    for key in (f"{path}/{name}", f"{path.rsplit('/', 1)[-1]}/{name}"):
+        if isinstance(texts.get(key), str):
+            return texts[key]
+    return None
+
+
 def baseline_listing(db, root: Path) -> dict:
     """The baselines' table, as `listing`'s of them alone: each as imported (`import_baseline`;
     its runs' ids `BASELINE_RUN`<its id>/<file>), with how its files on tensor differ from that
@@ -717,7 +738,8 @@ def baseline_listing(db, root: Path) -> dict:
     is quick, to be shown before the rest).
 
     Returns:
-        dict with ``baselines`` (as `baselines`, with ``ok``, ``error`` (why it is not shown),
+        dict with ``baselines`` (as `baselines`, with ``ok``, ``error`` (why it is not shown), ``summary``
+        (how its model was made, `baseline_summary`'s; None if none),
         ``drift`` (`drift`'s, None if not imported), ``archive`` (its imported rebuild archive, `archive_of`'s; None
         if it has none) and ``model``, its index in ``models``),
         ``experiments``, ``models`` (each with ``baseline``, its id) and ``columns``, as `listing`'s
@@ -726,7 +748,8 @@ def baseline_listing(db, root: Path) -> dict:
     out = {"baselines": [], "experiments": {}, "models": []}
     srcs, keys, lists = sources(db), {}, {k: [] for k in LISTS}
     for b in _baseline_rows(db):
-        entry = {**{k: v for k, v in b.items() if k != "files"}, "ok": False, "error": None, "drift": None, "model": None, "archive": None}
+        entry = {**{k: v for k, v in b.items() if k != "files"}, "ok": False, "error": None, "drift": None, "model": None, "archive": None,
+                 "summary": baseline_summary(b["experiment"], b["name"])}
         out["baselines"].append(entry)
         src = _source_of(b["experiment"], srcs)
         if b["imported_at"] is None:
