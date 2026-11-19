@@ -409,7 +409,9 @@ def test_baseline_summaries(main, outputs, copies, tmp_path, monkeypatch):  # no
     for key in ("E13_bouton_coincidence/bouton_base", "E44_operating_point/thr40_gain1.5_rate0.068_k2_cap3",
                 "E67_apl_effect_fits/rate0.068_aplboth_k2_cap3", "olfdb_baselines/bouton_base",
                 "olfdb_baselines/uniform_glomeruli_claws_uniform_apl", "olfdb_baselines/shuffled_connectome_pairs_kept_seed0",
-                "olfdb_baselines/shuffled_connectome_pairs_broken_seed0"):
+                "olfdb_baselines/shuffled_connectome_pairs_broken_seed0",
+                *(f"olfdb_baselines/{n}_input_glomeruli" for n in ("bouton_base", "uniform_glomeruli_claws_uniform_apl",
+                                                                   "shuffled_connectome_pairs_kept_seed0", "shuffled_connectome_pairs_broken_seed0"))):
         assert isinstance(shipped[key], str) and 20 < len(shipped[key].split()) < 160, key
     f = tmp_path / "summaries.json"
     f.write_text(json.dumps({"summaries": {"E1_apl/k0": "By folder.", "tom/model_outputs/E2_gain/f2": "By path.\n\nTwo paragraphs."}}))

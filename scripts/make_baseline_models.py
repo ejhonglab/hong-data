@@ -15,7 +15,9 @@ definitions the queue's code uses, so this script only lays them out:
 - ``shuffled_connectome_pairs_kept_seed0``, ``shuffled_connectome_pairs_broken_seed0``: the
   connectome's claws, boutons and APL weights shuffled with seed 0 (which bouton each claw has, how
   much each claw and bouton gets from and gives to APL), each claw's and bouton's two APL weights kept
-  together or shuffled apart.
+  together or shuffled apart;
+- each of these with ``_input_glomeruli`` appended: its wiring restricted to the glomeruli of the ORN
+  input it is run on (fit_mb_model's ``input_glomeruli_only``; on other datasets, theirs).
 
 The folder (default `DEFAULT_OUT`, on tensor) gets, as the archive has it:
 
@@ -38,7 +40,8 @@ on 16 threads):
 
 A model whose files are in the folder already is not run again (unless ``--force``): its row is kept.
 ``--register`` POSTs /api/admin/models/baselines for each model named by ``--register-models`` (by
-default all but the bouton base, which is a baseline already, from the archive), finding the folder
+default every model of the folder's params.csv but the bouton base, which is a baseline already, from
+the archive), finding the folder
 among the folders of model data the site has (/api/models); the admin path's password, if the site's
 proxy asks for one, is taken as ``user:password`` from $OLFDB_ADMIN_AUTH.
 """
@@ -63,8 +66,7 @@ TENSOR = Path("/local/tensor")  # where tensor is mounted on the lab's hosts
 DEFAULT_OUT = TENSOR / "Tom/claude_kc_remapping/data/model_outputs/olfdb_baselines"
 PARAMS, PROVENANCE, MODEL_PROVENANCE, ORN_FILE = "params.csv", "provenance.json", "model_provenance.json", "orn_deltas.csv"
 BASE = "bouton"  # every model's ``base`` (as the archive names the bouton base)
-REGISTERED_BY_DEFAULT = ("uniform_glomeruli_claws_uniform_apl", "shuffled_connectome_pairs_kept_seed0",
-                         "shuffled_connectome_pairs_broken_seed0")
+NOT_REGISTERED = ("bouton_base",)  # by default: a baseline already, from the archive (E13_bouton_coincidence)
 CONDITIONS = {"on": "on", "acute_off": "off"}  # file condition -> run_baseline's key suffix
 TARGET = "target_sparsity"  # the fit_mb_model setting of the response rate tuned to (the ``target_rate`` column)
 # the threshold and APL weight scales tuned, as fit_mb_model's params name them (absolute values)
@@ -285,10 +287,13 @@ def experiment_key(listing: dict, out: Path, tensor: Path = TENSOR) -> str:
     raise SystemExit(f"{rel} is in no folder of model data the site has (add it, or the folder above it, in its Admin tab)")
 
 
-def register(url: str, out: Path, names: list[str], tensor: Path = TENSOR) -> None:
-    """Chooses the models named, of the folder `out`, as baselines on the olfdb site at `url`
-    (POST /api/admin/models/baselines {"experiment", "row"}, each its row in params.csv)."""
+def register(url: str, out: Path, names: Optional[list[str]] = None, tensor: Path = TENSOR) -> None:
+    """Chooses the models named (default: every model of the folder's params.csv but `NOT_REGISTERED`), of
+    the folder `out`, as baselines on the olfdb site at `url` (POST /api/admin/models/baselines
+    {"experiment", "row"}, each its row in params.csv)."""
     url = url.rstrip("/")
+    if names is None:
+        names = [t for t in read_params(out) if t not in NOT_REGISTERED]
     listing = _request(f"{url}/api/models")
     key = experiment_key(listing, out, tensor)
     models = [m for m in listing.get("models", []) if m.get("experiment") == key]
@@ -313,7 +318,7 @@ def main(argv: Optional[list[str]] = None) -> None:
     ap.add_argument("--force", action="store_true", help="run a model again even if its files are there")
     ap.add_argument("--no-run", action="store_true", help="run nothing (only --register)")
     ap.add_argument("--register", metavar="URL", help="choose the models as baselines on the olfdb site at URL (e.g. http://hal:8080)")
-    ap.add_argument("--register-models", nargs="+", default=list(REGISTERED_BY_DEFAULT), help="those registered (default: all but bouton_base)")
+    ap.add_argument("--register-models", nargs="+", help="those registered (default: every model of the folder but bouton_base)")
     ap.add_argument("--tensor", type=Path, default=TENSOR, help=f"where tensor is mounted, for --register (default {TENSOR})")
     args = ap.parse_args(argv)
     if not args.no_run:

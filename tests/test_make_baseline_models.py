@@ -26,11 +26,12 @@ VARIANTS = {
                                                 seed=0, uniform_apl_weights=True),
     "shuffled_connectome_pairs_kept_seed0": dict(BASE, shuffle_connectome_seed=0, shuffle_apl_pairs=True),
     "shuffled_connectome_pairs_broken_seed0": dict(BASE, shuffle_connectome_seed=0, shuffle_apl_pairs=False),
+    "bouton_base_input_glomeruli": dict(BASE, input_glomeruli_only=True),
 }
 # the arguments fit_mb_model takes (those of them here), as the model worker says
 KWARGS = ["orn_deltas", "target_sparsity", "fixed_thr", "wAPLKC", "wKCAPL", "wAPLPN", "wPNAPL", "one_row_per_claw", "prat_claws",
           "prat_boutons", "use_connectome_APL_weights", "pn_claw_to_apl", "n_spikes_for_response", "pn2kc_connections", "n_claws",
-          "seed", "uniform_apl_weights", "shuffle_connectome_seed", "shuffle_apl_pairs"]
+          "seed", "uniform_apl_weights", "shuffle_connectome_seed", "shuffle_apl_pairs", "input_glomeruli_only"]
 ODORS = ["2h @ -3", "eb @ -3", "paa @ -4"]
 
 
@@ -109,12 +110,12 @@ def test_folder(script, tmp_path):
     assert names == sorted(["params.csv", "provenance.json", "model_provenance.json", "orn_deltas.csv",
                             *(f"{t}_{c}_{w}.parquet" for t in VARIANTS for c in ("on", "acute_off") for w in ("spike_counts", "responses"))])
     df = pd.read_csv(out / "params.csv")
-    assert list(df.columns[:4]) == ["source_table", "tag", "variant", "base"] and len(df) == 4
+    assert list(df.columns[:4]) == ["source_table", "tag", "variant", "base"] and len(df) == len(VARIANTS)
     for c in ("seed", "target_rate", "fixed_thr", "wAPLKC_scale", "wKCAPL_scale", "wAPLPN_scale", "wPNAPL_scale", "rate_on", "rate_off",
-              "base_kwargs_json", "pn2kc_connections", "n_claws", "uniform_apl_weights", "shuffle_connectome_seed", "shuffle_apl_pairs"):
+              "base_kwargs_json", "pn2kc_connections", "n_claws", "uniform_apl_weights", "shuffle_connectome_seed", "shuffle_apl_pairs", "input_glomeruli_only"):
         assert c in df.columns, c
     s = model_data.scan(out)
-    assert model_data.summary(s) == {"experiments": 1, "models": 4, "runs": 8, "unmatched": 0, "skipped": 0}
+    assert model_data.summary(s) == {"experiments": 1, "models": len(VARIANTS), "runs": 2 * len(VARIANTS), "unmatched": 0, "skipped": 0}
     for m in s["models"]:
         tag = m["params"]["tag"]
         assert sorted(r["label"] for r in m["runs"]) == ["acute_off", "on"]
@@ -124,16 +125,16 @@ def test_folder(script, tmp_path):
         assert p["target"] == 0.05 and p["fixed"]["fixed_thr"] == 250.0 + len(tag) and p["fixed"]["wAPLPN_scale"] == 0.13
     # without the new settings (an older pyolfsysm), the models that need them cannot be run, and say why
     old = [k for k in KWARGS if k not in ("pn2kc_connections", "n_claws", "seed", "uniform_apl_weights", "shuffle_connectome_seed",
-                                           "shuffle_apl_pairs")]
+                                           "shuffle_apl_pairs", "input_glomeruli_only")]
     plans = {m["params"]["tag"]: model_runs.plan(m["params"], old) for m in s["models"]}
     assert plans["bouton_base"]["runnable"] is True
-    assert plans["shuffled_connectome_pairs_kept_seed0"]["runnable"] is False
+    assert plans["shuffled_connectome_pairs_kept_seed0"]["runnable"] is False and plans["bouton_base_input_glomeruli"]["runnable"] is False
     assert "shuffle_connectome_seed" in plans["shuffled_connectome_pairs_kept_seed0"]["why"][0]
     # run again: those done kept; one forced, run again
     script.calls.clear()
     assert [r["tag"] for r in script.run(out, ["bouton_base"])] == list(VARIANTS) and script.calls == []
     script.run(out, ["shuffled_connectome_pairs_kept_seed0"], force=True)
-    assert script.calls == ["shuffled_connectome_pairs_kept_seed0"] and len(pd.read_csv(out / "params.csv")) == 4
+    assert script.calls == ["shuffled_connectome_pairs_kept_seed0"] and len(pd.read_csv(out / "params.csv")) == len(VARIANTS)
     assert json.loads((out / "provenance.json").read_text())["inputs"]["orn_deltas.csv"] == script.sha256(out / "orn_deltas.csv")
 
 
@@ -145,3 +146,25 @@ def test_experiment_key(script, tmp_path):
     assert script.experiment_key(listing, out, tmp_path) == "1/olfdb_baselines"
     with pytest.raises(SystemExit):
         script.experiment_key({"sources": [{"id": 2, "path": "Remy"}]}, out, tmp_path)
+
+
+def test_register(script, tmp_path, monkeypatch):
+    """Registering: by default every model of the folder but the bouton base (a baseline already, from the archive),
+    each by its row as the site lists it."""
+    out = tmp_path / "Tom/model_outputs/olfdb_baselines"
+    script.run(out, list(VARIANTS))
+    posted = []
+
+    def request(url, body=None):
+        if body is None:
+            return {"sources": [{"id": 1, "path": "Tom/model_outputs"}],
+                    "models": [{"experiment": "1/olfdb_baselines", "row": i, "params": {"tag": t}} for i, t in enumerate(VARIANTS)]}
+        posted.append(body)
+        return {"id": len(posted), "experiment": body["experiment"], "row": body["row"]}
+
+    monkeypatch.setattr(script, "_request", request)
+    script.register("http://site/", out, tensor=tmp_path)
+    assert posted == [{"experiment": "1/olfdb_baselines", "row": i} for i in range(1, len(VARIANTS))]
+    posted.clear()
+    script.register("http://site", out, ["bouton_base", "nope"], tensor=tmp_path)
+    assert posted == [{"experiment": "1/olfdb_baselines", "row": 0}]
