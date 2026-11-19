@@ -11,6 +11,8 @@
 import { History, area, deletePoint, inside, movePoints, nearestPoint, simplify, splitPoint } from './roi_edit.js';
 import { showIdentity, showNoIdentity } from './identity.js';
 import { changes, copyPredicted, merge, mergedIds, mergedOf, provisional } from './nmf_merge.js';
+import { Heatmap } from './heatmap.js';
+import { COLORMAPS, drawColorbar, makeNorm } from './colormaps.js';
 
 const TYPED = { uint8: Uint8Array, int8: Int8Array, uint16: Uint16Array, int16: Int16Array, uint32: Uint32Array, int32: Int32Array, float32: Float32Array };
 const CACHE_BYTES = 256 * 1024 * 1024;
@@ -45,6 +47,9 @@ const SLIDER = 1000;
 const HIST_BINS = 256;
 const STRONGEST_BYTES = 32 * 1024 * 1024; // at most this much of a movie's planes is read to find its strongest (`_startContrast`)
 const AUTO_THRESHOLD = 5000;
+// the plot of ROIs' responses to each odor (P, Alt+P): its cells' size, and at most how much of the movie's room it takes
+const PLOT_CELL = 18;
+const PLOT_MAX_SHARE = 0.45;
 
 const sleep = (ms) => new Promise((r) => { setTimeout(r, ms); });
 
@@ -139,6 +144,8 @@ export class MoviePlayer {
     this.$('.player-undo').addEventListener('click', () => this._undo());
     this.$('.player-redo').addEventListener('click', () => this._undo(true));
     el.addEventListener('keydown', (e) => this._key(e));
+    this.plot = { rows: [], seq: 0, heatmap: null };
+    this.$('.player-roiplot-close').addEventListener('click', () => this._plotClear());
     el.addEventListener('wheel', (e) => this._wheelSlider(e), { passive: false });
     this._wireView();
     new ResizeObserver(() => {
@@ -151,6 +158,7 @@ export class MoviePlayer {
   // Opens the player on a dataset's movies of one `kind` ('raw' or 'mocorr'), showing the first.
   async open(datasetId, title, kind) {
     this._setMode(null);
+    if (datasetId !== this.datasetId) this._plotClear();
     this.datasetId = datasetId;
     this.$('.player-title').textContent = `${kind === 'raw' ? 'Raw' : 'Motion-corrected'} movies of ${title}`;
     this.$('.player-list').innerHTML = '<p class="muted">Looking for movies…</p>';
@@ -193,6 +201,7 @@ export class MoviePlayer {
   // `name()` (who: the name set in Settings, if any), `onSaved` called after each save.
   openPrediction(view, title, { name, onSaved } = {}) {
     this._setMode('prediction');
+    this._plotClear();
     this.edit = { id: view.id, revision: view.revision || 0, saved: view.edited || null, hist: null, name, onSaved, drag: null,
       editedPath: view.edited?.path || null };
     this.nmf = { state: view.nmf || null, found: null, pick: new Set(), run: null };
@@ -977,6 +986,19 @@ export class MoviePlayer {
     return best;
   }
 
+  // the smallest ROI drawn on the plane shown that the pointer is in (of a dataset's movies), or null
+  _roiAt(e) {
+    if (!this.showRois || this.maxProj) return null;
+    const [x, y] = this._imagePoint(e);
+    let best = null, least = Infinity;
+    this.rois.forEach((r, i) => {
+      const plane = this._roiPlane(r);
+      if (!this._visible(r) || (plane != null && plane !== this.z)) return;
+      for (const p of r.paths) if (p.length >= 3 && inside(p, x, y) && area(p) < least) { least = area(p); best = i; }
+    });
+    return best;
+  }
+
   // whether the pointer is in the edited ROI chosen (which a drag from there moves)
   _inChosen(e) {
     const roi = this.edit?.hist && !this.edit.stale ? this._chosenEdited() : null;
@@ -1525,6 +1547,9 @@ export class MoviePlayer {
       } else if (click && this.edit?.hist?.current) {
         const i = this._editedAt(e), chosen = this.selectedRoi != null && this.rois[this.selectedRoi]?.source === 'edited';
         if (i != null ? i !== this.selectedRoi : chosen) this._selectRoi(i ?? this.selectedRoi);
+      } else if (click && this.mode !== 'prediction') { // (an ROI clicked in: chosen, to plot with P)
+        const i = this._roiAt(e);
+        if (i != null && i !== this.selectedRoi) this._selectRoi(i);
       }
       drag = null;
     });
@@ -1654,7 +1679,7 @@ export class MoviePlayer {
       ArrowRight: () => this.goTo(this.t + (e.shiftKey ? 10 : 1)), ArrowLeft: () => this.goTo(this.t - (e.shiftKey ? 10 : 1)),
       '>': () => this.goTo(this.t + 1), '<': () => this.goTo(this.t - 1),
       ArrowUp: () => this._stepZ(1), ArrowDown: () => this._stepZ(-1),
-      p: () => {
+      m: () => {
         if (this.mode === 'prediction') return;
         this.maxProj = !this.maxProj;
         this.$('.player-max').checked = this.maxProj;
@@ -1665,8 +1690,101 @@ export class MoviePlayer {
       o: () => { this.showOdors = !this.showOdors; this.$('.player-odors').checked = this.showOdors; this._paint(); },
       f: () => { this._fit(); this._paint(); },
     };
+    // (by the key's place: Alt+P types another character on some layouts, e.g. a Mac's π)
+    if (e.code === 'KeyP' && !e.shiftKey) { e.preventDefault(); this._plotRoi(e.altKey); return; }
+    if (e.altKey) return;
     const f = keys[e.key];
     if (f) { e.preventDefault(); f(); }
+  }
+
+  // ------------------------------------------- ROIs' responses to each odor (P, Alt+P)
+  // As Sam's ImageJ macros' P (al_analysis' plot_roi.py): the mean response to each odor of the ROI chosen, in
+  // every recording of its fly (roi_responses.py), shown as a row of a matrix above the movie; P starts the
+  // matrix again with it, Alt+P adds it (in place of its row, if it has one). Of the fly's own ROIs (as read
+  // from their RoiSet.zip), on a movie with odors (or its fly's recordings with theirs).
+  async _plotRoi(add) {
+    const m = this.movie, r = this.selectedRoi == null ? null : this.rois[this.selectedRoi];
+    if (!m || !r) { this._plotShow('Choose an ROI first (click in it, or on its name, or in the list), then P to plot it, or Alt+P to add it to the plot.'); return; }
+    const k = r.source === 'manual' ? this.base?.manual.indexOf(r) : -1, src = m.dff ? this.movies[m.dff.of] : m;
+    if (k == null || k < 0 || !src?.rois) { this._plotShow(`Only the fly's own ROIs can be plotted (as drawn by hand, from their RoiSet.zip), not ${this.esc(r.name)}.`); return; }
+    if (!add) { this.plot.rows = []; this.plot.seq += 1; }
+    const seq = this.plot.seq, key = `${src.rois}|${k}`;
+    const row = { key, label: r.name, plane: this._roiPlane(r), pending: true, values: new Map(), error: null };
+    const at = this.plot.rows.findIndex((x) => x.key === key);
+    if (at >= 0) this.plot.rows[at] = row; else this.plot.rows.push(row);
+    this._plotRender();
+    let res;
+    try {
+      res = await this.api('/api/movie/roi_responses', { method: 'POST',
+        json: { path: src.path, trials: src.trials || null, rois: src.rois, index: k, name: r.name } });
+    } catch (e) {
+      row.error = e.message;
+    }
+    if (seq !== this.plot.seq || !this.plot.rows.includes(row)) return; // (another plot asked for since)
+    row.pending = false;
+    if (res) {
+      row.res = res;
+      res.columns.forEach((c, i) => row.values.set(`${c.panel}|${c.odor}`, res.values[i]));
+    }
+    this._plotRender();
+  }
+
+  _plotClear() {
+    this.plot.rows = [];
+    this.plot.seq += 1;
+    this._plotRender();
+  }
+
+  // the plot's place, with only a note in it
+  _plotShow(note) {
+    const box = this.$('.player-roiplot');
+    box.hidden = false;
+    this.$('.player-roiplot-title').innerHTML = note;
+    if (!this.plot.rows.length) { this.$('.player-roiplot-map').hidden = true; this.$('.player-roiplot-bar').hidden = true; }
+  }
+
+  _plotRender() {
+    const box = this.$('.player-roiplot'), rows = this.plot.rows;
+    box.hidden = !rows.length;
+    if (!rows.length) { this.plot.heatmap?.destroy(); this.plot.heatmap = null; return; }
+    // the odors: of the first ROI plotted, in their order, then any others' after them
+    const cols = new Map();
+    for (const r of rows) r.res?.columns.forEach((c) => {
+      const key = `${c.panel}|${c.odor}`;
+      if (!cols.has(key)) cols.set(key, { key, label: c.label, detail: `${c.odor} · ${c.panel} · mean of ${c.trials} trial${c.trials === 1 ? '' : 's'}` });
+    });
+    const colList = [...cols.values()], flies = new Set(rows.filter((r) => r.res).map((r) => r.res.fly));
+    const values = new Float32Array(rows.length * colList.length).fill(NaN);
+    rows.forEach((r, i) => colList.forEach((c, j) => { const v = r.values.get(c.key); if (v != null) values[i * colList.length + j] = v; }));
+    // (an ROI's plane said where another row is of the same name: Sam draws a glomerulus on each of its planes)
+    const named = (r) => (r.plane != null && rows.some((x) => x !== r && x.label === r.label) ? `${r.label} (plane ${r.plane + 1})` : r.label);
+    const model = { cols: colList, values, rows: rows.map((r) => ({ key: r.key, label: `${named(r)}${r.pending ? ' …' : r.error ? ' (failed)' : ''}`,
+      detail: r.error || (r.res ? `${flies.size > 1 ? `${r.res.fly.split('/').slice(-2).join('/')} · ` : ''}${r.res.recordings.length} recordings` : 'computing…') })) };
+    const map = this.$('.player-roiplot-map'), bar = this.$('.player-roiplot-bar');
+    map.hidden = false;
+    bar.hidden = !colList.length;
+    const pending = rows.filter((r) => r.pending).length, failed = rows.filter((r) => r.error);
+    const done = rows.find((r) => r.res)?.res;
+    const windows = done ? [...new Set(done.recordings.map((x) => x.window))].join(' or ') : null;
+    const warn = [...new Set(rows.flatMap((r) => r.res?.warnings || []))];
+    this.$('.player-roiplot-title').innerHTML = [
+      done ? `Mean response to each odor (dF/F, the largest of ${windows} volumes from the odor's onset)` : '',
+      pending ? `<span class="muted">computing ${pending} ROI${pending === 1 ? '' : 's'}…</span>` : '',
+      ...failed.map((r) => `<span class="player-error">${this.esc(r.label)}: ${this.esc(r.error)}</span>`),
+      warn.length ? `<span class="player-roiplot-warn">${warn.length} recording${warn.length === 1 ? '' : 's'} left out</span>` : '',
+    ].filter(Boolean).join(' · ');
+    this.$('.player-roiplot-title').title = [...(done ? done.recordings.map((x) => `${x.name}: ${x.how}`) : []), ...warn].join('\n');
+    if (!colList.length) { map.hidden = true; return; }
+    if (!this.plot.heatmap) this.plot.heatmap = new Heatmap(this.$('.player-roiplot-hm'), { cellW: PLOT_CELL, cellH: PLOT_CELL });
+    let lo = 0, hi = 0;
+    for (const v of values) if (Number.isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    const lut = COLORMAPS['oklab-div'].lut, norm = makeNorm('twoslope', lo, hi);
+    const hm = this.plot.heatmap;
+    hm.setModel(model, { lut, norm });
+    // (as high as its rows, a scrollbar's room more, up to a share of the movie's room)
+    const room = this.$('.player-main').clientHeight * PLOT_MAX_SHARE;
+    map.style.height = `${Math.round(Math.min(room, hm.headerH + rows.length * PLOT_CELL + 14))}px`;
+    drawColorbar(bar, lut, norm);
   }
 
   _stepZ(d) {

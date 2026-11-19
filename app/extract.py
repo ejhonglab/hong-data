@@ -162,6 +162,31 @@ def polygon_mask(points: np.ndarray, shape: tuple[int, int]) -> tuple[int, int, 
     return y0, x0, inside(pts[:, ::-1], yy, xx)
 
 
+def roi_mask(r, shape: tuple[int, int, int]):
+    """An ImageJ ROI's (a roifile ``ImagejRoi``) mask on a movie of `shape` (z, y, x), as
+    hong2p's ``ijroi_masks`` makes it: ``z`` (its hyperstack Z, else its stack position, from 0;
+    0 on a movie of one plane), where its mask is (``y0``, ``x0``, ``mask``: `polygon_mask`, of
+    each of a composite ROI's outlines, those in one and not another) and ``pixels``. Else why
+    there is none: "no plane" (of none, or of one the movie lacks) or "no pixels"."""
+    nz, ny, nx = shape
+    z = r.z_position - 1 if r.z_position > 0 else r.position - 1 if r.position > 0 else None
+    if nz == 1 and z is None:
+        z = 0
+    if z is None or not 0 <= z < nz:
+        return "no plane"
+    mask = np.zeros((ny, nx), bool)
+    box = [ny, nx, 0, 0]
+    for p in r.coordinates(multi=True):  # (one outline, but for composite ROIs: in one and not another of theirs)
+        y0, x0, m = polygon_mask(np.asarray(p, dtype=np.float64), (ny, nx))
+        if m.any():
+            mask[y0:y0 + m.shape[0], x0:x0 + m.shape[1]] ^= m
+            box = [min(box[0], y0), min(box[1], x0), max(box[2], y0 + m.shape[0]), max(box[3], x0 + m.shape[1])]
+    if not mask.any():
+        return "no pixels"
+    m = mask[box[0]:box[2], box[1]:box[3]]
+    return {"z": int(z), "y0": box[0], "x0": box[1], "mask": m, "pixels": int(m.sum())}
+
+
 def read_rois(path: Path, shape: tuple[int, int, int], say: Callable[[str], None] = print) -> list[dict]:
     """The ROIs of a RoiSet.zip (or one .roi) to take signals from, in its order, as al_analysis
     reads them (hong2p's ``ijroi_masks``, for a movie of `shape`: z, y, x): each a polygon on
@@ -180,7 +205,7 @@ def read_rois(path: Path, shape: tuple[int, int, int], say: Callable[[str], None
     except Exception as e:  # noqa: BLE001 (roifile raises many kinds)
         raise ExtractError(f"cannot read the ImageJ ROIs of {path} ({e})") from None
     rois = rois if isinstance(rois, list) else [rois]
-    nz, ny, nx = shape
+    nz = shape[0]
     out, left = [], {"maximal": [], "outline": 0, "no plane": [], "no pixels": []}
     for i, r in enumerate(rois):
         name = r.name or f"{i + 1}"
@@ -190,24 +215,11 @@ def read_rois(path: Path, shape: tuple[int, int, int], say: Callable[[str], None
         if name == OUTLINE:
             left["outline"] += 1
             continue
-        z = r.z_position - 1 if r.z_position > 0 else r.position - 1 if r.position > 0 else None
-        if nz == 1 and z is None:
-            z = 0
-        if z is None or not 0 <= z < nz:
-            left["no plane"].append(name)
+        m = roi_mask(r, shape)
+        if isinstance(m, str):
+            left[m].append(name)
             continue
-        mask = np.zeros((ny, nx), bool)
-        box = [ny, nx, 0, 0]
-        for p in r.coordinates(multi=True):  # (one outline, but for composite ROIs: in one and not another of theirs)
-            y0, x0, m = polygon_mask(np.asarray(p, dtype=np.float64), (ny, nx))
-            if m.any():
-                mask[y0:y0 + m.shape[0], x0:x0 + m.shape[1]] ^= m
-                box = [min(box[0], y0), min(box[1], x0), max(box[2], y0 + m.shape[0]), max(box[3], x0 + m.shape[1])]
-        if not mask.any():
-            left["no pixels"].append(name)
-            continue
-        m = mask[box[0]:box[2], box[1]:box[3]]
-        out.append({"name": name, "z": int(z), "y0": box[0], "x0": box[1], "mask": m, "pixels": int(m.sum())})
+        out.append({"name": name, **m})
     if left["maximal"]:
         say(f"left out: {len(left['maximal'])} ROIs whose name ends in {MAXIMAL} ({', '.join(left['maximal'])}), as al_analysis leaves them out")
     if left["outline"]:
@@ -295,17 +307,23 @@ def read_trials(path: Path) -> list[dict]:
                 parts = [dict(o) for o in olf.parse_odor_list(str(t.get("odors")))]
             except Exception:  # noqa: BLE001
                 parts = [{"name": str(t.get("odors"))}]
-        strs = []
-        for o in parts:
-            o["log10_conc"] = log10_conc(o.get("log10_conc"))
-            for k in ("name", "abbrev"):  # (some files' abbreviations end in a zero-width space, another odor to a table)
-                if isinstance(o.get(k), str):
-                    o[k] = INVISIBLE.sub("", o[k]).strip()
-            # (hong2p's abbreviation of it, as al_analysis' tables have; else its own, from its odor's YAML)
-            own = o.get("abbrev") if isinstance(o.get("abbrev"), str) and o.get("abbrev") else o["name"]
-            strs.append(olf.format_odor({**{k: v for k, v in o.items() if k != "abbrev"}, "name": olf.odor2abbrev.get(o["name"], own)}))
-        out.append({**f, "odors": sorted(strs), "recorded": f["odor"]})
+        out.append({**f, "odors": sorted(odor_str(o) for o in parts), "recorded": f["odor"]})
     return out
+
+
+def odor_str(o: dict) -> str:
+    """An odor (its ``name``, ``log10_conc`` and ``abbrev``, if any: of a recording's trials, or of
+    its stimulus YAML's ``pins2odors``) as al_analysis' tables name it, e.g. ``ea @ -4.2``: hong2p's
+    abbreviation of it, else its own."""
+    from hong2p import olf
+
+    o = {**o, "log10_conc": log10_conc(o.get("log10_conc"))}
+    for k in ("name", "abbrev"):  # (some files' abbreviations end in a zero-width space, another odor to a table)
+        if isinstance(o.get(k), str):
+            o[k] = INVISIBLE.sub("", o[k]).strip()
+    # (hong2p's abbreviation of it, as al_analysis' tables have; else its own, from its odor's YAML)
+    own = o.get("abbrev") if isinstance(o.get("abbrev"), str) and o.get("abbrev") else o["name"]
+    return olf.format_odor({**{k: v for k, v in o.items() if k != "abbrev"}, "name": olf.odor2abbrev.get(o["name"], own)})
 
 
 def responses(traces: np.ndarray, trials: list[dict], n_response: int = N_RESPONSE) -> np.ndarray:

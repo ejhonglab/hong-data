@@ -1474,6 +1474,14 @@ try {
       </details>
     </div>
     <div class="player-main">
+      <section class="player-roiplot" aria-label="ROIs' responses to each odor" hidden>
+        <div class="player-roiplot-head">
+          <span class="player-roiplot-title small"></span>
+          <canvas class="colorbar player-roiplot-bar" aria-hidden="true"></canvas>
+          <button type="button" class="btn small player-roiplot-close" title="Close the plot">×</button>
+        </div>
+        <div class="player-roiplot-map" hidden><div class="player-roiplot-hm"></div></div>
+      </section>
       <div class="player-stage">
         <canvas class="player-canvas" aria-label="Movie"></canvas>
         <div class="player-msg"></div>
@@ -1498,7 +1506,7 @@ try {
           <button type="button" class="btn small player-fit" title="Fit the image to the window (or double-click it)">Fit screen</button>
           <span class="player-pixel muted"></span>
         </div>
-        <p class="player-keys">Space: play / pause · ←/→: time (with Shift: ×10) · ↑/↓: plane · P: max projection · A: auto contrast (again: more) · R: reset contrast · O: odor names · F: fit screen · drag to move, wheel to zoom (over a slider: to step it)</p>
+        <p class="player-keys">Space: play / pause · ←/→: time (with Shift: ×10) · ↑/↓: plane · M: max projection · P: plot the ROI chosen's response to each odor (Alt+P: add it to the plot) · click in an ROI: choose it · A: auto contrast (again: more) · R: reset contrast · O: odor names · F: fit screen · drag to move, wheel to zoom (over a slider: to step it)</p>
       </div>
     </div>
     <aside class="player-rois" aria-label="Brightness and contrast, and ImageJ ROIs">

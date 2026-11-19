@@ -40,7 +40,7 @@ from starlette.staticfiles import StaticFiles
 
 from . import (backup, bundle_import, chemprops, compare, config, dilution, export, extract, filelog, fits, headspace, lotus,
                batches, lotus_import, matrix_download, merge, metacyc, metacyc_import, model_data, model_runs, nmf_check, orn_input, movies, odormeta, permalinks,
-               predictions, refinement, reference, roi_training, sandbox, tensor, thorimage, trial_dff, vcf, version, yamlcheck)
+               predictions, refinement, reference, roi_responses, roi_training, sandbox, tensor, thorimage, trial_dff, vcf, version, yamlcheck)
 from .db import PANEL_RENAMES, PROPERTY_COLUMNS, Database, rename_panel
 from .glomeruli import GLOMERULI, load_glomeruli
 from .ingest import (ParsedData, ValidationError, combine, extra_text, files_text, fly_key, kc_id_problems, load_file,
@@ -1342,12 +1342,17 @@ def _server_file(path: Any, suffixes: tuple[str, ...]) -> Path:
     if not os.path.isabs(p) or not p.lower().endswith(suffixes):
         raise HTTPException(400, f"expected the path on the server of a {' / '.join(suffixes)} file")
     real = os.path.realpath(p)
-    tops = [os.path.realpath(t).rstrip("/") for t in [config.TENSOR_ROOT, *sandbox.folders(), predictions.root(), trial_dff.cache_dir()]]
-    if not any(real == t or real.startswith(t + "/") for t in tops) or not sandbox.can_read(real):
+    if not _server_readable(real):
         raise HTTPException(403, tensor.NOT_ALLOWED)
     if not os.path.isfile(real):
         raise HTTPException(404, "no such file on the server")
     return Path(real)
+
+
+def _server_readable(real: str) -> bool:
+    """Whether a path on the server (resolved) is one the browser may name: as `_server_file` says."""
+    tops = [os.path.realpath(t).rstrip("/") for t in [config.TENSOR_ROOT, *sandbox.folders(), predictions.root(), trial_dff.cache_dir()]]
+    return any(real == t or real.startswith(t + "/") for t in tops) and sandbox.can_read(real)
 
 
 async def dataset_movies(request: Request) -> Response:
@@ -1461,6 +1466,39 @@ async def movie_trial_dff(request: Request) -> Response:
 
     st, ok = await run_in_threadpool(run)
     return JSONResponse({"movies": [{**s, "path": o["asked"]} for s, o in zip(st, ok)]})
+
+
+async def movie_roi_responses(request: Request) -> Response:
+    """An ImageJ ROI's mean response to each odor, in each recording of its fly (`roi_responses`), for the
+    player's plot of them: {"path": the movie it is drawn on, as listed, "trials": its trials file, if any,
+    "rois": its RoiSet.zip, "index": the ROI's place in it (from 0), "name": its name there, "window": the
+    response window (volumes; by default an extraction's, `extract.WINDOW`)}."""
+    body = await request.json()
+    if not isinstance(body, dict) or not isinstance(body.get("index"), int) or not isinstance(body.get("path"), str):
+        return json_error(400, "expected {path, rois, index, name, trials?, window?}")
+    window = body.get("window", extract.WINDOW)
+    if window != extract.WINDOW and not (isinstance(window, int) and 1 <= window <= 100):
+        return json_error(400, f"window: '{extract.WINDOW}' or a number of volumes, from 1 to 100")
+    _server_file(body["path"], movies.TIFF_SUFFIXES + (".raw",))
+    asked = Path(os.path.normpath(body["path"]))
+    trials = _server_file(body["trials"], (".json",)) if body.get("trials") else None
+    rois = _server_file(body.get("rois"), (".zip", ".roi"))
+
+    def check(p: Path) -> Path:
+        return _server_file(str(p), movies.TIFF_SUFFIXES + (".raw", ".json"))
+
+    def run() -> dict:
+        fly = asked.parent if asked.name == movies.CONCAT else asked.parent.parent
+        if not _server_readable(os.path.realpath(fly)):
+            raise HTTPException(403, tensor.NOT_ALLOWED)
+        return roi_responses.compute(asked, trials, rois, body["index"], body.get("name"), window,
+                                     extract.stimulus_folders(db, config.TENSOR_ROOT), check)
+
+    try:
+        result = await run_in_threadpool(run)
+    except (roi_responses.RoiResponsesError, movies.MovieError) as e:
+        return json_error(422, str(e))
+    return JSONResponse(result)
 
 
 async def dataset_file(request: Request) -> Response:
@@ -4269,6 +4307,7 @@ routes = [
     Route("/api/movie/rois/download", movie_rois_download),
     Route("/api/movie/trials", movie_trials),
     Route("/api/movie/trial_dff", movie_trial_dff, methods=["POST"]),
+    Route("/api/movie/roi_responses", movie_roi_responses, methods=["POST"]),
     Route("/api/download", download),
     Route("/api/roi_training", roi_training_flies),
     Route("/api/roi_training/download", roi_training_download),

@@ -398,9 +398,15 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   (as ImageJ's: few pixels saturated, more contrast at each press) and *Reset* (the
   plane's full range). A movie opens as *Reset* would set it on its plane with the strongest
   signal (the highest 99.5th percentile at its first time point), so no plane is saturated. Keys as in ImageJ where they exist (space or `\` to play, `<` /
-  `>` and the arrows to step, `A` auto contrast), `R` to reset the contrast and `O` for
-  odor names. Only the planes shown are read, on the server, so even large movies open
-  at once.
+  `>` and the arrows to step, `A` auto contrast), `R` to reset the contrast, `O` for
+  odor names and `M` for the max projection. Only the planes shown are read, on the server,
+  so even large movies open at once.
+- **Plotting an ROI's responses** (as `P` in Sam's ImageJ macros): choose one of the fly's
+  own ROIs (click in it, on its name, or in the list), then press `P`. A matrix of its mean
+  response to each odor, in every recording of the fly, opens above the movie; `Alt+P` adds
+  the next ROI chosen to it as another row. Diagnostic odors come first, in al_analysis'
+  fixed order, then each panel's, in its stimulus YAML's order. A fly's first ROI takes a
+  few seconds; later ones about a third of a second.
 - **Download**: the matrices of several datasets are concatenated into one wide CSV
   (trials × ROIs, with `dataset_id` as an extra column level; trials matched on panel,
   odor components and repeat) or long CSV (one row per value). Zips always have

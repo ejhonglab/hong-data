@@ -946,6 +946,17 @@ between the frontend and the server. Using the app is described in
   at Reset's levels of its strongest plane (each plane's first time point read alone, at
   most 32 MB of them, evenly spaced), not Auto's of the first: one level for every plane,
   which a first plane dimmer or brighter than the rest no longer skews.
+- **An ROI's responses are computed only from what they need** (`roi_responses.py`, the
+  player's `P`). Of each of the fly's recordings, it reads the ROI's plane, the rows its mask
+  spans, and each trial's time points up to the end of its response window. The numbers are
+  an extraction's, to the last bit. With the movies in memory, this is 0.1 to 0.4 s for a fly
+  of six recordings, against 2 to 15 s reading them whole.
+  Read from tensor the first time, it is about as slow either way (4 to 6 s): tensor reads
+  whole records of its disks, whatever part is asked for. So a fly's first ROI also has its
+  movies read whole in the background, and the next ROI, on any plane, takes about 0.3 s.
+  Odor order follows al_analysis' `sort_odors` (hong2p's `panel2name_order`, copied here, as
+  the pinned hong2p predates it). A panel without such an order uses its stimulus YAMLs'
+  `pins2odors`, else the order presented.
 - **Motion-corrected movies are found as al_analysis lays out a fly's folder**, not by
   listing every TIFF in it, which also has its dF/F volumes, averages and the suite2p
   run (twice, through its link): the fly's recordings registered together
@@ -2096,6 +2107,7 @@ app/filelog.py     the files the server has read and written in its own folders 
 app/backup.py      backups of the database and files into a folder the server may write (Admin tab)
 app/movies.py      a dataset's movies on tensor: finding them, reading their planes, their ImageJ ROIs
 app/trial_dff.py   each trial's dF/F image of a movie, and each odor's mean: al_analysis', or made in the background
+app/roi_responses.py  an ImageJ ROI's mean response to each odor in its fly's recordings (the player's P), reading only what it needs
 config/odor_sheet_template.csv   odor sheet columns, with the odors from the thesis tables
 app/static/        frontend: index.html, app.js, heatmap.js, colormaps.js (+ mpl_luts.js),
                    app.css, cluster.js (+ cluster-worker.js), figure.js (SVG/PDF/PNG export),
@@ -2240,6 +2252,8 @@ GET    /api/movie/rois?path=[&dataset=]     the ImageJ ROIs of a RoiSet.zip (or 
 GET    /api/movie/rois/download?path=       that file as it is, to save under its own name (the viewer's
                                             Download the ROIs: a prediction's as edited, else as predicted)
 GET    /api/movie/trials?path=              the trials of an al_analysis trial_frames_and_odors.json: frames, odor
+POST   /api/movie/roi_responses             {"path", "trials", "rois", "index", "name", "window"} → an ImageJ ROI's
+                                            mean response to each odor, in each recording of its fly
 GET    /api/download?ids=1,2&format=files|wide|long
                                             a zip, or a CSV for the matrix of a single dataset;
                                             &lower=1 for odor names in lowercase (but in files)
