@@ -245,7 +245,8 @@ def test_api(main, outputs, odor_table):  # noqa: F811
 def test_baselines(main, outputs, copies):  # noqa: F811
     """Models chosen as baselines: kept by their experiment's folder on tensor, name, base and row; listed alone, as /api/models lists them
     (but their runs: of their imported copy)."""
-    assert call(main.models_baselines) == (200, {"baselines": [], "experiments": {}, "models": [], "columns": []})
+    status, empty = call(main.models_baselines)
+    assert status == 200 and {k: v for k, v in empty.items() if k != "details"} == {"baselines": [], "experiments": {}, "models": [], "columns": []}
     sid = call(main.admin_models_add, body={"path": "tom/model_outputs"})[1]["id"]
     for body, want in [({}, 400), ({"experiment": f"{sid}/E1_apl", "row": True}, 400), ({"experiment": f"{sid + 1}/E1_apl", "row": 0}, 404),
                        ({"experiment": f"{sid}/E1_apl", "row": 9}, 404), ({"experiment": f"{sid}/nope", "row": 0}, 404)]:
@@ -424,3 +425,17 @@ def test_baseline_summaries(main, outputs, copies, tmp_path, monkeypatch):  # no
     assert [b["summary"] for b in out["baselines"]] == ["By folder.", "By path.\n\nTwo paragraphs.", None]
     f.write_text("not JSON")
     assert [b["summary"] for b in call(main.models_baselines)[1]["baselines"]] == [None, None, None]
+
+
+def test_baseline_details(main, copies, tmp_path, monkeypatch):  # noqa: F811
+    """The reference baseline models' details, served with the baselines as HTML (from Markdown with tables): the
+    repository's, and none when there is none."""
+    html = call(main.models_baselines)[1]["details"]
+    assert "<h3" in html and "<table>" in html and "input_glomeruli_only" in html
+    f = tmp_path / "details.md"
+    f.write_text("### A\n\n- one\n\n| a | b |\n|---|---|\n| 1 | 2 |\n")
+    monkeypatch.setattr(model_data, "DETAILS", f)
+    assert call(main.models_baselines)[1]["details"] == ("<h3>A</h3>\n<ul>\n<li>one</li>\n</ul>\n<table>\n<thead>\n<tr>\n<th>a</th>\n<th>b</th>\n"
+                                                         "</tr>\n</thead>\n<tbody>\n<tr>\n<td>1</td>\n<td>2</td>\n</tr>\n</tbody>\n</table>")
+    monkeypatch.setattr(model_data, "DETAILS", tmp_path / "none.md")
+    assert call(main.models_baselines)[1]["details"] is None

@@ -278,6 +278,13 @@ export class ModelsPage {
     $('#models-base-table').innerHTML = `<table class="odor-table models-table"><thead><tr><th>Summary</th><th>Open</th>${this._head(cols, false)}</tr></thead>
       <tbody>${b.models.map((m) => this._row(b, m, cols, null, 0, cols.length - 1, lead(m))).join('')}</tbody></table>`;
     this._showSummary();
+    const det = $('#models-base-details');
+    det.hidden = !b.details;
+    if (b.details && det.dataset.html !== b.details) {
+      // (the repository's own text, as HTML: app/baseline_details.md; kept open or closed as it was)
+      $('#models-base-details-body').innerHTML = b.details;
+      det.dataset.html = b.details;
+    }
   }
 
   // the summary of the baseline whose Summary button was pressed (pressed again: hidden), below their table

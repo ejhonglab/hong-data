@@ -486,6 +486,14 @@ button.link { background: none; border: 0; padding: 0; color: var(--accent); tex
 .models-base-summary { margin-top: 10px; padding: 8px 12px; border: 1px solid var(--rule); border-radius: var(--radius); max-width: 75ch; }
 .models-base-summary h3 { margin: 0 0 6px; font-size: 1em; }
 .models-base-summary p { margin: 0 0 6px; }
+.models-base-details { margin-top: 10px; }
+.models-base-details > summary { cursor: pointer; font-weight: 600; }
+.models-base-details > div { max-width: 90ch; }
+.models-base-details h3 { font-size: 1em; margin: 14px 0 4px; }
+.models-base-details h4 { font-size: 0.95em; margin: 10px 0 4px; }
+.models-base-details table { border-collapse: collapse; margin: 6px 0; font-size: 0.9em; }
+.models-base-details th, .models-base-details td { border: 1px solid var(--rule); padding: 2px 8px; text-align: right; white-space: nowrap; }
+.models-base-details th:first-child, .models-base-details td:first-child { text-align: left; }
 .models-loading { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; }
 .models-loading[hidden] { display: none; }
 .models-tools { flex-wrap: wrap; }

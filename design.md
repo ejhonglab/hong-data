@@ -724,6 +724,9 @@ between the frontend and the server. Using the app is described in
   folder laid out as the queue's archive (a `params.csv` row per model whose
   `base_kwargs_json` and columns are its every setting, so the model worker runs it as
   made), and chosen as baselines through the Admin API (`--register`).
+  How they were made is said at length, with their tuned values, in `app/baseline_details.md`, served
+  with the baselines as HTML (`model_data.baseline_details`) and shown folded under their table
+  (*Model details*).
 - **Baseline models are run on datasets by a worker of their own, one at a time**
   (`model_runs.py`, `model_worker.py`, `orn_input.py`): a `model_runs` row per run, claimed
   only while none is running (`model_runs.claim`), by a third container (the Dockerfile's
@@ -2372,7 +2375,8 @@ GET    /api/models                          every model of the folders of model 
 GET    /api/models/baselines                the models chosen as baselines, as /api/models has them (with
                                             whether each is found, and why not), as imported (with how
                                             their files on tensor differ: "drift"), else read on tensor;
-                                            each with "summary": how its model was made (or null)
+                                            each with "summary": how its model was made (or null); "details":
+                                            app/baseline_details.md as HTML (or null)
 GET    /api/models/run?id=<path on tensor>  a run's spike counts: KCs (labels, types) × odors (matched to
                                             the odor table), float32 base64, and its provenance.json; of a
                                             baseline's copy (id olfdb:baselines/<id>/<file>), with

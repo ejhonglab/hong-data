@@ -82,6 +82,8 @@ JOB_VIEW = "view"  # in such a run's folder: its spike counts, with a params.csv
 ARCHIVES, ARCHIVE_JSON = "rebuild", "rebuild.json"
 # how each baseline's model was made, in a few sentences (`baseline_summary`): {"summaries": {"<its experiment's folder>/<its name>": text}}
 SUMMARIES = Path(__file__).with_name("baseline_summaries.json")
+# how the reference baseline models were made, at length (`baseline_details`): Markdown, shown below the baselines' table, folded
+DETAILS = Path(__file__).with_name("baseline_details.md")
 
 _lock = threading.Lock()
 _scans: dict[str, tuple[tuple, dict]] = {}  # folder on the server -> (its files' sizes and times, its scan)
@@ -731,6 +733,17 @@ def baseline_summary(experiment: str, name: Optional[str]) -> Optional[str]:
     return None
 
 
+def baseline_details() -> Optional[str]:
+    """How the reference baseline models were made, at length (`DETAILS`, Markdown with tables), as HTML; None if
+    there is none."""
+    import markdown
+
+    try:
+        return markdown.markdown(DETAILS.read_text(), extensions=["tables"])
+    except OSError:
+        return None
+
+
 def baseline_listing(db, root: Path) -> dict:
     """The baselines' table, as `listing`'s of them alone: each as imported (`import_baseline`;
     its runs' ids `BASELINE_RUN`<its id>/<file>), with how its files on tensor differ from that
@@ -743,7 +756,8 @@ def baseline_listing(db, root: Path) -> dict:
         ``drift`` (`drift`'s, None if not imported), ``archive`` (its imported rebuild archive, `archive_of`'s; None
         if it has none) and ``model``, its index in ``models``),
         ``experiments``, ``models`` (each with ``baseline``, its id) and ``columns``, as `listing`'s
-        (an experiment of no folder added any more keyed ``baseline:<its id>``).
+        (an experiment of no folder added any more keyed ``baseline:<its id>``), and ``details``
+        (`baseline_details`'s HTML, or None).
     """
     out = {"baselines": [], "experiments": {}, "models": []}
     srcs, keys, lists = sources(db), {}, {k: [] for k in LISTS}
@@ -784,6 +798,7 @@ def baseline_listing(db, root: Path) -> dict:
         for k in LISTS:
             lists[k] += parse_list(src[k]) if src else []
     out["columns"] = _columns(keys, lists)
+    out["details"] = baseline_details()
     return out
 
 
