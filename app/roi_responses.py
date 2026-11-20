@@ -13,9 +13,9 @@ spans and the time points of each trial up to the end of its response window, ea
 rows in one read, several at once (`_trace`). On a fly of Sam's (6 recordings, 1.3 GB) that is
 0.1 to 0.4 s where the movies are in the server's memory, against 2 to 15 s for reading them whole
 as an extraction does; read from tensor the first time it is about as slow either way (tensor
-reads whole records of its disks, whatever part of one is asked for). So the first ROI of a fly
-plotted also has its recordings' movies read whole, in the background (`warm`), for the next ROIs:
-another plane's ROI took 1.4 to 3.6 s before that, 0.3 s after.
+reads whole records of its disks, whatever part of one is asked for). So a player open on a fly
+has its recordings' movies held in memory, read whole in the background (`movie_memory`), for the
+ROIs plotted: another plane's ROI took 1.4 to 3.6 s before, 0.3 s from tensor's pages in memory.
 
 Odors are in al_analysis' order (hong2p's ``panel2name_order``: `orders`, as ``plot_roi.py`` sorts them with
 ``sort_odors``): diagnostic panels first, then the others in the order of their recordings; in a
@@ -27,16 +27,13 @@ from __future__ import annotations
 
 import math
 import os
-import queue
-import threading
-import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable, Optional
 
 import numpy as np
 
-from . import extract, movies, sandbox
+from . import extract, movie_memory, movies, sandbox
 
 # hong2p's odor orders of the lab's panels (its ``olf.panel2name_order``, al_analysis' before 5a84e53 moved them
 # there), as of hong2p ae2abda: the hong2p pinned for the site predates them (`orders` takes hong2p's, if it has them)
@@ -53,54 +50,11 @@ PANEL2NAME_ORDER = {
     "control": ["pfo", "ms", "va", "fur", "2h", "oct", "1o3ol", "1o3ol+2h", "2h+oct (air mix)", "2h+1o3ol (air mix)",
                 "1o3ol+2h (air mix)", "control mix", "cmix", "cmix0", "cmix-1", "cmix-2"],
 }
-WARM_CHUNK = 8 << 20  # bytes of a movie read at once, warming it
-WARM_AGAIN_S = 1800  # a movie warmed is not read again for this long
 READERS = 16  # reads of a movie at once (each a time point's rows of the ROI's plane): tensor answers them together
 
 
 class RoiResponsesError(ValueError):
     pass
-
-
-_warm_queue: "queue.Queue[Path]" = queue.Queue()
-_warmed: dict[str, float] = {}
-_warm_lock = threading.Lock()
-_warm_thread: Optional[threading.Thread] = None
-
-
-def warm(paths: list[Path]) -> None:
-    """Has movies read whole, one after another, in a thread of their own, for the server (the
-    computer's memory) to have them for the next ROI plotted: but not one warmed in the last
-    `WARM_AGAIN_S`."""
-    global _warm_thread
-    now = time.monotonic()
-    with _warm_lock:
-        for p in paths:
-            if now - _warmed.get(str(p), -math.inf) > WARM_AGAIN_S:
-                _warmed[str(p)] = now
-                _warm_queue.put(p)
-        if _warm_thread is None:
-            _warm_thread = threading.Thread(target=_warm_loop, name="roi-responses-warm", daemon=True)
-            _warm_thread.start()
-
-
-def _warm_loop() -> None:
-    global _warm_thread
-    while True:
-        try:
-            p = _warm_queue.get(timeout=60)
-        except queue.Empty:
-            with _warm_lock:  # (not if `warm` gave it more meanwhile)
-                if _warm_queue.empty():
-                    _warm_thread = None
-                    return
-            continue
-        try:
-            with open(p, "rb", buffering=0) as f:
-                while f.read(WARM_CHUNK):
-                    pass
-        except OSError:
-            pass
 
 
 def recordings(movie: Path, trials: Optional[Path]) -> tuple[Path, list[dict]]:
@@ -116,6 +70,19 @@ def recordings(movie: Path, trials: Optional[Path]) -> tuple[Path, list[dict]]:
     if trials is None:
         raise RoiResponsesError("the movie has no trials (trial_frames_and_odors.json), and its fly no recordings with theirs")
     return fly, [{"name": movie.parent.name, "dir": movie.parent, "movie": movie, "trials": trials}]
+
+
+def movie_paths(movie: Path, trials: Optional[Path], check: Callable[[Path], Path]) -> tuple[Path, list[Path]]:
+    """The fly's folder, and the movies (as `check` gives their paths) a plot of an ROI drawn on
+    `movie` reads (`recordings`): what `movie_memory` holds for a player open on it."""
+    fly, recs = recordings(movie, trials)
+    out = []
+    for r in recs:
+        try:
+            out.append(check(r["movie"]))
+        except Exception:  # noqa: BLE001 (one the server may not read: left out, as `compute` leaves it)
+            continue
+    return fly, out
 
 
 def raw_dir(fly: Path) -> Optional[Path]:
@@ -154,10 +121,16 @@ def needed(trials: list[dict], window: int, t: int) -> np.ndarray:
 
 def _trace(movie: movies.Movie, roi: dict, frames: np.ndarray) -> np.ndarray:
     """The ROI's trace (its mean over its mask, as `extract.plane_traces` computes it, to the last
-    bit) at `frames`: each a read of the rows of its plane its mask spans, where the movie is in
-    one piece (a memory map), else from the whole movie read."""
+    bit) at `frames`: from the movie held in memory (`movie_memory`), if it is; else each a read of
+    the rows of its plane its mask spans, where the movie is in one piece (a memory map), else from
+    the whole movie read."""
     d, m = movie.data, roi["mask"]
     h, w = m.shape
+    held = movie_memory.array(movie.path)
+    if held is not None and len(frames):
+        at = {"t": frames, "z": roi["z"], "y": slice(roi["y0"], roi["y0"] + h), "x": slice(roi["x0"], roi["x0"] + w)}
+        box = held[tuple(at.get(r, 0) for r in movie.roles)]  # (frames, h, w): the time points and the plane, its only arrays
+        return np.mean(box[:, m], axis=1)
     if d is None or not d.flags.c_contiguous or not len(frames):
         return extract.plane_traces(movie, [roi])[frames, 0]
     strides = dict(zip(movie.roles, d.strides))
@@ -264,7 +237,7 @@ def compute(movie: Path, trials: Optional[Path], roiset: Path, index: int, name:
     r = read_roi(roiset, index, name)
     roi_name = r.name or f"{index + 1}"
     per: dict[tuple[str, str], list[float]] = {}
-    panels, yaml_odors, out_recs, warnings, read = [], [], [], [], []
+    panels, yaml_odors, out_recs, warnings = [], [], [], []
     for rec in recs:
         panel = extract.panel(rec["name"])
         try:
@@ -286,7 +259,6 @@ def compute(movie: Path, trials: Optional[Path], roiset: Path, index: int, name:
         except OSError as e:
             warnings.append(f"{rec['name']}: left out (cannot read its movie: {e})")
             continue
-        read.append(m)
         resp = extract.responses(trace, tr, win["volumes"])[:, 0]
         for t, v in zip(tr, resp):
             per.setdefault((panel, " + ".join(t["odors"])), []).append(float(v))
@@ -294,7 +266,6 @@ def compute(movie: Path, trials: Optional[Path], roiset: Path, index: int, name:
         yaml_odors += _yaml_order(win.get("yaml"))
         out_recs.append({"name": rec["name"], "panel": panel, "window": win["volumes"], "how": win["how"], "trials": len(tr),
                          "read": int(len(frames)), "of": s["t"]})
-    warm([m.path for m in read])
     if not per:
         raise RoiResponsesError(f"no response of {roi_name} in any recording" + (f": {'; '.join(warnings)}" if warnings else ""))
     keys = order(list(per), panels, yaml_odors)

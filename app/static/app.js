@@ -4950,6 +4950,8 @@ class AdminPage {
     $('#admin-restart').addEventListener('click', () => this.restart());
     $('#admin-restart-full').addEventListener('click', (e) => this.restart(e.currentTarget, $('#admin-restart-full-status'), { full: true }));
     $('#admin-chemutils-btn').addEventListener('click', () => this.relookup());
+    $('#admin-memory-save').addEventListener('click', () => this.saveMemory());
+    $('#admin-memory-refresh').addEventListener('click', () => this.loadMemory());
     $('#admin-panel-add').addEventListener('click', () => { this._renameRow('', ''); $('#admin-panel-renames .rename-row:last-child .from').focus(); });
     $('#admin-panel-save').addEventListener('click', () => this.savePanels());
     $('#admin-panel-renames').addEventListener('click', (e) => { if (e.target.closest('[data-remove]')) e.target.closest('.rename-row').remove(); });
@@ -5066,6 +5068,7 @@ class AdminPage {
     this.loadFiles();
     this.loadBackups();
     this.loadChemutils(true);
+    this.loadMemory();
     this.loadPanels();
     this.loadDatasets();
     this.loadRefs();
@@ -5159,6 +5162,31 @@ class AdminPage {
     $('#admin-sheet-source').innerHTML = o.saved ? `Set here ${esc(fmtWhen(o.updated_at))}.`
       : o.url ? 'Set on the server (<code>OLFDB_ODOR_SHEET_URL</code>); saving a link here replaces it.'
         : 'None yet: until there is one, the odor table can only be synced from CSVs imported below.';
+  }
+
+  // movies held in memory for the player's plots (movie_memory.py): how many players may, and each one's
+  async loadMemory(res) {
+    const msg = $('#admin-memory-msg');
+    if (!res) {
+      try { res = await api('/api/admin/movie_memory'); } catch (e) { msg.textContent = `Could not load them: ${e.message}`; return; }
+    }
+    $('#admin-memory-slots').value = res.slots;
+    $('#admin-memory-slots').max = res.max;
+    const state = (h) => (h.state === 'failed' ? `failed: ${esc(h.error || '')}` : h.state === 'loading'
+      ? `reading: ${fmtBytes(h.read)} of ${h.bytes ? fmtBytes(h.bytes) : '…'}` : `held: ${fmtBytes(h.bytes)}`);
+    const rows = res.held.map((h) => `<tr><td><code>${esc(h.fly)}</code></td><td>${h.movies}</td><td>${state(h)}</td>
+      <td>${h.frees_in_s != null ? `closed: let go of in ${Math.ceil(h.frees_in_s)} s` : `open, used ${Math.round(h.idle_s)} s ago`}</td>
+      <td>${esc(h.who || '')}</td></tr>`).join('');
+    $('#admin-memory-held').innerHTML = res.held.length ? `<table class="odor-table"><thead><tr><th>Fly</th><th>Movies</th><th>State</th>
+      <th>Player</th><th>From</th></tr></thead><tbody>${rows}</tbody></table>` : `<p class="muted small">None held now (of ${res.slots}).</p>`;
+  }
+
+  async saveMemory() {
+    const msg = $('#admin-memory-msg'), n = Number($('#admin-memory-slots').value);
+    let res;
+    try { res = await api('/api/admin/movie_memory', { method: 'POST', json: { slots: n } }); } catch (e) { msg.textContent = `Not saved: ${e.message}`; return; }
+    msg.textContent = 'Saved.';
+    this.loadMemory(res);
   }
 
   async saveCase(only) {

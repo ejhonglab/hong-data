@@ -145,6 +145,9 @@ export class MoviePlayer {
     this.$('.player-redo').addEventListener('click', () => this._undo(true));
     el.addEventListener('keydown', (e) => this._key(e));
     this.plot = { rows: [], seq: 0, heatmap: null };
+    // this player, to the server: which movies it has held in memory, for plots (movie_memory.py), let go of once it is closed
+    this.holder = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+    window.addEventListener('pagehide', () => { if (this.el.open) this._letGo(); });
     this.$('.player-roiplot-close').addEventListener('click', () => this._plotClear());
     el.addEventListener('wheel', (e) => this._wheelSlider(e), { passive: false });
     this._wireView();
@@ -286,6 +289,7 @@ export class MoviePlayer {
     else this._renderRoiList(null);
     this.$('.player-odors-row').hidden = true;
     if (movie.trials) this._loadTrials(movie.trials, id);
+    this._holdMovies(movie);
     const plane = await this._plane(0);
     if (id !== this.loadId || !plane) return;
     this.current = plane;
@@ -1492,6 +1496,7 @@ export class MoviePlayer {
   }
 
   _unload() {
+    this._letGo();
     this.dff = null; // (no more asking after dF/F images being made)
     this.stop();
     this.loadId = (this.loadId || 0) + 1;
@@ -1716,7 +1721,7 @@ export class MoviePlayer {
     let res;
     try {
       res = await this.api('/api/movie/roi_responses', { method: 'POST',
-        json: { path: src.path, trials: src.trials || null, rois: src.rois, index: k, name: r.name } });
+        json: { path: src.path, trials: src.trials || null, rois: src.rois, index: k, name: r.name, holder: this.holder } });
     } catch (e) {
       row.error = e.message;
     }
@@ -1727,6 +1732,18 @@ export class MoviePlayer {
       res.columns.forEach((c, i) => row.values.set(`${c.panel}|${c.odor}`, res.values[i]));
     }
     this._plotRender();
+  }
+
+  // the movies a plot of this movie's ROIs reads, held in the server's memory meanwhile, if one of its slots is free
+  _holdMovies(movie) {
+    const src = movie.dff ? this.movies[movie.dff.of] : movie;
+    if (!src?.rois) return;
+    this.api('/api/movie/memory', { method: 'POST', json: { holder: this.holder, path: src.path, trials: src.trials || null } }).catch(() => {});
+  }
+
+  // (as a beacon: it is sent as the page goes too)
+  _letGo() {
+    try { navigator.sendBeacon('/api/movie/memory/release', new Blob([JSON.stringify({ holder: this.holder })], { type: 'application/json' })); } catch { /* none */ }
   }
 
   _plotClear() {

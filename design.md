@@ -952,8 +952,14 @@ between the frontend and the server. Using the app is described in
   an extraction's, to the last bit. With the movies in memory, this is 0.1 to 0.4 s for a fly
   of six recordings, against 2 to 15 s reading them whole.
   Read from tensor the first time, it is about as slow either way (4 to 6 s): tensor reads
-  whole records of its disks, whatever part is asked for. So a fly's first ROI also has its
-  movies read whole in the background, and the next ROI, on any plane, takes about 0.3 s.
+  whole records of its disks, whatever part is asked for.
+- **So a player's movies are held in the web server's memory** (`movie_memory.py`). A player
+  open on a movie with the fly's own ROIs has the movies its plots read loaded in the
+  background (1.3 GB in about 15 s from tensor), after which an ROI takes 0.2 to 0.3 s on
+  any plane. The page cache alone was not enough: what it keeps cannot be counted or freed.
+  Memory is bounded by slots, one per player, two by default (Admin tab). Opening a movie
+  takes a slot only if one is free, but a plot evicts the least recently used one, a closed
+  player's first. A closed player keeps its slot 30 s, in case it is opened again.
   Odor order follows al_analysis' `sort_odors` (hong2p's `panel2name_order`, copied here, as
   the pinned hong2p predates it). A panel without such an order uses its stimulus YAMLs'
   `pins2odors`, else the order presented.
@@ -2108,6 +2114,7 @@ app/backup.py      backups of the database and files into a folder the server ma
 app/movies.py      a dataset's movies on tensor: finding them, reading their planes, their ImageJ ROIs
 app/trial_dff.py   each trial's dF/F image of a movie, and each odor's mean: al_analysis', or made in the background
 app/roi_responses.py  an ImageJ ROI's mean response to each odor in its fly's recordings (the player's P), reading only what it needs
+app/movie_memory.py   the movies of open players' flies, held in memory for those plots (a few slots, set in the Admin tab)
 config/odor_sheet_template.csv   odor sheet columns, with the odors from the thesis tables
 app/static/        frontend: index.html, app.js, heatmap.js, colormaps.js (+ mpl_luts.js),
                    app.css, cluster.js (+ cluster-worker.js), figure.js (SVG/PDF/PNG export),
@@ -2254,6 +2261,9 @@ GET    /api/movie/rois/download?path=       that file as it is, to save under it
 GET    /api/movie/trials?path=              the trials of an al_analysis trial_frames_and_odors.json: frames, odor
 POST   /api/movie/roi_responses             {"path", "trials", "rois", "index", "name", "window"} → an ImageJ ROI's
                                             mean response to each odor, in each recording of its fly
+POST   /api/movie/memory                    {"holder", "path", "trials"} → a player's fly's movies held in memory,
+                                            if a slot is free; /release {"holder"}: let go of 30 s later
+GET    /api/admin/movie_memory              how many players may have movies held, and each slot; POST {"slots"}
 GET    /api/download?ids=1,2&format=files|wide|long
                                             a zip, or a CSV for the matrix of a single dataset;
                                             &lower=1 for odor names in lowercase (but in files)

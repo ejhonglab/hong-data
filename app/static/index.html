@@ -1202,6 +1202,19 @@ try {
         </div>
       </div>
 
+      <div class="step" id="admin-movie-memory">
+        <div class="step-head"><h2>Movies in memory</h2></div>
+        <p class="muted">The movie player plots an ROI's response to each odor (P) from every recording of its fly. While a player is open on a movie with the fly's own ROIs, those recordings' movies are read into the server's memory in the background (about 1 to 2 GB a fly), so that each ROI plotted takes a fraction of a second, not seconds of reading tensor. A player closed lets go of them 30 s later. Players beyond the number set here read tensor instead, until one plots an ROI: that takes the place of the player whose movies were used least recently.</p>
+        <div class="actions">
+          <label>Players at once <input type="number" id="admin-memory-slots" class="admin-memory-slots" min="0" max="16" step="1"></label>
+          <button type="button" class="btn primary" id="admin-memory-save">Save</button>
+          <button type="button" class="btn" id="admin-memory-refresh">Refresh</button>
+          <span class="status" id="admin-memory-msg" aria-live="polite"></span>
+        </div>
+        <p class="muted small">0: none held (every plot reads tensor). Saved at once; fewer than are held now lets go of those used least recently.</p>
+        <div id="admin-memory-held"></div>
+      </div>
+
       <div class="step" id="admin-server">
         <div class="step-head"><h2>Restart</h2></div>
         <div class="paths-status" id="admin-status" aria-live="polite"></div>

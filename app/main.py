@@ -40,7 +40,7 @@ from starlette.staticfiles import StaticFiles
 
 from . import (backup, bundle_import, chemprops, compare, config, dilution, export, extract, filelog, fits, headspace, lotus,
                batches, lotus_import, matrix_download, merge, metacyc, metacyc_import, model_data, model_runs, nmf_check, orn_input, movies, odormeta, permalinks,
-               predictions, refinement, reference, roi_responses, roi_training, sandbox, tensor, thorimage, trial_dff, vcf, version, yamlcheck)
+               predictions, refinement, reference, movie_memory, roi_responses, roi_training, sandbox, tensor, thorimage, trial_dff, vcf, version, yamlcheck)
 from .db import PANEL_RENAMES, PROPERTY_COLUMNS, Database, rename_panel
 from .glomeruli import GLOMERULI, load_glomeruli
 from .ingest import (ParsedData, ValidationError, combine, extra_text, files_text, fly_key, kc_id_problems, load_file,
@@ -1468,31 +1468,89 @@ async def movie_trial_dff(request: Request) -> Response:
     return JSONResponse({"movies": [{**s, "path": o["asked"]} for s, o in zip(st, ok)]})
 
 
+def _movie_slots() -> int:
+    """How many players may have movies held in memory at once (`movie_memory`; set in the Admin tab)."""
+    saved = db.get_setting(movie_memory.SETTING)
+    try:
+        return int(saved["value"]) if saved else movie_memory.DEFAULT_SLOTS
+    except ValueError:
+        return movie_memory.DEFAULT_SLOTS
+
+
+def _movie_check(p: Path) -> Path:
+    return _server_file(str(p), movies.TIFF_SUFFIXES + (".raw", ".json"))
+
+
+def _movie_of(body: dict) -> tuple[Path, Optional[Path], Path]:
+    """The movie a player names (as listed, its path checked), its trials file (if any) and its fly's folder."""
+    _server_file(body.get("path"), movies.TIFF_SUFFIXES + (".raw",))
+    asked = Path(os.path.normpath(body["path"]))
+    trials = _server_file(body["trials"], (".json",)) if body.get("trials") else None
+    fly = asked.parent if asked.name == movies.CONCAT else asked.parent.parent
+    if not _server_readable(os.path.realpath(fly)):
+        raise HTTPException(403, tensor.NOT_ALLOWED)
+    return asked, trials, fly
+
+
+def _holder(body: dict) -> Optional[str]:
+    h = body.get("holder")
+    return h if isinstance(h, str) and 0 < len(h) <= 64 else None
+
+
+def _hold(asked: Path, trials: Optional[Path], holder: str, evict: bool, who: Optional[str]) -> Optional[dict]:
+    try:
+        fly, paths = roi_responses.movie_paths(asked, trials, _movie_check)
+    except roi_responses.RoiResponsesError:
+        return None
+    return movie_memory.hold(holder, fly, paths, _movie_slots(), evict=evict, who=who) if paths else None
+
+
+async def movie_memory_hold(request: Request) -> Response:
+    """A player open on a movie with ROIs ({"holder": the player's id, "path": the movie, as listed, "trials"}):
+    the movies a plot of its ROIs reads are read into memory, in the background, if a slot is free
+    (`movie_memory.hold`). Returns {"slot": its state, or null}."""
+    body = await request.json()
+    if not isinstance(body, dict) or not _holder(body) or not isinstance(body.get("path"), str):
+        return json_error(400, "expected {holder, path, trials?}")
+    asked, trials, _ = _movie_of(body)
+    who = request.client.host if request.client else None
+    return JSONResponse({"slot": await run_in_threadpool(_hold, asked, trials, _holder(body), False, who)})
+
+
+async def movie_memory_release(request: Request) -> Response:
+    """A player closed ({"holder"}, as a beacon may send it): its movies are let go of `movie_memory.LINGER_S` later."""
+    try:
+        body = json.loads(await request.body() or b"{}")
+    except ValueError:
+        body = None
+    if not isinstance(body, dict) or not _holder(body):
+        return json_error(400, "expected {holder}")
+    movie_memory.release(_holder(body))
+    return JSONResponse({"ok": True})
+
+
 async def movie_roi_responses(request: Request) -> Response:
     """An ImageJ ROI's mean response to each odor, in each recording of its fly (`roi_responses`), for the
     player's plot of them: {"path": the movie it is drawn on, as listed, "trials": its trials file, if any,
     "rois": its RoiSet.zip, "index": the ROI's place in it (from 0), "name": its name there, "window": the
-    response window (volumes; by default an extraction's, `extract.WINDOW`)}."""
+    response window (volumes; by default an extraction's, `extract.WINDOW`), "holder": the player's id}.
+    The player's movies are then held in memory (`movie_memory`), a slot taken from another if none is free."""
     body = await request.json()
     if not isinstance(body, dict) or not isinstance(body.get("index"), int) or not isinstance(body.get("path"), str):
-        return json_error(400, "expected {path, rois, index, name, trials?, window?}")
+        return json_error(400, "expected {path, rois, index, name, trials?, window?, holder?}")
     window = body.get("window", extract.WINDOW)
     if window != extract.WINDOW and not (isinstance(window, int) and 1 <= window <= 100):
         return json_error(400, f"window: '{extract.WINDOW}' or a number of volumes, from 1 to 100")
-    _server_file(body["path"], movies.TIFF_SUFFIXES + (".raw",))
-    asked = Path(os.path.normpath(body["path"]))
-    trials = _server_file(body["trials"], (".json",)) if body.get("trials") else None
+    asked, trials, _ = _movie_of(body)
     rois = _server_file(body.get("rois"), (".zip", ".roi"))
-
-    def check(p: Path) -> Path:
-        return _server_file(str(p), movies.TIFF_SUFFIXES + (".raw", ".json"))
+    holder, who = _holder(body), request.client.host if request.client else None
 
     def run() -> dict:
-        fly = asked.parent if asked.name == movies.CONCAT else asked.parent.parent
-        if not _server_readable(os.path.realpath(fly)):
-            raise HTTPException(403, tensor.NOT_ALLOWED)
-        return roi_responses.compute(asked, trials, rois, body["index"], body.get("name"), window,
-                                     extract.stimulus_folders(db, config.TENSOR_ROOT), check)
+        out = roi_responses.compute(asked, trials, rois, body["index"], body.get("name"), window,
+                                    extract.stimulus_folders(db, config.TENSOR_ROOT), _movie_check)
+        if holder:
+            out["slot"] = _hold(asked, trials, holder, True, who)
+        return out
 
     try:
         result = await run_in_threadpool(run)
@@ -3631,6 +3689,28 @@ async def admin_odor_case(request: Request) -> Response:
     return JSONResponse(await run_in_threadpool(run))
 
 
+async def admin_movie_memory(request: Request) -> Response:
+    """Movies held in memory for the player's plots (`movie_memory`): {"slots": how many players may, "held": each slot}."""
+    return JSONResponse({"slots": await run_in_threadpool(_movie_slots), "max": movie_memory.MAX_SLOTS, "held": movie_memory.status()})
+
+
+async def admin_movie_memory_save(request: Request) -> Response:
+    """How many players may have movies held in memory at once ({"slots"}: 0 for none), at once; those used least
+    recently are let go of, if more are held."""
+    body = await request.json()
+    n = body.get("slots") if isinstance(body, dict) else None
+    if not isinstance(n, int) or isinstance(n, bool) or not 0 <= n <= movie_memory.MAX_SLOTS:
+        return json_error(400, f'expected {{"slots": a whole number from 0 to {movie_memory.MAX_SLOTS}}}')
+
+    def run() -> None:
+        db.set_setting(movie_memory.SETTING, str(n), when=dt.datetime.now().isoformat(timespec="seconds"))
+        movie_memory.limit(n)
+        log.info("movies held in memory for at most %d players (Admin tab)", n)
+
+    await run_in_threadpool(run)
+    return await admin_movie_memory(request)
+
+
 def _host() -> dict:
     """The server's name and IP addresses (``name``, ``source``, ``addresses``).
 
@@ -4308,6 +4388,10 @@ routes = [
     Route("/api/movie/trials", movie_trials),
     Route("/api/movie/trial_dff", movie_trial_dff, methods=["POST"]),
     Route("/api/movie/roi_responses", movie_roi_responses, methods=["POST"]),
+    Route("/api/movie/memory", movie_memory_hold, methods=["POST"]),
+    Route("/api/movie/memory/release", movie_memory_release, methods=["POST"]),
+    Route("/api/admin/movie_memory", admin_movie_memory),
+    Route("/api/admin/movie_memory", admin_movie_memory_save, methods=["POST"]),
     Route("/api/download", download),
     Route("/api/roi_training", roi_training_flies),
     Route("/api/roi_training/download", roi_training_download),

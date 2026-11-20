@@ -405,8 +405,11 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   own ROIs (click in it, on its name, or in the list), then press `P`. A matrix of its mean
   response to each odor, in every recording of the fly, opens above the movie; `Alt+P` adds
   the next ROI chosen to it as another row. Diagnostic odors come first, in al_analysis'
-  fixed order, then each panel's, in its stimulus YAML's order. A fly's first ROI takes a
-  few seconds; later ones about a third of a second.
+  fixed order, then each panel's, in its stimulus YAML's order.
+  While the player is open on a movie with ROIs, the fly's movies are read into the server's
+  memory in the background (about 15 s), after which each ROI takes about a quarter of a
+  second; before that, a few seconds. Two players at once can have movies held so (set in
+  the Admin tab, *Movies in memory*); a closed player's are let go of 30 s later.
 - **Download**: the matrices of several datasets are concatenated into one wide CSV
   (trials × ROIs, with `dataset_id` as an extra column level; trials matched on panel,
   odor components and repeat) or long CSV (one row per value). Zips always have
