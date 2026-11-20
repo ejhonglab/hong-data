@@ -701,9 +701,13 @@ def test_connectome_builtin():
         dense = dense.toarray() if isinstance(dense, reference.Sparse) else dense
         # one bouton per claw of the model; its APL weights of every claw of it, in its order
         assert (dense.sum(axis=1) == 1).all()
+        # each claw and bouton placed (centered, with its compartment), as the loader places claws
+        fields = wiring["rows"][0]["fields"].keys() | wiring["cols"][0]["fields"].keys()
+        assert {f"{k}_{a}" for k in ("claw", "bouton") for a in ("x", "y", "z", "compartment")} <= fields
+        assert {r["fields"]["claw_compartment"] for r in wiring["rows"]} == {"0", "1"}
         for name in ("kc-apl", "apl-kc"):
             rec, v = got[f"connectome-{calyx}-{name}-model"]
             assert [r["label"] for r in rec["rows"]] == [r["label"] for r in wiring["rows"]] and rec["shape"][1] == 1
         assert reference.kcs(wiring)["n_kcs"] > 1500
-    # the hemibrain's model: as E13's bouton base (1,732 KCs with APL weights; 9,867 claws, 389 boutons)
-    assert got["connectome-hemibrain-pn-kc-model"][0]["shape"] == [9867, 389]
+    # the hemibrain's model (multibouton_claws='argmax'): 9,867 claws on 387 boutons (389 with E13's 'first')
+    assert got["connectome-hemibrain-pn-kc-model"][0]["shape"] == [9867, 387]

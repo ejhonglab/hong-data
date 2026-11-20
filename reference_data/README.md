@@ -188,8 +188,10 @@ APL, APL → KC claws, PN boutons → APL, APL → PN boutons), two tables of on
 
 - `..._raw`: every synapse of his table counted per pair of units (claw, bouton, APL unit), whatever
   its ROI and its cells' types (units labelled -1, unassigned, kept as units of their own);
-- `..._model`: what the model is given (olfsysm's loader, `prat_claws` and `prat_boutons`, as the
-  Models tab's baselines): its claws, each 1 for its one bouton; and its APL weights per claw (or
+- `..._model`: what the model is given (olfsysm's loader, `prat_claws`, `prat_boutons` and
+  `multibouton_claws='argmax'`): its claws, each 1 for its one bouton (of its PN's boutons it has
+  synapses from, the one with the most, ties to the lowest numbered, as E97's main bouton; the
+  Models tab's baselines, as E13 made them, take the lowest numbered); and its APL weights per claw (or
   bouton), the synapses with APL summed over its units (one column). The script checks that its
   steps give the hemibrain's exactly as olfsysm's loader does, and applies them to the male CNS
   with no ROI rule and its PN types' glomeruli renamed as the hemibrain's (as the KC-remapping
@@ -197,7 +199,14 @@ APL, APL → KC claws, PN boutons → APL, APL → PN boutons), two tables of on
 
 Their claws are rows, with each claw's KC (`kc_id`, its body ID), KC type and subtype; boutons with
 their PN (`pn_id`), glomerulus (as the connectome names it, and as the model does), type and
-bundle; APL units with APL's body ID. Most of their cells are 0, so they are kept sparse
+bundle; APL units with APL's body ID. Each claw, bouton and APL unit has its place, as olfsysm places the
+model's claws: `<kind>_x`, `_y`, `_z` (µm, each centered on the middle of its range over the table's
+units of that kind) and `<kind>_compartment` (0 within half the largest distance from their
+centroid, else 1). A model claw is at the mean of its synapses from its PN (the loader's claw
+coordinates, checked against it); every other unit at the mean of the synapses Pratyush assigned
+to it (none for units labelled -1). The compartments follow olfsysm's rule as it is: a few units far
+from the rest (the raw tables keep every unit, and the male CNS has no ROI rule) put nearly all the
+others in compartment 0. Most of their cells are 0, so they are kept sparse
 (`"empty": "zero"`).
 
 Any table whose rows (or columns) have a `kc_id` field (or `kc body id`), or a matrix of glomeruli
