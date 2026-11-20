@@ -122,3 +122,33 @@ export class History {
 
   redo() { return this.canRedo ? this.states[++this.at] : undefined; }
 }
+
+// whether an ROI's name is a number (one left unnamed, or drawn and not named yet)
+export const numbered = (name) => /^\d+$/.test(name);
+
+// a number no ROI of `rois` ([{ name }]) is named
+export const nextNumber = (rois) => String(rois.reduce((n, r) => (numbered(r.name) ? Math.max(n, Number(r.name) + 1) : n), 0));
+
+// ROIs ([{ name, z, ... }]) with those named by numbers numbered again from 0, as imagej_macros'
+// number_rois.py numbers them: by plane (those of no plane first), then as listed, those that shared
+// a number (one ROI over several planes) sharing one again. Those whose names change are marked
+// `unlinked` (their names no longer say their labels).
+export function renumber(rois) {
+  const order = rois.map((r, i) => i).filter((i) => numbered(rois[i].name)).sort((a, b) => (rois[a].z ?? -1) - (rois[b].z ?? -1) || a - b);
+  const to = new Map();
+  for (const i of order) {
+    const n = Number(rois[i].name);
+    if (!to.has(n)) to.set(n, String(to.size));
+  }
+  return rois.map((r) => {
+    const name = numbered(r.name) ? to.get(Number(r.name)) : r.name;
+    return name === r.name ? r : { ...r, name, unlinked: true };
+  });
+}
+
+// ROIs with every one named `from` (on any plane) named `to` (of `kind`) and marked `unlinked`, then
+// numbered again (`renumber`); null if another ROI is named `to` already
+export function rename(rois, from, to, kind) {
+  if (rois.some((r) => r.name === to)) return null;
+  return renumber(rois.map((r) => (r.name === from ? { ...r, name: to, kind, unlinked: true } : r)));
+}

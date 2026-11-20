@@ -654,9 +654,10 @@ def edited_info(p: dict) -> Optional[dict]:
 
 def _edited_rois(rois) -> list[dict]:
     """The ROIs the viewer sends to save, checked: each its ``name``, ``z`` (its plane, from 0;
-    None: all), ``points`` ([x, y] in pixels, as ImageJ's: three or more) and ``nmf`` (the
+    None: all), ``points`` ([x, y] in pixels, as ImageJ's: three or more), ``nmf`` (the
     candidate it is of, if it was merged in from the look for glomeruli the ROIs miss,
-    `nmf_check`; else None).
+    `nmf_check`; else None) and ``unlinked`` (whether its name no longer says its label, in the
+    prediction's label volumes or the look's: one drawn, renamed or numbered again in the viewer).
 
     Raises:
         ValueError: saying what is wrong with them.
@@ -683,8 +684,11 @@ def _edited_rois(rois) -> list[dict]:
         cand = r.get("nmf")
         if cand is not None and (isinstance(cand, bool) or not isinstance(cand, int) or not 0 < cand < 100_000):
             raise ValueError(f"{what} ({name}): nmf must be the number of the candidate it is of, or null")
+        if not isinstance(r.get("unlinked", False), bool):
+            raise ValueError(f"{what} ({name}): unlinked must be true or false")
         total += len(pts)
-        out.append({"name": name.strip(), "z": z, "points": [[round(float(x), 2), round(float(y), 2)] for x, y in pts], "nmf": cand})
+        out.append({"name": name.strip(), "z": z, "points": [[round(float(x), 2), round(float(y), 2)] for x, y in pts], "nmf": cand,
+                    "unlinked": r.get("unlinked", False)})
     if total > MAX_EDITED_POINTS:
         raise ValueError(f"more than {MAX_EDITED_POINTS} points in all")
     return out
@@ -741,7 +745,8 @@ def save_edited(db, pred_id: int, rois, base, by: Optional[str], ip: Optional[st
     ``rois`` and ``points`` (how many), ``of`` (the predicted ROIs they are a copy of) and,
     once candidates of the look for glomeruli the ROIs miss were merged in (`nmf_check`),
     ``nmf`` (which, and every ROI's name then: `_merged`) and ``from_nmf`` (per ROI, in the
-    RoiSet's order: the candidate it is of, else None).
+    RoiSet's order: the candidate it is of, else None); and, once any were drawn, renamed or numbered
+    again there, ``unlinked`` (per ROI: whether its name no longer says its label).
 
     Args:
         rois: as `_edited_rois` takes them.
@@ -773,7 +778,8 @@ def save_edited(db, pred_id: int, rois, base, by: Optional[str], ip: Optional[st
         _write_meta(p, {"revision": revision + 1, "saved_at": now(), "by": by, "ip": ip,
                         "simplified": simplified, "points_edited": bool(points_edited), "rois": len(rois),
                         "points": sum(len(r["points"]) for r in rois), "of": roiset(p).name,
-                        **({"nmf": nmf, "from_nmf": [r["nmf"] for r in rois]} if nmf or any(r["nmf"] for r in rois) else {})})
+                        **({"nmf": nmf, "from_nmf": [r["nmf"] for r in rois]} if nmf or any(r["nmf"] for r in rois) else {}),
+                        **({"unlinked": [r["unlinked"] for r in rois]} if any(r["unlinked"] for r in rois) else {})})
     return edited_info(p)
 
 

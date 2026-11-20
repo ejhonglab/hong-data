@@ -27,7 +27,7 @@ const LS = {
 // names (abbreviations) in lowercase, in downloads too but of the original files; and the
 // theme: 'system' (as the system or browser is set), 'light' or 'dark'
 const DISPLAY_KEY = 'olfdb.display';
-const display = { lowerOdors: false, theme: 'system', ...LS.get(DISPLAY_KEY, {}) };
+const display = { lowerOdors: false, theme: 'system', clickDraws: true, ...LS.get(DISPLAY_KEY, {}) };
 
 // the theme shown (index.html's script sets it first, before the page is drawn): when it
 // changes, 'olfdb-theme' on window, so that canvases are drawn again in its colors
@@ -4571,6 +4571,9 @@ class SettingsPage {
     const lower = $('#settings-lower-odors');
     lower.checked = display.lowerOdors;
     lower.addEventListener('change', () => { display.lowerOdors = lower.checked; displayChanged(); });
+    const draws = $('#settings-click-draws');
+    draws.checked = display.clickDraws;
+    draws.addEventListener('change', () => { display.clickDraws = draws.checked; LS.set(DISPLAY_KEY, display); });
     const theme = $('#settings-theme');
     theme.value = display.theme;
     theme.addEventListener('change', () => { display.theme = theme.value; LS.set(DISPLAY_KEY, display); applyTheme(); });
@@ -9131,7 +9134,7 @@ const headspacePage = new HeadspacePage();
 const headspaceVcf = new HeadspaceVcf(headspacePage);
 const headspaceDilutions = new HeadspaceDilutions(headspacePage);
 const admin = new AdminPage();
-const player = new MoviePlayer($('#player'), { api, esc, fmtBytes });
+const player = new MoviePlayer($('#player'), { api, esc, fmtBytes, clickDraws: () => display.clickDraws });
 
 let currentTab = null;
 let lastPlace = 'browse'; // the hash of the last place shown other than the Admin tab

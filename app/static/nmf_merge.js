@@ -86,7 +86,8 @@ export function copyPredicted(predicted, found, nmf, tolerance) {
 // A state with the candidates `chosen` (ids: those it has merged already, and more) merged in, named
 // by `plan`: its ROIs renamed (each by its label, which its name before says), the outline of an ROI a
 // part is cut off replaced by what is left of it, and the new candidates' outlines added, simplified
-// as the state's are. Outlines edited by hand stay as they are, but for an ROI's a part is cut off.
+// as the state's are. Outlines edited by hand stay as they are, but for an ROI's a part is cut off; ROIs
+// marked `unlinked` (drawn, renamed or numbered again: their names no longer say their labels) as they are.
 export function merge(state, found, plan, chosen, joint) {
   const before = mergedOf(found, state), had = new Set(before?.merged || []);
   const byName = labelsByName(before ? before.names : found.predicted);
@@ -95,7 +96,7 @@ export function merge(state, found, plan, chosen, joint) {
   const kinds = { ...found.kinds, ...plan.kinds };
   const rois = [];
   for (const r of state.rois) {
-    const label = byName.get(r.name);
+    const label = r.unlinked ? null : byName.get(r.name); // (drawn, renamed or numbered again in the viewer: its name kept)
     if (label == null) { rois.push(r); continue; }
     if (r.nmf == null && cut.has(`${label}|${r.z}`)) continue;
     const name = shownName(plan.names, label);

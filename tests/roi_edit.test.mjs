@@ -1,7 +1,7 @@
 // Tests of what the movie player edits a prediction's ROIs with (app/static/roi_edit.js).
 // Run with: node tests/roi_edit.test.mjs (tests/test_roi_edit.py does, where there is a node).
 import assert from 'node:assert/strict';
-import { History, area, deletePoint, inside, movePoints, nearestPoint, outlineDist, simplify, splitPoint } from '../app/static/roi_edit.js';
+import { History, area, deletePoint, inside, movePoints, nearestPoint, nextNumber, outlineDist, rename, renumber, simplify, splitPoint } from '../app/static/roi_edit.js';
 
 const close = (a, b, eps = 1e-9) => Math.abs(a - b) <= eps;
 // the distance from p to the outline
@@ -82,5 +82,19 @@ const box = [[0, 0], [10, 0], [10, 10], [0, 10]];
 assert.equal(outlineDist(box, 5, 2), 2);
 assert.equal(outlineDist(box, -3, 5), 3); // (the edge from the last point back to the first)
 assert.equal(outlineDist(box, 13, 14), 5);
+
+// numbered again as number_rois.py numbers them: from 0, by plane then as listed, an ROI over several planes keeping one number
+const named = [{ name: '6', z: 2 }, { name: 'DM2', z: 0 }, { name: '9', z: 1 }, { name: '6', z: 3 }, { name: '12', z: 1 }];
+const again = renumber(named);
+assert.deepEqual(again.map((r) => r.name), ['2', 'DM2', '0', '2', '1']);
+assert.deepEqual(again.map((r) => Boolean(r.unlinked)), [true, false, true, true, true]);
+assert.equal(renumber([{ name: '0', z: 0 }])[0].unlinked, undefined); // (unchanged: as it was)
+assert.equal(nextNumber(named), '13');
+assert.equal(nextNumber([{ name: 'DM2' }]), '0');
+// renamed on every plane, then numbered again; refused if another ROI has the name
+const re = rename(named, '6', 'DL5', 'glomerulus');
+assert.deepEqual(re.map((r) => [r.name, r.kind]), [['DL5', 'glomerulus'], ['DM2', undefined], ['0', undefined], ['DL5', 'glomerulus'], ['1', undefined]]);
+assert.ok(re[0].unlinked && re[3].unlinked);
+assert.equal(rename(named, '6', 'DM2', 'glomerulus'), null);
 
 console.log('roi_edit.js: ok');

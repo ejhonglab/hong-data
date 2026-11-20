@@ -8,9 +8,9 @@
 // predicted ROIs miss can be looked for in the fly's movies there (nmf_check.py): what that finds is
 // listed first, and merged into the edited ROIs or not (nmf_merge.js).
 
-import { History, area, deletePoint, inside, movePoints, nearestPoint, outlineDist, simplify, splitPoint } from './roi_edit.js';
+import { History, area, deletePoint, inside, movePoints, nearestPoint, nextNumber, outlineDist, rename, renumber, simplify, splitPoint } from './roi_edit.js';
 import { showIdentity, showNoIdentity } from './identity.js';
-import { changes, copyPredicted, merge, mergedIds, mergedOf, provisional } from './nmf_merge.js';
+import { changes, copyPredicted, kindOf, merge, mergedIds, mergedOf, provisional } from './nmf_merge.js';
 import { Heatmap } from './heatmap.js';
 import { COLORMAPS, drawColorbar, makeNorm } from './colormaps.js';
 
@@ -60,9 +60,10 @@ const desaturate = (hex, k = 0.6) => {
 };
 
 export class MoviePlayer {
-  // el: the player's <dialog>; api, esc, fmtBytes: the app's helpers
-  constructor(el, { api, esc, fmtBytes }) {
-    Object.assign(this, { el, api, esc, fmtBytes });
+  // el: the player's <dialog>; api, esc, fmtBytes: the app's helpers; clickDraws: whether a click outside every ROI
+  // of a prediction starts drawing a new one (the user's setting)
+  constructor(el, { api, esc, fmtBytes, clickDraws = () => false }) {
+    Object.assign(this, { el, api, esc, fmtBytes, clickDraws });
     this.$ = (sel) => el.querySelector(sel);
     this.movie = null; // as listed by /api/datasets/<id>/movies, with its info
     this.cache = new Map(); // `${t}|${z}|${c}` -> plane (most recently used last)
@@ -81,6 +82,7 @@ export class MoviePlayer {
     this.mode = null; // 'prediction': a prediction's ROIs (`openPrediction`), else a dataset's movies
     this.showSource = { predicted: true, manual: true };
     this.canvas = this.$('.player-canvas');
+    this.canvas.tabIndex = -1; // (to give the viewer's keys back to, from the rename box)
     this.off = document.createElement('canvas');
 
     this.$('.player-close').addEventListener('click', () => el.close());
@@ -142,6 +144,16 @@ export class MoviePlayer {
     this.$('.player-edit-discard').addEventListener('click', () => this._discard());
     this.$('.player-roi-download').addEventListener('click', () => this._downloadRois());
     this.$('.player-undo').addEventListener('click', () => this._undo());
+    this.draw = null; // an ROI being drawn: { points, at (the pointer's place) } (`_startDraw`)
+    this.renaming = null; // the ROI being renamed: { from, z } (`_startRename`)
+    this.$('.player-add-roi').addEventListener('click', () => (this.draw ? this._cancelDraw() : this._startDraw()));
+    this.$('.player-rename-roi').addEventListener('click', () => this._startRename());
+    const box = this.$('.player-rename'), input = this.$('.player-rename-input');
+    box.addEventListener('submit', (e) => { e.preventDefault(); this._finishRename(); });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); this._closeRename(); } });
+    input.addEventListener('input', () => { this.$('.player-rename-warn').textContent = ''; });
+    // (Escape stops drawing or renaming, not the viewer)
+    el.addEventListener('cancel', (e) => { if (this.draw || this.renaming) e.preventDefault(); });
     this.$('.player-redo').addEventListener('click', () => this._undo(true));
     el.addEventListener('keydown', (e) => this._key(e));
     this.plot = { rows: [], seq: 0, heatmap: null };
@@ -227,6 +239,8 @@ export class MoviePlayer {
   // a dataset's movies (null), or a prediction's ('prediction': only the ROIs of the plane shown,
   // none on a max projection; those the model could not name, numbered, under a box of their own)
   _setMode(mode) {
+    this._cancelDraw();
+    this._closeRename();
     this.mode = mode;
     const pred = mode === 'prediction';
     this.el.classList.toggle('player-prediction', pred);
@@ -249,6 +263,8 @@ export class MoviePlayer {
 
   async load(movie) {
     this.stop();
+    this._cancelDraw();
+    this._closeRename();
     this._resetCache();
     const id = (this.loadId = (this.loadId || 0) + 1);
     this.el.querySelectorAll('.player-item').forEach((b) => b.classList.toggle('active', this.movies[+b.dataset.movie] === movie));
@@ -376,7 +392,7 @@ export class MoviePlayer {
       // (with what was merged into them of a look for missed glomeruli, and which of them are of it)
       const state = ed.saved && edited.length ? { simplified: ed.saved.simplified ?? null, pointsEdited: Boolean(ed.saved.points_edited),
         nmf: ed.saved.nmf || null, rois: edited.map((r, i) => ({ name: r.name, z: r.z ?? r.position ?? null, kind: r.kind, points: r.paths[0],
-          nmf: ed.saved.from_nmf?.[i] ?? null })).filter((r) => r.points?.length >= 3) } : null;
+          nmf: ed.saved.from_nmf?.[i] ?? null, unlinked: Boolean(ed.saved.unlinked?.[i]) })).filter((r) => r.points?.length >= 3) } : null;
       ed.hist = new History(state);
       if (state) this.showSource.predicted = false; // (the edited ones are shown in their place)
     }
@@ -530,7 +546,8 @@ export class MoviePlayer {
   // predicted, the fly's own, and the edited ones as they are now
   _composeRois() {
     const state = this.edit?.hist?.current, b = this.base || { predicted: [], manual: [], unrefined: [] };
-    const roi = (r, more) => ({ name: r.name, z: r.z, position: null, color: null, closed: true, type: 'polygon', kind: r.kind, paths: [r.points], ...more });
+    const roi = (r, more) => ({ name: r.name, z: r.z, position: null, color: null, closed: true, type: 'polygon', kind: r.kind, paths: [r.points],
+      unlinked: Boolean(r.unlinked), ...more });
     const edited = (state?.rois || []).map((r, k) => roi(r, { source: 'edited', k, nmf: r.nmf ?? null }));
     const found = this.base && this.mode === 'prediction' ? provisional(this.nmf?.found, state).map((r) => roi(r, { source: 'nmf', cand: r.cand,
       what: r.what, first: r.first })) : [];
@@ -694,7 +711,7 @@ export class MoviePlayer {
         if (s) {
           const info = await this.api(`/api/predictions/${ed.id}/edited`, { method: 'PUT', json: { base: ed.revision, name,
             simplified: s.simplified, points_edited: s.pointsEdited, nmf: s.nmf ?? null,
-            rois: s.rois.map((r) => ({ name: r.name, z: r.z, points: r.points, nmf: r.nmf ?? null })) } });
+            rois: s.rois.map((r) => ({ name: r.name, z: r.z, points: r.points, nmf: r.nmf ?? null, unlinked: Boolean(r.unlinked) })) } });
           ed.revision = info.revision;
           ed.editedPath = info.path || ed.editedPath;
         } else {
@@ -727,7 +744,7 @@ export class MoviePlayer {
   // shows it: { title (an attribute: its numbers), tag (a mark, if it is under a threshold the look had) }
   _tested(r) {
     const f = this.nmf?.found, none = { text: '', tag: '' };
-    if (!f?.rois?.length || !['predicted', 'edited'].includes(r.source) || r.nmf != null) return none;
+    if (!f?.rois?.length || !['predicted', 'edited'].includes(r.source) || r.nmf != null || r.unlinked) return none;
     const names = mergedOf(f, this.edit?.hist?.current)?.names, plane = this._roiPlane(r);
     // (its name is its label's: as predicted, or as named when candidates were merged)
     const m = f.rois.find((x) => x.z === plane && (r.source === 'edited' && names ? (names[x.label] ?? String(x.label)) : x.name) === r.name);
@@ -928,6 +945,12 @@ export class MoviePlayer {
           a name cost then is not kept. Tick “predicted” above the list and double-click that ROI's name on the image for the values the model named it by.`);
       return;
     }
+    if (copy && r.unlinked) {
+      showNoIdentity(dialog, `ROI ${r.name}`, `This ROI was drawn, renamed or numbered again here, so its name is not one the model gave: there
+        is nothing kept of what a name cost for it. Tick “predicted” above the list and double-click a predicted ROI's name on the image for
+        the values the model named it by.`);
+      return;
+    }
     const title = `${/^\d+$/.test(r.name) ? `Predicted ROI ${r.name}: not named` : `Predicted ROI named ${r.name}`}${copy ? ' (its copy to edit)' : ''}`;
     if (copy && !this._asPredicted(r)) {
       const s = ed.hist.current;
@@ -956,8 +979,7 @@ export class MoviePlayer {
     else showIdentity(dialog, `${title}${copy ? ', unchanged' : ''}`, terms, label, this.esc);
   }
 
-  // the ROI whose name, drawn on the image, the pointer is on (a predicted one's, or its copy's): its
-  // index, or null (the last drawn, if names overlap: the one on top)
+  // the ROI whose name, drawn on the image, the pointer is on: its index, or null (the last drawn, if names overlap: the one on top)
   _nameAt(e) {
     const r = this.canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
     const hit = (this.nameBoxes || []).findLast((b) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
@@ -1083,6 +1105,169 @@ export class MoviePlayer {
     });
   }
 
+  // ------------------------------------------- drawing and renaming a prediction's ROIs
+  // As in ImageJ (and imagej_macros' R and N): a new ROI is drawn as a polygon on the plane shown (A, the Add ROI
+  // button, or a click outside every ROI if the setting says so), numbered, then named as typed; R renames the
+  // ROI chosen on every plane it is on. Both change the edited ROIs (a copy of those predicted, made if there is
+  // none yet); numbered ROIs are then numbered again from 0 (`renumber`). Those drawn, renamed or numbered again
+  // are marked `unlinked`: their names no longer say their labels (nmf_merge.js).
+
+  // whether the ROIs shown can be added to and renamed now
+  _canEdit() {
+    return Boolean(this.mode === 'prediction' && this.movie && this.edit?.hist && !this.edit.stale && this.base?.predicted.length);
+  }
+
+  // the edited ROIs as they are, or a copy of those predicted to edit
+  _editState() { return this.edit.hist.current || this._copyPredicted(null); }
+
+  // why an ROI cannot be drawn or renamed, said where the edits' status is
+  _editSay(text) { if (this.mode === 'prediction') this._renderEdit({ text, error: true }); }
+
+  // starts drawing a new ROI (its first corner at `first`, an image point, if given)
+  _startDraw(first = null) {
+    if (this.mode !== 'prediction') return;
+    if (!this._canEdit()) { this._editSay('ROIs can be added only to a prediction\'s, once they are read, and not while they cannot be saved.'); return; }
+    if (this.maxProj) { this._editSay('An ROI is drawn on a plane: leave the max projection first (M).'); return; }
+    this._closeRename();
+    this.draw = { points: first ? [first] : [], at: first };
+    if (this.selectedRoi != null) this._selectRoi(this.selectedRoi); // (none chosen meanwhile)
+    this._drawShown(true);
+  }
+
+  _cancelDraw() {
+    if (!this.draw) return;
+    this.draw = null;
+    this._drawShown(false);
+  }
+
+  _drawShown(on) {
+    this.$('.player-draw-note').hidden = !on;
+    this.$('.player-add-roi').textContent = on ? 'Stop drawing' : 'Add ROI';
+    this.canvas.style.cursor = on ? 'crosshair' : '';
+    this._paint();
+  }
+
+  // a click while drawing: a corner more, or (on the first corner, once there are three) the ROI closed
+  _drawClick(pt) {
+    const d = this.draw, first = d.points[0], last = d.points.at(-1);
+    if (d.points.length >= 3 && Math.hypot(pt[0] - first[0], pt[1] - first[1]) <= HANDLE / this.view.scale) { this._finishDraw(); return; }
+    if (last && Math.hypot(pt[0] - last[0], pt[1] - last[1]) < 1 / this.view.scale) return; // (a double click's second)
+    d.points.push(pt);
+    d.at = pt;
+    this._paint();
+  }
+
+  // the ROI drawn, added to the edited ROIs on the plane shown, numbered (then the others again), chosen, and named as typed
+  _finishDraw() {
+    const d = this.draw;
+    if (!d) return;
+    this._cancelDraw();
+    if (d.points.length < 3) { this._editSay('An ROI needs three corners or more: none was added.'); return; }
+    if (!this._canEdit()) return;
+    const info = this.movie.info, clamp = (v, hi) => +Math.max(0, Math.min(hi, v)).toFixed(2);
+    const points = d.points.map(([x, y]) => [clamp(x, info.x), clamp(y, info.y)]);
+    const s = this._editState(), k = s.rois.length;
+    const rois = renumber([...s.rois, { name: nextNumber(s.rois), z: this.z, kind: 'other', points, nmf: null, unlinked: true }]);
+    this.showSource.edited = true;
+    this._commit({ ...s, rois, pointsEdited: true });
+    this._chooseEdited(k);
+    this._startRename();
+  }
+
+  // chooses edited ROI k (of the state now)
+  _chooseEdited(k) {
+    this.selectedRoi = null;
+    this._selectRoi(this.editedFrom + k);
+  }
+
+  _paintDraw(ctx) {
+    const d = this.draw;
+    if (!d?.points.length || this.maxProj) return;
+    const { scale, ox, oy } = this.view, at = (p) => [ox + p[0] * scale, oy + p[1] * scale];
+    ctx.save();
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = SOURCES.edited.color;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    d.points.forEach((p, k) => (k ? ctx.lineTo(...at(p)) : ctx.moveTo(...at(p))));
+    ctx.stroke();
+    if (d.at) { // (to the pointer, and from it back to the first corner: the ROI as it would close)
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.moveTo(...at(d.points.at(-1)));
+      ctx.lineTo(...at(d.at));
+      if (d.points.length >= 2) ctx.lineTo(...at(d.points[0]));
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    ctx.lineWidth = 1;
+    d.points.forEach((p, k) => {
+      const [x, y] = at(p);
+      ctx.fillStyle = k === 0 && d.points.length >= 3 ? SELECTED_COLOR : '#fff';
+      ctx.strokeStyle = '#000';
+      ctx.fillRect(x - HANDLE / 2, y - HANDLE / 2, HANDLE, HANDLE);
+      ctx.strokeRect(x - HANDLE / 2 + 0.5, y - HANDLE / 2 + 0.5, HANDLE - 1, HANDLE - 1);
+    });
+    ctx.restore();
+  }
+
+  // opens the box to rename the ROI chosen (a predicted one, or its copy), on every plane it is on; keys go there
+  _startRename() {
+    if (this.mode !== 'prediction') return;
+    const r = this.selectedRoi == null ? null : this.rois[this.selectedRoi];
+    if (!r) { this._editSay('Choose an ROI to rename first (click on or in it, or on its name), then R.'); return; }
+    if (!['edited', 'predicted'].includes(r.source)) {
+      this._editSay(r.source === 'nmf' ? 'Merge this ROI found by NMF first (tick it, then Merge…), then rename it.'
+        : `${r.source === 'manual' ? 'Manual ROIs' : 'ROIs before refinement'} are only shown: rename the predicted ROIs, or their copy edited here.`);
+      return;
+    }
+    if (!this._canEdit()) { this._editSay('These ROIs cannot be edited now.'); return; }
+    this._cancelDraw();
+    const planes = this._editState().rois.filter((x) => x.name === r.name).length;
+    this.renaming = { from: r.name, z: this._roiPlane(r) };
+    this.$('.player-rename-of').textContent = `${r.name}${planes > 1 ? ` (on ${planes} planes)` : ''}`;
+    this.$('.player-rename-warn').textContent = '';
+    const box = this.$('.player-rename'), input = this.$('.player-rename-input');
+    box.hidden = false;
+    input.value = r.name;
+    input.focus();
+    input.select();
+  }
+
+  _closeRename() {
+    if (!this.renaming) return;
+    this.renaming = null;
+    this.$('.player-rename').hidden = true;
+    this.canvas.focus({ preventScroll: true }); // (so the viewer's keys work again)
+  }
+
+  // renames the ROI (on every plane), unless another ROI has the name; then numbers those numbered again
+  async _finishRename() {
+    const rn = this.renaming, warn = (t) => { this.$('.player-rename-warn').textContent = t; };
+    if (!rn) return;
+    const to = this.$('.player-rename-input').value.trim();
+    if (!to) { warn('An ROI needs a name.'); return; }
+    if (to.length > 100 || /\p{C}/u.test(to)) { warn('A name is at most 100 characters, all printable.'); return; }
+    if (to === rn.from) { this._closeRename(); return; }
+    if (!this._canEdit()) { warn('These ROIs cannot be edited now.'); return; }
+    const taken = this._editState().rois.filter((r) => r.name === to);
+    if (taken.length) {
+      const planes = [...new Set(taken.map((r) => (r.z ?? 0) + 1))].sort((a, b) => a - b);
+      warn(`Another ROI is named ${to} already (on plane${planes.length > 1 ? 's' : ''} ${planes.join(', ')}): not renamed.`);
+      return;
+    }
+    let kind;
+    try { kind = (await this.api('/api/movie/roi_kinds', { method: 'POST', json: { names: [to] } })).kinds[to]; } catch { kind = kindOf(null, to); }
+    if (rn !== this.renaming || !this._canEdit()) return; // (closed, or the ROIs changed, meanwhile)
+    const s = this._editState(), rois = rename(s.rois, rn.from, to, kind);
+    if (!rois) { warn(`Another ROI is named ${to} already: not renamed.`); return; }
+    this._closeRename();
+    const k = s.rois.findIndex((r) => r.name === rn.from && (r.z ?? null) === (rn.z ?? null));
+    this._commit({ ...s, rois });
+    if (k >= 0) this._chooseEdited(k);
+  }
+
   // --------------------------------------------------------------- planes
   _zKey() { return this.maxProj ? 'max' : this.z; }
 
@@ -1160,6 +1345,7 @@ export class MoviePlayer {
   }
 
   _planeChanged() {
+    this._cancelDraw(); // (its corners are of the plane before)
     this.$('.player-z').disabled = this.maxProj;
     this._updateLabels();
     if (this.mode === 'prediction' && this.roiPath) this._renderRoiList(this.roiPath);
@@ -1375,14 +1561,14 @@ export class MoviePlayer {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#111';
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-    this.nameBoxes = []; // where predicted ROIs' names (and their copies') are drawn, to click: `_nameAt`
+    this.nameBoxes = []; // where ROIs' names are drawn, to click: `_nameAt`
     if (!this.current) return;
     ctx.imageSmoothingEnabled = false;
     ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * ox, dpr * oy);
     ctx.drawImage(this.off, 0, 0);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this._paintOdor(ctx);
-    if (!this.showRois || !this.rois.length) return;
+    if (!this.showRois || !this.rois.length) { this._paintDraw(ctx); return; }
     ctx.font = '500 12px system-ui, sans-serif'; // (ROIs' names: a little heavier than normal, to stand out on the image)
     this.rois.forEach((r, i) => {
       const style = this._roiStyle(r, i);
@@ -1409,14 +1595,13 @@ export class MoviePlayer {
         ctx.shadowBlur = 3;
         ctx.fillText(r.name, cx / n + 4, cy / n);
         ctx.shadowBlur = 0;
-        if (this.mode === 'prediction' && r.source !== 'manual') {
-          this.nameBoxes.push({ i, x: cx / n + 2, y: cy / n - 12, w: ctx.measureText(r.name).width + 4, h: 16 });
-        }
+        this.nameBoxes.push({ i, x: cx / n + 2, y: cy / n - 12, w: ctx.measureText(r.name).width + 4, h: 16 });
       }
     });
     ctx.globalAlpha = 1;
     ctx.setLineDash([]);
     this._paintHandles(ctx);
+    this._paintDraw(ctx);
   }
 
   // how an ROI is drawn over the plane shown (null: not): those of the plane, or of every
@@ -1532,7 +1717,7 @@ export class MoviePlayer {
     let drag = null;
     c.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 || !this.movie) return;
-      if (this._pressHandle(e)) { e.preventDefault(); return; }
+      if (!this.draw && this._pressHandle(e)) { e.preventDefault(); return; }
       drag = { x: e.clientX, y: e.clientY, ox: this.view.ox, oy: this.view.oy, moved: false };
       c.setPointerCapture(e.pointerId);
     });
@@ -1543,6 +1728,10 @@ export class MoviePlayer {
         this.view.ox = drag.ox + e.clientX - drag.x;
         this.view.oy = drag.oy + e.clientY - drag.y;
         this._clampView();
+        this._paint();
+      } else if (this.draw) { // (the line from the last corner follows the pointer)
+        this.draw.at = this._imagePoint(e);
+        c.style.cursor = 'crosshair';
         this._paint();
       } else if (this.movie) { // (over a point that can be dragged, or an edited ROI that can be chosen)
         const hit = this._handleAt(e), at = hit ? hit.i : -1;
@@ -1556,17 +1745,23 @@ export class MoviePlayer {
       const held = this.edit?.drag, click = Boolean(this.movie) && (held ? held.whole && !held.moved : drag && !drag.moved);
       const named = click ? this._nameAt(e) : null;
       if (held) this._dropHandle();
-      if (named != null) { // (a click on an ROI's name: the ROI chosen, if it is not)
+      if (click && this.draw) this._drawClick(this._imagePoint(e));
+      else if (named != null) { // (a click on an ROI's name: the ROI chosen, if it is not)
         if (named !== this.selectedRoi) this._selectRoi(named);
       } else if (click) { // (an ROI clicked on or in: chosen, to edit if it is an edited one, and to plot with P)
         const i = this._roiAt(e), chosen = this.selectedRoi != null && this.rois[this.selectedRoi]?.source === 'edited';
-        if (i != null ? i !== this.selectedRoi : chosen) this._selectRoi(i ?? this.selectedRoi);
+        if (i == null && this.clickDraws() && this._canEdit()) this._startDraw(this._imagePoint(e)); // (as ImageJ's polygon tool)
+        else if (i != null ? i !== this.selectedRoi : chosen) this._selectRoi(i ?? this.selectedRoi);
       }
       drag = null;
     });
     c.addEventListener('pointercancel', () => { drag = null; if (this.edit?.drag) this._dropHandle(); });
     c.addEventListener('pointerleave', () => { this.$('.player-pixel').textContent = ''; });
     c.addEventListener('dblclick', (e) => {
+      if (this.draw) { // (its clicks added a corner, once: it is closed there; or, of fewer than three, given up)
+        if (this.draw.points.length >= 3) { this._finishDraw(); return; }
+        this._cancelDraw();
+      }
       const named = this.movie ? this._nameAt(e) : null;
       if (named != null) { this._showIdentity(named); return; }
       if (this._handleAt(e) || this._editedAt(e) != null) return;
@@ -1696,13 +1891,22 @@ export class MoviePlayer {
         this.$('.player-max').checked = this.maxProj;
         this._planeChanged();
       },
-      a: () => this._autoContrast(),
-      r: () => this._resetContrast(),
+      a: () => (this.draw ? this._cancelDraw() : this._startDraw()),
+      r: () => this._startRename(),
+      A: () => this._autoContrast(),
+      R: () => this._resetContrast(),
       o: () => { this.showOdors = !this.showOdors; this.$('.player-odors').checked = this.showOdors; this._paint(); },
       f: () => { this._fit(); this._paint(); },
     };
     // (by the key's place: Alt+P types another character on some layouts, e.g. a Mac's π)
     if (e.code === 'KeyP' && !e.shiftKey) { e.preventDefault(); this._plotRoi(e.altKey); return; }
+    if (this.draw && ['Escape', 'Enter', 'Backspace'].includes(e.key)) {
+      e.preventDefault();
+      if (e.key === 'Escape') this._cancelDraw();
+      else if (e.key === 'Enter') this._finishDraw();
+      else { this.draw.points.pop(); this._paint(); }
+      return;
+    }
     if (e.altKey) return;
     const f = keys[e.key];
     if (f) { e.preventDefault(); f(); }

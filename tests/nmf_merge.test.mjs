@@ -5,6 +5,7 @@ import { changes, copyPredicted, kindOf, merge, mergedIds, mergedOf, provisional
 
 // a square with a point at the middle of each side too (which simplifying leaves out)
 const sq = (x, y, s = 4) => [[x, y], [x + s / 2, y], [x + s, y], [x + s, y + s / 2], [x + s, y + s], [x + s / 2, y + s], [x, y + s], [x, y + s / 2]];
+const joint0 = () => ({ names: found.names.joint, kinds: {} });
 const names = (rois) => rois.map((r) => `${r.name}@${r.z}${r.nmf == null ? '' : `#${r.nmf}`}`).sort();
 
 // a prediction's ROIs: DM1 (label 1) on planes 0 and 1, DM2 (2) on plane 0, and one left unnamed (3) on plane 1
@@ -55,6 +56,13 @@ assert.ok(first.rois.filter((r) => r.nmf != null).every((r) => r.points.length =
 assert.deepEqual([...mergedIds(found, first)], [1, 2]);
 assert.deepEqual(provisional(found, first).map((r) => r.cand), [3]);
 assert.equal(state.rois.length, 4); // (the state before is as it was: to undo to)
+
+// an ROI renamed in the viewer (`unlinked`) keeps its name in a merge that names the ROIs again, even one whose new name is
+// a label's (here 3's)
+const renamedOne = { ...first, rois: first.rois.map((r) => (r.name === 'DM2' && r.z === 0 ? { ...r, name: '3', unlinked: true } : r)) };
+const after = merge(renamedOne, found, joint0(), [1, 2, 3], true);
+assert.ok(after.rois.some((r) => r.name === '3' && r.z === 0 && r.unlinked));
+assert.ok(!after.rois.some((r) => r.name === 'DM5' && r.z === 0 && r.nmf == null)); // (it is not taken for label 2's)
 
 // then the part cut off, all named again together: names change by label, DM2's outline on that plane is what is left of it
 const joint = { names: found.names.joint, kinds: {} };

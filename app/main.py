@@ -1425,6 +1425,16 @@ async def movie_rois(request: Request) -> Response:
     return JSONResponse({"rois": rois})
 
 
+async def movie_roi_kinds(request: Request) -> Response:
+    """ROI names as glomeruli' ({"names": [...]}: `movies.roi_kind`, of the glomeruli an upload accepts), for
+    ROIs named in the player. Returns {"kinds": {name: kind}}."""
+    body = await request.json()
+    names = body.get("names") if isinstance(body, dict) else None
+    if not isinstance(names, list) or len(names) > 1000 or not all(isinstance(n, str) and len(n) <= 100 for n in names):
+        return json_error(400, "names: a list of ROI names")
+    return JSONResponse({"kinds": {n: movies.roi_kind(n, GLOMERULI) for n in names}})
+
+
 async def movie_rois_download(request: Request) -> Response:
     """A RoiSet.zip (or .roi) on the server (``?path=``, as `movie_rois` takes it), as it is, to save
     under its own name (a prediction's as in its download: ``<fly>_RoiSet.zip``, ``<fly>_pred-edited_RoiSet.zip``)."""
@@ -4394,6 +4404,7 @@ routes = [
     Route("/api/movie/trials", movie_trials),
     Route("/api/movie/trial_dff", movie_trial_dff, methods=["POST"]),
     Route("/api/movie/roi_responses", movie_roi_responses, methods=["POST"]),
+    Route("/api/movie/roi_kinds", movie_roi_kinds, methods=["POST"]),
     Route("/api/movie/memory", movie_memory_hold, methods=["POST"]),
     Route("/api/movie/memory/release", movie_memory_release, methods=["POST"]),
     Route("/api/admin/movie_memory", admin_movie_memory),

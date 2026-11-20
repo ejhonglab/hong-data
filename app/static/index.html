@@ -844,6 +844,8 @@ try {
           <select id="settings-theme"><option value="system">As this computer's system or browser</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
       </div>
       <p class="muted">Kept on this computer only. Exported figures are always light.</p>
+      <label class="check"><input type="checkbox" id="settings-click-draws"> In the AL segmentation viewer, a click outside every ROI starts drawing a new one</label>
+      <p class="muted">Kept on this computer only. As ImageJ's polygon tool: each click after that adds a corner, and Esc stops. Unticked, only the Add ROI button (or A) starts one, and a click outside every ROI chooses none.</p>
       <label class="check"><input type="checkbox" id="settings-lower-odors"> Odor names (abbreviations) in lowercase</label>
       <p class="muted">Kept on this computer only. Odor names as in datasets (e.g. <code>IaA @ -3</code> as <code>iaa @ -3</code>) and the odor table's abbreviations, wherever they are shown (Browse, Compare, Reference data, the Odors tab) and in every download but of the original files. Names that differ from another shown with them only in case are left as they are, so that no two odors look the same. The upload form shows a file's odors as they are in it.</p>
     </div>
@@ -1492,8 +1494,8 @@ try {
         <label class="player-slider"><span>Brightness</span><input type="range" class="player-bc-bright" min="0" max="1000" value="500"><output></output></label>
         <label class="player-slider"><span>Contrast</span><input type="range" class="player-bc-contrast" min="0" max="1000" value="500"><output></output></label>
         <div class="player-bc-buttons">
-          <button type="button" class="btn small player-auto" title="As ImageJ's Auto: from the histogram of the plane shown, leaving out only its sparsest ends (bins with under 0.02% of its pixels). Press again for more contrast (A)">Auto</button>
-          <button type="button" class="btn small player-reset" title="The full range of the plane shown (R)">Reset</button>
+          <button type="button" class="btn small player-auto" title="As ImageJ's Auto: from the histogram of the plane shown, leaving out only its sparsest ends (bins with under 0.02% of its pixels). Press again for more contrast (Shift+A)">Auto</button>
+          <button type="button" class="btn small player-reset" title="The full range of the plane shown (Shift+R)">Reset</button>
         </div>
       </section>
       </details>
@@ -1510,6 +1512,12 @@ try {
       <div class="player-stage">
         <canvas class="player-canvas" aria-label="Movie"></canvas>
         <div class="player-msg"></div>
+        <form class="player-rename" hidden>
+          <label>Rename <b class="player-rename-of"></b> to <input type="text" class="player-rename-input" maxlength="100" spellcheck="false" autocomplete="off"></label>
+          <span class="player-rename-note muted small">Enter: rename · Esc: cancel</span>
+          <span class="player-rename-warn small" aria-live="polite"></span>
+        </form>
+        <div class="player-draw-note small" hidden>Drawing an ROI on this plane: click at each corner; double-click, click the first again or Enter to close it · Backspace: undo a corner · Esc: cancel</div>
       </div>
       <p class="player-warnings"></p>
       <div class="player-controls">
@@ -1531,7 +1539,7 @@ try {
           <button type="button" class="btn small player-fit" title="Fit the image to the window (or double-click it)">Fit screen</button>
           <span class="player-pixel muted"></span>
         </div>
-        <p class="player-keys">Space: play / pause · ←/→: time (with Shift: ×10) · ↑/↓: plane · M: max projection · P: plot the ROI chosen's response to each odor (Alt+P: add it to the plot) · click in an ROI: choose it · A: auto contrast (again: more) · R: reset contrast · O: odor names · F: fit screen · drag to move, wheel to zoom (over a slider: to step it)</p>
+        <p class="player-keys">Space: play / pause · ←/→: time (with Shift: ×10) · ↑/↓: plane · M: max projection · P: plot the ROI chosen's response to each odor (Alt+P: add it to the plot) · click on or in an ROI: choose it · A: add an ROI (a prediction's) · R: rename the ROI chosen · Shift+A: auto contrast (again: more) · Shift+R: reset contrast · O: odor names · F: fit screen · drag to move, wheel to zoom (over a slider: to step it)</p>
       </div>
     </div>
     <aside class="player-rois" aria-label="Brightness and contrast, and ImageJ ROIs">
@@ -1568,6 +1576,10 @@ try {
           <button type="button" class="btn small player-undo" title="Undo the last change (Ctrl+Z)" disabled>Undo</button>
           <button type="button" class="btn small player-redo" title="Redo the change undone (Ctrl+Shift+Z or Ctrl+Y)" disabled>Redo</button>
           <button type="button" class="btn small player-edit-discard" title="Delete the edited ROIs, once confirmed: those predicted are shown again (Undo brings the edited ones back, while this viewer stays open)" hidden>Discard…</button>
+        </div>
+        <div class="player-edit-row">
+          <button type="button" class="btn small player-add-roi" title="Draw a new ROI on the plane shown (A), as with ImageJ's polygon tool: click at each corner, then double-click, click the first corner again or press Enter to close it (Backspace: the last corner again, Esc: none). It is numbered, then named as you type (Enter; Esc keeps the number).">Add ROI</button>
+          <button type="button" class="btn small player-rename-roi" title="Rename the ROI chosen on every plane it is on (R): not to a name another ROI has. Numbered ROIs are then numbered again, from 0 (as imagej_macros' N).">Rename</button>
         </div>
         <p class="player-edit-status small" aria-live="polite"></p>
         <details class="player-edit-help-box"><summary>Edit controls</summary>

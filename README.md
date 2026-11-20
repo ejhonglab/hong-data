@@ -398,11 +398,13 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   (as ImageJ's: few pixels saturated, more contrast at each press) and *Reset* (the
   plane's full range). A movie opens as *Reset* would set it on its plane with the strongest
   signal (the highest 99.5th percentile at its first time point), so no plane is saturated. Keys as in ImageJ where they exist (space or `\` to play, `<` /
-  `>` and the arrows to step, `A` auto contrast), `R` to reset the contrast, `O` for
+  `>` and the arrows to step), `Shift+A` auto contrast, `Shift+R` to reset it (`A` and `R` add
+  and rename ROIs, as below), `O` for
   odor names and `M` for the max projection. Only the planes shown are read, on the server,
   so even large movies open at once.
-- **Plotting an ROI's responses** (as `P` in Sam's ImageJ macros): choose one of the fly's
-  own ROIs (click in it, on its name, or in the list), then press `P`. A matrix of its mean
+- **Plotting an ROI's responses** (as `P` in Sam's ImageJ macros): choose any ROI (click on
+  its outline, in it, on its name, or in the list; a prediction's ROIs before manual ones
+  where they overlap), then press `P`. A matrix of its mean
   response to each odor, in every recording of the fly, opens above the movie; `Alt+P` adds
   the next ROI chosen to it as another row. Diagnostic odors come first, in al_analysis'
   fixed order, then each panel's, in its stimulus YAML's order.
@@ -918,8 +920,17 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   changes made since the viewer was opened, simplifying and *Discard* (which deletes the
   copy, so that the predicted ROIs are shown again; it asks first, as the copy is deleted on
   the server for everyone, and only that viewer's Undo, while it stays open, brings it
-  back) among them. Double-clicking a predicted ROI's name on the image opens what naming
-  it cost. *Download the ROIs*, above the list, saves the ROIs shown as a file for ImageJ,
+  back) among them.
+  New ROIs are drawn as with ImageJ's polygon tool: *Add ROI* (or `A`), then a click at each
+  corner, closed by a double-click, a click on the first corner or Enter (Backspace takes
+  back a corner, Esc stops). By default (Settings, *Display*) a click outside every ROI
+  starts one too, as in ImageJ. A new ROI is numbered, then named as you type (Enter; Esc
+  keeps the number). `R` (or *Rename*) renames the ROI chosen on every plane it is on,
+  refusing a name another ROI has. After either, numbered ROIs are numbered again from 0 by
+  plane (as imagej_macros' `N`), one over several planes keeping one number. Such ROIs'
+  names no longer say their labels, so a later NMF merge leaves them as they are, and what
+  their names cost is not shown. Double-clicking a predicted ROI's name on the image opens
+  what naming it cost. *Download the ROIs*, above the list, saves the ROIs shown as a file for ImageJ,
   named as in the prediction's download: the edited ones if there are any
   (`<fly>_pred-edited_RoiSet.zip`), else those predicted (`<fly>_RoiSet.zip`); in a
   dataset's movies, the movie's own `RoiSet.zip`. Each change is saved at

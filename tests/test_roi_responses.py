@@ -91,6 +91,13 @@ def test_drawn(tmp_path):
         roi_responses.Drawn({"z": 0, "paths": [["a"]]})
 
 
+def test_roi_kinds(main):  # noqa: F811
+    # names given to ROIs in the player, as glomeruli' (as the ROIs read from a RoiSet.zip are said to be)
+    status, got = call(main.movie_roi_kinds, body={"names": ["DM2", "DM2_t0", "7", "VA1d/VA1v", "DM2?"]})
+    assert status == 200 and got["kinds"] == {"DM2": "glomerulus", "DM2_t0": "tentative", "7": "other", "VA1d/VA1v": "glomerulus", "DM2?": "other"}
+    assert call(main.movie_roi_kinds, body={"names": "DM2"})[0] == 400
+
+
 def test_order():
     # a panel hong2p has no order of: its stimulus YAMLs' order, else as presented; an odor's concentrations together, lowest first
     keys = [("x", "b @ -2"), ("x", "c @ -1"), ("x", "a @ -1"), ("glomeruli_diagnostics", "ACV @ -2"), ("x", "a @ -3"),

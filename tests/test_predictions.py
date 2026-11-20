@@ -169,7 +169,13 @@ def test_edited(main, tensor):  # noqa: F811
     assert status == 409 and r["revision"] == 1 and r["edited"] == e
     status, e2 = save(base=1, points_edited=True, name="", simplified=None, rois=rois[:1])
     assert status == 200 and (e2["revision"], e2["by"], e2["simplified"], e2["points_edited"], e2["rois"]) == (2, None, None, True, 1)
-    assert len(roifile.ImagejRoi.fromfile(path)) == 1
+    assert len(roifile.ImagejRoi.fromfile(path)) == 1 and "unlinked" not in e2
+    # ROIs drawn, renamed or numbered again there: which, said (their names no longer say their labels)
+    status, e3 = save(base=2, rois=[rois[0], {**rois[2], "name": "7", "unlinked": True}])
+    assert status == 200 and e3["unlinked"] == [False, True] and e3["revision"] == 3
+    assert save(base=3, rois=[{**rois[0], "unlinked": 1}])[0] == 400
+    status, e2 = save(base=3, points_edited=True, name="", simplified=None, rois=rois[:1])
+    assert status == 200 and "unlinked" not in e2
 
     # in its download; deleted, those predicted are what there is (and that they were is still said)
     names = zipfile.ZipFile(io.BytesIO(b"".join(predictions.stream_zip(p["id"], "top")))).namelist()
@@ -177,13 +183,13 @@ def test_edited(main, tensor):  # noqa: F811
     delete = lambda base: call(main.predictions_edited_delete, method="DELETE", path_params={"id": p["id"]},  # noqa: E731
                                query={"base": str(base), "name": "Cy"})
     assert delete(1)[0] == 409 and delete("x")[0] == 400
-    assert delete(2) == (200, {"deleted": True, "revision": 3})
+    assert delete(4) == (200, {"deleted": True, "revision": 5})
     assert not path.exists() and pred.read_bytes() == was
     assert json.loads((d / "ann_2024-01-01_1_pred-edited.json").read_text())["deleted"] is True
     v = call(main.predictions_view, path_params={"id": p["id"]})[1]
-    assert v["edited"] is None and v["revision"] == 3
-    assert save(base=2)[0] == 409  # (an older one, again)
-    assert save(base=3)[1]["revision"] == 4
+    assert v["edited"] is None and v["revision"] == 5
+    assert save(base=4)[0] == 409  # (an older one, again)
+    assert save(base=5)[1]["revision"] == 6
 
 
 def test_streams(tmp_path):
