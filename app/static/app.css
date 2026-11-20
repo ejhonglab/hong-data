@@ -970,6 +970,9 @@ dialog.roi-identity::backdrop { background: rgba(29,31,34,.3); }
 
 /* ---------------------------------------------------------------- compare */
 .compare-content { overflow: auto; display: block; }
+.cmp-toolbar { display: flex; justify-content: flex-end; min-height: 0; }
+.cmp-toolbar:has(> [hidden]:only-child) { display: none; }
+.cmp-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 #compare-view { display: flex; flex-direction: column; gap: 18px; }
 .cmp-block { display: flex; flex-direction: column; gap: 6px; }
 .cmp-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }

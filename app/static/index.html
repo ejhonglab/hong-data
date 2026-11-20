@@ -377,7 +377,8 @@ try {
   <section id="tab-compare" class="tab" hidden>
     <aside class="sidebar">
       <div class="sidebar-head">
-        <h1>Compare</h1>
+        <div class="cmp-title-row"><h1>Compare</h1>
+          <button type="button" class="btn small" id="compare-clear" title="Untick every dataset and model run ticked here" hidden>Clear shown</button></div>
         <div class="seg seg-grid" role="group" aria-label="Group datasets by">
           <button type="button" data-group="panel" class="active">By panel</button>
           <button type="button" data-group="date">By last fly date</button>
@@ -389,10 +390,10 @@ try {
       <div id="compare-list" class="list"></div>
       <div class="sidebar-foot">
         <span id="compare-count" class="grow muted"></span>
-        <button type="button" class="btn small" id="compare-clear" hidden>Clear</button>
       </div>
     </aside>
     <div class="content compare-content" id="compare-content">
+      <div class="cmp-toolbar"><button type="button" class="btn small" id="compare-clear-all" title="Untick everything shown: the datasets and model runs on the left, and what they are compared to on the right" hidden>Clear shown</button></div>
       <div class="empty" id="compare-empty">Tick datasets on the left to compare them: each is shown with its odors as rows, every trial of an odor averaged (and for glomeruli, every fly).</div>
       <div id="compare-view"></div>
     </div>
@@ -409,7 +410,8 @@ try {
         <option value="cosine">cosine similarity</option></select></label>
       <p class="muted small" id="cmp-sim-note"></p>
 
-      <h2>Compare to</h2>
+      <div class="cmp-title-row"><h2>Compare to</h2>
+        <button type="button" class="btn small" id="cmp-spaces-clear" title="Untick everything ticked under Compare to" hidden>Clear shown</button></div>
       <p class="muted small" id="cmp-shown"></p>
       <div id="cmp-spaces"></div>
       <label class="opt" id="cmp-conc-opt">An odor at several concentrations: <select id="cmp-conc">

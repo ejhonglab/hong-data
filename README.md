@@ -424,6 +424,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   odors (rows, by panel) by its glomeruli or ROIs, every trial of an odor averaged, and
   for glomeruli every fly too (a column per glomerulus, the mean of the flies with it;
   ROIs grouped by fly and named as in Browse, in its order);
+  *Clear shown* (top right of each pane) unticks the datasets and model runs on the left,
+  or what *Compare to* has ticked, or (over the main area) both;
   in the viewer of reference data (colors, cell size, transpose, moving and removing
   rows and columns, figure export), without trials, ROI ordering or clustering. Under an
   entry of the same recordings calculated more than one way are Browse's menu of their

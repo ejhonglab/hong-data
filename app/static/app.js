@@ -6527,7 +6527,15 @@ class ComparePage {
       this.o.calcs = null; // (anything ticked or not, but by a calculation's menu, ends comparing calculations)
       this._changed();
     });
-    $('#compare-clear').addEventListener('click', () => { this.o.picked = []; this.o.calcs = null; this._changed(); });
+    // (Clear shown: of the left (datasets and model runs), of the right (what they are compared to), or of both)
+    const clear = (left, right) => {
+      if (left) { this.o.picked = []; this.o.calcs = null; this.o.models = this.o.models.map((m) => ({ ...m, shown: false })); }
+      if (right) { const listed = this._listedSpaces(); this.o.spaces = this.o.spaces.filter((k) => !listed.has(k)); }
+      this._changed();
+    };
+    $('#compare-clear').addEventListener('click', () => clear(true, false));
+    $('#cmp-spaces-clear').addEventListener('click', () => clear(false, true));
+    $('#compare-clear-all').addEventListener('click', () => clear(true, true));
     $('#cmp-metric').innerHTML = Object.entries(SIMILARITIES).map(([k, m]) => `<option value="${k}">${m.label}</option>`).join('');
     for (const [id, key, read] of [['#cmp-on', 'on'], ['#cmp-metric', 'metric'], ['#cmp-ref-metric', 'refMetric'], ['#cmp-show', 'show'], ['#cmp-conc', 'conc'],
       ['#cmp-rsa', 'rsa', (el) => el.checked], ['#cmp-rsa-method', 'rsaMethod'], ['#cmp-p-by', 'pBy'],
@@ -6565,7 +6573,19 @@ class ComparePage {
 
   _save() { LS.set(COMPARE_KEY, this.o); }
 
-  _changed() { this._save(); this.renderList(); this.render(); }
+  _changed() { this._save(); this.renderList(); this.render(); this._syncClear(); }
+
+  // the keys of what Compare to lists now (of what is ticked there, only those count: Compare on glomeruli lists no chemical spaces)
+  _listedSpaces() { return new Set([...(this.o.on === 'odors' ? ['ecfp'] : []), ...this._refsOn().map((r) => `ref:${r.id}`)]); }
+
+  // the Clear shown buttons, each only while it has something to clear
+  _syncClear() {
+    const listed = this._listedSpaces();
+    const left = this.o.picked.length > 0 || this.o.models.some((m) => m.shown), right = this.o.spaces.some((k) => listed.has(k));
+    $('#compare-clear').hidden = !left;
+    $('#cmp-spaces-clear').hidden = !right;
+    $('#compare-clear-all').hidden = !left && !right;
+  }
 
   // a model run to compare (the Models tab's Compare: {id, title, filter, nSpikes, run}), shown
   // at the top of the list on the left; on odors, as the Compare tab compares models
@@ -6647,7 +6667,7 @@ class ComparePage {
     const n = this.o.picked.length, nm = this.o.models.filter((m) => m.shown).length;
     $('#compare-count').textContent = [n ? `${n} dataset${n === 1 ? '' : 's'}` : '', nm ? `${nm} model run${nm === 1 ? '' : 's'}` : '']
       .filter(Boolean).join(', ') + (n || nm ? ' shown' : '');
-    $('#compare-clear').hidden = !n;
+    this._syncClear();
   }
 
   // the datasets ticked (a set of their ids), in the order they are shown: oldest first
