@@ -465,7 +465,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   - *Compare to*: chemical structure, as the Jaccard similarity (1 − Jaccard distance)
     of the odors' ECFP fingerprints (RDKit's Morgan fingerprints from their InChI, ECFP6
     by default, of any even diameter up to 12), and every reference dataset with
-    chemicals. Odors are matched across them by the Odors table (one chemical alone, not
+    chemicals, grouped as in the Reference data tab (each group collapsible, saying how
+    many of it are ticked). Odors are matched across them by the Odors table (one chemical alone, not
     mixtures; an odor at several concentrations as its highest, lowest or the mean of
     them; a reference dataset's chemicals that are one odor, e.g. its stereoisomers, made
     one as it was added to say: averaged, summed or the highest); each says how many of

@@ -4212,9 +4212,33 @@ function refSubset(ref, { unidentified = true, onlyOdors = false } = {}) {
 // reference dataset can have (those added in the Admin tab are only a-z, 0-9 and '-')
 const ECFP_REF = '_ecfp';
 const ECFP_GROUP = 'Chemical'; // (the group ECFP is listed under)
-const REF_GROUPS_CLOSED = 'olfdb.refGroupsClosed'; // (localStorage: the groups of the Reference data list collapsed)
-function refGroupsClosed() {
-  try { return new Set(JSON.parse(localStorage.getItem(REF_GROUPS_CLOSED) || '[]')); } catch { return new Set(); }
+// (localStorage: the groups collapsed, of the Reference data list and of Compare to)
+const REF_GROUPS_CLOSED = { list: 'olfdb.refGroupsClosed', compare: 'olfdb.cmpRefGroupsClosed' };
+function refGroupsClosed(where) {
+  try { return new Set(JSON.parse(localStorage.getItem(REF_GROUPS_CLOSED[where]) || '[]')); } catch { return new Set(); }
+}
+
+// reference data's entries ([{group, html, open: shown open even if collapsed before, note}])
+// as HTML: those of no group, then each group (by name) a collapsible section of its own,
+// headed by its name, how many, and its `note`s; `where`: which list (`REF_GROUPS_CLOSED`)
+function refGroupsHtml(entries, where, cls) {
+  const groups = [...new Set(entries.map((e) => e.group).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const closed = refGroupsClosed(where);
+  return entries.filter((e) => !e.group).map((e) => e.html).join('') + groups.map((g) => {
+    const of = entries.filter((e) => e.group === g), notes = of.map((e) => e.note).filter(Boolean);
+    return `<details class="${cls} ref-group" data-group="${esc(g)}"${!closed.has(g) || of.some((e) => e.open) ? ' open' : ''}>
+      <summary class="list-group">${esc(g)} <span class="muted">(${of.length}${notes.length ? `, ${notes.length} ticked` : ''})</span></summary>
+      ${of.map((e) => e.html).join('')}</details>`;
+  }).join('');
+}
+
+// each group of `refGroupsHtml` in `el` remembered collapsed or not
+function wireRefGroups(el, where) {
+  $$('details.ref-group', el).forEach((d) => d.addEventListener('toggle', () => {
+    const now = refGroupsClosed(where), g = d.dataset.group;
+    const next = d.open ? [...now].filter((x) => x !== g) : [...now, g];
+    try { localStorage.setItem(REF_GROUPS_CLOSED[where], JSON.stringify([...new Set(next)])); } catch { /* (as it was, next time) */ }
+  }));
 }
 const REF_BUNDLE_RE = /\.(sqlite3?|db)$/i; // a reference dataset's file that is a bundle (MetaCyc or LOTUS: their SUFFIXES)
 
@@ -4301,21 +4325,10 @@ class Reference {
         <span class="t">${esc(it.title)}</span>${why}</button>`;
     };
     const items = [...this.items, { id: ECFP_REF, title: 'ECFP', state: 'ok', group: ECFP_GROUP }];
-    const groups = [...new Set(items.map((it) => it.group).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-    const closed = refGroupsClosed();
     list.innerHTML = (this.items.length ? '' : '<div class="empty">No reference data yet: it is added in the Admin tab.</div>')
-      + items.filter((it) => !it.group).map(item).join('')
-      + groups.map((g) => {
-        const of = items.filter((it) => it.group === g), open = !closed.has(g) || of.some((it) => it.id === this.selected);
-        return `<details class="list-section ref-group" data-group="${esc(g)}"${open ? ' open' : ''}>
-          <summary class="list-group">${esc(g)} <span class="muted">(${of.length})</span></summary>${of.map(item).join('')}</details>`;
-      }).join('');
+      + refGroupsHtml(items.map((it) => ({ group: it.group, html: item(it), open: it.id === this.selected })), 'list', 'list-section');
     $$('.list-item', list).forEach((b) => b.addEventListener('click', () => { location.hash = `#reference/${b.dataset.id}`; }));
-    $$('details.ref-group', list).forEach((d) => d.addEventListener('toggle', () => {
-      const now = refGroupsClosed(), g = d.dataset.group;
-      const next = d.open ? [...now].filter((x) => x !== g) : [...now, g];
-      try { localStorage.setItem(REF_GROUPS_CLOSED, JSON.stringify([...new Set(next)])); } catch { /* (as it was, next time) */ }
-    }));
+    wireRefGroups(list, 'list');
   }
 
   async show(id) {
@@ -7103,19 +7116,21 @@ class ComparePage {
     };
     const fp = this.ecfp.get(this.o.ecfpD);
     const checked = (key) => (this.o.spaces.includes(key) ? ' checked' : '');
-    const html = on !== 'odors' ? [] : [`<div class="space"><label class="check"><input type="checkbox" data-space="ecfp"${checked('ecfp')}> Chemical structure:
+    // (grouped as in the Reference data tab; a group's ticked ones counted by its name)
+    const entry = (key, group, html) => ({ group, html, note: checked(key) ? 'ticked' : null });
+    const entries = on !== 'odors' ? [] : [entry('ecfp', ECFP_GROUP, `<div class="space"><label class="check"><input type="checkbox" data-space="ecfp"${checked('ecfp')}> Chemical structure:
         ECFP fingerprints, by their Jaccard similarity (1 − Jaccard distance)</label>
         <label class="opt">Diameter <input type="number" id="cmp-ecfp-d" min="0" max="12" step="2" value="${this.o.ecfpD}"> (ECFP${this.o.ecfpD})</label>
-        ${fp ? overlap(Object.keys(fp.fingerprints).map(Number)) : '<span class="overlap">…</span>'}</div>`];
+        ${fp ? overlap(Object.keys(fp.fingerprints).map(Number)) : '<span class="overlap">…</span>'}</div>`)];
     const refs = this._refsOn();
     for (const r of refs) {
-      html.push(`<div class="space"><label class="check"><input type="checkbox" data-space="ref:${esc(r.id)}"${checked(`ref:${r.id}`)}> ${esc(r.title)}</label>
+      entries.push(entry(`ref:${r.id}`, r.group, `<div class="space"><label class="check"><input type="checkbox" data-space="ref:${esc(r.id)}"${checked(`ref:${r.id}`)}> ${esc(r.title)}</label>
         ${overlap((on === 'odors' ? r.chemicals.odor_ids : r.glomeruli.names) || [])}${on === 'odors' && r.stereo
-          ? `<a class="overlap few" href="#reference/${esc(r.id)}" title="Which, in the Reference data tab">⚠ ${esc(r.stereo)}</a>` : ''}</div>`);
+          ? `<a class="overlap few" href="#reference/${esc(r.id)}" title="Which, in the Reference data tab">⚠ ${esc(r.stereo)}</a>` : ''}</div>`));
     }
-    if (!refs.length) html.push(`<p class="muted small">${esc(N.none)}</p>`);
-    const active = document.activeElement?.id === 'cmp-ecfp-d';
-    $('#cmp-spaces').innerHTML = html.join('');
+    const active = document.activeElement?.id === 'cmp-ecfp-d', box = $('#cmp-spaces');
+    box.innerHTML = refGroupsHtml(entries, 'compare', 'space-group') + (refs.length ? '' : `<p class="muted small">${esc(N.none)}</p>`);
+    wireRefGroups(box, 'compare');
     if (active) $('#cmp-ecfp-d').focus();
   }
 
