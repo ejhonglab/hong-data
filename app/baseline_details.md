@@ -35,7 +35,8 @@ and a twin of each of the four restricted to the glomeruli with ORN input.
 
 ### The shuffled connectome
 
-- One seed (`shuffle_connectome_seed`, 0 here) draws five permutations, always in this order: the
+- `shuffle_connectome` turns it on: `'pairs_kept'` or `'pairs_broken'` (below). One seed
+  (`shuffle_seed`, 0 here) draws five permutations, always in this order: the
   claw rows of the PN→KC wiring, then APL→claw, claw→APL, APL→bouton and bouton→APL.
 - Claw rows are permuted across all claws: each claw takes another claw's bouton. Each KC keeps its
   number of claws, each bouton its total output, and the total weight is unchanged.
@@ -108,7 +109,7 @@ run.
   `fit_mb_model`) refuses these options. The saved pieces already contain the shuffle, the uniform
   draw or the restriction.
 - **The seed columns.** `seed` is the random wiring's seed and is filled only for the uniform models.
-  A shuffle's seed is its `shuffle_connectome_seed` column. olfdb passes a nonzero `seed` column on
+  A shuffle's seed is its `shuffle_seed` column. olfdb passes a nonzero `seed` column on
   to the model.
 
 ### Where the code is
@@ -116,7 +117,7 @@ run.
 - pyolfsysm, `pyolfsysm.baselines`: `BOUTON_BASE_KWS`, `BASELINE_VARIANTS` (the eight),
   `run_baseline` (APL on, tuned, then acute APL off) and `save_baseline_outputs`.
 - pyolfsysm's `fit_mb_model` settings: `pn2kc_connections='uniform-glomeruli-boutons'` (with
-  `n_claws`, `seed`), `uniform_apl_weights`, `shuffle_connectome_seed`, `shuffle_apl_pairs` and
+  `n_claws`, `seed`), `uniform_apl_weights`, `shuffle_connectome`, `shuffle_seed` and
   `input_glomeruli_only`.
 - olfdb (hong-data): `scripts/make_baseline_models.py` makes the folder and registers the models as
   baselines. The Summary texts are in `app/baseline_summaries.json` and this text is

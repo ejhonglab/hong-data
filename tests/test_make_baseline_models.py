@@ -24,14 +24,14 @@ VARIANTS = {
     "bouton_base": dict(BASE),
     "uniform_glomeruli_claws_uniform_apl": dict(BASE, prat_claws=False, pn2kc_connections="uniform-glomeruli-boutons", n_claws=7,
                                                 seed=0, uniform_apl_weights=True),
-    "shuffled_connectome_pairs_kept_seed0": dict(BASE, shuffle_connectome_seed=0, shuffle_apl_pairs=True),
-    "shuffled_connectome_pairs_broken_seed0": dict(BASE, shuffle_connectome_seed=0, shuffle_apl_pairs=False),
+    "shuffled_connectome_pairs_kept_seed0": dict(BASE, shuffle_connectome="pairs_kept", shuffle_seed=0),
+    "shuffled_connectome_pairs_broken_seed0": dict(BASE, shuffle_connectome="pairs_broken", shuffle_seed=0),
     "bouton_base_input_glomeruli": dict(BASE, input_glomeruli_only=True),
 }
 # the arguments fit_mb_model takes (those of them here), as the model worker says
 KWARGS = ["orn_deltas", "target_sparsity", "fixed_thr", "wAPLKC", "wKCAPL", "wAPLPN", "wPNAPL", "one_row_per_claw", "prat_claws",
           "prat_boutons", "use_connectome_APL_weights", "pn_claw_to_apl", "n_spikes_for_response", "pn2kc_connections", "n_claws",
-          "seed", "uniform_apl_weights", "shuffle_connectome_seed", "shuffle_apl_pairs", "input_glomeruli_only"]
+          "seed", "uniform_apl_weights", "shuffle_connectome", "shuffle_seed", "input_glomeruli_only"]
 ODORS = ["2h @ -3", "eb @ -3", "paa @ -4"]
 
 
@@ -94,7 +94,7 @@ def test_params_row(script):
     assert all(r[k] == v for k, v in kws.items() if k != "target_sparsity")
     s = script.params_row("shuffled_connectome_pairs_broken_seed0", VARIANTS["shuffled_connectome_pairs_broken_seed0"], params, n_kcs=1,
                           n_inputs=1, rate_on=0, rate_off=0)
-    assert s["seed"] is None and s["shuffle_connectome_seed"] == 0 and s["shuffle_apl_pairs"] is False
+    assert s["seed"] is None and s["shuffle_seed"] == 0 and s["shuffle_connectome"] == "pairs_broken"
     # a threshold per KC: only its mean, which is no setting to run it with
     v = script.params_row("bouton_base", BASE, {**params, "fixed_thr": np.array([1.0, 3.0])}, n_kcs=2, n_inputs=1, rate_on=0, rate_off=0)
     assert v["fixed_thr"] is None and v["fixed_thr_mean"] == 2.0
@@ -112,7 +112,7 @@ def test_folder(script, tmp_path):
     df = pd.read_csv(out / "params.csv")
     assert list(df.columns[:4]) == ["source_table", "tag", "variant", "base"] and len(df) == len(VARIANTS)
     for c in ("seed", "target_rate", "fixed_thr", "wAPLKC_scale", "wKCAPL_scale", "wAPLPN_scale", "wPNAPL_scale", "rate_on", "rate_off",
-              "base_kwargs_json", "pn2kc_connections", "n_claws", "uniform_apl_weights", "shuffle_connectome_seed", "shuffle_apl_pairs", "input_glomeruli_only"):
+              "base_kwargs_json", "pn2kc_connections", "n_claws", "uniform_apl_weights", "shuffle_connectome", "shuffle_seed", "input_glomeruli_only"):
         assert c in df.columns, c
     s = model_data.scan(out)
     assert model_data.summary(s) == {"experiments": 1, "models": len(VARIANTS), "runs": 2 * len(VARIANTS), "unmatched": 0, "skipped": 0}
@@ -124,12 +124,12 @@ def test_folder(script, tmp_path):
         assert p["model"] == {k: v for k, v in VARIANTS[tag].items() if k != "target_sparsity"}, tag
         assert p["target"] == 0.05 and p["fixed"]["fixed_thr"] == 250.0 + len(tag) and p["fixed"]["wAPLPN_scale"] == 0.13
     # without the new settings (an older pyolfsysm), the models that need them cannot be run, and say why
-    old = [k for k in KWARGS if k not in ("pn2kc_connections", "n_claws", "seed", "uniform_apl_weights", "shuffle_connectome_seed",
-                                           "shuffle_apl_pairs", "input_glomeruli_only")]
+    old = [k for k in KWARGS if k not in ("pn2kc_connections", "n_claws", "seed", "uniform_apl_weights", "shuffle_connectome",
+                                           "shuffle_seed", "input_glomeruli_only")]
     plans = {m["params"]["tag"]: model_runs.plan(m["params"], old) for m in s["models"]}
     assert plans["bouton_base"]["runnable"] is True
     assert plans["shuffled_connectome_pairs_kept_seed0"]["runnable"] is False and plans["bouton_base_input_glomeruli"]["runnable"] is False
-    assert "shuffle_connectome_seed" in plans["shuffled_connectome_pairs_kept_seed0"]["why"][0]
+    assert "shuffle_connectome" in plans["shuffled_connectome_pairs_kept_seed0"]["why"][0]
     # run again: those done kept; one forced, run again
     script.calls.clear()
     assert [r["tag"] for r in script.run(out, ["bouton_base"])] == list(VARIANTS) and script.calls == []

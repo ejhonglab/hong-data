@@ -33,7 +33,7 @@ const SAME_IF_CONNECTOME = new Set(['wAPLKC', 'wKCAPL', 'wAPLPN', 'wPNAPL']);
 // fit_mb_model kwargs with no effect on some models (given which other kwargs): shown as such (a dash) there, whatever
 // their value, by why not
 const NO_EFFECT = {
-  shuffle_apl_pairs: (v) => (v('shuffle_connectome_seed') == null ? 'only with shuffle_connectome_seed (the connectome shuffled)' : null),
+  shuffle_seed: (v) => (v('shuffle_connectome') == null ? 'only with shuffle_connectome (the connectome shuffled)' : null),
   seed: (v) => (v('pn2kc_connections') === 'hemibrain' ? 'only with a random wiring (pn2kc_connections not hemibrain)' : null),
   n_claws: (v) => (v('pn2kc_connections') === 'hemibrain' ? 'only with a random wiring (pn2kc_connections not hemibrain)' : null),
   kc_kc_tau: (v) => (!v('kc_kc_inh') ? 'only with KC-KC inhibition (kc_kc_inh)' : null),

@@ -70,7 +70,7 @@ CMD ["python", "-m", "app.fit_worker"]
 # extras need pydantic 1, the app pydantic 2.
 FROM base AS model
 COPY requirements-model.txt .
-ARG OLFSYSM=8634969a41704eefd9ee40a852532550ff718c33
+ARG OLFSYSM=bde95cb59d21c6d817beda5fd5b8c5501fd06c93
 RUN apt-get update && apt-get install -y --no-install-recommends git build-essential libxrender1 libxext6 libexpat1 libgl1 libglib2.0-0 \
  && rm -rf /var/lib/apt/lists/* \
  && git config --system --add safe.directory /opt/olfsysm \

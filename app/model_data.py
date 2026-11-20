@@ -103,6 +103,9 @@ COMMIT_KEYS = {"al_analysis": ("al_analysis_commit", f"model{SEP}al_analysis{SEP
                "olfsysm": ("pyolfsysm_commit", "olfsysm_commit", f"model{SEP}olfsysm{SEP}checkout{SEP}git_hash",
                            f"model{SEP}olfsysm{SEP}build{SEP}git_hash")}
 NOT_MODEL_KWARGS = {"make_plots", "silent"}  # fit_mb_model kwargs of its output alone, not of the model
+# fit_mb_model kwargs renamed since models were made with them (`renamed_kwargs`): before olfsysm bde95cb, the connectome
+# shuffle was shuffle_connectome_seed (None: none) and shuffle_apl_pairs; since, shuffle_connectome and shuffle_seed
+OLD_SHUFFLE = ("shuffle_connectome_seed", "shuffle_apl_pairs")
 
 _lock = threading.Lock()
 _scans: dict[str, tuple[tuple, dict]] = {}  # folder on the server -> (its files' sizes and times, its scan)
@@ -759,6 +762,22 @@ def fit_mb_model_defaults(repo: str, commit: str, made: Optional[str] = None) ->
     return out
 
 
+def renamed_kwargs(d: dict) -> dict:
+    """fit_mb_model kwargs (or a params.csv row, or its defaults) with any of `OLD_SHUFFLE` as they are named now:
+    ``shuffle_connectome`` ('pairs_kept' if ``shuffle_apl_pairs`` was True or not given, else 'pairs_broken';
+    None if ``shuffle_connectome_seed`` was) and ``shuffle_seed`` (``shuffle_connectome_seed``)."""
+    if not any(k in d for k in OLD_SHUFFLE):
+        return d
+    d = dict(d)
+    seed, pairs = d.pop(OLD_SHUFFLE[0], None), d.pop(OLD_SHUFFLE[1], None)
+    if isinstance(seed, float) and seed.is_integer():
+        seed = int(seed)
+    on = seed is not None and seed != ""
+    d.setdefault("shuffle_connectome", ("pairs_broken" if pairs is False else "pairs_kept") if on else None)
+    d.setdefault("shuffle_seed", seed if on else None)
+    return d
+
+
 def _read_json(path: Path) -> dict:
     try:
         d = json.loads(path.read_text())
@@ -773,7 +792,8 @@ def model_kwargs(folder: Path, m: dict) -> dict:
     Returns:
         dict with ``recorded``: those its files record (its experiment's provenance.json's ``base``, of all
         its models, then its params.csv row's ``base_kwargs_json``, its own provenance_<tag>.json's ``base``,
-        and its rebuild archive's ``model_kws``, each over the one before; not those of its output alone, `NOT_MODEL_KWARGS`),
+        and its rebuild archive's ``model_kws``, each over the one before; not those of its output alone, `NOT_MODEL_KWARGS`;
+        those renamed since as they are named now, `renamed_kwargs`, as are the defaults),
         ``defaults``: the function's (every argument's) at the commit its provenance says made it, and
         ``source``: that, as ``<repository>@<commit>`` (al_analysis', if fit_mb_model was there then, else
         olfsysm's), and ``note``: if that is not the commit named (one not on GitHub), how it was chosen (else
@@ -790,6 +810,7 @@ def model_kwargs(folder: Path, m: dict) -> dict:
     for d in (exp.get("base"), row, fit.get("base"), _read_json(folder / rel / ARCHIVE_JSON).get("model_kws") if rel else None):
         if isinstance(d, dict):
             recorded.update(d)
+    recorded = renamed_kwargs(recorded)
     out = {"recorded": {k: v for k, v in recorded.items() if k not in NOT_MODEL_KWARGS}, "defaults": None, "source": None, "note": None,
            "error": None}
     flats = [flatten(fit), flatten(exp)]
@@ -802,7 +823,7 @@ def model_kwargs(folder: Path, m: dict) -> dict:
         for repo, commit in commits.items():
             if commit and (found := fit_mb_model_defaults(repo, commit, made)) is not None:
                 at, d = found
-                out.update(defaults=d, source=f"{repo}@{at}")
+                out.update(defaults=renamed_kwargs(d), source=f"{repo}@{at}")
                 if at != commit:
                     out["note"] = (f"{repo}@{commit[:7]}, which made it, is not on GitHub: fit_mb_model as in the last commit there "
                                    f"to change its file before it was made ({made})")

@@ -505,3 +505,19 @@ def test_baseline_kwargs(main, outputs, copies, monkeypatch):  # noqa: F811
         con.execute("UPDATE model_baselines SET kwargs_json = NULL")
     assert model_data.refresh_kwargs(main.db, bid) and not model_data.refresh_kwargs(main.db, bid + 99)
     assert next(x for x in call(main.models_baselines)[1]["baselines"] if x["id"] == bid)["kwargs"] == kw
+
+
+def test_renamed_kwargs():
+    """The connectome shuffle's kwargs as named before olfsysm's rename, as named now (and what is run from them)."""
+    from app import model_runs
+
+    old = {"prat_claws": True, "shuffle_connectome_seed": 0, "shuffle_apl_pairs": False}
+    assert model_data.renamed_kwargs(old) == {"prat_claws": True, "shuffle_connectome": "pairs_broken", "shuffle_seed": 0}
+    assert model_data.renamed_kwargs({"shuffle_connectome_seed": 3.0}) == {"shuffle_connectome": "pairs_kept", "shuffle_seed": 3}
+    assert model_data.renamed_kwargs({"shuffle_connectome_seed": None, "shuffle_apl_pairs": True}) == {
+        "shuffle_connectome": None, "shuffle_seed": None}  # (fit_mb_model's defaults before)
+    assert model_data.renamed_kwargs({"seed": 1}) == {"seed": 1}
+    row = {"tag": "s", "base_kwargs_json": json.dumps(old), "shuffle_connectome_seed": 0, "shuffle_apl_pairs": False,
+           "fixed_thr": 250.0, "wAPLKC_scale": 0.1}
+    p = model_runs.plan(row, ["prat_claws", "shuffle_connectome", "shuffle_seed"])
+    assert p["runnable"] and p["model"] == {"prat_claws": True, "shuffle_connectome": "pairs_broken", "shuffle_seed": 0}

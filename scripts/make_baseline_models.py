@@ -145,7 +145,7 @@ def params_row(tag: str, kws: dict, params: dict, *, n_kcs: int, n_inputs: int, 
     scales (absolute), how it came out, ``base_kwargs_json`` and a column per setting of it.
 
     ``seed`` is given only where it is a setting of the model (``seed`` of a random wiring; a shuffle's
-    is ``shuffle_connectome_seed``): olfdb's model worker passes a column that is a fit_mb_model
+    is ``shuffle_seed``): olfdb's model worker passes a column that is a fit_mb_model
     argument, and not off, on to the model (`model_runs.plan`)."""
     import numpy as np
 

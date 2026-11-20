@@ -702,7 +702,7 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   function's default at the commit its provenance names (al_analysis', or olfsysm's since the model code
   moved there; of a commit never pushed, the last one on GitHub before the model was made), found when it
   is imported (kc_kc_inh's None as 0: no KC-KC inhibition). A kwarg with no effect on a model given its
-  others (`shuffle_apl_pairs` unshuffled, `seed` and `n_claws` with the connectome's wiring, `kc_kc_tau`
+  others (`shuffle_seed` unshuffled, `seed` and `n_claws` with the connectome's wiring, `kc_kc_tau`
   without KC-KC inhibition) is a dash. The parameters set by tuning (the threshold and the APL weight
   scales) are grouped under *Tuned*, and how they were fitted after them; a parameter the same as another
   (`fixed_thr_mean`, a weight passed and its scale, `wKCKC_scale` and `kc_kc_inh`) is shown in that one's

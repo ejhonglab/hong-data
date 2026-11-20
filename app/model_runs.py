@@ -138,6 +138,7 @@ def plan(params: dict, kwargs: Optional[list[str]]) -> dict:
     """
     why: list[str] = []
     model: dict = {}
+    params = model_data.renamed_kwargs(params)  # (kwargs renamed since: as fit_mb_model names them now)
     raw = params.get(BASE_KWARGS)
     if not _given(raw):
         why.append(f"its params.csv has no {BASE_KWARGS} (the settings its model was made with)")
@@ -146,6 +147,7 @@ def plan(params: dict, kwargs: Optional[list[str]]) -> dict:
             model = json.loads(raw) if isinstance(raw, str) else dict(raw)
             if not isinstance(model, dict):
                 raise ValueError
+            model = model_data.renamed_kwargs(model)
         except (TypeError, ValueError):
             model = {}
             why.append(f"its {BASE_KWARGS} is not a JSON object of settings")
