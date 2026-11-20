@@ -254,7 +254,7 @@ def test_baselines(main, outputs, copies):  # noqa: F811
     """Models chosen as baselines: kept by their experiment's folder on tensor, name, base and row; listed alone, as /api/models lists them
     (but their runs: of their imported copy)."""
     status, empty = call(main.models_baselines)
-    assert status == 200 and {k: v for k, v in empty.items() if k != "details"} == {"baselines": [], "experiments": {}, "models": [], "columns": []}
+    assert status == 200 and {k: v for k, v in empty.items() if k not in ("details", "glossary")} == {"baselines": [], "experiments": {}, "models": [], "columns": []}
     sid = call(main.admin_models_add, body={"path": "tom/model_outputs"})[1]["id"]
     for body, want in [({}, 400), ({"experiment": f"{sid}/E1_apl", "row": True}, 400), ({"experiment": f"{sid + 1}/E1_apl", "row": 0}, 404),
                        ({"experiment": f"{sid}/E1_apl", "row": 9}, 404), ({"experiment": f"{sid}/nope", "row": 0}, 404)]:
@@ -458,6 +458,13 @@ def fit_mb_model(orn_deltas, sim=None, *, prat_claws: bool = False, pn_claw_to_a
 """
 
 
+def test_glossary(main):  # noqa: F811
+    """What each parameter means, listed with both tables."""
+    g = model_data.param_glossary()
+    assert "pn_claw_to_apl" in g and all(isinstance(v, str) and v for v in g.values())
+    assert call(main.models_baselines)[1]["glossary"] == g == call(main.models_list)[1]["glossary"]
+
+
 def test_signature_defaults():
     assert model_data.signature_defaults(MB_MODEL) == {"sim": None, "prat_claws": False, "pn_claw_to_apl": False, "kc_kc_tau": None,
                                                        "claw_thr": 1.5, "max_iters": "np.inf", "wAPLKC": None, "make_plots": True}
@@ -480,10 +487,14 @@ def test_baseline_kwargs(main, outputs, copies, monkeypatch):  # noqa: F811
         return MB_MODEL if (repo, commit, path) == ("al_analysis", "b" * 40, "al_analysis/mb_model.py") else None
     monkeypatch.setattr(model_data, "_fetch_source", fetch)
     monkeypatch.setattr(model_data, "_commit_before", lambda repo, path, until: "b" * 40 if until == PROVENANCE["generated"] else None)
+    p = e1 / "params.csv"  # (its own base kwargs over its experiment's)
+    df = pd.read_csv(p, dtype=str, keep_default_na=False)
+    df["base_kwargs_json"] = ["", "", json.dumps({"prat_claws": False, "n_claws": 7}), ""]
+    df.to_csv(p, index=False)
     sid = call(main.admin_models_add, body={"path": "tom/model_outputs"})[1]["id"]
     bid = call(main.admin_models_baseline_add, body={"experiment": f"{sid}/E1_apl", "row": 2})[1]["id"]
     kw = next(x for x in call(main.models_baselines)[1]["baselines"] if x["id"] == bid)["kwargs"]
-    assert kw["recorded"] == {"n_spikes_for_response": 2, "prat_claws": True, "claw_thr": 40.0, "kc_kc_tau": 0.05}
+    assert kw["recorded"] == {"n_spikes_for_response": 2, "prat_claws": False, "n_claws": 7, "claw_thr": 40.0, "kc_kc_tau": 0.05}
     assert kw["defaults"]["pn_claw_to_apl"] is False and kw["source"] == f"al_analysis@{'b' * 40}" and "not on GitHub" in kw["note"]
     assert ("al_analysis", "a" * 40, "al_analysis/mb_model.py") in fetched and kw["error"] is None
     # of no commit named: none

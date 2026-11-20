@@ -16,13 +16,30 @@ const BASELINE_RUN = 'olfdb:baselines/';
 const JOB_RUN = 'olfdb:runs/';
 const MAX_CH = 26; // a column's width at most (characters): longer values are cut short (all of them on hover)
 // the baselines' table: what is not shown of their params.csv (what made the files, their names, the duplicates of
-// base_kwargs_json's kwargs, and what was counted of the model's responses or size, not of what it does)
-const BASE_HIDDEN = new Set(['generated', 'source_table', 'tag', 'variant', 'base_kwargs_json', 'rate_on', 'rate_off', 'n_kcs', 'n_glomeruli']);
-// and the parameters tuned (to a response rate, by fit_mb_model, or fitted, as E10_joint_fit's fits are), or worked out
-// from those tuned (thr_factor: fixed_thr over the base's; fixed_thr_mean; wAPLKC the scale; kc_kc_inh the same as
-// wKCKC_scale), shown together under "Tuned", never filled in from fit_mb_model's defaults
-const TUNED = ['fixed_thr', 'fixed_thr_mean', 'thr_factor', 'wAPLKC', 'wAPLKC_scale', 'wKCAPL', 'wKCAPL_scale', 'wAPLPN', 'wAPLPN_scale',
-  'wPNAPL', 'wPNAPL_scale', 'wKCKC_scale', 'kc_kc_inh'];
+// base_kwargs_json's kwargs, what was counted of the model's responses or size, not of what it does, and thr_factor,
+// fixed_thr over the base's)
+const BASE_HIDDEN = new Set(['generated', 'source_table', 'tag', 'variant', 'base_kwargs_json', 'rate_on', 'rate_off', 'n_kcs', 'n_glomeruli',
+  'thr_factor']);
+// and the parameters set by tuning (fit_mb_model's: the threshold to twice the target response rate, then the APL
+// weights, which move together, to the target; or fitted, as E10_joint_fit's fits are), shown together under "Tuned",
+// never filled in from fit_mb_model's defaults (kc_kc_inh, which only such fits fit, is with what each model is)
+const TUNED = ['fixed_thr', 'wAPLKC_scale', 'wKCAPL_scale', 'wAPLPN_scale', 'wPNAPL_scale', 'wAPLKC', 'wKCAPL', 'wAPLPN', 'wPNAPL'];
+// parameters the same as another, shown in its column (where it has no value of its own), and in their own only
+// where they differ from it: fixed_thr_mean (the mean of per-KC thresholds) and fixed_thr; with connectome APL
+// weights, a weight passed to fit_mb_model and its scale; wKCKC_scale and kc_kc_inh
+const SAME_AS = { fixed_thr_mean: 'fixed_thr', wAPLKC: 'wAPLKC_scale', wKCAPL: 'wKCAPL_scale', wAPLPN: 'wAPLPN_scale', wPNAPL: 'wPNAPL_scale',
+  wKCKC_scale: 'kc_kc_inh' };
+const SAME_IF_CONNECTOME = new Set(['wAPLKC', 'wKCAPL', 'wAPLPN', 'wPNAPL']);
+// fit_mb_model kwargs with no effect on some models (given which other kwargs): shown as such (a dash) there, whatever
+// their value, by why not
+const NO_EFFECT = {
+  shuffle_apl_pairs: (v) => (v('shuffle_connectome_seed') == null ? 'only with shuffle_connectome_seed (the connectome shuffled)' : null),
+  seed: (v) => (v('pn2kc_connections') === 'hemibrain' ? 'only with a random wiring (pn2kc_connections not hemibrain)' : null),
+  n_claws: (v) => (v('pn2kc_connections') === 'hemibrain' ? 'only with a random wiring (pn2kc_connections not hemibrain)' : null),
+  kc_kc_tau: (v) => (!v('kc_kc_inh') ? 'only with KC-KC inhibition (kc_kc_inh)' : null),
+};
+// fit_mb_model defaults of None shown as what they mean (kc_kc_inh None: no KC-KC inhibition, as 0)
+const NONE_IS = { kc_kc_inh: 0 };
 // and how they were fitted (what the fit aimed at, started from, and its bounds and method), not the model itself
 const FIT_SETTINGS = ['target_rate', 'part', 'base_params', 'init_from', 'init_params', 'init_thr', 'kckc0', 'thr0_factor', 'aplpn_max',
   'aplpn_fixed', 'aplkc_min', 'loss_variant', 'method', 'maxfev'];
@@ -265,26 +282,55 @@ export class ModelsPage {
       + `${c0 > 0 ? `<td colspan="${c0}"></td>` : ''}${cells}${c1 < cols.length - 1 ? `<td colspan="${cols.length - 1 - c1}"></td>` : ''}</tr>`;
   }
 
-  _head(cols, sortable) {
+  // the columns' names (glossary: what each means, model_params.json, said on hover)
+  _head(cols, sortable, glossary = {}) {
     const { esc } = this.h, s = this.o.sort;
     return cols.map((c) => {
-      const name = c === EXP ? 'experiment' : c;
-      if (!sortable) return `<th title="${esc(name)}"><span class="th-plain">${esc(name)}</span></th>`;
+      const name = c === EXP ? 'experiment' : c, what = glossary[c] ? `: ${glossary[c]}` : '';
+      if (!sortable) return `<th title="${esc(name + what)}"><span class="th-plain">${esc(name)}</span></th>`;
       const on = s.col === c;
       return `<th aria-sort="${on ? (s.dir > 0 ? 'ascending' : 'descending') : 'none'}"><button type="button" class="th-sort${on ? ' on' : ''}" data-sort="${esc(c)}"
-        title="Sort by ${esc(name)}${on ? (s.dir > 0 ? ' (again: descending)' : ' (again: ascending)') : ''}">${esc(name)}${on ? (s.dir > 0 ? ' ▲' : ' ▼') : ''}</button></th>`;
+        title="${esc(`${name}${what}\n\nClick to sort by it${on ? (s.dir > 0 ? ' (again: descending)' : ' (again: ascending)') : ''}`)}">${esc(name)}${on ? (s.dir > 0 ? ' ▲' : ' ▼') : ''}</button></th>`;
     }).join('');
   }
 
-  // a baseline's value of a parameter: its params.csv's, else the fit_mb_model kwarg its files record, else (unless
-  // tuned) that kwarg's default at the commit that made it (model_data.model_kwargs); dflt: that last
+  // a baseline's own value of a parameter: its params.csv row's (or provenance.json's of it alone), else the
+  // fit_mb_model kwarg its files record (model_data.model_kwargs); not its experiment's of all its models
+  _baseOwn(b, m, c) {
+    const v = b.experiments[m.experiment].paramSet.has(c) ? m.params[c] : m.own?.[c];
+    if (v != null) return v;
+    const kw = this._kwargs.get(m.baseline);
+    return kw?.recorded && c in kw.recorded ? kw.recorded[c] : null;
+  }
+
+  // whether a parameter is the same as another (SAME_AS) of a baseline
+  _sameAs(b, m, c) {
+    return c in SAME_AS && (!SAME_IF_CONNECTOME.has(c) || this._baseValue(b, m, 'use_connectome_APL_weights').v === true);
+  }
+
+  // a baseline's value of a parameter (as shown in its column): its own (_baseOwn), else that of one the same as it
+  // (SAME_AS), else (unless tuned) the kwarg's default at the commit that made it (model_data.model_kwargs; None as
+  // NONE_IS says); dflt: that last; na: why it has no effect on it (NO_EFFECT), then shown as such, not its value
   _baseValue(b, m, c) {
-    const v = this._value(b, m, c);
+    const na = NO_EFFECT[c]?.((k) => this._baseValue(b, m, k).v);
+    if (na) return { v: null, na };
+    let v = this._baseOwn(b, m, c);
+    for (const [d, to] of Object.entries(SAME_AS)) {
+      if (v == null && to === c && this._sameAs(b, m, d)) v = this._baseOwn(b, m, d);
+    }
     if (v != null) return { v };
     const kw = this._kwargs.get(m.baseline);
-    if (kw?.recorded && c in kw.recorded) return { v: kw.recorded[c] };
-    if (kw?.defaults && c in kw.defaults && !TUNED.includes(c)) return { v: kw.defaults[c], dflt: true, kw };
+    if (kw?.defaults && c in kw.defaults && !TUNED.includes(c)) return { v: kw.defaults[c] ?? NONE_IS[c] ?? null, dflt: true, kw };
     return { v: null };
+  }
+
+  // whether a parameter the same as another (SAME_AS) needs its own column: some baseline's differs from that one's
+  _ownColumn(b, c) {
+    const near = (x, y) => x === y || (typeof x === 'number' && typeof y === 'number' && Math.abs(x - y) <= 1e-9 * Math.max(Math.abs(x), Math.abs(y)));
+    return b.models.some((m) => {
+      const v = this._baseOwn(b, m, c);
+      return v != null && !(this._sameAs(b, m, c) && near(v, this._baseValue(b, m, SAME_AS[c]).v));
+    });
   }
 
   _baseCell(b, m, c) {
@@ -294,15 +340,22 @@ export class ModelsPage {
       return `<td class="model-name"><button type="button" class="linkish" data-exp="${esc(m.experiment)}"
         title="${esc(`${name}: show ${this._value(b, m, EXP)}'s provenance.json (what made its models)`)}">${esc(name)}</button></td>`;
     }
-    const x = this._baseValue(b, m, c);
+    const x = c in SAME_AS ? { v: this._baseOwn(b, m, c) } : this._baseValue(b, m, c);
+    if (x.na) return `<td class="model-na" title="${esc(`${c}: no effect on this model: ${x.na}`)}">–</td>`;
+    const kw = this._kwargs.get(m.baseline);
+    if (x.v == null && kw?.defaults && !(c in kw.defaults) && [...this._kwargs.values()].some((k) => k?.defaults && c in k.defaults)) {
+      return `<td title="${esc(`${c}: not a fit_mb_model kwarg at ${kw.source.replace(/@(\w{7})\w*/, '@$1')}, which made it (not an option yet)`)}"></td>`;
+    }
     if (!x.dflt) return this._valueCell(c, x.v);
     const at = x.kw.source.replace(/@(\w{7})\w*/, '@$1');
-    return this._valueCell(c, x.v ?? 'None', 'model-default', `, fit_mb_model's default (${at}), as its files do not set it${x.kw.note ? `. ${x.kw.note}` : ''}`);
+    const none = x.kw.defaults[c] == null && x.v != null ? ' (None: none)' : '';
+    return this._valueCell(c, x.v ?? 'None', 'model-default', `${none}, fit_mb_model's default (${at}), as its files do not set it${x.kw.note ? `. ${x.kw.note}` : ''}`);
   }
 
-  // the baselines' table: their params.csv's parameters (but those of BASE_HIDDEN), and the fit_mb_model kwargs any of them
-  // records; first what each model is, then those tuned, then how they were fitted, under a row naming those two groups;
-  // as chosen, only those that differ between them (of those that have them)
+  // the baselines' table: their params.csv's parameters (but those of BASE_HIDDEN, and those the same as another, SAME_AS,
+  // where they are), and the fit_mb_model kwargs any of them records; first what each model is, then those tuned, then
+  // how they were fitted, under a row naming those two groups; as chosen, only those that differ between them (of
+  // those that have them)
   renderBase() {
     const { $, esc, msgBox } = this.h, b = this.base;
     if (!b) return;
@@ -320,13 +373,16 @@ export class ModelsPage {
     this._kwargs = new Map(b.baselines.map((x) => [x.id, x.kwargs]));
     const recorded = b.baselines.flatMap((x) => Object.keys(x.kwargs?.recorded ?? {}));
     const all = [...new Set([...b.columns.filter((c) => b.paramCols.has(c)), ...recorded])].filter((c) => !BASE_HIDDEN.has(c) && !c.includes('->'))
+      .filter((c) => !(c in SAME_AS) || this._ownColumn(b, c))
       .filter((c) => b.models.some((m) => this._baseValue(b, m, c).v != null))
       .filter((c) => !this.o.hideSameBase || this._differ(b, b.models, c, (m) => {
-        const v = this._baseValue(b, m, c).v;
+        const v = c in SAME_AS ? this._baseOwn(b, m, c) : this._baseValue(b, m, c).v;
         return v == null || typeof v !== 'object' ? v : JSON.stringify(v);
       }));
     const groups = [['', all.filter((c) => !TUNED.includes(c) && !FIT_SETTINGS.includes(c))],
-      ['Tuned', TUNED.filter((c) => all.includes(c))], ['How it was fitted', FIT_SETTINGS.filter((c) => all.includes(c))]].filter(([, cs]) => cs.length);
+      ['Tuned', TUNED.filter((c) => all.includes(c)), 'Set by tuning: fit_mb_model\'s (the threshold to twice the target response rate, then the APL weights, together, to the target), or a fit\'s (E10_joint_fit\'s Nelder-Mead)'],
+      ['How it was fitted', FIT_SETTINGS.filter((c) => all.includes(c)), 'What the tuning or fit aimed at, started from, and its bounds and method: not the model itself']]
+      .filter(([, cs]) => cs.length);
     const params = groups.flatMap(([, cs]) => cs), cols = [EXP, ...params];
     const byId = new Map(b.baselines.map((x) => [x.id, x]));
     const lead = (m) => {
@@ -334,11 +390,11 @@ export class ModelsPage {
       return `<td class="model-summary">${x?.summary ? `<button type="button" class="btn small${on ? ' primary' : ''}" data-summary="${x.id}"
         aria-expanded="${on}" title="How ${esc(x.name ?? 'this model')} was made">Summary</button>` : '<span class="muted small" title="No summary of it is kept">none</span>'}</td>`;
     };
-    const grouped = groups.map(([g, cs]) => `<th colspan="${cs.length}" class="models-group${g ? ' named' : ''}">${g ? `<span class="th-plain">${esc(g)}</span>` : ''}</th>`).join('');
+    const grouped = groups.map(([g, cs, what]) => `<th colspan="${cs.length}" class="models-group${g ? ' named' : ''}"${what ? ` title="${esc(what)}"` : ''}>${g ? `<span class="th-plain">${esc(g)}</span>` : ''}</th>`).join('');
     $('#models-base-table').innerHTML = `<table class="odor-table models-table"><thead>
       <tr><th rowspan="2" class="b-summary">Summary</th><th rowspan="2" class="b-open">Open</th>
         <th rowspan="2" class="b-name" title="Its variant: click one for its experiment's provenance.json"><span class="th-plain">name</span></th>${grouped}</tr>
-      <tr>${this._head(params, false)}</tr></thead>
+      <tr>${this._head(params, false, b.glossary)}</tr></thead>
       <tbody>${b.models.map((m) => this._row(b, m, cols, null, 0, cols.length - 1, lead(m), (c) => this._baseCell(b, m, c))).join('')}</tbody></table>`;
     this._showSummary();
     const det = $('#models-base-details');
@@ -431,7 +487,7 @@ export class ModelsPage {
     const wrap = $('#models-table');
     wrap.innerHTML = `<table class="odor-table models-table models-virtual" style="width: ${width}">
       <colgroup><col style="width: 15em">${colTags}</colgroup>
-      <thead><tr><th>Open</th>${this._head(cols, true)}</tr></thead><tbody></tbody></table>`
+      <thead><tr><th>Open</th>${this._head(cols, true, d.glossary)}</tr></thead><tbody></tbody></table>`
       + (order.length ? '' : '<p class="muted models-none">No model has that.</p>');
     // where each column starts (px from the table's left; and where the last ends)
     const ths = [...wrap.querySelectorAll('thead th')].slice(1);

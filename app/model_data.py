@@ -90,6 +90,8 @@ ARCHIVES, ARCHIVE_JSON = "rebuild", "rebuild.json"
 SUMMARIES = Path(__file__).with_name("baseline_summaries.json")
 # how the reference baseline models were made, at length (`baseline_details`): Markdown, shown below the baselines' table, folded
 DETAILS = Path(__file__).with_name("baseline_details.md")
+# what each model parameter means, a sentence or two (`param_glossary`): {"params": {name: text}}, shown on hover over its column
+GLOSSARY = Path(__file__).with_name("model_params.json")
 # where fit_mb_model was at a commit: al_analysis' mb_model.py until 2026-11-12 (after, it only forwards to olfsysm's),
 # then olfsysm's pyolfsysm (`fit_mb_model_defaults`); both repositories public, read from GitHub's raw files
 FIT_MB_MODEL = {"al_analysis": ("al_analysis/mb_model.py", "mb_model.py"), "olfsysm": ("pyolfsysm/mb_model.py",)}
@@ -471,7 +473,8 @@ def listing(db, root: Path) -> dict:
         ``<source id>/<folder>`` -> ``source``, ``folder``, ``params``, ``flat`` (`scan`'s
         ``shared``: the parameters of all its models), ``error``), ``models`` (as `scan`'s,
         ``experiment`` that key, each run's ``id`` its file's path on tensor, from its top), and
-        ``unmatched`` (paths on tensor too; but those its folder's patterns say are not models).
+        ``unmatched`` (paths on tensor too; but those its folder's patterns say are not models), and
+        ``glossary`` (`param_glossary`'s).
     """
     out = {"sources": [], "experiments": {}, "models": [], "unmatched": []}
     keys: dict[str, int] = {}
@@ -499,7 +502,17 @@ def listing(db, root: Path) -> dict:
             out["models"].append(_listed_model(m, f"{src['id']}/{m['experiment']}", c["path"]))
         out["unmatched"] += [f"{c['path']}/{f}" for f in s["unmatched"] if not skips(f, skip)]
     out["columns"] = _columns(keys, lists)
+    out["glossary"] = param_glossary()
     return out
+
+
+def param_glossary() -> dict[str, str]:
+    """What each model parameter means, by its name (`GLOSSARY`; empty if it cannot be read)."""
+    try:
+        params = json.loads(GLOSSARY.read_text())["params"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return {}
+    return {k: v for k, v in params.items() if isinstance(v, str)} if isinstance(params, dict) else {}
 
 
 def _listed_experiment(src: Optional[dict], folder: str, e: dict) -> dict:
@@ -758,9 +771,9 @@ def model_kwargs(folder: Path, m: dict) -> dict:
     """The fit_mb_model kwargs a model (`m`, as scanned in its experiment's `folder`) was made with.
 
     Returns:
-        dict with ``recorded``: those its files record (its params.csv row's ``base_kwargs_json``, then its
-        experiment's provenance.json's ``base``, its own provenance_<tag>.json's, and its rebuild archive's
-        ``model_kws``, each over the one before; not those of its output alone, `NOT_MODEL_KWARGS`),
+        dict with ``recorded``: those its files record (its experiment's provenance.json's ``base``, of all
+        its models, then its params.csv row's ``base_kwargs_json``, its own provenance_<tag>.json's ``base``,
+        and its rebuild archive's ``model_kws``, each over the one before; not those of its output alone, `NOT_MODEL_KWARGS`),
         ``defaults``: the function's (every argument's) at the commit its provenance says made it, and
         ``source``: that, as ``<repository>@<commit>`` (al_analysis', if fit_mb_model was there then, else
         olfsysm's), and ``note``: if that is not the commit named (one not on GitHub), how it was chosen (else
@@ -769,13 +782,12 @@ def model_kwargs(folder: Path, m: dict) -> dict:
     exp = _read_json(folder / PROVENANCE)
     fit = _read_json(folder / m["fit_provenance"]) if m.get("fit_provenance") else {}
     rel = archive_of(folder, m)
-    recorded = {}
     try:
-        kw = json.loads(m["params"].get("base_kwargs_json") or "{}")
-        recorded.update(kw if isinstance(kw, dict) else {})
+        row = json.loads(m["params"].get("base_kwargs_json") or "{}")
     except (TypeError, ValueError):
-        pass
-    for d in (exp.get("base"), fit.get("base"), _read_json(folder / rel / ARCHIVE_JSON).get("model_kws") if rel else None):
+        row = None
+    recorded = {}
+    for d in (exp.get("base"), row, fit.get("base"), _read_json(folder / rel / ARCHIVE_JSON).get("model_kws") if rel else None):
         if isinstance(d, dict):
             recorded.update(d)
     out = {"recorded": {k: v for k, v in recorded.items() if k not in NOT_MODEL_KWARGS}, "defaults": None, "source": None, "note": None,
@@ -914,8 +926,8 @@ def baseline_listing(db, root: Path) -> dict:
         ``drift`` (`drift`'s, None if not imported), ``archive`` (its imported rebuild archive, `archive_of`'s; None
         if it has none) and ``model``, its index in ``models``),
         ``experiments``, ``models`` (each with ``baseline``, its id) and ``columns``, as `listing`'s
-        (an experiment of no folder added any more keyed ``baseline:<its id>``), and ``details``
-        (`baseline_details`'s HTML, or None).
+        (an experiment of no folder added any more keyed ``baseline:<its id>``), ``details``
+        (`baseline_details`'s HTML, or None) and ``glossary`` (`param_glossary`'s).
     """
     out = {"baselines": [], "experiments": {}, "models": []}
     srcs, keys, lists = sources(db), {}, {k: [] for k in LISTS}
@@ -957,6 +969,7 @@ def baseline_listing(db, root: Path) -> dict:
             lists[k] += parse_list(src[k]) if src else []
     out["columns"] = _columns(keys, lists)
     out["details"] = baseline_details()
+    out["glossary"] = param_glossary()
     return out
 
 

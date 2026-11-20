@@ -694,8 +694,13 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   fit's `provenance_<tag>.json`'s, their rebuild archive's). A kwarg one leaves out is shown in grey: that
   function's default at the commit its provenance names (al_analysis', or olfsysm's since the model code
   moved there; of a commit never pushed, the last one on GitHub before the model was made), found when it
-  is imported. The parameters tuned (to a response rate, or fitted) are grouped under *Tuned*, and how
-  they were fitted after them; what made the files, and the response rates counted, are left out. Only
+  is imported (kc_kc_inh's None as 0: no KC-KC inhibition). A kwarg with no effect on a model given its
+  others (`shuffle_apl_pairs` unshuffled, `seed` and `n_claws` with the connectome's wiring, `kc_kc_tau`
+  without KC-KC inhibition) is a dash. The parameters set by tuning (the threshold and the APL weight
+  scales) are grouped under *Tuned*, and how they were fitted after them; a parameter the same as another
+  (`fixed_thr_mean`, a weight passed and its scale, `wKCKC_scale` and `kc_kc_inh`) is shown in that one's
+  column; what made the files, `thr_factor` and the response rates counted are left out. Hovering over a
+  parameter's name says what it is (`app/model_params.json`, in both tables). Only
   those that differ between them are shown, unless *Hide parameters the same for every model that has
   them* is unticked. They are loaded before the rest: as
   imported into the site when chosen, with a warning saying how their files on tensor
