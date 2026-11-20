@@ -8989,11 +8989,12 @@ function route() {
   $$('.tabs a').forEach((a) => a.classList.toggle('active', a.dataset.tab === name));
   if (name === 'admin' && currentTab !== 'admin') admin.enter(lastPlace);
   if (name !== 'admin') { admin.leave(); lastPlace = location.hash.replace(/^#/, '') || 'browse'; }
+  const was = currentTab;
   currentTab = name;
   if (name === 'browse') { browse.load().then(() => { if (id) { if (/^\d+$/.test(id)) browse.show(+id); else browse.openPermalink(decodeURIComponent(id)); } }); }
   if (name === 'odors') { odorsPage.highlightId = id ? +id : null; odorsPage.load().then(() => { if (id) odorsPage.highlight(+id); }); }
   if (name === 'reference') { reference.load().then(() => { if (id) reference.show(id); }); }
-  if (name === 'models') Promise.all([modelsPage.load(), modelRuns.load()]).then(() => (id ? modelsPage.show(decodeURIComponent(id)) : modelsPage.close()));
+  if (name === 'models') modelsPage.route(id ? decodeURIComponent(id) : null, was !== 'models', modelRuns);
   if (name === 'settings') settings.load().then(() => { if (id === 'name') settings.focusName(); });
   if (name === 'al-segmentation') roiTraining.load();
   if (name === 'al-atlas') atlasPage.load();

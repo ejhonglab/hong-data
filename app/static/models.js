@@ -11,6 +11,9 @@ const EXP = ':experiment'; // the column of a model's experiment (its folder), b
 const ROW_H = 29; // a row's height (px) until it has been drawn, with its runs on one line
 const OVERSCAN = 20; // rows drawn above and below those in view
 const COL_OVERSCAN = 8; // columns drawn left and right of those in view
+// the starts of the ids of runs not on tensor: a baseline's imported copy, a baseline run on datasets (model_data.py's)
+const BASELINE_RUN = 'olfdb:baselines/';
+const JOB_RUN = 'olfdb:runs/';
 const MAX_CH = 26; // a column's width at most (characters): longer values are cut short (all of them on hover)
 
 // a cell's value as shown: numbers to 6 significant digits (all of them on hover)
@@ -115,8 +118,23 @@ export class ModelsPage {
     this._mark();
   }
 
+  // the tab shown (`id`: a run to open, or none), from another tab (`entering`) or within it (a run's button, a link
+  // to one). Only entering it reads the folders again (`load`): a run opened within the tab is shown at once. Each
+  // run waits only for the listing it is in: a baseline's (BASELINE_RUN) or a run on datasets' (JOB_RUN, `runs`:
+  // model_runs.js's) not for every model's, which reads tensor (seconds).
+  async route(id, entering, runs) {
+    const all = entering || !this.data ? this.load() : Promise.resolve();
+    const jobs = entering || !this.jobs ? runs.load() : Promise.resolve();
+    if (!id) { await Promise.all([all, jobs]); this.close(); return; }
+    const seq = ++this._seq;
+    if (id.startsWith(BASELINE_RUN)) await (this._baseLoading || all);
+    else if (id.startsWith(JOB_RUN)) await jobs;
+    else await Promise.all([all, jobs]);
+    if (seq === this._seq) this.show(id);
+  }
+
   // each time the tab is opened (models may have been added to the folders since), but not
-  // again within a few seconds (as when a run is opened); the baselines shown as soon as they come
+  // again within a few seconds; the baselines shown as soon as they come (`_baseLoading`)
   load() {
     if (this.data && Date.now() - this.loadedAt < 10e3) return Promise.resolve();
     if (!this._loading) this._loading = this._load().finally(() => { this._loading = null; });
@@ -132,7 +150,7 @@ export class ModelsPage {
     $('#models-loading').hidden = false;
     tell();
     const timer = setInterval(tell, 1000);
-    const base = api('/api/models/baselines').then((b) => { this.base = b; this.renderBase(); tell(); }, (e) => {
+    const base = this._baseLoading = api('/api/models/baselines').then((b) => { this.base = b; this.renderBase(); tell(); }, (e) => {
       $('#models-base-step').hidden = false;
       $('#models-base-status').replaceChildren(msgBox('error', `Could not load the baseline models: ${esc(e.message)}`));
     });
