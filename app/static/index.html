@@ -1296,7 +1296,9 @@ try {
       <div class="step" id="models-base-step" hidden>
         <div class="step-head"><h2>Baseline models <span class="muted" id="models-base-count"></span></h2></div>
         <p class="muted small">Chosen in the <a href="#admin">Admin tab</a> (under <i>Model data</i>), with the parameters of their
-          <code>params.csv</code> that they have; <i>Summary</i> says in a few sentences how each was made. Shown as imported into olfdb when chosen (so backups have them), and in the table of every model too, as on tensor.</p>
+          <code>params.csv</code> and the <code>fit_mb_model</code> kwargs their files record; one left out is <i>in grey</i>: that function's default at
+          the commit that made the model (hover over it for which). Those tuned (to a response rate, or fitted) are grouped, and how they were fitted after them.
+          <i>Summary</i> says in a few sentences how each was made; its name opens its experiment's <code>provenance.json</code>. Shown as imported into olfdb when chosen (so backups have them), and in the table of every model too, as on tensor.</p>
         <div id="models-base-status"></div>
         <div class="actions models-tools">
           <label class="check"><input type="checkbox" id="models-base-hide-same" checked> Hide parameters the same for every model that has them</label>

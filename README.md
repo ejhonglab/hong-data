@@ -689,8 +689,15 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   `provenance.json` keys of those names, an experiment's for all its models); tick *Also
   provenance.json's other keys* for the rest (what made them, notes, each model's
   settings: hundreds). The baseline models (chosen in the Admin tab) come first, in a table
-  of their own with the `params.csv` parameters they have (those that differ between them,
-  unless *Hide parameters the same for every model that has them* is unticked), loaded before the rest: as
+  of their own, each by its name (its variant; click it for its experiment's `provenance.json`), with the
+  `params.csv` parameters they have and the `fit_mb_model` kwargs their files record (the base's, their
+  fit's `provenance_<tag>.json`'s, their rebuild archive's). A kwarg one leaves out is shown in grey: that
+  function's default at the commit its provenance names (al_analysis', or olfsysm's since the model code
+  moved there; of a commit never pushed, the last one on GitHub before the model was made), found when it
+  is imported. The parameters tuned (to a response rate, or fitted) are grouped under *Tuned*, and how
+  they were fitted after them; what made the files, and the response rates counted, are left out. Only
+  those that differ between them are shown, unless *Hide parameters the same for every model that has
+  them* is unticked. They are loaded before the rest: as
   imported into the site when chosen, with a warning saying how their files on tensor
   differ from that, if they do. Each one's *Summary* button says, in a few sentences, how
   its model was made (the texts are kept in `app/baseline_summaries.json`). The reference

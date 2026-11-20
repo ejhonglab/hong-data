@@ -322,7 +322,8 @@ CREATE TABLE IF NOT EXISTS model_baselines (  -- models chosen in the Admin tab,
     row INTEGER NOT NULL,              -- its row there when chosen, or imported (of models named alike, which)
     created_at TEXT NOT NULL,
     imported_at TEXT,                  -- when its files were copied into the data folder (model_data.import_baseline), NULL if never
-    imported_json TEXT                 -- what they were: {"files": {name: {size, mtime_ns, sha256}}}, to tell drift by
+    imported_json TEXT,                -- what they were: {"files": {name: {size, mtime_ns, sha256}}}, to tell drift by
+    kwargs_json TEXT                   -- the fit_mb_model kwargs its model was made with, found when imported (model_data.model_kwargs)
 );
 CREATE TABLE IF NOT EXISTS model_runs (  -- baseline models run on datasets of glomeruli, asked for in the Models tab, by the model worker (see model_runs.py)
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -352,7 +353,7 @@ PROPERTY_COLUMNS = {"vapor_pressure": "vapor_pressure_kpa", "est_vapor_pressure"
 ADDED_COLUMNS = [("datasets", "mocorr_data_path", "TEXT"), ("datasets", "data_files", "TEXT"), ("datasets", "manipulations", "TEXT"), ("datasets", "response_calc", "TEXT"),
                  ("reference_datasets", "fields", "TEXT"), ("reference_datasets", "group_name", "TEXT"), ("units", "bad", "INTEGER"),
                  ("units", "extra_json", "TEXT"), ("model_sources", "skip", "TEXT NOT NULL DEFAULT ''"),
-                 ("model_baselines", "imported_at", "TEXT"), ("model_baselines", "imported_json", "TEXT"),
+                 ("model_baselines", "imported_at", "TEXT"), ("model_baselines", "imported_json", "TEXT"), ("model_baselines", "kwargs_json", "TEXT"),
                  ("extractions", "raw_dir", "TEXT"), ("predictions", "options_json", "TEXT"),
                  ("predictions", "nmf_status", "TEXT"), ("predictions", "nmf_json", "TEXT"),
                  ("predictions", "refine_status", "TEXT"), ("predictions", "refine_json", "TEXT"),

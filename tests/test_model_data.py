@@ -77,6 +77,14 @@ def copies(tmp_path, monkeypatch):
     return data
 
 
+@pytest.fixture(autouse=True)
+def offline(monkeypatch):
+    """fit_mb_model's source never read from GitHub: of none at any commit, unless a test says so."""
+    monkeypatch.setattr(model_data, "_fetch_source", lambda repo, commit, path: None)
+    monkeypatch.setattr(model_data, "_commit_before", lambda repo, path, until: None)
+    model_data._defaults.clear()
+
+
 @pytest.fixture
 def odor_table(main):  # noqa: F811
     rows, _, _ = odormeta.parse_sheet("name,abbrev,cid\n2-heptanone,2h,8051\nethyl butyrate,eb,7762\npentyl acetate,pa,12348\n")
@@ -439,3 +447,50 @@ def test_baseline_details(main, copies, tmp_path, monkeypatch):  # noqa: F811
                                                          "</tr>\n</thead>\n<tbody>\n<tr>\n<td>1</td>\n<td>2</td>\n</tr>\n</tbody>\n</table>")
     monkeypatch.setattr(model_data, "DETAILS", tmp_path / "none.md")
     assert call(main.models_baselines)[1]["details"] is None
+
+
+MB_MODEL = """
+import numpy as np
+
+def fit_mb_model(orn_deltas, sim=None, *, prat_claws: bool = False, pn_claw_to_apl: bool = False, kc_kc_tau=None,
+                 claw_thr: float = 1.5, max_iters=np.inf, wAPLKC=None, make_plots=True):
+    pass
+"""
+
+
+def test_signature_defaults():
+    assert model_data.signature_defaults(MB_MODEL) == {"sim": None, "prat_claws": False, "pn_claw_to_apl": False, "kc_kc_tau": None,
+                                                       "claw_thr": 1.5, "max_iters": "np.inf", "wAPLKC": None, "make_plots": True}
+    assert model_data.signature_defaults("def other(x=1):\n    pass\n") is None
+
+
+def test_baseline_kwargs(main, outputs, copies, monkeypatch):  # noqa: F811
+    """A baseline's fit_mb_model kwargs found when imported: those its files record (the experiment's base, its fit's, its rebuild
+    archive's), and the defaults of fit_mb_model at the commit its provenance names (or of a commit not on GitHub, the last one
+    there before it was made); listed with it, and found again (refresh_kwargs)."""
+    e1 = outputs / "E1_apl"
+    (e1 / "provenance_k0_x.json").write_text(json.dumps({**FIT, "al_analysis_commit": "a" * 40, "base": {"claw_thr": 40.0, "silent": True}}))
+    arch = e1 / "rebuild/k0_x"
+    arch.mkdir(parents=True)
+    (arch / "rebuild.json").write_text(json.dumps({"model_kws": {"kc_kc_tau": 0.05, "make_plots": False}}))
+    fetched = []
+
+    def fetch(repo, commit, path):
+        fetched.append((repo, commit, path))
+        return MB_MODEL if (repo, commit, path) == ("al_analysis", "b" * 40, "al_analysis/mb_model.py") else None
+    monkeypatch.setattr(model_data, "_fetch_source", fetch)
+    monkeypatch.setattr(model_data, "_commit_before", lambda repo, path, until: "b" * 40 if until == PROVENANCE["generated"] else None)
+    sid = call(main.admin_models_add, body={"path": "tom/model_outputs"})[1]["id"]
+    bid = call(main.admin_models_baseline_add, body={"experiment": f"{sid}/E1_apl", "row": 2})[1]["id"]
+    kw = next(x for x in call(main.models_baselines)[1]["baselines"] if x["id"] == bid)["kwargs"]
+    assert kw["recorded"] == {"n_spikes_for_response": 2, "prat_claws": True, "claw_thr": 40.0, "kc_kc_tau": 0.05}
+    assert kw["defaults"]["pn_claw_to_apl"] is False and kw["source"] == f"al_analysis@{'b' * 40}" and "not on GitHub" in kw["note"]
+    assert ("al_analysis", "a" * 40, "al_analysis/mb_model.py") in fetched and kw["error"] is None
+    # of no commit named: none
+    bid2 = call(main.admin_models_baseline_add, body={"experiment": f"{sid}/E2_gain", "row": 0})[1]["id"]
+    kw2 = next(x for x in call(main.models_baselines)[1]["baselines"] if x["id"] == bid2)["kwargs"]
+    assert kw2["defaults"] is None and "no commit" in kw2["error"]
+    with main.db.connect() as con:
+        con.execute("UPDATE model_baselines SET kwargs_json = NULL")
+    assert model_data.refresh_kwargs(main.db, bid) and not model_data.refresh_kwargs(main.db, bid + 99)
+    assert next(x for x in call(main.models_baselines)[1]["baselines"] if x["id"] == bid)["kwargs"] == kw

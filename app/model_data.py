@@ -36,9 +36,12 @@ data folder, so backups have them: `import_baseline`), and shown as imported, wi
 tensor they were imported from differ from them now (`drift`), each time they are listed or opened.
 Each is listed with a few sentences in plain words of how its model was made (`baseline_summary`, from
 `SUMMARIES`, kept in the repository by its experiment's folder and name), shown by its Summary button.
+When imported, the ``fit_mb_model`` kwargs its model was made with are found (`model_kwargs`): those
+its files record, and that function's defaults at the commit they say made it, to fill in the rest.
 """
 from __future__ import annotations
 
+import ast
 import base64
 import csv
 import datetime as dt
@@ -50,6 +53,9 @@ import os
 import re
 import shutil
 import threading
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any, Optional
 
@@ -84,10 +90,22 @@ ARCHIVES, ARCHIVE_JSON = "rebuild", "rebuild.json"
 SUMMARIES = Path(__file__).with_name("baseline_summaries.json")
 # how the reference baseline models were made, at length (`baseline_details`): Markdown, shown below the baselines' table, folded
 DETAILS = Path(__file__).with_name("baseline_details.md")
+# where fit_mb_model was at a commit: al_analysis' mb_model.py until 2026-11-12 (after, it only forwards to olfsysm's),
+# then olfsysm's pyolfsysm (`fit_mb_model_defaults`); both repositories public, read from GitHub's raw files
+FIT_MB_MODEL = {"al_analysis": ("al_analysis/mb_model.py", "mb_model.py"), "olfsysm": ("pyolfsysm/mb_model.py",)}
+RAW_URL = "https://raw.githubusercontent.com/ejhonglab/{repo}/{commit}/{path}"
+# of a commit not on GitHub (rebased before it was pushed), the last one there to change a file before a time
+COMMITS_URL = "https://api.github.com/repos/ejhonglab/{repo}/commits?path={path}&until={until}&per_page=1"
+# provenance keys of the commits a model was made at (its own provenance_<tag>.json's first, then its experiment's)
+COMMIT_KEYS = {"al_analysis": ("al_analysis_commit", f"model{SEP}al_analysis{SEP}git_hash"),
+               "olfsysm": ("pyolfsysm_commit", "olfsysm_commit", f"model{SEP}olfsysm{SEP}checkout{SEP}git_hash",
+                           f"model{SEP}olfsysm{SEP}build{SEP}git_hash")}
+NOT_MODEL_KWARGS = {"make_plots", "silent"}  # fit_mb_model kwargs of its output alone, not of the model
 
 _lock = threading.Lock()
 _scans: dict[str, tuple[tuple, dict]] = {}  # folder on the server -> (its files' sizes and times, its scan)
 _hashes: dict[str, tuple[int, int, str]] = {}  # file on the server -> (its size, time, SHA-256), as when last hashed (`_sha256`)
+_defaults: dict[tuple, Optional[tuple[str, dict]]] = {}  # (repository, commit, when made) -> `fit_mb_model_defaults`' (None: not there)
 
 
 def now() -> str:
@@ -514,10 +532,12 @@ def _baseline(row) -> dict:
 
 def _baseline_rows(db) -> list[dict]:
     """The baselines with what their files were when imported (``files``: name -> {``size``,
-    ``mtime_ns``, ``sha256``}, empty if never)."""
+    ``mtime_ns``, ``sha256``}, empty if never) and its fit_mb_model kwargs (``kwargs``: `model_kwargs`', None if
+    not found)."""
     with db.connect() as con:
         rows = con.execute("SELECT * FROM model_baselines ORDER BY id").fetchall()
-    return [{**_baseline(r), "files": json.loads(r["imported_json"])["files"] if r["imported_json"] else {}} for r in rows]
+    return [{**_baseline(r), "files": json.loads(r["imported_json"])["files"] if r["imported_json"] else {},
+             "kwargs": json.loads(r["kwargs_json"]) if r["kwargs_json"] else None} for r in rows]
 
 
 def baselines(db) -> list[dict]:
@@ -622,7 +642,8 @@ def import_baseline(db, baseline_id: int, root: Path) -> tuple[int, dict]:
     """Copy a baseline's files from tensor into the data folder (`baseline_dir`, so backups have
     them), in place of any copy made before: its experiment's params.csv and provenance.json,
     its own provenance_<tag>.json, its runs' spike count files and its rebuild archive, if it has one
-    (`archive_of`), with what they were (size, time and SHA-256) to tell drift by (`drift`). Returns (HTTP status, the baseline as in
+    (`archive_of`), with what they were (size, time and SHA-256) to tell drift by (`drift`), and the
+    fit_mb_model kwargs its model was made with (`model_kwargs`). Returns (HTTP status, the baseline as in
     `baselines`; or {"error"})."""
     b = next((b for b in _baseline_rows(db) if b["id"] == baseline_id), None)
     if b is None:
@@ -661,7 +682,143 @@ def import_baseline(db, baseline_id: int, root: Path) -> tuple[int, dict]:
     with db.connect() as con:
         con.execute("UPDATE model_baselines SET imported_at = ?, imported_json = ?, row = ? WHERE id = ?",
                     (now(), json.dumps({"files": files}), m["row"], baseline_id))
+    _store_kwargs(db, baseline_id, dest, m)
+    with db.connect() as con:
         return 200, _baseline(con.execute("SELECT * FROM model_baselines WHERE id = ?", (baseline_id,)).fetchone())
+
+
+def _fetch_source(repo: str, commit: str, path: str) -> Optional[str]:
+    """A file of one of the lab's repositories at a commit, from GitHub (None if it has no such file there)."""
+    try:
+        with urllib.request.urlopen(RAW_URL.format(repo=repo, commit=commit, path=path), timeout=30) as r:
+            return r.read().decode()
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None
+        raise
+
+
+def signature_defaults(source: str, func: str = "fit_mb_model") -> Optional[dict]:
+    """The defaults of a function's arguments in a module's source, by name (one not a literal as its
+    source text, e.g. ``np.inf``); None if the module defines no such function."""
+    tree = ast.parse(source)
+    f = next((n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == func), None)
+    if f is None:
+        return None
+    a = f.args
+    pairs = [*zip(a.args[len(a.args) - len(a.defaults):], a.defaults), *((k, d) for k, d in zip(a.kwonlyargs, a.kw_defaults) if d is not None)]
+    out = {}
+    for arg, d in pairs:
+        try:
+            out[arg.arg] = ast.literal_eval(d)
+        except ValueError:
+            out[arg.arg] = ast.get_source_segment(source, d)
+    return out
+
+
+def _commit_before(repo: str, path: str, until: str) -> Optional[str]:
+    """The last commit on GitHub (its default branch) to change a file of a repository before a time (ISO 8601), or None."""
+    url = COMMITS_URL.format(repo=repo, path=path, until=urllib.parse.quote(until))
+    with urllib.request.urlopen(urllib.request.Request(url, headers={"Accept": "application/vnd.github+json"}), timeout=30) as r:
+        found = json.loads(r.read())
+    return found[0]["sha"] if found else None
+
+
+def fit_mb_model_defaults(repo: str, commit: str, made: Optional[str] = None) -> Optional[tuple[str, dict]]:
+    """fit_mb_model's defaults (`signature_defaults`) in a repository of `FIT_MB_MODEL` at a commit, and the
+    commit they are of: that one, or if GitHub does not have it (rebased before it was pushed), the last one
+    there to change the file before `made` (when the model was made, ISO 8601), if given. None if it was not
+    there (al_analysis' after it moved to olfsysm, olfsysm's before). Raises OSError if GitHub cannot be read."""
+    key = (repo, commit, made)
+    with _lock:
+        if key in _defaults:
+            return _defaults[key]
+    out = None
+    for path in FIT_MB_MODEL[repo]:
+        src, at = _fetch_source(repo, commit, path), commit
+        if src is None and made and (at := _commit_before(repo, path, made)):
+            src = _fetch_source(repo, at, path)
+        if src is not None and (d := signature_defaults(src)) is not None:
+            out = (at, d)
+            break
+    with _lock:
+        _defaults[key] = out
+    return out
+
+
+def _read_json(path: Path) -> dict:
+    try:
+        d = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    return d if isinstance(d, dict) else {}
+
+
+def model_kwargs(folder: Path, m: dict) -> dict:
+    """The fit_mb_model kwargs a model (`m`, as scanned in its experiment's `folder`) was made with.
+
+    Returns:
+        dict with ``recorded``: those its files record (its params.csv row's ``base_kwargs_json``, then its
+        experiment's provenance.json's ``base``, its own provenance_<tag>.json's, and its rebuild archive's
+        ``model_kws``, each over the one before; not those of its output alone, `NOT_MODEL_KWARGS`),
+        ``defaults``: the function's (every argument's) at the commit its provenance says made it, and
+        ``source``: that, as ``<repository>@<commit>`` (al_analysis', if fit_mb_model was there then, else
+        olfsysm's), and ``note``: if that is not the commit named (one not on GitHub), how it was chosen (else
+        None); ``error``: why there are no defaults (None if there are).
+    """
+    exp = _read_json(folder / PROVENANCE)
+    fit = _read_json(folder / m["fit_provenance"]) if m.get("fit_provenance") else {}
+    rel = archive_of(folder, m)
+    recorded = {}
+    try:
+        kw = json.loads(m["params"].get("base_kwargs_json") or "{}")
+        recorded.update(kw if isinstance(kw, dict) else {})
+    except (TypeError, ValueError):
+        pass
+    for d in (exp.get("base"), fit.get("base"), _read_json(folder / rel / ARCHIVE_JSON).get("model_kws") if rel else None):
+        if isinstance(d, dict):
+            recorded.update(d)
+    out = {"recorded": {k: v for k, v in recorded.items() if k not in NOT_MODEL_KWARGS}, "defaults": None, "source": None, "note": None,
+           "error": None}
+    flats = [flatten(fit), flatten(exp)]
+    made = next((str(f[k]) for f in flats for k in (GENERATED, f"model{SEP}timestamp") if f.get(k)), None)
+    commits = {repo: next((str(f[k]) for f in flats for k in keys if f.get(k)), None) for repo, keys in COMMIT_KEYS.items()}
+    if not any(commits.values()):
+        out["error"] = "its provenance names no commit of al_analysis or olfsysm"
+        return out
+    try:
+        for repo, commit in commits.items():
+            if commit and (found := fit_mb_model_defaults(repo, commit, made)) is not None:
+                at, d = found
+                out.update(defaults=d, source=f"{repo}@{at}")
+                if at != commit:
+                    out["note"] = (f"{repo}@{commit[:7]}, which made it, is not on GitHub: fit_mb_model as in the last commit there "
+                                   f"to change its file before it was made ({made})")
+                return out
+    except (OSError, ValueError, SyntaxError) as e:
+        out["error"] = f"fit_mb_model could not be read from GitHub: {e}"
+        return out
+    out["error"] = "no fit_mb_model at " + " or ".join(f"{r}@{c[:7]}" for r, c in commits.items() if c)
+    return out
+
+
+def _store_kwargs(db, baseline_id: int, folder: Path, m: dict) -> None:
+    with db.connect() as con:
+        con.execute("UPDATE model_baselines SET kwargs_json = ? WHERE id = ?", (json.dumps(model_kwargs(folder, m)), baseline_id))
+
+
+def refresh_kwargs(db, baseline_id: int) -> bool:
+    """Find a baseline's fit_mb_model kwargs again (`model_kwargs`) in its imported copy, as `import_baseline`
+    does. False if it has none."""
+    b = next((b for b in _baseline_rows(db) if b["id"] == baseline_id), None)
+    folder = baseline_dir(baseline_id)
+    if b is None or b["imported_at"] is None or not folder.is_dir():
+        return False
+    _, m = _found(scan(folder), b)
+    if m is None:
+        return False
+    _store_kwargs(db, baseline_id, folder, m)
+    return True
 
 
 def delete_baseline(db, baseline_id: int) -> bool:
@@ -751,7 +908,8 @@ def baseline_listing(db, root: Path) -> dict:
     is quick, to be shown before the rest).
 
     Returns:
-        dict with ``baselines`` (as `baselines`, with ``ok``, ``error`` (why it is not shown), ``summary``
+        dict with ``baselines`` (as `baselines`, with ``kwargs`` (`model_kwargs`', as imported; None if not
+        found), ``ok``, ``error`` (why it is not shown), ``summary``
         (how its model was made, `baseline_summary`'s; None if none),
         ``drift`` (`drift`'s, None if not imported), ``archive`` (its imported rebuild archive, `archive_of`'s; None
         if it has none) and ``model``, its index in ``models``),

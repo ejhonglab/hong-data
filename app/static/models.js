@@ -15,6 +15,17 @@ const COL_OVERSCAN = 8; // columns drawn left and right of those in view
 const BASELINE_RUN = 'olfdb:baselines/';
 const JOB_RUN = 'olfdb:runs/';
 const MAX_CH = 26; // a column's width at most (characters): longer values are cut short (all of them on hover)
+// the baselines' table: what is not shown of their params.csv (what made the files, their names, the duplicates of
+// base_kwargs_json's kwargs, and what was counted of the model's responses or size, not of what it does)
+const BASE_HIDDEN = new Set(['generated', 'source_table', 'tag', 'variant', 'base_kwargs_json', 'rate_on', 'rate_off', 'n_kcs', 'n_glomeruli']);
+// and the parameters tuned (to a response rate, by fit_mb_model, or fitted, as E10_joint_fit's fits are), or worked out
+// from those tuned (thr_factor: fixed_thr over the base's; fixed_thr_mean; wAPLKC the scale; kc_kc_inh the same as
+// wKCKC_scale), shown together under "Tuned", never filled in from fit_mb_model's defaults
+const TUNED = ['fixed_thr', 'fixed_thr_mean', 'thr_factor', 'wAPLKC', 'wAPLKC_scale', 'wKCAPL', 'wKCAPL_scale', 'wAPLPN', 'wAPLPN_scale',
+  'wPNAPL', 'wPNAPL_scale', 'wKCKC_scale', 'kc_kc_inh'];
+// and how they were fitted (what the fit aimed at, started from, and its bounds and method), not the model itself
+const FIT_SETTINGS = ['target_rate', 'part', 'base_params', 'init_from', 'init_params', 'init_thr', 'kckc0', 'thr0_factor', 'aplpn_max',
+  'aplpn_fixed', 'aplkc_min', 'loss_variant', 'method', 'maxfev'];
 
 // a cell's value as shown: numbers to 6 significant digits (all of them on hover)
 function fmtValue(v) {
@@ -62,6 +73,7 @@ export class ModelsPage {
     this.openId = null; // the run opened (its row marked in the tables), shown once loaded
     this._seq = 0;
     this.summaryOf = null; // the baseline (id) whose summary is shown below their table
+    this._kwargs = new Map(); // baseline id -> its fit_mb_model kwargs (model_data.model_kwargs), of the baselines' table
     this.viewer = null;
     // (hideSame* ticked unless unticked: an older hideSame, unticked by default then, is not taken)
     const kept = h.LS.get(KEY, {});
@@ -205,10 +217,10 @@ export class ModelsPage {
   _source(id) { return this.data?.sources.find((s) => s.id === id); }
 
   // whether the models that have a parameter differ in it
-  _differ(d, models, c) {
+  _differ(d, models, c, value = (m) => this._value(d, m, c)) {
     let first;
     for (const m of models) {
-      const v = this._value(d, m, c);
+      const v = value(m);
       if (v == null) continue;
       if (first === undefined) first = v;
       else if (v !== first) return true;
@@ -230,19 +242,25 @@ export class ModelsPage {
     if (c === EXP) {
       return `<td><button type="button" class="linkish" data-exp="${esc(m.experiment)}" title="Show ${esc(v)}'s provenance.json (what made its models)">${esc(v)}</button></td>`;
     }
+    return this._valueCell(c, v);
+  }
+
+  // a parameter's cell, of its value v (none: empty); cls: its class, more: said after its value on hover
+  _valueCell(c, v, cls = '', more = '') {
     if (v == null) return '<td></td>';
-    const text = c === 'generated' && typeof v === 'string' ? this.h.fmtWhen(v) : fmtValue(v);
-    return `<td${typeof v === 'number' ? ' class="num"' : ''} title="${esc(`${c === EXP ? 'experiment' : c}: ${typeof v === 'string' ? v : JSON.stringify(v)}`)}">${esc(text)}</td>`;
+    const { esc } = this.h, text = c === 'generated' && typeof v === 'string' ? this.h.fmtWhen(v) : fmtValue(v);
+    cls = [cls, typeof v === 'number' ? 'num' : ''].filter(Boolean).join(' ');
+    return `<td${cls ? ` class="${cls}"` : ''} title="${esc(`${c}: ${typeof v === 'string' ? v : JSON.stringify(v)}${more}`)}">${esc(text)}</td>`;
   }
 
   // a model's row: its runs, and its values of cols (of those from c0 to c1 alone, if given: the
-  // others stood in for by a cell as wide); lead: a first cell's HTML (the baselines' Summary button)
-  _row(d, m, cols, i = null, c0 = 0, c1 = cols.length - 1, lead = '') {
+  // others stood in for by a cell as wide); lead: a first cell's HTML (the baselines' Summary button); cell: of a column's (_cell)
+  _row(d, m, cols, i = null, c0 = 0, c1 = cols.length - 1, lead = '', cell = (c) => this._cell(d, m, c)) {
     const { esc } = this.h, open = this.openId;
     const runs = m.runs.length ? m.runs.map((r) => `<button type="button" class="btn small${r.id === open ? ' primary' : ''}" data-run="${esc(r.id)}"
       title="${esc(`Open ${r.file}`)}">${esc(r.label || 'spike counts')}</button>`).join('')
       : '<span class="muted small" title="No spike count file of it was found">none</span>';
-    const cells = cols.slice(c0, c1 + 1).map((c) => this._cell(d, m, c)).join('');
+    const cells = cols.slice(c0, c1 + 1).map(cell).join('');
     return `<tr${i != null ? ` data-i="${i}"` : ''}${m.runs.some((r) => r.id === open) ? ' class="hl"' : ''}>${lead}<td class="model-runs">${runs}</td>`
       + `${c0 > 0 ? `<td colspan="${c0}"></td>` : ''}${cells}${c1 < cols.length - 1 ? `<td colspan="${cols.length - 1 - c1}"></td>` : ''}</tr>`;
   }
@@ -258,7 +276,33 @@ export class ModelsPage {
     }).join('');
   }
 
-  // the baselines' table: their params.csv's parameters that they have (few, and few differ; as chosen, only those that do)
+  // a baseline's value of a parameter: its params.csv's, else the fit_mb_model kwarg its files record, else (unless
+  // tuned) that kwarg's default at the commit that made it (model_data.model_kwargs); dflt: that last
+  _baseValue(b, m, c) {
+    const v = this._value(b, m, c);
+    if (v != null) return { v };
+    const kw = this._kwargs.get(m.baseline);
+    if (kw?.recorded && c in kw.recorded) return { v: kw.recorded[c] };
+    if (kw?.defaults && c in kw.defaults && !TUNED.includes(c)) return { v: kw.defaults[c], dflt: true, kw };
+    return { v: null };
+  }
+
+  _baseCell(b, m, c) {
+    const { esc } = this.h;
+    if (c === EXP) {
+      const name = m.params.variant ?? m.params.tag ?? `row ${m.row + 1}`;
+      return `<td class="model-name"><button type="button" class="linkish" data-exp="${esc(m.experiment)}"
+        title="${esc(`${name}: show ${this._value(b, m, EXP)}'s provenance.json (what made its models)`)}">${esc(name)}</button></td>`;
+    }
+    const x = this._baseValue(b, m, c);
+    if (!x.dflt) return this._valueCell(c, x.v);
+    const at = x.kw.source.replace(/@(\w{7})\w*/, '@$1');
+    return this._valueCell(c, x.v ?? 'None', 'model-default', `, fit_mb_model's default (${at}), as its files do not set it${x.kw.note ? `. ${x.kw.note}` : ''}`);
+  }
+
+  // the baselines' table: their params.csv's parameters (but those of BASE_HIDDEN), and the fit_mb_model kwargs any of them
+  // records; first what each model is, then those tuned, then how they were fitted, under a row naming those two groups;
+  // as chosen, only those that differ between them (of those that have them)
   renderBase() {
     const { $, esc, msgBox } = this.h, b = this.base;
     if (!b) return;
@@ -273,16 +317,29 @@ export class ModelsPage {
         into olfdb, so not backed up (<a href="#admin">Admin tab</a>: Import).`)));
     $('#models-base-count').textContent = b.models.length > 1 ? `${b.models.length}` : '';
     if (!b.models.length) { $('#models-base-table').replaceChildren(); return; }
-    const cols = [EXP, ...b.columns.filter((c) => (c === 'generated' || b.paramCols.has(c)) && b.models.some((m) => this._value(b, m, c) != null)
-      && (!this.o.hideSameBase || this._differ(b, b.models, c)))];
+    this._kwargs = new Map(b.baselines.map((x) => [x.id, x.kwargs]));
+    const recorded = b.baselines.flatMap((x) => Object.keys(x.kwargs?.recorded ?? {}));
+    const all = [...new Set([...b.columns.filter((c) => b.paramCols.has(c)), ...recorded])].filter((c) => !BASE_HIDDEN.has(c) && !c.includes('->'))
+      .filter((c) => b.models.some((m) => this._baseValue(b, m, c).v != null))
+      .filter((c) => !this.o.hideSameBase || this._differ(b, b.models, c, (m) => {
+        const v = this._baseValue(b, m, c).v;
+        return v == null || typeof v !== 'object' ? v : JSON.stringify(v);
+      }));
+    const groups = [['', all.filter((c) => !TUNED.includes(c) && !FIT_SETTINGS.includes(c))],
+      ['Tuned', TUNED.filter((c) => all.includes(c))], ['How it was fitted', FIT_SETTINGS.filter((c) => all.includes(c))]].filter(([, cs]) => cs.length);
+    const params = groups.flatMap(([, cs]) => cs), cols = [EXP, ...params];
     const byId = new Map(b.baselines.map((x) => [x.id, x]));
     const lead = (m) => {
       const x = byId.get(m.baseline), on = x && this.summaryOf === x.id;
       return `<td class="model-summary">${x?.summary ? `<button type="button" class="btn small${on ? ' primary' : ''}" data-summary="${x.id}"
         aria-expanded="${on}" title="How ${esc(x.name ?? 'this model')} was made">Summary</button>` : '<span class="muted small" title="No summary of it is kept">none</span>'}</td>`;
     };
-    $('#models-base-table').innerHTML = `<table class="odor-table models-table"><thead><tr><th>Summary</th><th>Open</th>${this._head(cols, false)}</tr></thead>
-      <tbody>${b.models.map((m) => this._row(b, m, cols, null, 0, cols.length - 1, lead(m))).join('')}</tbody></table>`;
+    const grouped = groups.map(([g, cs]) => `<th colspan="${cs.length}" class="models-group${g ? ' named' : ''}">${g ? `<span class="th-plain">${esc(g)}</span>` : ''}</th>`).join('');
+    $('#models-base-table').innerHTML = `<table class="odor-table models-table"><thead>
+      <tr><th rowspan="2" class="b-summary">Summary</th><th rowspan="2" class="b-open">Open</th>
+        <th rowspan="2" class="b-name" title="Its variant: click one for its experiment's provenance.json"><span class="th-plain">name</span></th>${grouped}</tr>
+      <tr>${this._head(params, false)}</tr></thead>
+      <tbody>${b.models.map((m) => this._row(b, m, cols, null, 0, cols.length - 1, lead(m), (c) => this._baseCell(b, m, c))).join('')}</tbody></table>`;
     this._showSummary();
     const det = $('#models-base-details');
     det.hidden = !b.details;
