@@ -1,7 +1,7 @@
 // Tests of what the movie player edits a prediction's ROIs with (app/static/roi_edit.js).
 // Run with: node tests/roi_edit.test.mjs (tests/test_roi_edit.py does, where there is a node).
 import assert from 'node:assert/strict';
-import { History, area, deletePoint, inside, movePoints, nearestPoint, simplify, splitPoint } from '../app/static/roi_edit.js';
+import { History, area, deletePoint, inside, movePoints, nearestPoint, outlineDist, simplify, splitPoint } from '../app/static/roi_edit.js';
 
 const close = (a, b, eps = 1e-9) => Math.abs(a - b) <= eps;
 // the distance from p to the outline
@@ -76,5 +76,11 @@ h.push(null); // (a state may be none; those undone are gone)
 assert.ok(h.current === null && !h.canRedo && h.undo() === 'b');
 h.redo(); h.push('d'); // (the oldest go, past its limit)
 assert.deepEqual(h.states, ['b', null, 'd']);
+
+// how far a point is from a closed outline: its nearest edge, the closing one too, inside or out
+const box = [[0, 0], [10, 0], [10, 10], [0, 10]];
+assert.equal(outlineDist(box, 5, 2), 2);
+assert.equal(outlineDist(box, -3, 5), 3); // (the edge from the last point back to the first)
+assert.equal(outlineDist(box, 13, 14), 5);
 
 console.log('roi_edit.js: ok');

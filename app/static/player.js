@@ -8,7 +8,7 @@
 // predicted ROIs miss can be looked for in the fly's movies there (nmf_check.py): what that finds is
 // listed first, and merged into the edited ROIs or not (nmf_merge.js).
 
-import { History, area, deletePoint, inside, movePoints, nearestPoint, simplify, splitPoint } from './roi_edit.js';
+import { History, area, deletePoint, inside, movePoints, nearestPoint, outlineDist, simplify, splitPoint } from './roi_edit.js';
 import { showIdentity, showNoIdentity } from './identity.js';
 import { changes, copyPredicted, merge, mergedIds, mergedOf, provisional } from './nmf_merge.js';
 import { Heatmap } from './heatmap.js';
@@ -990,17 +990,26 @@ export class MoviePlayer {
     return best;
   }
 
-  // the smallest ROI drawn on the plane shown that the pointer is in (of a dataset's movies), or null
+  // the ROI drawn on the plane shown that a click there chooses (its index, or null): those predicted (or
+  // edited, or found by NMF) before those drawn by hand, and an outline clicked on (within `HANDLE` / 2) before
+  // the inside of one. So: the nearest predicted outline, else the nearest manual one, else the smallest
+  // predicted ROI the pointer is in, else the smallest manual one.
   _roiAt(e) {
     if (!this.showRois || this.maxProj) return null;
-    const [x, y] = this._imagePoint(e);
-    let best = null, least = Infinity;
+    const [x, y] = this._imagePoint(e), reach = HANDLE / 2 / this.view.scale;
+    const best = [[null, Infinity], [null, Infinity], [null, Infinity], [null, Infinity]]; // (predicted, manual) lines, then insides
+    const keep = (k, i, v) => { if (v < best[k][1]) best[k] = [i, v]; };
     this.rois.forEach((r, i) => {
-      const plane = this._roiPlane(r);
+      const plane = this._roiPlane(r), manual = this._predicted(r) ? 0 : 1;
       if (!this._visible(r) || (plane != null && plane !== this.z)) return;
-      for (const p of r.paths) if (p.length >= 3 && inside(p, x, y) && area(p) < least) { least = area(p); best = i; }
+      for (const p of r.paths) {
+        if (p.length < 3) continue;
+        const d = outlineDist(p, x, y);
+        if (d <= reach) keep(manual, i, d);
+        if (inside(p, x, y)) keep(2 + manual, i, area(p));
+      }
     });
-    return best;
+    return best.find(([i]) => i != null)?.[0] ?? null;
   }
 
   // whether the pointer is in the edited ROI chosen (which a drag from there moves)
@@ -1537,7 +1546,7 @@ export class MoviePlayer {
         this._paint();
       } else if (this.movie) { // (over a point that can be dragged, or an edited ROI that can be chosen)
         const hit = this._handleAt(e), at = hit ? hit.i : -1;
-        c.style.cursor = hit ? 'crosshair' : this._nameAt(e) != null ? 'pointer' : this._inChosen(e) ? 'move' : this._editedAt(e) != null ? 'pointer' : '';
+        c.style.cursor = hit ? 'crosshair' : this._nameAt(e) != null ? 'pointer' : this._inChosen(e) ? 'move' : this._roiAt(e) != null ? 'pointer' : '';
         if (at !== this.hoverHandle) { this.hoverHandle = at; this._paint(); }
       }
       this._readout(e);
@@ -1549,12 +1558,9 @@ export class MoviePlayer {
       if (held) this._dropHandle();
       if (named != null) { // (a click on an ROI's name: the ROI chosen, if it is not)
         if (named !== this.selectedRoi) this._selectRoi(named);
-      } else if (click && this.edit?.hist?.current) {
-        const i = this._editedAt(e), chosen = this.selectedRoi != null && this.rois[this.selectedRoi]?.source === 'edited';
+      } else if (click) { // (an ROI clicked on or in: chosen, to edit if it is an edited one, and to plot with P)
+        const i = this._roiAt(e), chosen = this.selectedRoi != null && this.rois[this.selectedRoi]?.source === 'edited';
         if (i != null ? i !== this.selectedRoi : chosen) this._selectRoi(i ?? this.selectedRoi);
-      } else if (click && this.mode !== 'prediction') { // (an ROI clicked in: chosen, to plot with P)
-        const i = this._roiAt(e);
-        if (i != null && i !== this.selectedRoi) this._selectRoi(i);
       }
       drag = null;
     });

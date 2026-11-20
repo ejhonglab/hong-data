@@ -65,6 +65,13 @@ export function movePoints(points, dx, dy, w, h) {
   return points.map(([x, y]) => [+(x + mx).toFixed(2), +(y + my).toFixed(2)]);
 }
 
+// how far (x, y) is from a closed outline (from its nearest edge)
+export function outlineDist(points, x, y) {
+  let least = Infinity;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) least = Math.min(least, segDist2([x, y], points[j], points[i]));
+  return Math.sqrt(least);
+}
+
 // the point of the outline nearest (x, y), if within `reach` of it: its index, else -1
 export function nearestPoint(points, x, y, reach) {
   let at = -1, least = reach * reach;
