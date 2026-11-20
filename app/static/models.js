@@ -91,9 +91,14 @@ export class ModelsPage {
         const b = e.target.closest('[data-run]');
         if (b) location.hash = `#models/${encodeURIComponent(b.dataset.run)}`;
         const x = e.target.closest('[data-exp]');
-        if (x) this.showExperiment(id === '#models-table' ? this.data : this.base, x.dataset.exp);
+        if (x) { this._place($('#models-exp'), x.closest('.step')); this.showExperiment(id === '#models-table' ? this.data : this.base, x.dataset.exp); }
       });
     }
+    // (the box a run was opened from, by its button or a link to it: its spike counts are shown right below it, `show`)
+    $('#tab-models').addEventListener('click', (e) => {
+      const a = e.target.closest('[data-run], a[href^="#models/"]');
+      if (a) this._from = { step: a.closest('.step'), at: Date.now() };
+    }, true);
     let frame = 0;
     const redraw = () => { if (!frame) frame = requestAnimationFrame(() => { frame = 0; this._draw(); }); };
     $('#models-table').addEventListener('scroll', redraw, { passive: true });
@@ -423,11 +428,21 @@ export class ModelsPage {
     return null;
   }
 
-  // a run opened (from a table, or a link to it): its spike counts shown below the tables
+  // a box (`el`: a run's view, or an experiment's) moved to right below another (`step`: the box its button is in), if given
+  _place(el, step) {
+    if (step && step !== el && step.isConnected && step.nextElementSibling !== el) step.after(el);
+  }
+
+  // a run opened (from a table, or a link to it): its spike counts shown right below the box it was opened from (by a
+  // link from elsewhere: the box listing it, of the baselines, the runs on datasets, or every model)
   async show(id) {
     const { $, api, msgBox, esc } = this.h, seq = ++this._seq;
     const found = this._find(id);
     this.openId = found ? id : null;
+    const listing = found && (found.d === this.base ? '#models-base-step' : found.d === this.jobs ? '#model-runs-step' : '#models-table-step');
+    const from = this._from && Date.now() - this._from.at < 5e3 ? this._from.step : null; // (of a click just now: not one that opened nothing)
+    this._place($('#model-view'), from || (listing && $(listing)));
+    this._from = null;
     $('#model-view').hidden = false;
     if (!found) {
       $('#model-title').textContent = 'No such model run';
