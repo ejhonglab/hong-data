@@ -36,6 +36,9 @@ expected, and nothing secret is entered. If a download or the page is blocked, s
    (a zip), or the response matrices as CSV.
 5. **Compare**: tick datasets to see them side by side, averaged, with how alike their
    odors are, and how that compares with chemical structure or reference data.
+   Compare on *KCs* to line model runs up, KC by KC (their body IDs), with each other and
+   with the connectome's reference data of KCs (the hemibrain's and male CNS's claws: their
+   input from PN boutons, and their synapses with APL, raw or as the model has them).
 6. **Merge**: every dataset of a coding unit (e.g. glomeruli) in one download (one
    calculation of the same recordings), optionally with groups of datasets (by
    experimenter, rig, response calculation or power) scaled to each other first.

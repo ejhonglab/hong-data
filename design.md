@@ -145,7 +145,12 @@ between the frontend and the server. Using the app is described in
   responses to its odors; a reference dataset's whose labels on one axis are mostly
   glomerulus names, `reference.glomeruli`, by its values along the other), and all the
   rest (similarities, their correlations and p-values, those side by side) is the
-  same, of glomeruli; no odor–odor similarity is shown then. Or on a panel's odors, for
+  same, of glomeruli; no odor–odor similarity is shown then. Or on KCs: model runs alone of
+  what is ticked on the left, each keyed by its KCs' IDs (its spike counts' first index level), by
+  their spike counts to its odors (`_modelKcSpace`), and reference datasets of KCs (`reference.kcs`:
+  items with a `kc_id` field, e.g. the connectome's claws, those of a KC summed), by their values
+  along the other axis; similarities of vectors with nothing missing are computed as dot products
+  of unit vectors (`similarityMatrix`), for thousands of KCs. Or on a panel's odors, for
   datasets with a panel in common (whose odors need not be in the odor table, nor be
   alone): then only datasets are spaces, each keyed by the panel's odors as presented
   (an odor of the odor table alone by its id and concentration, anything else by its

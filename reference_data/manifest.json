@@ -13,6 +13,1074 @@
    "source": "Hallem & Carlson, Cell 125 (2006) 143-160; as tabulated in olfsysm (hc_data.csv), made by reference_data/make_hallem.py"
   },
   {
+   "id": "connectome-hemibrain-pn-kc-model",
+   "title": "Hemibrain (right calyx): PN boutons → KC claws, as the model has it",
+   "group": "Connectome: hemibrain (right calyx)",
+   "description": "The model's wiring (olfsysm, prat_claws and prat_boutons, as the Models tab's baselines): each claw it keeps (5 or more synapses from one PN of its glomeruli, of a KC of its three types), 1 for the bouton it takes input from (the claw's synapses from its PN in the synapses field). Synapses with both ends in CA(R) alone (olfsysm's loader). Its rows are KCs' claws (kc_id: body ID), summed per KC in the Compare tab, on KCs. 9,867 claws × 389 boutons.",
+   "file": "connectome/hemibrain_pn_kc_model.parquet",
+   "kind": "sequential",
+   "value_label": "claw (1)",
+   "row_label": "KC claw",
+   "col_label": "bouton",
+   "chemical_axis": "none",
+   "fields": {
+    "layout": "list",
+    "rows": {
+     "label": "claw",
+     "keep": [
+      "kc_id",
+      "claw_id",
+      "kc_type",
+      "kc_subtype"
+     ]
+    },
+    "cols": {
+     "label": "bouton",
+     "keep": [
+      "pn_id",
+      "bouton_id",
+      "glomerulus",
+      "model_glomerulus",
+      "pn_type",
+      "pn_bundle"
+     ]
+    },
+    "value": "weight",
+    "empty": "zero"
+   },
+   "source": "Pratyush's hemibrain tables (2025-12-05 run), as olfsysm's pyolfsysm/data/from_pratyush/2025-12-05 has them; made by reference_data/make_connectome.py"
+  },
+  {
+   "id": "connectome-hemibrain-pn-kc-raw",
+   "title": "Hemibrain (right calyx): PN boutons → KC claws, raw synapse counts",
+   "group": "Connectome: hemibrain (right calyx)",
+   "description": "Every synapse of Pratyush's table counted per bouton and claw (his units: claws of KCs, boutons of PNs, units of APL), whatever its ROI and the cells' types; units labelled -1 (unassigned) kept as units of their own, synapses with none left out. The KCs (or PNs) of the right side. Its rows are KCs' claws (kc_id: body ID), summed per KC in the Compare tab, on KCs. 13,134 claws × 563 boutons.",
+   "file": "connectome/hemibrain_pn_kc_raw.parquet",
+   "kind": "sequential",
+   "value_label": "synapses",
+   "row_label": "KC claw",
+   "col_label": "bouton",
+   "chemical_axis": "none",
+   "fields": {
+    "layout": "list",
+    "rows": {
+     "label": "claw",
+     "keep": [
+      "kc_id",
+      "claw_id",
+      "kc_type",
+      "kc_subtype"
+     ]
+    },
+    "cols": {
+     "label": "bouton",
+     "keep": [
+      "pn_id",
+      "bouton_id",
+      "glomerulus",
+      "model_glomerulus",
+      "pn_type",
+      "pn_bundle"
+     ]
+    },
+    "value": "synapses",
+    "empty": "zero"
+   },
+   "source": "Pratyush's hemibrain tables (2025-12-05 run), as olfsysm's pyolfsysm/data/from_pratyush/2025-12-05 has them; made by reference_data/make_connectome.py"
+  },
+  {
+   "id": "connectome-hemibrain-kc-apl-model",
+   "title": "Hemibrain (right calyx): KC claws → APL, as the model has it",
+   "group": "Connectome: hemibrain (right calyx)",
+   "description": "The model's APL weights (olfsysm, use_connectome_APL_weights with prat_claws and prat_boutons): the synapses between APL and each of the model's claws, summed over APL's units (0 where none). The model normalizes them: only their ratios matter. Synapses with both ends in CA(R) alone (olfsysm's loader). Its rows are KCs' claws (kc_id: body ID), summed per KC in the Compare tab, on KCs. 9,867 claws × 1 APL.",
+   "file": "connectome/hemibrain_kc_apl_model.parquet",
+   "kind": "sequential",
+   "value_label": "synapses",
+   "row_label": "KC claw",
+   "col_label": "APL",
+   "chemical_axis": "none",
+   "fields": {
+    "layout": "list",
+    "rows": {
+     "label": "claw",
+     "keep": [
+      "kc_id",
+      "claw_id",
+      "kc_type",
+      "kc_subtype"
+     ]
+    },
+    "cols": {
+     "label": "apl",
+     "keep": [
+      "apl_id",
+      "apl_unit"
+     ]
+    },
+    "value": "weight",
+    "empty": "zero"
+   },
+   "source": "Pratyush's hemibrain tables (2025-12-05 run), as olfsysm's pyolfsysm/data/from_pratyush/2025-12-05 has them; made by reference_data/make_connectome.py"
+  },
+  {
+   "id": "connectome-hemibrain-kc-apl-raw",
+   "title": "Hemibrain (right calyx): KC claws → APL, raw synapse counts",
+   "group": "Connectome: hemibrain (right calyx)",
+   "description": "Every synapse of Pratyush's table counted per claw and APL unit (his units: claws of KCs, boutons of PNs, units of APL), whatever its ROI and the cells' types; units labelled -1 (unassigned) kept as units of their own, synapses with none left out. The KCs (or PNs) of the right side. Its rows are KCs' claws (kc_id: body ID), summed per KC in the Compare tab, on KCs. 8,836 claws × 526 APL units.",
+   "file": "connectome/hemibrain_kc_apl_raw.parquet",
+   "kind": "sequential",
+   "value_label": "synapses",
+   "row_label": "KC claw",
+   "col_label": "APL unit",
+   "chemical_axis": "none",
+   "fields": {
+    "layout": "list",
+    "rows": {
+     "label": "claw",
+     "keep": [
+      "kc_id",
+      "claw_id",
+      "kc_type",
+      "kc_subtype"
+     ]
+    },
+    "cols": {
+     "label": "apl",
+     "keep": [
+      "apl_id",
+      "apl_unit"
+     ]
+    },
+    "value": "synapses",
+    "empty": "zero"
+   },
+   "source": "Pratyush's hemibrain tables (2025-12-05 run), as olfsysm's pyolfsysm/data/from_pratyush/2025-12-05 has them; made by reference_data/make_connectome.py"
+  },
+  {
+   "id": "connectome-hemibrain-apl-kc-model",
+   "title": "Hemibrain (right calyx): APL → KC claws, as the model has it",
+   "group": "Connectome: hemibrain (right calyx)",
+   "description": "The model's APL weights (olfsysm, use_connectome_APL_weights with prat_claws and prat_boutons): the synapses between APL and each of the model's claws, summed over APL's units (0 where none). The model normalizes them: only their ratios matter. Synapses with both ends in CA(R) alone (olfsysm's loader). Its rows are KCs' claws (kc_id: body ID), summed per KC in the Compare tab, on KCs. 9,867 claws × 1 APL.",
+   "file": "connectome/hemibrain_apl_kc_model.parquet",
+   "kind": "sequential",
+   "value_label": "synapses",
+   "row_label": "KC claw",
+   "col_label": "APL",
+   "chemical_axis": "none",
+   "fields": {
+    "layout": "list",
+    "rows": {
+     "label": "claw",
+     "keep": [
+      "kc_id",
+      "claw_id",
+      "kc_type",
+      "kc_subtype"
+     ]
+    },
+    "cols": {
+     "label": "apl",
+     "keep": [
+      "apl_id",
+      "apl_unit"
+     ]
+    },
+    "value": "weight",
+    "empty": "zero"
+   },
+   "source": "Pratyush's hemibrain tables (2025-12-05 run), as olfsysm's pyolfsysm/data/from_pratyush/2025-12-05 has them; made by reference_data/make_connectome.py"
+  },
+  {
+   "id": "connectome-hemibrain-apl-kc-raw",
+   "title": "Hemibrain (right calyx): APL → KC claws, raw synapse counts",
+   "group": "Connectome: hemibrain (right calyx)",
+   "description": "Every synapse of Pratyush's table counted per APL unit and claw (his units: claws of KCs, boutons of PNs, units of APL), whatever its ROI and the cells' types; units labelled -1 (unassigned) kept as units of their own, synapses with none left out. The KCs (or PNs) of the right side. Its rows are KCs' claws (kc_id: body ID), summed per KC in the Compare tab, on KCs. 10,489 claws × 526 APL units.",
+   "file": "connectome/hemibrain_apl_kc_raw.parquet",
+   "kind": "sequential",
+   "value_label": "synapses",
+   "row_label": "KC claw",
+   "col_label": "APL unit",
+   "chemical_axis": "none",
+   "fields": {
+    "layout": "list",
+    "rows": {
+     "label": "claw",
+     "keep": [
+      "kc_id",
+      "claw_id",
+      "kc_type",
+      "kc_subtype"
+     ]
+    },
+    "cols": {
+     "label": "apl",
+     "keep": [
+      "apl_id",
+      "apl_unit"
+     ]
+    },
+    "value": "synapses",
+    "empty": "zero"
+   },
+   "source": "Pratyush's hemibrain tables (2025-12-05 run), as olfsysm's pyolfsysm/data/from_pratyush/2025-12-05 has them; made by reference_data/make_connectome.py"
+  },
+  {
+   "id": "connectome-hemibrain-pn-apl-model",
+   "title": "Hemibrain (right calyx): PN boutons → APL, as the model has it",
+   "group": "Connectome: hemibrain (right calyx)",
+   "description": "The model's APL weights (olfsysm, use_connectome_APL_weights with prat_claws and prat_boutons): the synapses between APL and each of the model's boutons, summed over APL's units (0 where none). The model normalizes them: only their ratios matter. Synapses with both ends in CA(R) alone (olfsysm's loader). 389 boutons × 1 APL.",
+   "file": "connectome/hemibrain_pn_apl_model.parquet",
+   "kind": "sequential",
+   "value_label": "synapses",
+   "row_label": "bouton",
+   "col_label": "APL",
+   "chemical_axis": "none",
+   "fields": {
+    "layout": "list",
+    "rows": {
+     "label": "bouton",
+     "keep": [
+      "pn_id",
+      "bouton_id",
+      "glomerulus",
+      "model_glomerulus",
+      "pn_type",
+      "pn_bundle"
+     ]
+    },
+    "cols": {
+     "label": "apl",
+     "keep": [
+      "apl_id",
+      "apl_unit"
+     ]
+    },
+    "value": "weight",
+    "empty": "zero"
+   },
+   "source": "Pratyush's hemibrain tables (2025-12-05 run), as olfsysm's pyolfsysm/data/from_pratyush/2025-12-05 has them; made by reference_data/make_connectome.py"
+  },
+  {
+   "id": "connectome-hemibrain-pn-apl-raw",
+   "title": "Hemibrain (right calyx): PN boutons → APL, raw synapse counts",
+   "group": "Connectome: hemibrain (right calyx)",
+   "description": "Every synapse of Pratyush's table counted per bouton and APL unit (his units: claws of KCs, boutons of PNs, units of APL), whatever its ROI and the cells' types; units labelled -1 (unassigned) kept as units of their own, synapses with none left out. The KCs (or PNs) of the right side. 487 boutons × 413 APL units.",
+   "file": "connectome/hemibrain_pn_apl_raw.parquet",
+   "kind": "sequential",
+   "value_label": "synapses",
+   "row_label": "bouton",
+   "col_label": "APL unit",
+   "chemical_axis": "none",
+   "fields": {
+    "layout": "list",
+    "rows": {
+     "label": "bouton",
+     "keep": [
+      "pn_id",
+      "bouton_id",
+      "glomerulus",
+      "model_glomerulus",
+      "pn_type",
+      "pn_bundle"
+     ]
+    },
+    "cols": {
+     "label": "apl",
+     "keep": [
+      "apl_id",
+      "apl_unit"
+     ]
+    },
+    "value": "synapses",
+    "empty": "zero"
+   },
+   "source": "Pratyush's hemibrain tables (2025-12-05 run), as olfsysm's pyolfsysm/data/from_pratyush/2025-12-05 has them; made by reference_data/make_connectome.py"
+  },
+  {
+   "id": "connectome-hemibrain-apl-pn-model",
+   "title": "Hemibrain (right calyx): APL → PN boutons, as the model has it",
+   "group": "Connectome: hemibrain (right calyx)",
+   "description": "The model's APL weights (olfsysm, use_connectome_APL_weights with prat_claws and prat_boutons): the synapses between APL and each of the model's boutons, summed over APL's units (0 where none). The model normalizes them: only their ratios matter. Synapses with both ends in CA(R) alone (olfsysm's loader). 389 boutons × 1 APL.",
+   "file": "connectome/hemibrain_apl_pn_model.parquet",
+   "kind": "sequential",
+   "value_label": "synapses",
+   "row_label": "bouton",
+   "col_label": "APL",
+   "chemical_axis": "none",
+   "fields": {
+    "layout": "list",
+    "rows": {
+     "label": "bouton",
+     "keep": [
+      "pn_id",
+      "bouton_id",
+      "glomerulus",
+      "model_glomerulus",
+      "pn_type",
+      "pn_bundle"
+     ]
+    },
+    "cols": {
+     "label": "apl",
+     "keep": [
+      "apl_id",
+      "apl_unit"
+     ]
+    },
+    "value": "weight",
+    "empty": "zero"
+   },
+   "source": "Pratyush's hemibrain tables (2025-12-05 run), as olfsysm's pyolfsysm/data/from_pratyush/2025-12-05 has them; made by reference_data/make_connectome.py"
+  },
+  {
+   "id": "connectome-hemibrain-apl-pn-raw",
+   "title": "Hemibrain (right calyx): APL → PN boutons, raw synapse counts",
+   "group": "Connectome: hemibrain (right calyx)",
+   "description": "Every synapse of Pratyush's table counted per APL unit and bouton (his units: claws of KCs, boutons of PNs, units of APL), whatever its ROI and the cells' types; units labelled -1 (unassigned) kept as units of their own, synapses with none left out. The KCs (or PNs) of the right side. 510 boutons × 445 APL units.",
+   "file": "connectome/hemibrain_apl_pn_raw.parquet",
+   "kind": "sequential",
+   "value_label": "synapses",
+   "row_label": "bouton",
+   "col_label": "APL unit",
+   "chemical_axis": "none",
+   "fields": {
+    "layout": "list",
+    "rows": {
+     "label": "bouton",
+     "keep": [
+      "pn_id",
+      "bouton_id",
+      "glomerulus",
+      "model_glomerulus",
+      "pn_type",
+      "pn_bundle"
+     ]
+    },
+    "cols": {
+     "label": "apl",
+     "keep": [
+      "apl_id",
+      "apl_unit"
+     ]
+    },
+    "value": "synapses",
+    "empty": "zero"
+   },
+   "source": "Pratyush's hemibrain tables (2025-12-05 run), as olfsysm's pyolfsysm/data/from_pratyush/2025-12-05 has them; made by reference_data/make_connectome.py"
+  },
+  {
+   "id": "connectome-malecns-left-pn-kc-model",
+   "title": "Male CNS, left calyx: PN boutons → KC claws, as the model has it",
+   "group": "Connectome: male CNS, left calyx",
+   "description": "The model's wiring (olfsysm, prat_claws and prat_boutons, as the Models tab's baselines): each claw it keeps (5 or more synapses from one PN of its glomeruli, of a KC of its three types), 1 for the bouton it takes input from (the claw's synapses from its PN in the synapses field). The KCs (or PNs) of the left side, by the loader's steps with no ROI rule (as the KC-remapping queue's E97), the PN types' glomeruli renamed as the hemibrain's (VC3 and VC5 -> VC3, VM6 -> VC5). Its rows are KCs' claws (kc_id: body ID), summed per KC in the Compare tab, on KCs. 10,077 claws × 474 boutons.",
+   "file": "connectome/malecns-left_pn_kc_model.parquet",
+   "kind": "sequential",
+   "value_label": "claw (1)",
+   "row_label": "KC claw",
+   "col_label": "bouton",
+   "chemical_axis": "none",
+   "fields": {
+    "layout": "list",
+    "rows": {
+     "label": "claw",
+     "keep": [
+      "kc_id",
+      "claw_id",
+      "kc_type",
+      "kc_subtype"
+     ]
+    },
+    "cols": {
+     "label": "bouton",
+     "keep": [
+      "pn_id",
+      "bouton_id",
+      "glomerulus",
+      "model_glomerulus",
+      "pn_type",
+      "pn_bundle"
+     ]
+    },
+    "value": "weight",
+    "empty": "zero"
+   },
+   "source": "Pratyush's male CNS tables (run 2026-10-25-17-31-06), Tom/claude_kc_remapping/data/Male-CNS_Tom on tensor; made by reference_data/make_connectome.py"
+  },
+  {
+   "id": "connectome-malecns-left-pn-kc-raw",
+   "title": "Male CNS, left calyx: PN boutons → KC claws, raw synapse counts",
+   "group": "Connectome: male CNS, left calyx",
+   "description": "Every synapse of Pratyush's table counted per bouton and claw (his units: claws of KCs, boutons of PNs, units of APL), whatever its ROI and the cells' types; units labelled -1 (unassigned) kept as units of their own, synapses with none left out. The KCs (or PNs) of the left side. Its rows are KCs' claws (kc_id: body ID), summed per KC in the Compare tab, on KCs. 12,029 claws × 672 boutons.",
+   "file": "connectome/malecns-left_pn_kc_raw.parquet",
+   "kind": "sequential",
+   "value_label": "synapses",
+   "row_label": "KC claw",
+   "col_label": "bouton",
+   "chemical_axis": "none",
+   "fields": {
+    "layout": "list",
+    "rows": {
+     "label": "claw",
+     "keep": [
+      "kc_id",
+      "claw_id",
+      "kc_type",
+      "kc_subtype"
+     ]
+    },
+    "cols": {
+     "label": "bouton",
+     "keep": [
+      "pn_id",
+      "bouton_id",
+      "glomerulus",
+      "model_glomerulus",
+      "pn_type",
+      "pn_bundle"
+     ]
+    },
+    "value": "synapses",
+    "empty": "zero"
+   },
+   "source": "Pratyush's male CNS tables (run 2026-10-25-17-31-06), Tom/claude_kc_remapping/data/Male-CNS_Tom on tensor; made by reference_data/make_connectome.py"
+  },
+  {
+   "id": "connectome-malecns-left-kc-apl-model",
+   "title": "Male CNS, left calyx: KC claws → APL, as the model has it",
+   "group": "Connectome: male CNS, left calyx",
+   "description": "The model's APL weights (olfsysm, use_connectome_APL_weights with prat_claws and prat_boutons): the synapses between APL and each of the model's claws, summed over APL's units (0 where none). The model normalizes them: only their ratios matter. The KCs (or PNs) of the left side, by the loader's steps with no ROI rule (as the KC-remapping queue's E97), the PN types' glomeruli renamed as the hemibrain's (VC3 and VC5 -> VC3, VM6 -> VC5). Its rows are KCs' claws (kc_id: body ID), summed per KC in the Compare tab, on KCs. 10,077 claws × 1 APL.",
+   "file": "connectome/malecns-left_kc_apl_model.parquet",
+   "kind": "sequential",
+   "value_label": "synapses",
+   "row_label": "KC claw",
+   "col_label": "APL",
+   "chemical_axis": "none",
+   "fields": {
+    "layout": "list",
+    "rows": {
+     "label": "claw",
+     "keep": [
+      "kc_id",
+      "claw_id",
+      "kc_type",
+      "kc_subtype"
+     ]
+    },
+    "cols": {
+     "label": "apl",
+     "keep": [
+      "apl_id",
+      "apl_unit"
+     ]
+    },
+    "value": "weight",
+    "empty": "zero"
+   },
+   "source": "Pratyush's male CNS tables (run 2026-10-25-17-31-06), Tom/claude_kc_remapping/data/Male-CNS_Tom on tensor; made by reference_data/make_connectome.py"
+  },
+  {
+   "id": "connectome-malecns-left-kc-apl-raw",
+   "title": "Male CNS, left calyx: KC claws → APL, raw synapse counts",
+   "group": "Connectome: male CNS, left calyx",
+   "description": "Every synapse of Pratyush's table counted per claw and APL unit (his units: claws of KCs, boutons of PNs, units of APL), whatever its ROI and the cells' types; units labelled -1 (unassigned) kept as units of their own, synapses with none left out. The KCs (or PNs) of the left side. Its rows are KCs' claws (kc_id: body ID), summed per KC in the Compare tab, on KCs. 8,868 claws × 574 APL units.",
+   "file": "connectome/malecns-left_kc_apl_raw.parquet",
+   "kind": "sequential",
+   "value_label": "synapses",
+   "row_label": "KC claw",
+   "col_label": "APL unit",
+   "chemical_axis": "none",
+   "fields": {
+    "layout": "list",
+    "rows": {
+     "label": "claw",
+     "keep": [
+      "kc_id",
+      "claw_id",
+      "kc_type",
+      "kc_subtype"
+     ]
+    },
+    "cols": {
+     "label": "apl",
+     "keep": [
+      "apl_id",
+      "apl_unit"
+     ]
+    },
+    "value": "synapses",
+    "empty": "zero"
+   },
+   "source": "Pratyush's male CNS tables (run 2026-10-25-17-31-06), Tom/claude_kc_remapping/data/Male-CNS_Tom on tensor; made by reference_data/make_connectome.py"
+  },
+  {
+   "id": "connectome-malecns-left-apl-kc-model",
+   "title": "Male CNS, left calyx: APL → KC claws, as the model has it",
+   "group": "Connectome: male CNS, left calyx",
+   "description": "The model's APL weights (olfsysm, use_connectome_APL_weights with prat_claws and prat_boutons): the synapses between APL and each of the model's claws, summed over APL's units (0 where none). The model normalizes them: only their ratios matter. The KCs (or PNs) of the left side, by the loader's steps with no ROI rule (as the KC-remapping queue's E97), the PN types' glomeruli renamed as the hemibrain's (VC3 and VC5 -> VC3, VM6 -> VC5). Its rows are KCs' claws (kc_id: body ID), summed per KC in the Compare tab, on KCs. 10,077 claws × 1 APL.",
+   "file": "connectome/malecns-left_apl_kc_model.parquet",
+   "kind": "sequential",
+   "value_label": "synapses",
+   "row_label": "KC claw",
+   "col_label": "APL",
+   "chemical_axis": "none",
+   "fields": {
+    "layout": "list",
+    "rows": {
+     "label": "claw",
+     "keep": [
+      "kc_id",
+      "claw_id",
+      "kc_type",
+      "kc_subtype"
+     ]
+    },
+    "cols": {
+     "label": "apl",
+     "keep": [
+      "apl_id",
+      "apl_unit"
+     ]
+    },
+    "value": "weight",
+    "empty": "zero"
+   },
+   "source": "Pratyush's male CNS tables (run 2026-10-25-17-31-06), Tom/claude_kc_remapping/data/Male-CNS_Tom on tensor; made by reference_data/make_connectome.py"
+  },
+  {
+   "id": "connectome-malecns-left-apl-kc-raw",
+   "title": "Male CNS, left calyx: APL → KC claws, raw synapse counts",
+   "group": "Connectome: male CNS, left calyx",
+   "description": "Every synapse of Pratyush's table counted per APL unit and claw (his units: claws of KCs, boutons of PNs, units of APL), whatever its ROI and the cells' types; units labelled -1 (unassigned) kept as units of their own, synapses with none left out. The KCs (or PNs) of the left side. Its rows are KCs' claws (kc_id: body ID), summed per KC in the Compare tab, on KCs. 9,871 claws × 573 APL units.",
+   "file": "connectome/malecns-left_apl_kc_raw.parquet",
+   "kind": "sequential",
+   "value_label": "synapses",
+   "row_label": "KC claw",
+   "col_label": "APL unit",
+   "chemical_axis": "none",
+   "fields": {
+    "layout": "list",
+    "rows": {
+     "label": "claw",
+     "keep": [
+      "kc_id",
+      "claw_id",
+      "kc_type",
+      "kc_subtype"
+     ]
+    },
+    "cols": {
+     "label": "apl",
+     "keep": [
+      "apl_id",
+      "apl_unit"
+     ]
+    },
+    "value": "synapses",
+    "empty": "zero"
+   },
+   "source": "Pratyush's male CNS tables (run 2026-10-25-17-31-06), Tom/claude_kc_remapping/data/Male-CNS_Tom on tensor; made by reference_data/make_connectome.py"
+  },
+  {
+   "id": "connectome-malecns-left-pn-apl-model",
+   "title": "Male CNS, left calyx: PN boutons → APL, as the model has it",
+   "group": "Connectome: male CNS, left calyx",
+   "description": "The model's APL weights (olfsysm, use_connectome_APL_weights with prat_claws and prat_boutons): the synapses between APL and each of the model's boutons, summed over APL's units (0 where none). The model normalizes them: only their ratios matter. The KCs (or PNs) of the left side, by the loader's steps with no ROI rule (as the KC-remapping queue's E97), the PN types' glomeruli renamed as the hemibrain's (VC3 and VC5 -> VC3, VM6 -> VC5). 474 boutons × 1 APL.",
+   "file": "connectome/malecns-left_pn_apl_model.parquet",
+   "kind": "sequential",
+   "value_label": "synapses",
+   "row_label": "bouton",
+   "col_label": "APL",
+   "chemical_axis": "none",
+   "fields": {
+    "layout": "list",
+    "rows": {
+     "label": "bouton",
+     "keep": [
+      "pn_id",
+      "bouton_id",
+      "glomerulus",
+      "model_glomerulus",
+      "pn_type",
+      "pn_bundle"
+     ]
+    },
+    "cols": {
+     "label": "apl",
+     "keep": [
+      "apl_id",
+      "apl_unit"
+     ]
+    },
+    "value": "weight",
+    "empty": "zero"
+   },
+   "source": "Pratyush's male CNS tables (run 2026-10-25-17-31-06), Tom/claude_kc_remapping/data/Male-CNS_Tom on tensor; made by reference_data/make_connectome.py"
+  },
+  {
+   "id": "connectome-malecns-left-pn-apl-raw",
+   "title": "Male CNS, left calyx: PN boutons → APL, raw synapse counts",
+   "group": "Connectome: male CNS, left calyx",
+   "description": "Every synapse of Pratyush's table counted per bouton and APL unit (his units: claws of KCs, boutons of PNs, units of APL), whatever its ROI and the cells' types; units labelled -1 (unassigned) kept as units of their own, synapses with none left out. The KCs (or PNs) of the left side. 467 boutons × 407 APL units.",
+   "file": "connectome/malecns-left_pn_apl_raw.parquet",
+   "kind": "sequential",
+   "value_label": "synapses",
+   "row_label": "bouton",
+   "col_label": "APL unit",
+   "chemical_axis": "none",
+   "fields": {
+    "layout": "list",
+    "rows": {
+     "label": "bouton",
+     "keep": [
+      "pn_id",
+      "bouton_id",
+      "glomerulus",
+      "model_glomerulus",
+      "pn_type",
+      "pn_bundle"
+     ]
+    },
+    "cols": {
+     "label": "apl",
+     "keep": [
+      "apl_id",
+      "apl_unit"
+     ]
+    },
+    "value": "synapses",
+    "empty": "zero"
+   },
+   "source": "Pratyush's male CNS tables (run 2026-10-25-17-31-06), Tom/claude_kc_remapping/data/Male-CNS_Tom on tensor; made by reference_data/make_connectome.py"
+  },
+  {
+   "id": "connectome-malecns-left-apl-pn-model",
+   "title": "Male CNS, left calyx: APL → PN boutons, as the model has it",
+   "group": "Connectome: male CNS, left calyx",
+   "description": "The model's APL weights (olfsysm, use_connectome_APL_weights with prat_claws and prat_boutons): the synapses between APL and each of the model's boutons, summed over APL's units (0 where none). The model normalizes them: only their ratios matter. The KCs (or PNs) of the left side, by the loader's steps with no ROI rule (as the KC-remapping queue's E97), the PN types' glomeruli renamed as the hemibrain's (VC3 and VC5 -> VC3, VM6 -> VC5). 474 boutons × 1 APL.",
+   "file": "connectome/malecns-left_apl_pn_model.parquet",
+   "kind": "sequential",
+   "value_label": "synapses",
+   "row_label": "bouton",
+   "col_label": "APL",
+   "chemical_axis": "none",
+   "fields": {
+    "layout": "list",
+    "rows": {
+     "label": "bouton",
+     "keep": [
+      "pn_id",
+      "bouton_id",
+      "glomerulus",
+      "model_glomerulus",
+      "pn_type",
+      "pn_bundle"
+     ]
+    },
+    "cols": {
+     "label": "apl",
+     "keep": [
+      "apl_id",
+      "apl_unit"
+     ]
+    },
+    "value": "weight",
+    "empty": "zero"
+   },
+   "source": "Pratyush's male CNS tables (run 2026-10-25-17-31-06), Tom/claude_kc_remapping/data/Male-CNS_Tom on tensor; made by reference_data/make_connectome.py"
+  },
+  {
+   "id": "connectome-malecns-left-apl-pn-raw",
+   "title": "Male CNS, left calyx: APL → PN boutons, raw synapse counts",
+   "group": "Connectome: male CNS, left calyx",
+   "description": "Every synapse of Pratyush's table counted per APL unit and bouton (his units: claws of KCs, boutons of PNs, units of APL), whatever its ROI and the cells' types; units labelled -1 (unassigned) kept as units of their own, synapses with none left out. The KCs (or PNs) of the left side. 508 boutons × 443 APL units.",
+   "file": "connectome/malecns-left_apl_pn_raw.parquet",
+   "kind": "sequential",
+   "value_label": "synapses",
+   "row_label": "bouton",
+   "col_label": "APL unit",
+   "chemical_axis": "none",
+   "fields": {
+    "layout": "list",
+    "rows": {
+     "label": "bouton",
+     "keep": [
+      "pn_id",
+      "bouton_id",
+      "glomerulus",
+      "model_glomerulus",
+      "pn_type",
+      "pn_bundle"
+     ]
+    },
+    "cols": {
+     "label": "apl",
+     "keep": [
+      "apl_id",
+      "apl_unit"
+     ]
+    },
+    "value": "synapses",
+    "empty": "zero"
+   },
+   "source": "Pratyush's male CNS tables (run 2026-10-25-17-31-06), Tom/claude_kc_remapping/data/Male-CNS_Tom on tensor; made by reference_data/make_connectome.py"
+  },
+  {
+   "id": "connectome-malecns-right-pn-kc-model",
+   "title": "Male CNS, right calyx: PN boutons → KC claws, as the model has it",
+   "group": "Connectome: male CNS, right calyx",
+   "description": "The model's wiring (olfsysm, prat_claws and prat_boutons, as the Models tab's baselines): each claw it keeps (5 or more synapses from one PN of its glomeruli, of a KC of its three types), 1 for the bouton it takes input from (the claw's synapses from its PN in the synapses field). The KCs (or PNs) of the right side, by the loader's steps with no ROI rule (as the KC-remapping queue's E97), the PN types' glomeruli renamed as the hemibrain's (VC3 and VC5 -> VC3, VM6 -> VC5). Its rows are KCs' claws (kc_id: body ID), summed per KC in the Compare tab, on KCs. 10,008 claws × 434 boutons.",
+   "file": "connectome/malecns-right_pn_kc_model.parquet",
+   "kind": "sequential",
+   "value_label": "claw (1)",
+   "row_label": "KC claw",
+   "col_label": "bouton",
+   "chemical_axis": "none",
+   "fields": {
+    "layout": "list",
+    "rows": {
+     "label": "claw",
+     "keep": [
+      "kc_id",
+      "claw_id",
+      "kc_type",
+      "kc_subtype"
+     ]
+    },
+    "cols": {
+     "label": "bouton",
+     "keep": [
+      "pn_id",
+      "bouton_id",
+      "glomerulus",
+      "model_glomerulus",
+      "pn_type",
+      "pn_bundle"
+     ]
+    },
+    "value": "weight",
+    "empty": "zero"
+   },
+   "source": "Pratyush's male CNS tables (run 2026-10-25-17-31-06), Tom/claude_kc_remapping/data/Male-CNS_Tom on tensor; made by reference_data/make_connectome.py"
+  },
+  {
+   "id": "connectome-malecns-right-pn-kc-raw",
+   "title": "Male CNS, right calyx: PN boutons → KC claws, raw synapse counts",
+   "group": "Connectome: male CNS, right calyx",
+   "description": "Every synapse of Pratyush's table counted per bouton and claw (his units: claws of KCs, boutons of PNs, units of APL), whatever its ROI and the cells' types; units labelled -1 (unassigned) kept as units of their own, synapses with none left out. The KCs (or PNs) of the right side. Its rows are KCs' claws (kc_id: body ID), summed per KC in the Compare tab, on KCs. 11,968 claws × 631 boutons.",
+   "file": "connectome/malecns-right_pn_kc_raw.parquet",
+   "kind": "sequential",
+   "value_label": "synapses",
+   "row_label": "KC claw",
+   "col_label": "bouton",
+   "chemical_axis": "none",
+   "fields": {
+    "layout": "list",
+    "rows": {
+     "label": "claw",
+     "keep": [
+      "kc_id",
+      "claw_id",
+      "kc_type",
+      "kc_subtype"
+     ]
+    },
+    "cols": {
+     "label": "bouton",
+     "keep": [
+      "pn_id",
+      "bouton_id",
+      "glomerulus",
+      "model_glomerulus",
+      "pn_type",
+      "pn_bundle"
+     ]
+    },
+    "value": "synapses",
+    "empty": "zero"
+   },
+   "source": "Pratyush's male CNS tables (run 2026-10-25-17-31-06), Tom/claude_kc_remapping/data/Male-CNS_Tom on tensor; made by reference_data/make_connectome.py"
+  },
+  {
+   "id": "connectome-malecns-right-kc-apl-model",
+   "title": "Male CNS, right calyx: KC claws → APL, as the model has it",
+   "group": "Connectome: male CNS, right calyx",
+   "description": "The model's APL weights (olfsysm, use_connectome_APL_weights with prat_claws and prat_boutons): the synapses between APL and each of the model's claws, summed over APL's units (0 where none). The model normalizes them: only their ratios matter. The KCs (or PNs) of the right side, by the loader's steps with no ROI rule (as the KC-remapping queue's E97), the PN types' glomeruli renamed as the hemibrain's (VC3 and VC5 -> VC3, VM6 -> VC5). Its rows are KCs' claws (kc_id: body ID), summed per KC in the Compare tab, on KCs. 10,008 claws × 1 APL.",
+   "file": "connectome/malecns-right_kc_apl_model.parquet",
+   "kind": "sequential",
+   "value_label": "synapses",
+   "row_label": "KC claw",
+   "col_label": "APL",
+   "chemical_axis": "none",
+   "fields": {
+    "layout": "list",
+    "rows": {
+     "label": "claw",
+     "keep": [
+      "kc_id",
+      "claw_id",
+      "kc_type",
+      "kc_subtype"
+     ]
+    },
+    "cols": {
+     "label": "apl",
+     "keep": [
+      "apl_id",
+      "apl_unit"
+     ]
+    },
+    "value": "weight",
+    "empty": "zero"
+   },
+   "source": "Pratyush's male CNS tables (run 2026-10-25-17-31-06), Tom/claude_kc_remapping/data/Male-CNS_Tom on tensor; made by reference_data/make_connectome.py"
+  },
+  {
+   "id": "connectome-malecns-right-kc-apl-raw",
+   "title": "Male CNS, right calyx: KC claws → APL, raw synapse counts",
+   "group": "Connectome: male CNS, right calyx",
+   "description": "Every synapse of Pratyush's table counted per claw and APL unit (his units: claws of KCs, boutons of PNs, units of APL), whatever its ROI and the cells' types; units labelled -1 (unassigned) kept as units of their own, synapses with none left out. The KCs (or PNs) of the right side. Its rows are KCs' claws (kc_id: body ID), summed per KC in the Compare tab, on KCs. 8,004 claws × 489 APL units.",
+   "file": "connectome/malecns-right_kc_apl_raw.parquet",
+   "kind": "sequential",
+   "value_label": "synapses",
+   "row_label": "KC claw",
+   "col_label": "APL unit",
+   "chemical_axis": "none",
+   "fields": {
+    "layout": "list",
+    "rows": {
+     "label": "claw",
+     "keep": [
+      "kc_id",
+      "claw_id",
+      "kc_type",
+      "kc_subtype"
+     ]
+    },
+    "cols": {
+     "label": "apl",
+     "keep": [
+      "apl_id",
+      "apl_unit"
+     ]
+    },
+    "value": "synapses",
+    "empty": "zero"
+   },
+   "source": "Pratyush's male CNS tables (run 2026-10-25-17-31-06), Tom/claude_kc_remapping/data/Male-CNS_Tom on tensor; made by reference_data/make_connectome.py"
+  },
+  {
+   "id": "connectome-malecns-right-apl-kc-model",
+   "title": "Male CNS, right calyx: APL → KC claws, as the model has it",
+   "group": "Connectome: male CNS, right calyx",
+   "description": "The model's APL weights (olfsysm, use_connectome_APL_weights with prat_claws and prat_boutons): the synapses between APL and each of the model's claws, summed over APL's units (0 where none). The model normalizes them: only their ratios matter. The KCs (or PNs) of the right side, by the loader's steps with no ROI rule (as the KC-remapping queue's E97), the PN types' glomeruli renamed as the hemibrain's (VC3 and VC5 -> VC3, VM6 -> VC5). Its rows are KCs' claws (kc_id: body ID), summed per KC in the Compare tab, on KCs. 10,008 claws × 1 APL.",
+   "file": "connectome/malecns-right_apl_kc_model.parquet",
+   "kind": "sequential",
+   "value_label": "synapses",
+   "row_label": "KC claw",
+   "col_label": "APL",
+   "chemical_axis": "none",
+   "fields": {
+    "layout": "list",
+    "rows": {
+     "label": "claw",
+     "keep": [
+      "kc_id",
+      "claw_id",
+      "kc_type",
+      "kc_subtype"
+     ]
+    },
+    "cols": {
+     "label": "apl",
+     "keep": [
+      "apl_id",
+      "apl_unit"
+     ]
+    },
+    "value": "weight",
+    "empty": "zero"
+   },
+   "source": "Pratyush's male CNS tables (run 2026-10-25-17-31-06), Tom/claude_kc_remapping/data/Male-CNS_Tom on tensor; made by reference_data/make_connectome.py"
+  },
+  {
+   "id": "connectome-malecns-right-apl-kc-raw",
+   "title": "Male CNS, right calyx: APL → KC claws, raw synapse counts",
+   "group": "Connectome: male CNS, right calyx",
+   "description": "Every synapse of Pratyush's table counted per APL unit and claw (his units: claws of KCs, boutons of PNs, units of APL), whatever its ROI and the cells' types; units labelled -1 (unassigned) kept as units of their own, synapses with none left out. The KCs (or PNs) of the right side. Its rows are KCs' claws (kc_id: body ID), summed per KC in the Compare tab, on KCs. 8,626 claws × 486 APL units.",
+   "file": "connectome/malecns-right_apl_kc_raw.parquet",
+   "kind": "sequential",
+   "value_label": "synapses",
+   "row_label": "KC claw",
+   "col_label": "APL unit",
+   "chemical_axis": "none",
+   "fields": {
+    "layout": "list",
+    "rows": {
+     "label": "claw",
+     "keep": [
+      "kc_id",
+      "claw_id",
+      "kc_type",
+      "kc_subtype"
+     ]
+    },
+    "cols": {
+     "label": "apl",
+     "keep": [
+      "apl_id",
+      "apl_unit"
+     ]
+    },
+    "value": "synapses",
+    "empty": "zero"
+   },
+   "source": "Pratyush's male CNS tables (run 2026-10-25-17-31-06), Tom/claude_kc_remapping/data/Male-CNS_Tom on tensor; made by reference_data/make_connectome.py"
+  },
+  {
+   "id": "connectome-malecns-right-pn-apl-model",
+   "title": "Male CNS, right calyx: PN boutons → APL, as the model has it",
+   "group": "Connectome: male CNS, right calyx",
+   "description": "The model's APL weights (olfsysm, use_connectome_APL_weights with prat_claws and prat_boutons): the synapses between APL and each of the model's boutons, summed over APL's units (0 where none). The model normalizes them: only their ratios matter. The KCs (or PNs) of the right side, by the loader's steps with no ROI rule (as the KC-remapping queue's E97), the PN types' glomeruli renamed as the hemibrain's (VC3 and VC5 -> VC3, VM6 -> VC5). 434 boutons × 1 APL.",
+   "file": "connectome/malecns-right_pn_apl_model.parquet",
+   "kind": "sequential",
+   "value_label": "synapses",
+   "row_label": "bouton",
+   "col_label": "APL",
+   "chemical_axis": "none",
+   "fields": {
+    "layout": "list",
+    "rows": {
+     "label": "bouton",
+     "keep": [
+      "pn_id",
+      "bouton_id",
+      "glomerulus",
+      "model_glomerulus",
+      "pn_type",
+      "pn_bundle"
+     ]
+    },
+    "cols": {
+     "label": "apl",
+     "keep": [
+      "apl_id",
+      "apl_unit"
+     ]
+    },
+    "value": "weight",
+    "empty": "zero"
+   },
+   "source": "Pratyush's male CNS tables (run 2026-10-25-17-31-06), Tom/claude_kc_remapping/data/Male-CNS_Tom on tensor; made by reference_data/make_connectome.py"
+  },
+  {
+   "id": "connectome-malecns-right-pn-apl-raw",
+   "title": "Male CNS, right calyx: PN boutons → APL, raw synapse counts",
+   "group": "Connectome: male CNS, right calyx",
+   "description": "Every synapse of Pratyush's table counted per bouton and APL unit (his units: claws of KCs, boutons of PNs, units of APL), whatever its ROI and the cells' types; units labelled -1 (unassigned) kept as units of their own, synapses with none left out. The KCs (or PNs) of the right side. 417 boutons × 343 APL units.",
+   "file": "connectome/malecns-right_pn_apl_raw.parquet",
+   "kind": "sequential",
+   "value_label": "synapses",
+   "row_label": "bouton",
+   "col_label": "APL unit",
+   "chemical_axis": "none",
+   "fields": {
+    "layout": "list",
+    "rows": {
+     "label": "bouton",
+     "keep": [
+      "pn_id",
+      "bouton_id",
+      "glomerulus",
+      "model_glomerulus",
+      "pn_type",
+      "pn_bundle"
+     ]
+    },
+    "cols": {
+     "label": "apl",
+     "keep": [
+      "apl_id",
+      "apl_unit"
+     ]
+    },
+    "value": "synapses",
+    "empty": "zero"
+   },
+   "source": "Pratyush's male CNS tables (run 2026-10-25-17-31-06), Tom/claude_kc_remapping/data/Male-CNS_Tom on tensor; made by reference_data/make_connectome.py"
+  },
+  {
+   "id": "connectome-malecns-right-apl-pn-model",
+   "title": "Male CNS, right calyx: APL → PN boutons, as the model has it",
+   "group": "Connectome: male CNS, right calyx",
+   "description": "The model's APL weights (olfsysm, use_connectome_APL_weights with prat_claws and prat_boutons): the synapses between APL and each of the model's boutons, summed over APL's units (0 where none). The model normalizes them: only their ratios matter. The KCs (or PNs) of the right side, by the loader's steps with no ROI rule (as the KC-remapping queue's E97), the PN types' glomeruli renamed as the hemibrain's (VC3 and VC5 -> VC3, VM6 -> VC5). 434 boutons × 1 APL.",
+   "file": "connectome/malecns-right_apl_pn_model.parquet",
+   "kind": "sequential",
+   "value_label": "synapses",
+   "row_label": "bouton",
+   "col_label": "APL",
+   "chemical_axis": "none",
+   "fields": {
+    "layout": "list",
+    "rows": {
+     "label": "bouton",
+     "keep": [
+      "pn_id",
+      "bouton_id",
+      "glomerulus",
+      "model_glomerulus",
+      "pn_type",
+      "pn_bundle"
+     ]
+    },
+    "cols": {
+     "label": "apl",
+     "keep": [
+      "apl_id",
+      "apl_unit"
+     ]
+    },
+    "value": "weight",
+    "empty": "zero"
+   },
+   "source": "Pratyush's male CNS tables (run 2026-10-25-17-31-06), Tom/claude_kc_remapping/data/Male-CNS_Tom on tensor; made by reference_data/make_connectome.py"
+  },
+  {
+   "id": "connectome-malecns-right-apl-pn-raw",
+   "title": "Male CNS, right calyx: APL → PN boutons, raw synapse counts",
+   "group": "Connectome: male CNS, right calyx",
+   "description": "Every synapse of Pratyush's table counted per APL unit and bouton (his units: claws of KCs, boutons of PNs, units of APL), whatever its ROI and the cells' types; units labelled -1 (unassigned) kept as units of their own, synapses with none left out. The KCs (or PNs) of the right side. 458 boutons × 367 APL units.",
+   "file": "connectome/malecns-right_apl_pn_raw.parquet",
+   "kind": "sequential",
+   "value_label": "synapses",
+   "row_label": "bouton",
+   "col_label": "APL unit",
+   "chemical_axis": "none",
+   "fields": {
+    "layout": "list",
+    "rows": {
+     "label": "bouton",
+     "keep": [
+      "pn_id",
+      "bouton_id",
+      "glomerulus",
+      "model_glomerulus",
+      "pn_type",
+      "pn_bundle"
+     ]
+    },
+    "cols": {
+     "label": "apl",
+     "keep": [
+      "apl_id",
+      "apl_unit"
+     ]
+    },
+    "value": "synapses",
+    "empty": "zero"
+   },
+   "source": "Pratyush's male CNS tables (run 2026-10-25-17-31-06), Tom/claude_kc_remapping/data/Male-CNS_Tom on tensor; made by reference_data/make_connectome.py"
+  },
+  {
    "id": "example-fruit-volatiles",
    "title": "EXAMPLE: volatile concentrations across fruits (synthetic)",
    "description": "Placeholder with random numbers so the tab has something to show. Replace with real data (see reference_data/README.md).",

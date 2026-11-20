@@ -644,3 +644,66 @@ def test_group(env, tmp_path):
     assert call(env.admin_reference_update, path_params={"ref_id": ref_id}, body={"group": ""})[0] == 200 and group() is None
     assert next(d for d in call(env.reference_list)[1]["datasets"] if d["id"] == "fruits")["group"] is None  # (built in: none in its manifest)
     assert call(env.admin_reference_update, path_params={"ref_id": "nothing"}, body={"group": "x"})[0] == 404
+
+
+def test_kcs(env, tmp_path):
+    # a connectome's claws, one value per line: rows of several claws of a KC (its kc_id field), kept sparse (most cells 0)
+    lines = ["claw,kc_id,claw_id,bouton,glomerulus,synapses"]
+    for k in range(12):
+        lines.append(f"KC {100 + k // 3} claw {k % 3},{100 + k // 3},{k % 3},DM{1 + k} bouton 0,DM{1 + k},{k + 1}")
+    lines.append("KC 200 claw 0,,0,DM1 bouton 0,DM1,0")  # (no KC ID: not of a KC; its 0 not kept)
+    p = write(tmp_path / "claws.csv", "\n".join(lines) + "\n")
+    fields = {"layout": "list", "rows": {"label": "claw", "keep": ["kc_id", "claw_id"]},
+              "cols": {"label": "bouton", "keep": ["glomerulus"]}, "value": "synapses", "empty": "zero"}
+    record, values = reference.parse(p, "none", "detect", fields)
+    assert isinstance(values, reference.Sparse) and values.shape == (13, 12) and len(values.index) == 12
+    assert record["nonzero"]["rows"] == [1] * 12 + [0] and record["nonzero"]["cols"] == [1] * 12
+    assert values.toarray()[1, 1] == 2 and record["kind"] == "sequential"
+    k = reference.kcs(record)
+    assert k["axis"] == "rows" and k["ids"][:4] == ["100", "100", "100", "101"] and k["ids"][-1] is None
+    assert (k["n"], k["matched"], k["n_kcs"]) == (13, 12, 4)
+    # missing where not listed: dense
+    assert isinstance(reference.parse(p, "none", "detect", {**fields, "empty": "missing"})[1], np.ndarray)
+    # a matrix of glomeruli: its other axis, if its labels are body IDs (not otherwise)
+    record, _ = reference.parse(write(tmp_path / "g.csv", "bodyid,DM2,VA2,DL5\n5813055184,3,0,1\n5813054622,0,2,4\n"))
+    assert reference.kcs(record)["axis"] == "rows" and reference.kcs(record)["ids"] == ["5813055184", "5813054622"]
+    record, _ = reference.parse(write(tmp_path / "h.csv", "glomerulus,kc a,kc b\nDM2,1,0\nva2,0,1\nDL5,2,2\n"))
+    assert reference.kcs(record)["axis"] is None
+    # listed with their KCs, and served sparse with each item's KC
+    (config.REFERENCE_DIR / "claws.csv").write_text(p.read_text())
+    manifest = json.loads((config.REFERENCE_DIR / "manifest.json").read_text())
+    manifest["datasets"].append({"id": "claws", "title": "Claws", "file": "claws.csv", "chemical_axis": "none", "fields": fields})
+    (config.REFERENCE_DIR / "manifest.json").write_text(json.dumps(manifest))
+    item = next(d for d in call(env.reference_list)[1]["datasets"] if d["id"] == "claws")
+    assert item["kcs"] == {"axis": "rows", "n": 13, "matched": 12, "n_kcs": 4, "ids": ["100", "101", "102", "103"]}
+    r = call(env.reference_get, path_params={"ref_id": "claws"})[1]
+    assert r["kcs"]["axis"] == "rows" and [x.get("kc") for x in r["rows"]][:4] == ["100", "100", "100", "101"]
+    assert "values_sparse" in r and r["vmax"] == 12
+
+
+def test_connectome_builtin():
+    """The connectome's built-in reference datasets (made by reference_data/make_connectome.py) as they are read."""
+    entries = {e["id"]: e for e in json.loads((config.REFERENCE_DIR / "manifest.json").read_text())["datasets"]
+               if e["id"].startswith("connectome-")}
+    assert len(entries) == 30
+    got = {}
+    for ref_id, e in entries.items():
+        record, values = reference.parse(config.REFERENCE_DIR / e["file"], e["chemical_axis"], e["kind"], reference._fields(e["fields"]))
+        got[ref_id] = (record, values)
+        k = reference.kcs(record)
+        claws = "-kc-" in ref_id  # (of KC claws: PN -> KC, KC -> APL, APL -> KC)
+        assert k["axis"] == ("rows" if claws else None), ref_id
+        if claws:
+            assert k["matched"] == k["n"], ref_id
+    for calyx in ("hemibrain", "malecns-left", "malecns-right"):
+        wiring, _ = got[f"connectome-{calyx}-pn-kc-model"]
+        dense = got[f"connectome-{calyx}-pn-kc-model"][1]
+        dense = dense.toarray() if isinstance(dense, reference.Sparse) else dense
+        # one bouton per claw of the model; its APL weights of every claw of it, in its order
+        assert (dense.sum(axis=1) == 1).all()
+        for name in ("kc-apl", "apl-kc"):
+            rec, v = got[f"connectome-{calyx}-{name}-model"]
+            assert [r["label"] for r in rec["rows"]] == [r["label"] for r in wiring["rows"]] and rec["shape"][1] == 1
+        assert reference.kcs(wiring)["n_kcs"] > 1500
+    # the hemibrain's model: as E13's bouton base (1,732 KCs with APL weights; 9,867 claws, 389 boutons)
+    assert got["connectome-hemibrain-pn-kc-model"][0]["shape"] == [9867, 389]

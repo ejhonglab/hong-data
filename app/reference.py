@@ -58,7 +58,11 @@ BUNDLE_ERRORS = (metacyc.MetacycError, lotus.LotusError)
 BUNDLE_SUFFIXES = tuple(dict.fromkeys(x for m in BUNDLES.values() for x in m.SUFFIXES))
 # a table's: laid out as its matrix, or one value per line (see `_parse_list`); a bundle's view (its kind)
 LAYOUTS = ("matrix", "list", *BUNDLES)
-MAX_CELLS = 20_000_000  # a matrix made from a list: its rows × columns, at most
+MAX_CELLS = 20_000_000  # a matrix made from a list: its rows × columns, at most (of one kept dense)
+# a matrix made from a list whose cells no line lists are 0 (``empty`` 'zero'): kept sparse (`Sparse`) if at most this
+# share of its cells are listed, and then of at most MAX_SPARSE_CELLS cells (the browser makes it dense)
+SPARSE_SHARE = 0.1
+MAX_SPARSE_CELLS = 200_000_000
 SUFFIXES = (".csv", ".tsv", ".tab", ".txt", ".parquet", ".pq", *NETCDF_SUFFIXES, *BUNDLE_SUFFIXES)
 _TABLES = [x for x in SUFFIXES if x not in BUNDLE_SUFFIXES]
 NOT_A_TABLE = (f"not a table it can read: give a {', '.join(_TABLES[:-1])} or {_TABLES[-1]} file, or a MetaCyc or LOTUS "
@@ -79,7 +83,9 @@ ID_HEADERS = {
     "abbrev": odormeta.HEADERS["abbrev"],
 }
 _ID_FIELD = {h: f for f, hs in ID_HEADERS.items() for h in hs}
-MEMO_SIZE = 8  # files read but not imported (built in, or being checked) kept parsed
+# files read but not imported (being checked) kept parsed, besides every built-in one (read again for each listing:
+# the connectome's 30 take seconds to read, and some 130 MB kept)
+MEMO_SIZE = 8
 # how the Compare tab makes one of several items of its chemical axis that are one odor
 # (``merge`` of its fields; the first, the default): cell by cell, of those not missing
 MERGES = ("mean", "sum", "max")
@@ -233,8 +239,14 @@ def parse(path: Path, chemical_axis: str = "detect", kind: str = "detect", field
         record, values = _parse_list(path, chemical_axis, kind, fields)
     else:
         record, values = _parse_matrix(path, chemical_axis, kind)
-    held = np.isfinite(values) & (values != 0)
-    record["nonzero"] = {"rows": held.sum(axis=1).tolist(), "cols": held.sum(axis=0).tolist()}
+    if isinstance(values, Sparse):
+        held = np.isfinite(values.values) & (values.values != 0)
+        r, c = np.divmod(values.index[held], values.shape[1])
+        record["nonzero"] = {"rows": np.bincount(r, minlength=values.shape[0]).tolist(),
+                             "cols": np.bincount(c, minlength=values.shape[1]).tolist()}
+    else:
+        held = np.isfinite(values) & (values != 0)
+        record["nonzero"] = {"rows": held.sum(axis=1).tolist(), "cols": held.sum(axis=0).tolist()}
     return record, values
 
 
@@ -470,9 +482,11 @@ def _parse_list(path: Path, chemical_axis: str, kind: str, fields: dict) -> tupl
     ri = np.fromiter((row_of.setdefault(tuple(text[k][i] for k in row_keys), len(row_of)) for i in lines), dtype=np.intp, count=len(lines))
     ci = np.fromiter((col_of.setdefault(tuple(text[k][i] for k in col_keys), len(col_of)) for i in lines), dtype=np.intp, count=len(lines))
     n_rows, n_cols = len(row_of), len(col_of)
-    if n_rows * n_cols > MAX_CELLS:
+    # (most cells 0: only the others kept, as of a bundle's view)
+    sparse = value is not None and fields.get("empty") == "zero" and len(lines) <= SPARSE_SHARE * n_rows * n_cols
+    if n_rows * n_cols > (MAX_SPARSE_CELLS if sparse else MAX_CELLS):
         raise ReferenceError(f"it would be {n_rows:,} rows × {n_cols:,} columns ({n_rows * n_cols:,} cells, and at most "
-                             f"{MAX_CELLS:,} are shown): choose fewer fields for its rows or columns")
+                             f"{MAX_SPARSE_CELLS if sparse else MAX_CELLS:,} are shown): choose fewer fields for its rows or columns")
     values_given = None
     if value is None:
         values = np.zeros((n_rows, n_cols), dtype=np.float32)
@@ -481,11 +495,16 @@ def _parse_list(path: Path, chemical_axis: str, kind: str, fields: dict) -> tupl
     else:
         numbers = pd.to_numeric(df[value].iloc[lines], errors="coerce").to_numpy(dtype=np.float64)
         given = np.array([_text(v) is not None for v in df[value].iloc[lines]])
-        values = np.full((n_rows, n_cols), 0.0 if fields.get("empty") == "zero" else np.nan, dtype=np.float32)
-        values[ri, ci] = np.nan  # listed, but maybe with no number
         cells = pd.DataFrame({"r": ri, "c": ci, "v": numbers}).groupby(["r", "c"])["v"]
-        mean, count = cells.mean(), cells.count()
-        values[mean.index.get_level_values(0), mean.index.get_level_values(1)] = mean.to_numpy(dtype=np.float32)
+        mean, count = cells.mean(), cells.count()  # (listed, but with no number: NaN)
+        mr, mc = mean.index.get_level_values(0).to_numpy(), mean.index.get_level_values(1).to_numpy()
+        if sparse:
+            m = mean.to_numpy(dtype=np.float32)
+            keep = m != 0
+            values = Sparse.of((n_rows, n_cols), mr[keep], mc[keep], m[keep])
+        else:
+            values = np.full((n_rows, n_cols), 0.0 if fields.get("empty") == "zero" else np.nan, dtype=np.float32)
+            values[mr, mc] = mean.to_numpy(dtype=np.float32)
         n_text = int((given & ~np.isfinite(numbers)).sum())
         examples = ""
         if n_text:
@@ -495,7 +514,7 @@ def _parse_list(path: Path, chemical_axis: str, kind: str, fields: dict) -> tupl
         n_many = int((count > 1).sum())
         if n_many:
             notes.append(f"{n_many:,} cell{'s are' if n_many > 1 else ' is'} on more than one line: the mean of their numbers")
-        if not np.isfinite(values).any():
+        if not np.isfinite(numbers).any():
             raise ReferenceError(f"{value!r} has no numbers: choose another field for its values, or presence")
 
     def axis(keys: list[str], of: dict[tuple, int], ids_allowed: bool) -> tuple[list[dict], Optional[list[dict]]]:
@@ -510,7 +529,7 @@ def _parse_list(path: Path, chemical_axis: str, kind: str, fields: dict) -> tupl
         "cols": [{"label": c["label"], "detail": c["detail"], "fields": c["fields"]} for c in cols],
         "ids": {"rows": row_ids, "cols": col_ids},
         "chemical_axis": chemical_axis,
-        "kind": kind if kind != "detect" else _detect_kind(np.nan_to_num(values)),
+        "kind": kind if kind != "detect" else _detect_kind(np.nan_to_num(values.values if sparse else values)),
         "shape": [n_rows, n_cols],
         "notes": notes,
         "values_given": values_given,  # (of its value field: how many lines give one, how many not a number)
@@ -696,8 +715,11 @@ def _parsed(path: Path, chemical_axis: str, kind: str, fields: Optional[dict] = 
             _memo.move_to_end(key)
             return _memo[key]
         out = _memo[key] = parse(path, chemical_axis, kind, fields, odors)
-        while len(_memo) > MEMO_SIZE:
-            _memo.popitem(last=False)
+        for k in [k for k in _memo if k[0] == key[0] and k[1] != key[1]]:  # (of the file as it was)
+            del _memo[k]
+        builtin = {str(config.REFERENCE_DIR / e["file"]) for e in manifest()}
+        for k in [k for k in _memo if k[0] not in builtin][:max(0, len(_memo) - MEMO_SIZE - len(builtin))]:
+            del _memo[k]
         return out
 
 
@@ -909,6 +931,49 @@ def glomeruli(record: dict) -> dict:
         if k >= 3 and 2 * k >= len(names) and k > best["matched"]:
             best = {"axis": axis, "names": names, "n": len(names), "matched": k}
     return best
+
+
+# the fields of an item (a row or column of a table of one value per line, a DataArray's coordinate) giving the
+# body ID of the KC it is of (e.g. a claw's), by header (matched as identifier headers are)
+KC_ID_HEADERS = ("kc id", "kc bodyid", "kc body id")
+
+
+def _body_id(v) -> Optional[str]:
+    """A KC's body ID as text (digits alone), from a field or label; None if it is not one."""
+    s = _text(v)
+    m = re.fullmatch(r"(\d+)(?:\.0+)?", s or "")
+    return m[1] if m else None
+
+
+def kcs(record: dict, gl: Optional[dict] = None) -> dict:
+    """A reference dataset's KCs, by their body IDs: the axis whose items have a field of them (``kc_id``, see
+    `KC_ID_HEADERS`; e.g. the claws of a connectome's table, several of one KC), else, of a matrix of glomeruli
+    (`gl`: `glomeruli`'s, found if not given), its other axis if at least half its labels are body IDs (as the
+    README's glomeruli × KCs). Models' KCs are matched to them by their IDs (the Compare tab, on KCs).
+
+    Returns:
+        ``axis`` ('rows' | 'cols' | None), ``ids`` (per item of that axis, its KC's body ID as text, or None),
+        ``n`` (its items), ``matched`` (those of a KC) and ``n_kcs`` (their KCs).
+    """
+    def of(axis, ids):
+        k = sum(i is not None for i in ids)
+        return {"axis": axis, "ids": ids, "n": len(ids), "matched": k, "n_kcs": len({i for i in ids if i is not None})}
+
+    for axis in ("rows", "cols"):
+        items = record[axis]
+        fields = items[0].get("fields") if items else None
+        key = next((f for f in (fields or {}) if _header_key(f) in KC_ID_HEADERS), None)
+        if key is not None:
+            ids = [_body_id((it.get("fields") or {}).get(key)) for it in items]
+            if any(i is not None for i in ids):
+                return of(axis, ids)
+    gl = gl if gl is not None else glomeruli(record)
+    if gl["axis"]:
+        axis = "cols" if gl["axis"] == "rows" else "rows"
+        ids = [_body_id(it["label"]) for it in record[axis]]
+        if ids and 2 * sum(i is not None for i in ids) >= len(ids):
+            return of(axis, ids)
+    return {"axis": None, "ids": [], "n": 0, "matched": 0, "n_kcs": 0}
 
 
 def warning(chem: dict, glomeruli: Optional[dict] = None) -> Optional[str]:
@@ -1132,12 +1197,15 @@ def _summary(rec: dict, index: odormeta.OdorIndex) -> dict:
     """What `listing` says of a reference dataset's record: its chemicals and glomeruli matched,
     and the warnings of them."""
     chem, gl = chemicals(rec, index), glomeruli(rec)
+    kc = kcs(rec, gl)
     return dict(kind=rec["kind"], shape=rec["shape"], notes=rec["notes"], imported_at=rec.get("imported_at"),
                 pairwise=rec.get("pairwise"), metacyc=rec.get("metacyc"), lotus=rec.get("lotus"),
                 chemicals={**{k: chem[k] for k in ("axis", "n", "matched", "identified")},
                            "odor_ids": [i["odor_id"] for i in chem["items"] if i["odor_id"] is not None]},
                 glomeruli={"axis": gl["axis"], "n": gl["n"], "matched": gl["matched"],
                            "names": [n for n in gl["names"] if n is not None]},
+                kcs={**{k: kc[k] for k in ("axis", "n", "matched", "n_kcs")},
+                     "ids": sorted({i for i in kc["ids"] if i is not None}, key=int)},
                 warning=warning(chem, gl), stereo=stereo_warning(chem, rec, short=True))
 
 
@@ -1202,7 +1270,7 @@ def opened(db, ref_id: str, index: odormeta.OdorIndex) -> Optional[dict[str, Any
     else:
         values = _parsed(Path(e["path"]), e.get("chemical_axis", "detect"), e.get("kind") or "detect", _fields(e.get("fields")), odors)[1]
     return {"entry": e, "meta": meta, "state": "ok", "error": None, "record": record, "values": values,
-            "chem": chemicals(record, index), "gl": glomeruli(record)}
+            "chem": chemicals(record, index), "gl": (gl := glomeruli(record)), "kc": kcs(record, gl)}
 
 
 def load(db, ref_id: str, index: odormeta.OdorIndex) -> Optional[dict[str, Any]]:
@@ -1210,7 +1278,7 @@ def load(db, ref_id: str, index: odormeta.OdorIndex) -> Optional[dict[str, Any]]
     o = opened(db, ref_id, index)
     if o is None or o["state"] != "ok":
         return o and {k: o[k] for k in ("meta", "state", "error")}
-    meta, record, values, chem, gl = o["meta"], o["record"], o["values"], o["chem"], o["gl"]
+    meta, record, values, chem, gl, kc = o["meta"], o["record"], o["values"], o["chem"], o["gl"], o["kc"]
     merge = (_fields(o["entry"].get("fields")) or {}).get("merge", MERGES[0])
     meta["kind"] = record["kind"]
     meta["metacyc"] = record.get("metacyc")
@@ -1229,6 +1297,9 @@ def load(db, ref_id: str, index: odormeta.OdorIndex) -> Optional[dict[str, Any]]
     if gl["axis"]:
         for it, name in zip(rows if gl["axis"] == "rows" else cols, gl["names"]):
             it["glomerulus"] = name
+    if kc["axis"]:
+        for it, i in zip(rows if kc["axis"] == "rows" else cols, kc["ids"]):
+            it["kc"] = i
     if isinstance(values, Sparse):  # (its cells other than 0)
         vrange, encoded = values.range(), {"values_sparse": values.payload()}
     else:
@@ -1243,6 +1314,7 @@ def load(db, ref_id: str, index: odormeta.OdorIndex) -> Optional[dict[str, Any]]
         "unresolved_warning": unresolved_warning(chem, record, values if isinstance(values, np.ndarray) else None, index, merge),
         "notes": record["notes"],
         "glomeruli": {k: gl[k] for k in ("axis", "n", "matched")},
+        "kcs": {k: kc[k] for k in ("axis", "n", "matched", "n_kcs")},
         "imported_at": record.get("imported_at"),
         **({"square": True, "pairwise": record["pairwise"]} if record.get("pairwise") else {}),
     }
@@ -1259,8 +1331,11 @@ def _described(path: Path) -> dict:
             _memo.move_to_end(key)
             return _memo[key]
         out = _memo[key] = describe_fields(path)
-        while len(_memo) > MEMO_SIZE:
-            _memo.popitem(last=False)
+        for k in [k for k in _memo if k[0] == key[0] and k[1] != key[1]]:  # (of the file as it was)
+            del _memo[k]
+        builtin = {str(config.REFERENCE_DIR / e["file"]) for e in manifest()}
+        for k in [k for k in _memo if k[0] not in builtin][:max(0, len(_memo) - MEMO_SIZE - len(builtin))]:
+            del _memo[k]
         return out
 
 
@@ -1316,6 +1391,7 @@ def check(path_input: str, chemical_axis: str, kind: str, index: odormeta.OdorIn
                "pairwise": record.get("pairwise"), "metacyc": record.get("metacyc"), "lotus": record.get("lotus"),
                "chemicals": {k: chem[k] for k in ("axis", "n", "matched", "identified", "unidentified", "ambiguous", "odors")},
                "glomeruli": {k: gl[k] for k in ("axis", "n", "matched")},
+               "kcs": {k: v for k, v in kcs(record, gl).items() if k != "ids"},
                # (its odors as datasets write them, to be checked against the odor table as a dataset's are)
                "odor_labels": [it["label"] for it in record[chem["axis"]]] if chem["odors"] else None}
     return {**out, "ok": True, "readable": True, "preview": preview}

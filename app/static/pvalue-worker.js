@@ -93,7 +93,8 @@ self.onmessage = ({ data: { tests, method, resamplings: B, unit } }) => {
         if (r >= 0) above++;
         if (Math.abs(r) >= Math.abs(r0) - 1e-12) extreme++; // as far from 0, but for rounding
       }
-      if (++done % 500 === 0) self.postMessage({ progress: done / total });
+      // (as it goes: every 500 resamplings, or each of many pairs, as of thousands of KCs)
+      if (++done % 500 === 0 || cap > 100000) self.postMessage({ progress: done / total });
     }
     if (!valid) ps.push(NaN);
     else if (unit === 'permute') ps.push((extreme + 1) / (valid + 1));

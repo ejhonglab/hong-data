@@ -178,3 +178,29 @@ each odor's CID and InChI, the `cid` and `inchi` rows, through chemutils and Pub
 are named as in the paper, and found in the odor table by those identifiers, so no aliases are
 needed for them. It is also what ORN data is scaled to before a baseline model is run on it in
 the Models tab (`app/orn_input.py`), so keep its file name and layout.
+
+`connectome/` (30 parquet files, and their entries, grouped "Connectome: ...") is made by
+`make_connectome.py` from Pratyush's tables of the hemibrain (the right calyx: those olfsysm's
+model reads) and of the male CNS (its left and right calyces, apart), run with a Python that has
+pyolfsysm (the model worker's `/opt/model-venv`; it reads the male CNS's tables from tensor, or a
+folder given). For each calyx and each connection the model has (PN boutons → KC claws, KC claws →
+APL, APL → KC claws, PN boutons → APL, APL → PN boutons), two tables of one value per line:
+
+- `..._raw`: every synapse of his table counted per pair of units (claw, bouton, APL unit), whatever
+  its ROI and its cells' types (units labelled -1, unassigned, kept as units of their own);
+- `..._model`: what the model is given (olfsysm's loader, `prat_claws` and `prat_boutons`, as the
+  Models tab's baselines): its claws, each 1 for its one bouton; and its APL weights per claw (or
+  bouton), the synapses with APL summed over its units (one column). The script checks that its
+  steps give the hemibrain's exactly as olfsysm's loader does, and applies them to the male CNS
+  with no ROI rule and its PN types' glomeruli renamed as the hemibrain's (as the KC-remapping
+  queue's E97).
+
+Their claws are rows, with each claw's KC (`kc_id`, its body ID), KC type and subtype; boutons with
+their PN (`pn_id`), glomerulus (as the connectome names it, and as the model does), type and
+bundle; APL units with APL's body ID. Most of their cells are 0, so they are kept sparse
+(`"empty": "zero"`).
+
+Any table whose rows (or columns) have a `kc_id` field (or `kc body id`), or a matrix of glomeruli
+whose other axis is labelled by body IDs, is of KCs: the Compare tab, on KCs, compares it with
+model runs (KCs × odors) on the KCs both have, by their IDs, the rows of several claws of a KC
+summed.

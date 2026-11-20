@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import base64
+import shutil
+import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -116,3 +118,12 @@ def test_dataset_extra_levels(tmp_path):
     assert [(c["label"], c["n_flies"]) for c in d["cols"]] == [("DM2", 1)]
     m = np.frombuffer(base64.b64decode(d["values_b64"]), "<f4").reshape(3, 1)
     np.testing.assert_allclose(m[0, 0], v[0:2].mean())
+
+
+def test_similarity_js():
+    """tests/similarity.test.mjs: how alike vectors are (app/static/similarity.js), where there is a node to run it."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("no node")
+    done = subprocess.run([node, str(Path(__file__).with_name("similarity.test.mjs"))], capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stdout + done.stderr

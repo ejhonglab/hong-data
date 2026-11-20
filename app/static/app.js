@@ -6435,7 +6435,20 @@ const ON = {
       + 'glomeruli shown that it has.',
     none: 'No reference datasets with glomeruli: rows or columns labelled by glomerulus names (Reference data tab).',
   },
+  kcs: {
+    one: 'KC', many: 'KCs', sim: 'KC–KC similarity',
+    show: "Model runs (as KCs × odors, their spike counts) and reference data of KCs (e.g. a connectome's claws, summed per KC), "
+      + 'over the KCs shown that it has, and those side by side alike. No odor–odor similarity is shown, nor chemical structure.',
+    simNote: "Of two KCs: by their spike counts across a model run's odors, or by their values across a reference dataset's other "
+      + "axis (a single column, as the model's APL weights, gives none). The correlations between similarities below are of these.",
+    match: "KCs are matched by their body IDs: a model run's KC IDs (its spike counts' first index level), and a reference dataset's "
+      + "kc_id field (the rows of several claws of a KC summed). Each space's similarities are shown over the KCs shown that it has.",
+    none: "No reference datasets of KCs: rows or columns with a kc_id field (Reference data tab, e.g. the connectome's).",
+  },
 };
+
+// a reference dataset's axis of what the Compare tab compares on (`on`): its chemicals, glomeruli or KCs (by their IDs)
+const refAxis = (ref, on) => (on === 'odors' ? ref.chemicals?.axis : on === 'kcs' ? ref.kcs?.axis : ref.glomeruli?.axis) || null;
 
 // how those p-values can be had (pvalue-worker.js), as their CSV says, of odors or glomeruli
 const pBy = (unit, many) => ({ pairs: `bootstrap of the pairs of ${many}`, odors: `bootstrap of the ${many}`,
@@ -6670,7 +6683,7 @@ class ComparePage {
     if (run) this.modelRuns.set(id, run);
     const key = `${id}|${filter}`;
     this.o.models = [{ key, id, title, filter, nSpikes, shown: true }, ...this.o.models.filter((m) => m.key !== key)];
-    this.o.on = 'odors';
+    if (this.o.on !== 'kcs') this.o.on = 'odors';
     this.o.calcs = null;
     this._save();
   }
@@ -6691,7 +6704,7 @@ class ComparePage {
     }
     this.datasets = ds.datasets;
     this.calcSets = ds.calculations || []; // (as Browse's)
-    this.refs = refs.datasets.filter((r) => r.state === 'ok' && ((r.chemicals?.axis && r.chemicals.matched) || r.glomeruli?.axis));
+    this.refs = refs.datasets.filter((r) => r.state === 'ok' && ((r.chemicals?.axis && r.chemicals.matched) || r.glomeruli?.axis || r.kcs?.axis));
     const ids = new Set(this.datasets.map((d) => d.id));
     this.o.picked = this.o.picked.filter((id) => ids.has(id));
     if (!this.o.calcs?.every((id) => ids.has(id)) || !this.o.picked.some((id) => this.o.calcs.includes(id))) this.o.calcs = null;
@@ -6977,6 +6990,19 @@ class ComparePage {
     });
   }
 
+  // a model run's (`_modelView`) of its KCs (by their IDs), by their spike counts to every odor of it, its data its KCs × its odors
+  _modelKcSpace(d) {
+    return this._memo(`modelkc:${d.id}:${this.o.metric}:${this.o.conc}`, () => {
+      const nR = d.rows.length, nC = d.cols.length;
+      const vectors = d.cols.map((_, c) => Float32Array.from({ length: nR }, (_, i) => d.values[i * nC + c]));
+      return {
+        ids: d.cols.map((c) => String(c.label)), sim: similarityMatrix(vectors, this.o.metric),
+        data: { vectors, cols: d.rows.map((r) => ({ label: r.odor })),
+          meta: { kind: 'sequential', scale: 'log', colormap: 'oklab-red', value_label: 'spike count', col_label: 'odor' } },
+      };
+    });
+  }
+
   // a dataset's of glomeruli, by their responses (the mean of the flies with each) to every
   // odor of it, its data its glomeruli × its odors
   _datasetGlomSpace(d) {
@@ -7045,9 +7071,9 @@ class ComparePage {
     });
   }
 
-  // a reference dataset's, of its chemicals (on 'odors') or its glomeruli (on 'glomeruli'),
+  // a reference dataset's, of its chemicals (on 'odors'), its glomeruli (on 'glomeruli') or its KCs (on 'kcs'),
   // by their values along its other axis (each once: of a glomerulus, the first of its rows
-  // or columns; of an odor, those of its chemicals that are it merged as the dataset says,
+  // or columns; of a KC, the sum of its rows or columns, e.g. its claws; of an odor, those of its chemicals that are it merged as the dataset says,
   // `mergeVectors`); on odors, of a dataset with chemicals not in the Odors table too, only
   // along the items of that axis any of those in it are not 0 or missing in (`refSubset`). Of
   // distances between its chemicals (pairwise: its columns its rows), the negative of its own
@@ -7056,16 +7082,16 @@ class ComparePage {
     if (given.pairwise && on === 'odors') return this._pairwiseSpace(given);
     return this._memo(`ref:${given.meta.id}:${on}:${this.o.refMetric}`, () => {
       const ref = on === 'odors' && canOnlyOdors(given) ? refSubset(given, { onlyOdors: true }) : given;
-      const axis = on === 'odors' ? ref.chemicals.axis : ref.glomeruli.axis;
+      const axis = refAxis(ref, on);
       const values = matrixValues(ref), nR = ref.rows.length, nC = ref.cols.length, onRows = axis === 'rows';
       const of = new Map();
       (onRows ? ref.rows : ref.cols).forEach((it, k) => {
-        const id = on === 'odors' ? it.chem?.odor_id : it.glomerulus;
+        const id = on === 'odors' ? it.chem?.odor_id : on === 'kcs' ? it.kc : it.glomerulus;
         if (id == null) return;
         if (!of.has(id)) of.set(id, []);
         of.get(id).push(onRows ? values.subarray(k * nC, (k + 1) * nC) : Float32Array.from({ length: nR }, (_, r) => values[r * nC + k]));
       });
-      const ids = [...of.keys()], how = on === 'odors' ? ref.chemicals.merge || 'mean' : 'first';
+      const ids = [...of.keys()], how = on === 'odors' ? ref.chemicals.merge || 'mean' : on === 'kcs' ? 'sum' : 'first';
       const vectors = ids.map((id) => mergeVectors(of.get(id), how));
       const m = ref.meta;
       return {
@@ -7121,7 +7147,7 @@ class ComparePage {
   // the reference datasets that can be compared to on what the page compares on
   _refsOn() {
     const on = this.o.on;
-    return on === 'panel' ? [] : this.refs.filter((r) => (on === 'odors' ? r.chemicals?.axis && r.chemicals.matched : r.glomeruli?.axis));
+    return on === 'panel' ? [] : this.refs.filter((r) => (on === 'odors' ? r.chemicals?.axis && r.chemicals.matched : refAxis(r, on)));
   }
 
   // the spaces compared to (of those chosen, those of what the page compares on), loaded:
@@ -7138,7 +7164,7 @@ class ComparePage {
           const id = key.slice(4);
           if (!this.refData.has(id)) this.refData.set(id, await api(`/api/reference/${encodeURIComponent(id)}`));
           const ref = this.refData.get(id);
-          const axis = on === 'odors' ? ref.chemicals.axis : ref.glomeruli.axis;
+          const axis = refAxis(ref, on);
           const along = axis === 'rows' ? ref.meta.col_label || 'columns' : ref.meta.row_label || 'rows';
           if (ref.pairwise && on === 'odors') {
             const what = ref.meta.value_label || 'distance';
@@ -7189,6 +7215,9 @@ class ComparePage {
       $('#cmp-spaces').innerHTML = (panels.size ? `<label class="opt">Panel <select id="cmp-panel">${[...panels].map(option).join('')}</select></label>` : '')
         + '<p class="muted small">Only datasets are compared on a panel\'s odors: reference data and chemical structure, on odors (of the odor table).</p>';
       return;
+    } else if (on === 'kcs') {
+      $('#cmp-shown').textContent = shown.size ? `The model runs shown have ${shown.size.toLocaleString()} KC${shown.size === 1 ? '' : 's'}.`
+        : "No KCs shown yet: tick model runs on the left (a model's Compare button in the Models tab lists it there).";
     } else {
       $('#cmp-shown').textContent = shown.size ? `The datasets of glomeruli shown have ${shown.size} glomerul${shown.size === 1 ? 'us' : 'i'}.`
         : 'No glomeruli shown yet: tick datasets of glomeruli on the left.';
@@ -7196,9 +7225,9 @@ class ComparePage {
     // (each once: a reference dataset can have several rows or columns of one chemical)
     const overlap = (given) => {
       const ids = [...new Set(given)];
-      if (!shown.size) return `<span class="overlap">it has ${ids.length} ${N.many}</span>`;
+      if (!shown.size) return `<span class="overlap">it has ${ids.length.toLocaleString()} ${N.many}</span>`;
       const n = ids.filter((id) => shown.has(id)).length;
-      return `<span class="overlap${n < 3 && this.o.picked.length ? ' few' : ''}">${n} of the ${shown.size} ${N.many} shown${ids.length ? ` (it has ${ids.length})` : ''}</span>`;
+      return `<span class="overlap${n < 3 && (this.o.picked.length || this.o.models.some((m) => m.shown)) ? ' few' : ''}">${n.toLocaleString()} of the ${shown.size.toLocaleString()} ${N.many} shown${ids.length ? ` (it has ${ids.length.toLocaleString()})` : ''}</span>`;
     };
     const fp = this.ecfp.get(this.o.ecfpD);
     const checked = (key) => (this.o.spaces.includes(key) ? ' checked' : '');
@@ -7211,7 +7240,7 @@ class ComparePage {
     const refs = this._refsOn();
     for (const r of refs) {
       entries.push(entry(`ref:${r.id}`, r.group, `<div class="space"><label class="check"><input type="checkbox" data-space="ref:${esc(r.id)}"${checked(`ref:${r.id}`)}> ${esc(r.title)}</label>
-        ${overlap((on === 'odors' ? r.chemicals.odor_ids : r.glomeruli.names) || [])}${on === 'odors' && r.stereo
+        ${overlap((on === 'odors' ? r.chemicals.odor_ids : on === 'kcs' ? r.kcs.ids : r.glomeruli.names) || [])}${on === 'odors' && r.stereo
           ? `<a class="overlap few" href="#reference/${esc(r.id)}" title="Which, in the Reference data tab">⚠ ${esc(r.stereo)}</a>` : ''}</div>`));
     }
     const active = document.activeElement?.id === 'cmp-ecfp-d', box = $('#cmp-spaces');
@@ -7291,16 +7320,18 @@ class ComparePage {
     // what is compared on, of the datasets shown: their odors of the odor table, the odors of the panel, or their glomeruli
     const shown = new Set(on === 'odors' ? datasets.flatMap((d) => (d.rows || []).filter((r) => r.odor_id != null).map((r) => r.odor_id))
       : on === 'panel' ? datasets.flatMap((d) => (panel && panels.get(panel).ids.includes(d.id) ? this._datasetPanelSpace(d, panel).ids : []))
-        : datasets.flatMap((d) => (d.kind === 'glomeruli' ? d.cols.map((c) => c.label) : [])));
+        : on === 'kcs' ? datasets.flatMap((d) => (d.model && !d.error ? d.cols.map((c) => String(c.label)) : []))
+          : datasets.flatMap((d) => (d.kind === 'glomeruli' ? d.cols.map((c) => c.label) : [])));
     this._renderOptions(shown, panels, panel);
     // every space shown: the datasets by what was recorded (ORNs, PNs, KCs...), by their
     // full names those that would share one, then the spaces compared to
     const metric = SIMILARITIES[this.o.metric].label, show = this.o.show;
-    const loaded = datasets.filter((d) => !d.error && (on === 'odors' || (on === 'panel' ? !!panel && panels.get(panel).ids.includes(d.id) : d.kind === 'glomeruli')));
+    const loaded = datasets.filter((d) => !d.error && (on === 'odors' || (on === 'panel' ? !!panel && panels.get(panel).ids.includes(d.id)
+      : on === 'kcs' ? !!d.model : d.kind === 'glomeruli')));
     const short = loaded.map(neuralSpaceName);
     const all = [
       ...loaded.map((d, i) => {
-        if (d.model) return { key: d.id, title: d.title, space: this._modelSpace(d), simLabel: metric, responseCalc: d.response_calc };
+        if (d.model) return { key: d.id, title: d.title, space: on === 'kcs' ? this._modelKcSpace(d) : this._modelSpace(d), simLabel: metric, responseCalc: d.response_calc };
         const full = `#${d.id} ${d.title}`;
         return { key: `ds:${d.id}`, title: short.filter((n) => n === short[i]).length > 1 ? full : short[i], fullTitle: full,
           space: on === 'odors' ? this._datasetSpace(d) : on === 'panel' ? this._datasetPanelSpace(d, panel) : this._datasetGlomSpace(d), simLabel: metric,
@@ -7310,7 +7341,8 @@ class ComparePage {
     ];
     this.all = all;
     this._renderPairOptions(all);
-    const rowOf = on === 'odors' ? this._chemRows(datasets) : on === 'panel' ? this._panelRows(loaded, panel) : (g) => ({ label: g });
+    const rowOf = on === 'odors' ? this._chemRows(datasets) : on === 'panel' ? this._panelRows(loaded, panel) : on === 'kcs' ? this._kcRows(loaded)
+      : (g) => ({ label: g });
     const state = this._stateKey();
     if (this.o.calcs) { await this._renderCalcs(view, seq); return; }
 
@@ -7373,6 +7405,10 @@ class ComparePage {
         }
         continue;
       }
+      if (on === 'kcs') {
+        info(`#${d.id} ${esc(d.title)}: its ROIs are not KCs of a connectome (with body IDs), so it is left out when comparing on KCs.`);
+        continue;
+      }
       if (on === 'glomeruli') {
         if (d.kind !== 'glomeruli') { info(`#${d.id} ${esc(d.title)}: its ROIs are not glomeruli, so it is left out when comparing on glomeruli.`); continue; }
         // its glomeruli (rows) by its odors, or their similarities
@@ -7432,12 +7468,25 @@ class ComparePage {
   _modelBlocks(d, block, info, parts) {
     if (d.error) { parts.push(msgBox('error', `${esc(d.title)} could not be shown: ${esc(d.error)}`)); return; }
     const on = this.o.on;
-    if (on !== 'odors') {
-      info(`${esc(d.title)}: a model's responses are compared on odors (of the odor table) alone, so it is left out when comparing on
+    if (on !== 'odors' && on !== 'kcs') {
+      info(`${esc(d.title)}: a model's responses are compared on odors (of the odor table) or its KCs alone, so it is left out when comparing on
         ${on === 'panel' ? "a panel's odors" : 'glomeruli'}.`);
       return;
     }
     const metric = SIMILARITIES[this.o.metric].label, stem = `model_${d.title}`.replace(/[^\w.-]+/g, '_');
+    if (on === 'kcs') {
+      // its KCs (rows, by their IDs) by its odors, or their similarities
+      const s = { space: this._modelKcSpace(d), simLabel: metric }, ids = s.space.ids, rowOf = this._kcRows([d]);
+      if (this.o.show !== 'sim') {
+        block(`kc${d.id}`, d.title, `KCs (model): ${ids.length.toLocaleString()} KCs, ${esc(modelKcs(d.model))} (of its ${d.nKcs.toLocaleString()}), × ${d.rows.length}
+          odors; spike counts`, this._memo(`modelkcdata:${d.id}:${this.o.conc}`, () => spaceData(s, ids, rowOf, 'KC', false)), `${stem}_spike_counts_by_kc`);
+      }
+      if (this.o.show !== 'data') {
+        block(`kcsim${d.id}`, `${d.title}: KC–KC similarity`, `${esc(metric)} of their spike counts across its ${d.rows.length} odors`,
+          this._memo(`modelkcsim:${d.id}:${this.o.metric}:${this.o.conc}`, () => spaceSims(s, ids, rowOf, 'KC', false)), `${stem}_kc_similarity`);
+      }
+      return;
+    }
     const rows = d.rows.map((r) => ({ label: r.odor })); // (as a dataset's: as named in its file)
     if (this.o.show !== 'sim') {
       block(d.id, d.title, `KCs (model): ${d.rows.length} odors × ${d.cols.length.toLocaleString()} KCs, ${esc(modelKcs(d.model))} (of its
@@ -7468,6 +7517,16 @@ class ComparePage {
     const labels = new Map();
     for (const d of datasets) for (const [k, l] of this._datasetPanelSpace(d, panel).labels) if (!labels.has(k)) labels.set(k, l);
     return (key) => ({ label: labels.get(key) ?? key });
+  }
+
+  // a KC (by its ID) as a row, labelled by its ID, grouped by its type, as the first of the model runs with it (`datasets`) has it
+  _kcRows(datasets) {
+    const types = new Map();
+    for (const d of datasets) {
+      const run = d.model && this.modelRuns.get(d.model.id), groups = run?.kcs?.groups;
+      if (groups) run.kcs.labels.forEach((id, k) => { if (!types.has(String(id))) types.set(String(id), groups[k]); });
+    }
+    return (id) => ({ label: id, group: types.get(id) ?? null });
   }
 
   // Spaces side by side (o.pair: two or more): the odors (or glomeruli) all have, in one order

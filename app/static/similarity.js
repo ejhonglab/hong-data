@@ -2,14 +2,18 @@
 // how alike those likenesses are between two spaces. NaN is a value missing.
 
 // ranks of xs, from 1, ties given the mean of theirs
+// (the values sorted by a typed array's own sort, each found in them by bisection: millions of pairs of KCs in a second)
 export function ranks(xs) {
-  const idx = xs.map((x, i) => i).sort((a, b) => xs[a] - xs[b]);
-  const out = new Array(xs.length);
-  for (let s = 0; s < idx.length;) {
-    let e = s;
-    while (e + 1 < idx.length && xs[idx[e + 1]] === xs[idx[s]]) e++;
-    for (let k = s; k <= e; k++) out[idx[k]] = (s + e) / 2 + 1;
-    s = e + 1;
+  const sorted = Float64Array.from(xs).sort(), n = sorted.length;
+  const out = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const x = xs[i];
+    let lo = 0, hi = n;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (sorted[m] < x) lo = m + 1; else hi = m; }
+    const first = lo;
+    hi = n;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (sorted[m] <= x) lo = m + 1; else hi = m; }
+    out[i] = (first + lo - 1) / 2 + 1;
   }
   return out;
 }
@@ -51,12 +55,45 @@ export function similarity(metric, a, b) {
   return xs.length >= 3 ? SIMILARITIES[metric].of(xs, ys) : NaN;
 }
 
-// n × n similarities (row-major) of n vectors, by a function of two of them (by default `metric`'s)
-export function similarityMatrix(vectors, metric, of = (a, b) => similarity(metric, a, b)) {
+// a vector with nothing missing (of 3 or more entries) made so that the similarity (`metric`'s) of two such is their dot
+// product: ranked (Spearman's), centered (Pearson's and Spearman's), and of length 1; null if it has something missing (or
+// too few), false if it is constant (none then: NaN, as `similarity` gives)
+function unitVector(v, metric) {
+  if (v.length < 3) return null;
+  for (let k = 0; k < v.length; k++) if (v[k] !== v[k]) return null;
+  const x = Float64Array.from(metric === 'spearman' ? ranks(Array.from(v)) : v);
+  if (metric !== 'cosine') {
+    let m = 0;
+    for (let k = 0; k < x.length; k++) m += x[k];
+    m /= x.length;
+    for (let k = 0; k < x.length; k++) x[k] -= m;
+  }
+  let ss = 0;
+  for (let k = 0; k < x.length; k++) ss += x[k] * x[k];
+  if (!(ss > 0)) return false;
+  const norm = Math.sqrt(ss);
+  for (let k = 0; k < x.length; k++) x[k] /= norm;
+  return x;
+}
+
+// n × n similarities (row-major) of n vectors, by a function of two of them (by default `metric`'s; then of two
+// vectors with nothing missing, as their unit vectors' dot product, `unitVector`: thousands of KCs at once)
+export function similarityMatrix(vectors, metric, of = null) {
   const n = vectors.length, out = new Float32Array(n * n);
+  const units = !of && SIMILARITIES[metric] ? vectors.map((v) => unitVector(v, metric)) : null;
+  of = of || ((a, b) => similarity(metric, a, b));
   for (let i = 0; i < n; i++) {
     for (let j = i; j < n; j++) {
-      const v = of(vectors[i], vectors[j]);
+      const a = units?.[i], b = units?.[j];
+      let v;
+      if (a != null && b != null && a.length === b.length) {
+        if (a === false || b === false) v = NaN;
+        else {
+          let dot = 0;
+          for (let k = 0; k < a.length; k++) dot += a[k] * b[k];
+          v = Math.max(-1, Math.min(1, dot));
+        }
+      } else v = of(vectors[i], vectors[j]);
       out[i * n + j] = v;
       out[j * n + i] = v;
     }
