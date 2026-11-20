@@ -91,6 +91,7 @@ export class ModelsPage {
     this._seq = 0;
     this.summaryOf = null; // the baseline (id) whose summary is shown below their table
     this._kwargs = new Map(); // baseline id -> its fit_mb_model kwargs (model_data.model_kwargs), of the baselines' table
+    this._nameW = null; // the width (px) the baselines' names' column was dragged to (none: at most 18em)
     this.viewer = null;
     // (hideSame* ticked unless unticked: an older hideSame, unticked by default then, is not taken)
     const kept = h.LS.get(KEY, {});
@@ -393,9 +394,10 @@ export class ModelsPage {
     const grouped = groups.map(([g, cs, what]) => `<th colspan="${cs.length}" class="models-group${g ? ' named' : ''}"${what ? ` title="${esc(what)}"` : ''}>${g ? `<span class="th-plain">${esc(g)}</span>` : ''}</th>`).join('');
     $('#models-base-table').innerHTML = `<table class="odor-table models-table"><thead>
       <tr><th rowspan="2" class="b-summary">Summary</th><th rowspan="2" class="b-open">Open</th>
-        <th rowspan="2" class="b-name" title="Its variant: click one for its experiment's provenance.json"><span class="th-plain">name</span></th>${grouped}</tr>
+        <th rowspan="2" class="b-name" title="Its variant: click one for its experiment's provenance.json"><span class="th-plain">Name</span></th>${grouped}</tr>
       <tr>${this._head(params, false, b.glossary)}</tr></thead>
       <tbody>${b.models.map((m) => this._row(b, m, cols, null, 0, cols.length - 1, lead(m), (c) => this._baseCell(b, m, c))).join('')}</tbody></table>`;
+    this._layoutBase();
     this._showSummary();
     const det = $('#models-base-details');
     det.hidden = !b.details;
@@ -404,6 +406,57 @@ export class ModelsPage {
       $('#models-base-details-body').innerHTML = b.details;
       det.dataset.html = b.details;
     }
+  }
+
+  // the baselines' table as drawn: its names kept in view right after the runs (however wide those are), a line before
+  // each group of parameters but the first, down through every row, and, when some names are cut short, a grip on the
+  // names' right edge to drag it wider or narrower (double-click: as wide as the longest name)
+  _layoutBase() {
+    const wrap = this.h.$('#models-base-table'), table = wrap.querySelector('table');
+    if (!table) return;
+    if (!this._baseSeen) {
+      // (laid out again once shown: a hidden tab's table has no widths)
+      this._baseSeen = new ResizeObserver(() => { if (wrap.offsetWidth) this._layoutBase(); });
+      this._baseSeen.observe(wrap);
+    }
+    const [r1, r2] = table.tHead.rows, groups = [...r1.cells].slice(3);
+    let at = 0;
+    groups.forEach((th, k) => {
+      if (k > 0 && !th.classList.contains('g-start')) {
+        th.classList.add('g-start');
+        r2.cells[at].classList.add('g-start');
+        for (const tr of table.tBodies[0].rows) tr.cells[3 + at]?.classList.add('g-start');
+      }
+      at += th.colSpan;
+    });
+    if (!wrap.offsetWidth) return;
+    table.style.setProperty('--b-name-left', `${r1.cells[0].offsetWidth + r1.cells[1].offsetWidth}px`);
+    const th = r1.cells[2], names = [...table.querySelectorAll('td.model-name')];
+    const pad = names.length ? names[0].offsetWidth - names[0].clientWidth + parseFloat(getComputedStyle(names[0]).paddingLeft) * 2 : 0;
+    const longest = Math.ceil(Math.max(0, ...names.map((td) => td.firstElementChild?.scrollWidth ?? 0)) + pad);
+    const set = (w) => {
+      this._nameW = w;
+      table.style.setProperty('--b-name-min', w == null ? '' : `${w}px`);
+      table.style.setProperty('--b-name-w', w == null ? '' : `${w}px`);
+    };
+    set(this._nameW == null ? null : Math.min(this._nameW, longest));
+    let grip = th.querySelector('.col-grip');
+    if (longest <= th.offsetWidth + 1 && this._nameW == null) { grip?.remove(); return; }
+    if (grip) return;
+    grip = document.createElement('span');
+    grip.className = 'col-grip';
+    grip.title = 'Drag to widen or narrow the names (double-click: as wide as the longest)';
+    th.append(grip);
+    grip.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      grip.setPointerCapture(e.pointerId);
+      grip.classList.add('on');
+      const x0 = e.clientX, w0 = th.offsetWidth;
+      const move = (ev) => set(Math.round(Math.min(Math.max(w0 + ev.clientX - x0, 64), longest)));
+      grip.addEventListener('pointermove', move);
+      grip.addEventListener('pointerup', () => { grip.removeEventListener('pointermove', move); grip.classList.remove('on'); }, { once: true });
+    });
+    grip.addEventListener('dblclick', () => set(longest));
   }
 
   // the summary of the baseline whose Summary button was pressed (pressed again: hidden), below their table

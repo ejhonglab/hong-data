@@ -481,8 +481,8 @@ button.link { background: none; border: 0; padding: 0; color: var(--accent); tex
 /* the baselines' table: their Summary buttons first, kept in view at the left with their runs beside them */
 /* (and their names after them, also kept in view; two rows of headers, the first naming groups of parameters, kept at the top together) */
 .models-base-wrap thead { position: sticky; top: 0; z-index: 4; }
-.models-base-wrap thead th { top: auto; }
-.models-base-wrap thead tr + tr th:first-child { position: static; }  /* (the second row's first is a parameter's, not kept in view) */
+.models-base-wrap thead th { top: auto; vertical-align: bottom; }
+.models-base-wrap thead tr + tr th:first-child { position: static; padding: 0; }  /* (the second row's first is a parameter's, not kept in view) */
 /* (borders kept apart, so each cell draws its own and those of the cells kept in view move with them) */
 .models-base-wrap .models-table { border-collapse: separate; border-spacing: 0; }
 .models-base-wrap th.b-summary, .models-base-wrap td.model-summary { position: sticky; left: 0; background: var(--panel); z-index: 1; padding: 4px 8px; width: 6.5em; min-width: 6.5em; max-width: 6.5em; box-sizing: border-box; }
