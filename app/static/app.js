@@ -6379,26 +6379,23 @@ function neuralSpaceName(d) {
   return driver.includes('pebbled') ? 'ORNs' : driver.includes('gh146') ? 'PNs' : 'glomeruli';
 }
 
-// the KCs of a model run compared (ComparePage's o.models), as the Models tab kept them
+// the KCs of a model run compared (ComparePage's o.models' filter, first as the Models tab kept them, then as chosen in
+// its list): every one, or those that spike (or respond: at least its n_spikes_for_response spikes) to some odor compared
+const MODEL_FILTERS = { all: 'every KC', spiking: 'KCs that spike to some odor compared', responding: 'KCs responding to some odor compared' };
 function modelKcs(m) {
-  return m.filter === 'all' ? 'every KC' : m.filter === 'spiking' ? 'its KCs that spike to some odor'
-    : `its KCs with at least ${m.nSpikes} spikes to some odor`;
+  return m.filter === 'all' ? 'every KC' : m.filter === 'spiking' ? 'its KCs that spike to some odor compared'
+    : `its KCs with at least ${m.nSpikes} spikes to some odor compared`;
 }
 
-// A model run (from /api/models/run) as the Compare tab has a dataset: its odors (rows) by its
-// KCs (those of the filter chosen), the odors of the odor table alone identified
+// A model run (from /api/models/run) as the Compare tab has a dataset: its odors (rows) by every KC, the odors of the
+// odor table alone identified (its KCs kept by its filter over the odors compared: ComparePage's `_modelView`)
 function modelDataset(m, run) {
-  const nK = run.kcs.labels.length, nO = run.odors.length, v = decodeValues(run.values_b64), keep = [];
-  for (let k = 0; k < nK; k++) {
-    let max = -Infinity;
-    for (let o = 0; o < nO; o++) if (v[k * nO + o] > max) max = v[k * nO + o];
-    if (m.filter === 'all' || (m.filter === 'spiking' ? max > 0 : max >= m.nSpikes)) keep.push(k);
-  }
-  const values = new Float32Array(nO * keep.length);
-  for (let o = 0; o < nO; o++) keep.forEach((k, j) => { values[o * keep.length + j] = v[k * nO + o]; });
-  const cols = keep.map((k) => ({ label: run.kcs.labels[k] }));
+  const nK = run.kcs.labels.length, nO = run.odors.length, v = decodeValues(run.values_b64);
+  const values = new Float32Array(nO * nK);
+  for (let o = 0; o < nO; o++) for (let k = 0; k < nK; k++) values[o * nK + k] = v[k * nO + o];
+  const cols = run.kcs.labels.map((label) => ({ label }));
   return {
-    id: `model:${m.key}`, model: m, title: m.title, coding_unit: 'KCs (model)', kind: 'rois', response_calc: 'spike count', nKcs: nK,
+    id: `model:${m.id}`, model: m, title: m.title, coding_unit: 'KCs (model)', kind: 'rois', response_calc: 'spike count', nKcs: nK,
     rows: run.odors.map((o) => ({ panel: null, odor: o.odor, odor_id: o.odor_id, log10_conc: o.log10_conc, chem: o.chem })),
     cols, values, all: { cols, values }, nBad: 0,
   };
@@ -6547,7 +6544,7 @@ class ComparePage {
     this.unitData = new Map(); // dataset id -> the same by unit, even of glomeruli (?units=1), as its calculations are compared
     this.refData = new Map(); // reference id -> as from /api/reference/<id>
     this.modelRuns = new Map(); // model run id -> as from /api/models/run (o.models: those to compare, from the Models tab)
-    this.modelData = new Map(); // o.models' key -> the run as a dataset is here (`modelDataset`)
+    this.modelData = new Map(); // o.models' id -> the run as a dataset is here, every KC (`modelDataset`; as compared: `_modelView`)
     this.ecfp = new Map(); // diameter -> fingerprints
     this.memo = new Map(); // what is computed, by what it is of
     this.blocks = new Map(); // key -> {el, viewer}, kept while shown
@@ -6581,6 +6578,15 @@ class ComparePage {
     });
     $('#compare-list').addEventListener('change', (e) => {
       if (e.target.matches('select[data-calcs]')) { this._chooseCalc(+e.target.value, e.target.dataset.calcs.split(',').map(Number)); return; }
+      if (e.target.matches('select[data-model-filter]')) {
+        const filter = e.target.value, key = e.target.dataset.modelFilter, m = this.o.models.find((x) => x.key === key);
+        if (!m) return;
+        const changed = { ...m, filter, key: `${m.id}|${filter}` };
+        this.o.models = this.o.models.filter((x) => x.key !== changed.key || x === m).map((x) => (x === m ? changed : x));
+        this.o.calcs = null;
+        this._changed();
+        return;
+      }
       if (e.target.matches('.pick-model')) {
         this.o.models = this.o.models.map((m) => (m.key === e.target.dataset.key ? { ...m, shown: e.target.checked } : m));
         this.o.calcs = null;
@@ -6687,7 +6693,7 @@ class ComparePage {
     this.o.picked = this.o.picked.filter((id) => ids.has(id));
     if (!this.o.calcs?.every((id) => ids.has(id)) || !this.o.picked.some((id) => this.o.calcs.includes(id))) this.o.calcs = null;
     this.o.spaces = this.o.spaces.filter((k) => k === 'ecfp' || this.refs.some((r) => `ref:${r.id}` === k));
-    for (const [k, d] of this.modelData) if (d.error) { this.modelData.delete(k); this.modelRuns.delete(d.model.id); } // (tried again)
+    for (const [k, d] of this.modelData) if (d.error) { this.modelData.delete(k); this.modelRuns.delete(k); } // (tried again)
     this.renderList();
     await this.render();
   }
@@ -6698,13 +6704,16 @@ class ComparePage {
   _modelsHtml() {
     const ms = this.o.models;
     if (!ms.length) return '';
-    const item = (m) => `<label class="ds-item${m.shown ? ' active' : ''}">
+    const filters = (m) => Object.entries(MODEL_FILTERS).filter(([f]) => f !== 'responding' || m.nSpikes != null)
+      .map(([f, label]) => `<option value="${f}"${m.filter === f ? ' selected' : ''}>${esc(f === 'responding' ? `KCs with ${m.nSpikes}+ spikes to some odor compared` : label)}</option>`).join('');
+    const item = (m) => `<div class="ds-item cmp-item${m.shown ? ' active' : ''}"><label>
         <input type="checkbox" class="pick-model" data-key="${esc(m.key)}"${m.shown ? ' checked' : ''}>
         <span class="list-item"><span class="t">${esc(m.title)}</span>
-          <span class="s">${esc(modelKcs(m))}</span>
           <span class="s"><a href="#models/${encodeURIComponent(m.id)}" title="Open it in the Models tab">Models tab</a> ·
             <button type="button" class="link" data-forget-model="${esc(m.key)}" title="Take it off this list">remove</button></span>
-        </span></label>`;
+        </span></label>
+        <div class="cmp-calc"><select data-model-filter="${esc(m.key)}" aria-label="Its KCs compared"
+          title="Its KCs compared: a KC silent to every odor compared still changes a correlation (not cosine similarity)">${filters(m)}</select></div></div>`;
     return `<div class="list-section"><div class="list-group"><label>Models <span class="muted">(${ms.length})</span></label></div>${ms.map(item).join('')}</div>`;
   }
 
@@ -6938,7 +6947,26 @@ class ComparePage {
     });
   }
 
-  // a model run's (`modelDataset`), as a dataset's, its data its spike counts
+  // a model run as compared (`modelDataset`'s, `m` of o.models): its KCs those of its filter, over the odors compared (the
+  // rows of its chemicals, `_chemicals`, at the concentration chosen), as a dataset is (its id of its filter's key)
+  _modelView(m) {
+    const raw = this.modelData.get(m.id);
+    if (!raw || raw.error) return raw && { ...raw, id: `model:${m.key}`, model: m, title: m.title };
+    return this._memo(`modelview:${m.key}:${m.nSpikes}:${this.o.conc}`, () => {
+      const nK = raw.cols.length, used = this._chemicals(raw).rows.flat(), keep = [];
+      for (let k = 0; k < nK; k++) {
+        let max = -Infinity;
+        for (const o of used) if (raw.values[o * nK + k] > max) max = raw.values[o * nK + k];
+        if (m.filter === 'all' || (m.filter === 'responding' && m.nSpikes != null ? max >= m.nSpikes : max > 0)) keep.push(k);
+      }
+      const nO = raw.rows.length, values = new Float32Array(nO * keep.length);
+      for (let o = 0; o < nO; o++) keep.forEach((k, j) => { values[o * keep.length + j] = raw.values[o * nK + k]; });
+      const cols = keep.map((k) => raw.cols[k]);
+      return { ...raw, id: `model:${m.key}`, model: m, title: m.title, cols, values, all: { cols, values } };
+    });
+  }
+
+  // a model run's (`_modelView`), as a dataset's, its data its spike counts
   _modelSpace(d) {
     return this._memo(`model:${d.id}:${this.o.metric}:${this.o.conc}`, () => {
       const sp = this._datasetSpace(d);
@@ -7239,11 +7267,11 @@ class ComparePage {
   async render() {
     const seq = ++this._seq, view = $('#compare-view'), models = this.o.models.filter((m) => m.shown);
     $('#compare-empty').hidden = !!this.o.picked.length || !!models.length;
-    await Promise.all(models.filter((m) => !this.modelData.has(m.key)).map(async (m) => {
+    await Promise.all([...new Map(models.filter((m) => !this.modelData.has(m.id)).map((m) => [m.id, m])).values()].map(async (m) => {
       try {
         if (!this.modelRuns.has(m.id)) this.modelRuns.set(m.id, await api(`/api/models/run?id=${encodeURIComponent(m.id)}`));
-        this.modelData.set(m.key, modelDataset(m, this.modelRuns.get(m.id)));
-      } catch (e) { this.modelData.set(m.key, { id: `model:${m.key}`, model: m, title: m.title, error: e.message }); }
+        this.modelData.set(m.id, modelDataset(m, this.modelRuns.get(m.id)));
+      } catch (e) { this.modelData.set(m.id, { id: `model:${m.id}`, model: m, title: m.title, error: e.message }); }
     }));
     await Promise.all(this.o.picked.filter((id) => !this.data.has(id)).map(async (id) => {
       try { this.data.set(id, compareDataset(await api(`/api/compare/datasets/${id}`))); } catch (e) { this.data.set(id, { id, error: e.message }); }
@@ -7253,7 +7281,7 @@ class ComparePage {
     const spaces = await this._spaces();
     if (seq !== this._seq) return;
     // the model runs shown (first, as listed), as datasets
-    const datasets = [...models.map((m) => this.modelData.get(m.key)), ...this.o.picked.map((id) => this.data.get(id))];
+    const datasets = [...models.map((m) => this._modelView(m)), ...this.o.picked.map((id) => this.data.get(id))];
     // on a panel: those of the datasets shown, and the one compared on
     const panels = on === 'panel' ? this._panels(datasets) : null, panel = panels && this._panelKey(panels), pname = panel && panels.get(panel).name;
     this.panel = panel;
@@ -7410,14 +7438,14 @@ class ComparePage {
     const rows = d.rows.map((r) => ({ label: r.odor })); // (as a dataset's: as named in its file)
     if (this.o.show !== 'sim') {
       block(d.id, d.title, `KCs (model): ${d.rows.length} odors × ${d.cols.length.toLocaleString()} KCs, ${esc(modelKcs(d.model))} (of its
-        ${d.nKcs.toLocaleString()}); spike counts`, this._memo(`modeldata:${d.id}`, () => ({
+        ${d.nKcs.toLocaleString()}); spike counts`, this._memo(`modeldata:${d.id}:${this.o.conc}`, () => ({
         meta: { kind: 'sequential', scale: 'log', colormap: 'oklab-red', value_label: 'spike count', row_label: 'odor', col_label: 'KC' },
         rows, cols: d.cols, values: d.values, kcAxis: 'cols',
       })), `${stem}_spike_counts`);
     }
     if (this.o.show !== 'data') {
       block(`sim${d.id}`, `${d.title}: odor–odor similarity`, `${esc(metric)} of their spike counts across its KCs (${esc(modelKcs(d.model))})`,
-        this._memo(`modelsim:${d.id}:${this.o.metric}`, () => {
+        this._memo(`modelsim:${d.id}:${this.o.metric}:${this.o.conc}`, () => {
           const nC = d.cols.length, vectors = d.rows.map((_, i) => d.values.subarray(i * nC, (i + 1) * nC));
           return { meta: { kind: 'diverging', row_label: 'odor', col_label: 'odor', value_label: metric }, rows, cols: rows,
             values: similarityMatrix(vectors, this.o.metric), square: true };

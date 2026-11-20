@@ -771,8 +771,11 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   at least n spikes to some odor* those below the model's `n_spikes_for_response` too.
   Above it, its experiment's `provenance.json` (click to open), and the model's own
   `provenance_<tag>.json` beside it, if it has one (a fit's). *Compare* opens the Compare
-  tab with it at the top of the list on the left (its KCs as shown), to tick datasets to
-  compare with: there it is shown as a dataset is (odors by KCs, or its odor–odor
+  tab with it at the top of the list on the left, to tick datasets to compare with. Its KCs
+  there are first those kept here (every KC, those that spike, or those responding), changed in
+  its menu in that list; a KC is kept by what it does to the odors compared (those of the Odors
+  table, at the concentration chosen), as one silent to all of them would still change a
+  correlation (not a cosine similarity). There it is shown as a dataset is (odors by KCs, or its odor–odor
   similarity), correlated with the others' similarities, and side by side, on odors only.
   *Download* saves its spike counts as shown (as a reference dataset's matrix is, above:
   each KC's levels as in its file, and each odor's, with the Odors table's name,
