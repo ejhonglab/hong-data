@@ -689,7 +689,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   `provenance.json` keys of those names, an experiment's for all its models); tick *Also
   provenance.json's other keys* for the rest (what made them, notes, each model's
   settings: hundreds). The baseline models (chosen in the Admin tab) come first, in a table
-  of their own with the `params.csv` parameters they have, loaded before the rest: as
+  of their own with the `params.csv` parameters they have (those that differ between them,
+  unless *Hide parameters the same for every model that has them* is unticked), loaded before the rest: as
   imported into the site when chosen, with a warning saying how their files on tensor
   differ from that, if they do. Each one's *Summary* button says, in a few sentences, how
   its model was made (the texts are kept in `app/baseline_summaries.json`). The reference
@@ -741,8 +742,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   again from those files), `provenance.json`, a README and its log.
   Click a
   parameter to sort by it (again: the other way), type in *Find models* to list only those
-  with it in a value shown (or a run's name), and tick *Hide parameters the same for every
-  model that has them* to see what differs. Only the rows and columns in view are drawn, so
+  with it in a value shown (or a run's name), and untick *Hide parameters the same for every
+  model that has them* (ticked unless unticked) to see those that do not differ too. Only the rows and columns in view are drawn, so
   that hundreds of models by hundreds of parameters scroll as quickly as a few (and the
   browser's own find sees only those). Each row's buttons open its runs, one per
   condition (`on`, `acute_off`, …): its `*_spike_counts.parquet` files, there or in a folder

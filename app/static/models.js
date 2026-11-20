@@ -6,7 +6,7 @@
 // to odors in a viewer (KCs that never spike left out, unless chosen), to compare with datasets
 // in the Compare tab.
 
-const KEY = 'olfdb.models'; // {hideSame, allKeys, sort: {col, dir}}: kept in this browser
+const KEY = 'olfdb.models'; // {hideSameAll, hideSameBase, allKeys, sort: {col, dir}}: kept in this browser
 const EXP = ':experiment'; // the column of a model's experiment (its folder), before its parameters
 const ROW_H = 29; // a row's height (px) until it has been drawn, with its runs on one line
 const OVERSCAN = 20; // rows drawn above and below those in view
@@ -63,15 +63,20 @@ export class ModelsPage {
     this._seq = 0;
     this.summaryOf = null; // the baseline (id) whose summary is shown below their table
     this.viewer = null;
-    this.o = { hideSame: false, allKeys: false, sort: { col: null, dir: 1 }, ...h.LS.get(KEY, {}) };
+    // (hideSame* ticked unless unticked: an older hideSame, unticked by default then, is not taken)
+    const kept = h.LS.get(KEY, {});
+    delete kept.hideSame;
+    this.o = { hideSameAll: true, hideSameBase: true, allKeys: false, sort: { col: null, dir: 1 }, ...kept };
     this.find = ''; // what the rows shown have, as typed
     this.heights = new Map(); // a model's row height as drawn (px), by its index in data.models
     this.widths = new Map(); // a column's width (characters), of data
     this.view = null; // the table of every model as laid out: {cols, order, lefts, first, last, c0, c1} (the rows and columns drawn)
     this.filter = { spiking: true, responding: false };
     const { $ } = h;
-    $('#models-hide-same').checked = !!this.o.hideSame;
-    $('#models-hide-same').addEventListener('change', (e) => { this.o.hideSame = e.target.checked; this._save(); this.render(); });
+    $('#models-hide-same').checked = !!this.o.hideSameAll;
+    $('#models-hide-same').addEventListener('change', (e) => { this.o.hideSameAll = e.target.checked; this._save(); this.render(); });
+    $('#models-base-hide-same').checked = !!this.o.hideSameBase;
+    $('#models-base-hide-same').addEventListener('change', (e) => { this.o.hideSameBase = e.target.checked; this._save(); this.renderBase(); });
     $('#models-all-keys').checked = !!this.o.allKeys;
     $('#models-all-keys').addEventListener('change', (e) => { this.o.allKeys = e.target.checked; this._save(); this.render(); });
     let findTimer = null;
@@ -117,7 +122,7 @@ export class ModelsPage {
     h.wireMenu($('#model-download'), ({ format }) => this._download(format));
   }
 
-  _save() { this.h.LS.set(KEY, { hideSame: this.o.hideSame, allKeys: this.o.allKeys, sort: this.o.sort }); }
+  _save() { const o = this.o; this.h.LS.set(KEY, { hideSameAll: o.hideSameAll, hideSameBase: o.hideSameBase, allKeys: o.allKeys, sort: o.sort }); }
 
   // after folders of model data, or baselines, were added, changed or deleted (Admin tab): read again when next shown
   invalidate() { this.data = null; this.base = null; this.runs.clear(); this.shown.clear(); }
@@ -216,7 +221,7 @@ export class ModelsPage {
   _columns() {
     const d = this.data;
     let cols = this.o.allKeys ? d.columns : d.columns.filter((c) => c === 'generated' || d.paramCols.has(c));
-    if (this.o.hideSame) cols = cols.filter((c) => this._differ(d, d.models, c));
+    if (this.o.hideSameAll) cols = cols.filter((c) => this._differ(d, d.models, c));
     return cols;
   }
 
@@ -253,7 +258,7 @@ export class ModelsPage {
     }).join('');
   }
 
-  // the baselines' table: their params.csv's parameters that they have (few, and few differ)
+  // the baselines' table: their params.csv's parameters that they have (few, and few differ; as chosen, only those that do)
   renderBase() {
     const { $, esc, msgBox } = this.h, b = this.base;
     if (!b) return;
@@ -268,7 +273,8 @@ export class ModelsPage {
         into olfdb, so not backed up (<a href="#admin">Admin tab</a>: Import).`)));
     $('#models-base-count').textContent = b.models.length > 1 ? `${b.models.length}` : '';
     if (!b.models.length) { $('#models-base-table').replaceChildren(); return; }
-    const cols = [EXP, ...b.columns.filter((c) => (c === 'generated' || b.paramCols.has(c)) && b.models.some((m) => this._value(b, m, c) != null))];
+    const cols = [EXP, ...b.columns.filter((c) => (c === 'generated' || b.paramCols.has(c)) && b.models.some((m) => this._value(b, m, c) != null)
+      && (!this.o.hideSameBase || this._differ(b, b.models, c)))];
     const byId = new Map(b.baselines.map((x) => [x.id, x]));
     const lead = (m) => {
       const x = byId.get(m.baseline), on = x && this.summaryOf === x.id;

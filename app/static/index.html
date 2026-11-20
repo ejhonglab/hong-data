@@ -1298,6 +1298,9 @@ try {
         <p class="muted small">Chosen in the <a href="#admin">Admin tab</a> (under <i>Model data</i>), with the parameters of their
           <code>params.csv</code> that they have; <i>Summary</i> says in a few sentences how each was made. Shown as imported into olfdb when chosen (so backups have them), and in the table of every model too, as on tensor.</p>
         <div id="models-base-status"></div>
+        <div class="actions models-tools">
+          <label class="check"><input type="checkbox" id="models-base-hide-same" checked> Hide parameters the same for every model that has them</label>
+        </div>
         <div id="models-base-table" class="models-table-wrap models-base-wrap"></div>
         <div id="models-base-summary" class="models-base-summary" aria-live="polite" hidden></div>
         <details id="models-base-details" class="models-base-details" hidden><summary>Model details</summary>
@@ -1333,7 +1336,7 @@ try {
         <div class="actions models-tools">
           <input type="search" id="models-find" class="models-find" placeholder="Find models: any value shown" aria-label="Find models: any value shown" spellcheck="false" autocomplete="off">
           <label class="check" title="Parameters are the columns of the params.csv files (and the keys of their provenance.json of the same names, which an experiment sets for all its models); its other keys are what made the models (script, commits, notes, …) and the settings of each"><input type="checkbox" id="models-all-keys"> Also provenance.json's other keys <span class="muted" id="models-all-n"></span></label>
-          <label class="check"><input type="checkbox" id="models-hide-same"> Hide parameters the same for every model that has them</label>
+          <label class="check"><input type="checkbox" id="models-hide-same" checked> Hide parameters the same for every model that has them</label>
           <span class="muted small" id="models-shown"></span>
         </div>
         <div id="models-table" class="models-table-wrap"></div>
