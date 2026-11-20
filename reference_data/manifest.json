@@ -3,6 +3,7 @@
   {
    "id": "hallem-carlson-2006",
    "title": "Hallem & Carlson 2006: ORN responses",
+   "group": "Responses",
    "description": "Every ORN response the paper tabulates, as the change in spike rate from the spontaneous rate: its 110 odors at 10^-2, 10 of them at 10^-4, 10^-6 and 10^-8, and 9 fruits pure (@ 0) and at 10^-2 to 10^-6 (its supplemental tables). Each receptor as its glomerulus (DM3: Or47a). What ORN data is scaled to before a baseline model is run on it (Models tab).",
    "file": "hallem_carlson_2006.csv",
    "kind": "diverging",

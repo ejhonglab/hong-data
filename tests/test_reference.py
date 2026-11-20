@@ -627,3 +627,20 @@ def test_change_value_and_delete_all(env, tmp_path):
     assert status == 200 and [d["id"] for d in r["deleted"]] == ["vcf", "fruits-2"] and r["errors"] == [{"id": "nope", "error": "reference dataset not found"}]
     assert env.db.list_references() == [] and p.exists() and other.exists()
     assert call(env.admin_reference_delete_all, body={"ids": []})[0] == 400
+
+
+def test_group(env, tmp_path):
+    # given when added, listed with it; changed alone (its file not read again), or cleared
+    p = write(tmp_path / "refs" / "fruits.csv", "chemical,banana\nethyl acetate,1\n")
+    sandbox.activate({"read_dirs": [str(tmp_path / "refs")], "write_dirs": []})
+    status, r = call(env.admin_reference_add, body={"path": str(p), "title": "Fruits", "group": "  Chemical   things "})
+    assert status == 200
+    ref_id = r["id"]
+    group = lambda: next(d for d in call(env.reference_list)[1]["datasets"] if d["id"] == ref_id)["group"]  # noqa: E731
+    assert group() == "Chemical things"
+    p.unlink()  # (not read for a change of group alone)
+    status, r = call(env.admin_reference_update, path_params={"ref_id": ref_id}, body={"group": "Responses"})
+    assert status == 200 and r == {"ok": True, "id": ref_id} and group() == "Responses"
+    assert call(env.admin_reference_update, path_params={"ref_id": ref_id}, body={"group": ""})[0] == 200 and group() is None
+    assert next(d for d in call(env.reference_list)[1]["datasets"] if d["id"] == "fruits")["group"] is None  # (built in: none in its manifest)
+    assert call(env.admin_reference_update, path_params={"ref_id": "nothing"}, body={"group": "x"})[0] == 404

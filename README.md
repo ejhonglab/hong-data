@@ -591,7 +591,10 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
 - **Reference data**: tables added in the Admin tab (below), and any in
   `reference_data/` listed in its `manifest.json` (format in
   [reference_data/README.md](reference_data/README.md)); its two synthetic examples
-  only until there is any other. The list ends with *ECFP*, not a table: how to compare
+  only until there is any other. Each is listed by its title alone (its description and
+  warnings atop it, once chosen), under its group if it has one (given in the Admin tab, or
+  `"group"` in the manifest): a section of the list that collapses, staying so on reload.
+  *ECFP*, under *Chemical*, is not a table: how to compare
   data with chemical structure (ECFP6 fingerprints) in the Compare tab, with a link there
   with it ticked; under the list, a link to the Admin tab to add reference datasets.
   *Download* (by its title) saves one as its matrix, a wide CSV of its rows and columns as
@@ -1112,7 +1115,8 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     type it, as other paths on tensor are, its folders and the files it can read listed) or
     its absolute path (completed only under tensor's), checked as you type it (when the
     server may read it: its size, and how many of its chemicals match the Odors tab), with a title,
-    description, source, labels, colors (or from its values) and whether its rows or
+    group (optional; those given before suggested, any typed taken; changed in its row of
+    the list above, for any added here), description, source, labels, colors (or from its values) and whether its rows or
     columns are chemicals (or found from identifier columns, e.g. `cid`, `pubchem_cid`,
     `inchi`, `cas`, `name`, or rows labelled so; of a DataArray, coordinates named so).
     Once read, its fields are listed, to choose which make the matrix (the rest are

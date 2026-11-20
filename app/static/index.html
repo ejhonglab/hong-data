@@ -1029,7 +1029,9 @@ try {
           <label class="field span2"><span>File on the server * <span class="muted">(on tensor from its top, or any absolute path)</span></span><input id="ref-path" data-tensor-path data-files="reference" spellcheck="false" autocomplete="off" placeholder="e.g. tom/reference/fruit_volatiles.csv, or /srv/reference/fruit_volatiles.csv"><span class="path-msg" id="ref-path-msg" aria-live="polite"></span></label>
           <label class="field"><span>Title *</span><input id="ref-title" placeholder="e.g. Volatile concentrations across fruits"></label>
           <label class="field"><span>Source</span><input id="ref-source" placeholder="citation or URL"></label>
-          <label class="field span2"><span>Description</span><input id="ref-description" placeholder="one or two sentences shown under the title"></label>
+          <label class="field"><span>Group <span class="muted">(optional: listed under it)</span></span><input id="ref-group" list="dl-ref-groups" spellcheck="false" autocomplete="off" placeholder="e.g. Chemical, Responses"></label>
+          <label class="field"><span>Description</span><input id="ref-description" placeholder="one or two sentences shown under the title"></label>
+          <datalist id="dl-ref-groups"></datalist>
           <label class="field"><span>Chemicals are</span><select id="ref-axis">
             <option value="detect">found from identifiers or names</option><option value="rows">its rows</option>
             <option value="cols">its columns</option><option value="none">neither (not about chemicals)</option></select></label>

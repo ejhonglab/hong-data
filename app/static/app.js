@@ -4211,6 +4211,11 @@ function refSubset(ref, { unidentified = true, onlyOdors = false } = {}) {
 // the Reference data list's entry for ECFP (not a dataset: `Reference._showEcfp`), an id no
 // reference dataset can have (those added in the Admin tab are only a-z, 0-9 and '-')
 const ECFP_REF = '_ecfp';
+const ECFP_GROUP = 'Chemical'; // (the group ECFP is listed under)
+const REF_GROUPS_CLOSED = 'olfdb.refGroupsClosed'; // (localStorage: the groups of the Reference data list collapsed)
+function refGroupsClosed() {
+  try { return new Set(JSON.parse(localStorage.getItem(REF_GROUPS_CLOSED) || '[]')); } catch { return new Set(); }
+}
 const REF_BUNDLE_RE = /\.(sqlite3?|db)$/i; // a reference dataset's file that is a bundle (MetaCyc or LOTUS: their SUFFIXES)
 
 class Reference {
@@ -4288,21 +4293,29 @@ class Reference {
       setAdminBadge(this.items);
     }
     const list = $('#reference-list');
-    const ecfp = `<button type="button" class="list-item${this.selected === ECFP_REF ? ' active' : ''}" data-id="${ECFP_REF}">
-      <span class="t">ECFP</span><span class="s">Chemical structure: compared with in the Compare tab</span></button>`;
-    if (!this.items.length) {
-      list.innerHTML = `<div class="empty">No reference data yet: it is added in the Admin tab.</div>${ecfp}`;
-      $('.list-item', list).addEventListener('click', () => { location.hash = `#reference/${ECFP_REF}`; });
-      return;
-    }
-    list.innerHTML = this.items.map((it) => {
-      const ok = it.state === 'ok';
-      const why = ok ? [it.warning, it.stereo].filter(Boolean).map((w) => `<span class="s warn">⚠ ${esc(w)}</span>`).join('')
-        : `<span class="s ${it.state === 'error' ? 'bad' : 'muted'}">${esc(it.state === 'error' ? `Cannot be read: ${it.error}` : 'Read once the server restarts')}</span>`;
+    // (each by its title alone: its description and warnings are shown atop it once chosen)
+    const item = (it) => {
+      const why = it.state === 'ok' ? '' : `<span class="s ${it.state === 'error' ? 'bad' : 'muted'}">${
+        esc(it.state === 'error' ? `Cannot be read: ${it.error}` : 'Read once the server restarts')}</span>`;
       return `<button type="button" class="list-item${this.selected === it.id ? ' active' : ''}" data-id="${esc(it.id)}">
-        <span class="t">${esc(it.title)}</span>${ok && it.description ? `<span class="s">${esc(it.description)}</span>` : ''}${why}</button>`;
-    }).join('') + ecfp;
+        <span class="t">${esc(it.title)}</span>${why}</button>`;
+    };
+    const items = [...this.items, { id: ECFP_REF, title: 'ECFP', state: 'ok', group: ECFP_GROUP }];
+    const groups = [...new Set(items.map((it) => it.group).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    const closed = refGroupsClosed();
+    list.innerHTML = (this.items.length ? '' : '<div class="empty">No reference data yet: it is added in the Admin tab.</div>')
+      + items.filter((it) => !it.group).map(item).join('')
+      + groups.map((g) => {
+        const of = items.filter((it) => it.group === g), open = !closed.has(g) || of.some((it) => it.id === this.selected);
+        return `<details class="list-section ref-group" data-group="${esc(g)}"${open ? ' open' : ''}>
+          <summary class="list-group">${esc(g)} <span class="muted">(${of.length})</span></summary>${of.map(item).join('')}</details>`;
+      }).join('');
     $$('.list-item', list).forEach((b) => b.addEventListener('click', () => { location.hash = `#reference/${b.dataset.id}`; }));
+    $$('details.ref-group', list).forEach((d) => d.addEventListener('toggle', () => {
+      const now = refGroupsClosed(), g = d.dataset.group;
+      const next = d.open ? [...now].filter((x) => x !== g) : [...now, g];
+      try { localStorage.setItem(REF_GROUPS_CLOSED, JSON.stringify([...new Set(next)])); } catch { /* (as it was, next time) */ }
+    }));
   }
 
   async show(id) {
@@ -4990,6 +5003,10 @@ class AdminPage {
       if (c) this.editRef(c.dataset.editRef);
       if (e.target.closest('[data-delete-all-refs]')) this.deleteAllRefs();
     });
+    $('#admin-refs-list').addEventListener('change', (e) => {
+      const g = e.target.closest('[data-ref-group]');
+      if (g) this.setRefGroup(g.dataset.refGroup, g);
+    });
     // MetaCyc and LOTUS imported here (bundle_import.py)
     const helpers = { api, postForm, esc, msgBox, listHtml, fmtBytes, fmtWhen,
       refTitle: (id) => this.refs?.find((r) => r.id === id)?.title || id, onAdded: () => { reference.invalidate(); this.loadRefs(); } };
@@ -5475,6 +5492,8 @@ class AdminPage {
     $('#admin-refs-status').replaceChildren(...(broken.length ? [msgBox('error',
       `<b>${broken.length} reference dataset${broken.length === 1 ? '' : 's'} cannot be read</b>, and ${broken.length === 1 ? 'is' : 'are'} listed by name alone in the Reference data tab: ${broken.map((r) => esc(r.title)).join(', ')} (why: below).`)] : []));
     // those added here (the built-in examples are only in the Reference data tab), and any that cannot be read
+    $('#dl-ref-groups').innerHTML = [...new Set([ECFP_GROUP, ...this.refs.map((r) => r.group).filter(Boolean)])]
+      .sort((a, b) => a.localeCompare(b)).map((g) => `<option value="${esc(g)}">`).join('');
     const listed = this.refs.filter((r) => r.origin === 'admin' || r.state === 'error');
     if (!listed.length) { $('#admin-refs-list').innerHTML = '<p class="muted">None added yet.</p>'; return; }
     // (a LOTUS bundle's settings, or a file's fields; a MetaCyc bundle's view is added again)
@@ -5488,8 +5507,10 @@ class AdminPage {
           ? ` <a href="#reference/${esc(r.id)}">(which)</a>` : ''}` : '')
         + (r.stereo ? `<br><span class="warn">⚠ ${esc(r.stereo)}</span> <a href="#reference/${esc(r.id)}">(which)</a>` : '');
     };
-    $('#admin-refs-list').innerHTML = `<table class="odor-table"><thead><tr><th>Title</th><th>File</th><th>State</th><th></th></tr></thead><tbody>
+    $('#admin-refs-list').innerHTML = `<table class="odor-table"><thead><tr><th>Title</th><th>Group</th><th>File</th><th>State</th><th></th></tr></thead><tbody>
       ${listed.map((r) => `<tr><td><a href="#reference/${esc(r.id)}">${esc(r.title)}</a></td>
+        <td>${r.origin === 'admin' ? `<input class="ref-group-input" list="dl-ref-groups" spellcheck="false" autocomplete="off" data-ref-group="${esc(r.id)}"
+          value="${esc(r.group || '')}" placeholder="none" aria-label="Group of ${esc(r.title)}">` : esc(r.group || '')}</td>
         <td><code>${esc(r.path)}</code>${r.origin === 'builtin' ? ' <span class="muted">(built in)</span>' : ''}</td><td>${stateHtml(r)}</td>
         <td>${r.origin === 'admin' ? `${editable(r) ? `<button type="button" class="btn small" data-edit-ref="${esc(r.id)}">Change settings…</button> ` : ''}<button type="button" class="btn small" data-delete-ref="${esc(r.id)}">Delete…</button>`
           : '<span class="muted small" title="Remove it from reference_data/manifest.json on the server">built in</span>'}</td></tr>`).join('')}</tbody></table>
@@ -5500,7 +5521,7 @@ class AdminPage {
     const v = (id) => $(id).value.trim(), f = this.refFields, chosen = f && f.layout !== 'matrix';
     if (f?.layout === 'lotus') { // (labels left empty: as suggested for its settings, see _lotusSuggest)
       return {
-        path: v('#ref-path'), title: v('#ref-title'), description: v('#ref-description'), source: v('#ref-source') || this._ltSource || '',
+        path: v('#ref-path'), title: v('#ref-title'), group: v('#ref-group'), description: v('#ref-description'), source: v('#ref-source') || this._ltSource || '',
         chemical_axis: $('#ref-axis').value, kind: $('#ref-kind').value, fields: f,
         value_label: v('#ref-value-label') || this._ltValueLabel || '', row_label: v('#ref-row-label') || 'chemical',
         col_label: v('#ref-col-label') || f.level || '',
@@ -5509,14 +5530,14 @@ class AdminPage {
     if (f?.layout === 'metacyc') {
       const lca = f.view === 'lca';
       return {
-        path: v('#ref-path'), title: v('#ref-title'), description: v('#ref-description'), source: v('#ref-source'),
+        path: v('#ref-path'), title: v('#ref-title'), group: v('#ref-group'), description: v('#ref-description'), source: v('#ref-source'),
         chemical_axis: $('#ref-axis').value, kind: $('#ref-kind').value, fields: f,
         value_label: v('#ref-value-label') || (lca ? 'steps to their lowest common ancestor' : 'in the pathway'),
         row_label: v('#ref-row-label') || 'chemical', col_label: v('#ref-col-label') || (lca ? 'chemical' : 'pathway'),
       };
     }
     return {
-      path: v('#ref-path'), title: v('#ref-title'), description: v('#ref-description'), source: v('#ref-source'),
+      path: v('#ref-path'), title: v('#ref-title'), group: v('#ref-group'), description: v('#ref-description'), source: v('#ref-source'),
       chemical_axis: $('#ref-axis').value, kind: $('#ref-kind').value, fields: f,
       // by default, the fields chosen
       value_label: v('#ref-value-label') || (chosen && f.layout === 'list' ? (f.value || 'presence') : ''),
@@ -5758,7 +5779,7 @@ class AdminPage {
 
   // the form above emptied, to add another (no longer changing one)
   _resetRefForm() {
-    for (const id of ['#ref-path', '#ref-title', '#ref-description', '#ref-source', '#ref-value-label', '#ref-row-label', '#ref-col-label']) $(id).value = '';
+    for (const id of ['#ref-path', '#ref-title', '#ref-group', '#ref-description', '#ref-source', '#ref-value-label', '#ref-row-label', '#ref-col-label']) $(id).value = '';
     for (const id of ['#ref-axis', '#ref-kind']) $(id).value = 'detect';
     showRefCheck(null);
     this._renderFields(null);
@@ -5774,6 +5795,22 @@ class AdminPage {
   // an added reference dataset's settings (a LOTUS bundle's, or the fields of a file's: e.g.
   // its value field), in the form to change (Save changes) or not (Cancel); labels as
   // suggested for its settings left empty, to follow them (`_refBody`)
+  // the group of an added reference dataset changed in its row of the table (`input`)
+  async setRefGroup(id, input) {
+    const out = $('#admin-refs-status');
+    input.disabled = true;
+    try {
+      const res = await api(`/api/admin/references/${encodeURIComponent(id)}`, { method: 'PATCH', json: { group: input.value } });
+      if (!res.ok) throw new Error(res.errors.join('; '));
+    } catch (e) {
+      out.replaceChildren(msgBox('error', `Could not change its group: ${esc(e.message)}`));
+      input.disabled = false;
+      return;
+    }
+    reference.invalidate();
+    this.loadRefs();
+  }
+
   editRef(id) {
     const r = this.refs.find((x) => x.id === id), lt = r?.lotus;
     if (!r) return;
@@ -5786,6 +5823,7 @@ class AdminPage {
     $('#ref-path').readOnly = true;
     $('#ref-title').value = r.title || '';
     this._ltTitle = lt && r.title === lt.title ? r.title : null;
+    $('#ref-group').value = r.group || '';
     $('#ref-description').value = r.description || '';
     $('#ref-source').value = r.source || '';
     $('#ref-value-label').value = r.value_label && r.value_label !== follows.value ? r.value_label : '';

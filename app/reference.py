@@ -1163,6 +1163,7 @@ def listing(db, index: odormeta.OdorIndex) -> list[dict]:
         rec = e.pop("record")
         item = {k: e.get(k) for k in ("id", "title", "description", "origin", "path", "state", "error", "source",
                                       "read_grant", "created_at", "value_label", "row_label", "col_label", "chemical_axis")}
+        item["group"] = _group(e.get("group_name") if e["origin"] == "admin" else e.get("group"))
         item["kind_setting"] = e.get("kind")
         item["fields"] = _fields(e.get("fields"))  # (as chosen: to change them in the Admin tab)
         item["warning"] = item["stereo"] = None
@@ -1334,6 +1335,7 @@ def add(db, body: dict, index: odormeta.OdorIndex, supervisor: Optional[str]) ->
     once it restarts."""
     fields = {k: (str(body.get(k) or "").strip() or None) for k in ("title", "description", "value_label", "row_label",
                                                                     "col_label", "source")}
+    fields["group_name"] = _group(body.get("group"))
     kind, axis = body.get("kind") or "detect", body.get("chemical_axis") or "detect"
     errors = []
     if not fields["title"]:
@@ -1369,6 +1371,11 @@ def _bundle_fields(path: str, used: Optional[dict]) -> Optional[dict]:
 EDITABLE = ("title", "description", "value_label", "row_label", "col_label", "source")
 
 
+def _group(v) -> Optional[str]:
+    """A group as entered (None: none), its spaces collapsed."""
+    return " ".join(str(v or "").split()) or None
+
+
 def update(db, ref_id: str, body: dict, index: odormeta.OdorIndex, supervisor: Optional[str]) -> tuple[int, dict]:
     """Change the settings of a reference dataset added in the Admin tab (any of those `add`
     takes but its file; those not in `body` are kept): (status, response). Its file is read
@@ -1378,7 +1385,12 @@ def update(db, ref_id: str, body: dict, index: odormeta.OdorIndex, supervisor: O
         if any(e["id"] == ref_id for e in manifest()):
             return 409, {"ok": False, "errors": ["it is built in: change it in reference_data/manifest.json on the server"]}
         return 404, {"ok": False, "errors": ["reference dataset not found"]}
+    if body.keys() == {"group"}:  # (only its group: its file not read again)
+        db.update_reference({**ref, "group_name": _group(body["group"])})
+        return 200, {"ok": True, "id": ref_id}
     new = dict(ref)
+    if "group" in body:
+        new["group_name"] = _group(body["group"])
     for k in EDITABLE:
         if k in body:
             new[k] = str(body.get(k) or "").strip() or None

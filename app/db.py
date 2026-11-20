@@ -181,7 +181,8 @@ CREATE TABLE IF NOT EXISTS reference_datasets (  -- added in the Admin tab (see 
     col_label TEXT,
     source TEXT,
     read_grant TEXT,                   -- the path added to the folders the server may read for it, if one was
-    fields TEXT                        -- JSON: which of its fields make its rows, columns and values (reference.parse)
+    fields TEXT,                       -- JSON: which of its fields make its rows, columns and values (reference.parse)
+    group_name TEXT                    -- the group it is listed under in the Reference data tab, if any
 );
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -349,7 +350,7 @@ PROPERTY_COLUMNS = {"vapor_pressure": "vapor_pressure_kpa", "est_vapor_pressure"
                     "molar_mass": "molar_mass_g_mol", "density": "density_g_ml", "k_henry": "k_henry_mol_m3_pa",
                     "k_henry_pfo": "k_henry_pfo_mol_m3_pa"}
 ADDED_COLUMNS = [("datasets", "mocorr_data_path", "TEXT"), ("datasets", "data_files", "TEXT"), ("datasets", "manipulations", "TEXT"), ("datasets", "response_calc", "TEXT"),
-                 ("reference_datasets", "fields", "TEXT"), ("units", "bad", "INTEGER"),
+                 ("reference_datasets", "fields", "TEXT"), ("reference_datasets", "group_name", "TEXT"), ("units", "bad", "INTEGER"),
                  ("units", "extra_json", "TEXT"), ("model_sources", "skip", "TEXT NOT NULL DEFAULT ''"),
                  ("model_baselines", "imported_at", "TEXT"), ("model_baselines", "imported_json", "TEXT"),
                  ("extractions", "raw_dir", "TEXT"), ("predictions", "options_json", "TEXT"),
@@ -363,7 +364,7 @@ USER_DIR_COLUMNS = ("raw_dirs", "mocorr_dirs", "odor_dirs")
 ODOR_COLUMNS = ("name", "abbrev", "aliases", "cid", "cas", "solvent", "supplier", "catalog_no", "catalog_url",
                 "metacyc", "lotus", "inventory", "notes")
 REFERENCE_COLUMNS = ("id", "created_at", "path", "title", "description", "kind", "chemical_axis", "value_label",
-                     "row_label", "col_label", "source", "read_grant", "fields")
+                     "row_label", "col_label", "source", "read_grant", "fields", "group_name")
 
 
 # tables written only along with their dataset (whose row in `datasets` tells of any change)

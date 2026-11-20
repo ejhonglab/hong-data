@@ -39,6 +39,9 @@ these, by their labels, as names or abbreviations in the Odors tab. They are lab
 their names there, and a matrix with chemicals not identified by a CID or InChI is
 shown with a warning, and without them unless they are chosen to be shown too.
 
+It may also give `"group"`: the collapsible group it is listed under in the Reference data
+tab (e.g. `"Responses"`), as those added in the Admin tab are given one there.
+
 ```
 chemical,cid,group,banana,strawberry
 ethyl acetate,8857,esters,2.1,1.4

@@ -1215,3 +1215,9 @@ dialog.roi-identity::backdrop { background: rgba(29,31,34,.3); }
 .atlas-row.hidden-row .atlas-name, .atlas-row.hidden-row .swatch-roi { opacity: 0.4; }
 .atlas-row .btn.small { padding: 1px 6px; }
 @media (max-width: 900px) { .atlas-layout { grid-template-columns: 1fr; } .atlas-side { height: auto; } .atlas-list { max-height: 50vh; } }
+
+/* the Reference data list's groups, collapsible */
+.ref-group > summary.list-group { cursor: pointer; user-select: none; }
+.ref-group > summary.list-group:hover { color: var(--ink); }
+.ref-group > .list-item { padding-left: 24px; }
+.ref-group-input { width: 10em; }
