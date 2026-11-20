@@ -567,6 +567,11 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     remove a glomerulus from every fly. Choosing another order in the toolbar replaces the dragged one. The orange
     *Reset rows & columns* brings back everything removed, in the toolbar's order.
     Edits are kept for each dataset while you look at others.
+  - *Show* (Browse and Models tabs): *odor–odor similarity* in place of the data, by
+    Pearson or Spearman correlation or cosine similarity (as in the Compare tab, which has
+    its own control): of the odors (or each trial of them) shown, over the ROIs or KCs
+    shown, so what is removed, hidden or summed is left out of it too. Removing or
+    moving an odor there removes or moves it in the data as well.
   - *Sum over KCs* (KC data): each fly's KCs (those not removed or hidden) summed into
     one row per odor or trial, missing values left out; ROIs are then neither clustered
     nor reordered.

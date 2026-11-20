@@ -1676,6 +1676,10 @@ try {
       <label><span data-role="rows-label">Rows</span> <select data-opt="rowOrder"><option value="fly">fly, then ROI</option><option value="roi">ROI, then fly</option><option value="none">ungrouped</option></select></label>
       <label>ROI order <select data-opt="roiSort"><option value="file">as in file</option><option value="sorted">sorted</option></select></label>
     </div>
+    <div class="vt-group" data-role="sim" hidden title="The odors' similarity to each other (as the Compare tab can show it), by their values over the rows shown (ROIs or KCs; those removed or hidden left out, pairs of odors with fewer than 3 values both have, none), in place of the values themselves">
+      <label>Show <select data-opt="show"><option value="data">data</option><option value="sim">odor–odor similarity</option></select></label>
+      <label>by <select data-opt="simMetric"></select></label>
+    </div>
     <div class="vt-group" data-role="cols">
       <label>Odors <select data-opt="odorOrder"><option value="file">as in file</option><option value="name">by name, then conc.</option></select></label>
     </div>

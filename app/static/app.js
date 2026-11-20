@@ -959,11 +959,14 @@ const clusteredOf = (saved, kind) => ({ clusterRows: !!saved.clustered?.[kind]?.
 
 class MatrixViewer {
   // cells: [width, height] of this viewer's cells to start with, not those of every viewer;
-  // asUploaded: odors as named in the data, whatever Settings say (the upload preview)
-  constructor(container, { kind = 'neural', cells = null, asUploaded = false } = {}) {
+  // asUploaded: odors as named in the data, whatever Settings say (the upload preview);
+  // similarity: whether it can show the odors' similarities to each other in place of the data
+  // (its odors being its columns: those of neural data, of a model run's spike counts)
+  constructor(container, { kind = 'neural', cells = null, asUploaded = false, similarity = false } = {}) {
     this.container = container;
     this.kind = kind;
     this.asUploaded = asUploaded;
+    this.similarity = similarity;
     this.kc = false; // whether it shows KCs: then its ROIs marked bad can be hidden
     this.hideBad = false; // whether they are (for each new matrix, if it has any)
     container.classList.add('viewer');
@@ -992,14 +995,19 @@ class MatrixViewer {
       {
         mode: 'average', rowOrder: 'fly', roiSort: 'file', odorOrder: 'file', clusterRows: false, clusterCols: false, metric: 'correlation',
         cellW: 16, cellH: 16, colormap: 'oklab-div', range: 'twoslope', clip: false, chemLabels: 'name', sumKCs: false, hideControls: false,
-        scale: 'auto', sortRows: 'file', sortCols: 'file',
+        scale: 'auto', sortRows: 'file', sortCols: 'file', simMetric: 'pearson',
       },
       saved,
       { transpose: !!saved.transposed?.[kind] },
       kind === 'neural' ? {} : clusteredOf(saved, kind),
       cells ? { cellW: cells[0], cellH: cells[1] } : {},
       { scale: 'auto' }, // (as chosen for each matrix shown, see `_scaleFor`)
+      { show: 'data' }, // (or 'sim': the odors' similarities, `_simModel`)
     );
+    if (!(this.opts.simMetric in SIMILARITIES)) this.opts.simMetric = 'pearson';
+    $('[data-role=sim]', this.toolbar).hidden = !similarity;
+    $('select[data-opt=simMetric]', this.toolbar).innerHTML = Object.entries(SIMILARITIES).map(([k, x]) => `<option value="${k}">${esc(x.label)}</option>`).join('');
+    this._simCache = null; // {input, nR, nC, metric, values}: the similarities last worked out (`_simModel`)
     this.ownCells = !!cells;
     this.tableExport = null; // () => {text, name}: the CSV the export menu offers, if any
     this.data = null;
@@ -1032,6 +1040,12 @@ class MatrixViewer {
       if (s.dataset.opt === 'rowOrder' || s.dataset.opt === 'roiSort') this.edits.rows.order = null;
       if (s.dataset.opt === 'odorOrder') this.edits.cols.order = null;
       if (s.dataset.opt === 'sortRows' || s.dataset.opt === 'sortCols') this.edits[this._editAxis(s.dataset.opt === 'sortRows' ? 'rows' : 'cols')].order = null;
+      // (similarities colored as diverging values, and the data again as before)
+      if (s.dataset.opt === 'show') {
+        if (this.kind !== 'neural') this._genericColormap();
+        this._syncToolbar();
+        this._syncEnabled();
+      }
       this._save();
       this._rebuild();
       if (s.dataset.opt === 'chemLabels') this._toLinked({ chemLabels: s.value });
@@ -1080,7 +1094,7 @@ class MatrixViewer {
       // (neural data's clustering as before; that of other kinds of matrix kept apart, by kind)
       clusterRows: neural ? o.clusterRows : saved.clusterRows, clusterCols: neural ? o.clusterCols : saved.clusterCols,
       clustered: neural ? saved.clustered : { ...saved.clustered, [this.kind]: { rows: o.clusterRows, cols: o.clusterCols } },
-      metric: o.metric, chemLabels: o.chemLabels, sumKCs: o.sumKCs,
+      metric: o.metric, chemLabels: o.chemLabels, sumKCs: o.sumKCs, simMetric: o.simMetric,
       hideControls: o.hideControls, transposed: { ...saved.transposed, [this.kind]: o.transpose }, sortRows: o.sortRows,
       sortCols: o.sortCols, scales: { ...saved.scales, [this.fileStem]: o.scale === 'auto' ? undefined : o.scale },
     });
@@ -1137,7 +1151,7 @@ class MatrixViewer {
     $('[data-role=scale]', tb).hidden = mapKind !== 'sequential';
     $('input[data-opt=clip]', tb).parentElement.hidden = mapKind === 'binary';
     $('input[data-opt=transpose]', tb).parentElement.title = neural ? 'Odors as rows and ROIs as columns' : 'Rows as columns and columns as rows';
-    for (const k of ['rowOrder', 'roiSort', 'odorOrder', 'metric', 'range', 'chemLabels', 'scale', 'sortRows', 'sortCols']) { const s = $(`select[data-opt=${k}]`, tb); if (s) s.value = o[k]; }
+    for (const k of ['rowOrder', 'roiSort', 'odorOrder', 'metric', 'range', 'chemLabels', 'scale', 'sortRows', 'sortCols', 'show', 'simMetric']) { const s = $(`select[data-opt=${k}]`, tb); if (s) s.value = o[k]; }
     for (const k of ['cellW', 'cellH']) { $(`input[data-opt=${k}]`, tb).value = o[k]; $(`[data-out=${k}]`, tb).textContent = o[k]; }
     this._syncControls();
     $$('input[type=checkbox][data-opt]', tb).forEach((cb) => { cb.checked = !!o[cb.dataset.opt]; });
@@ -1187,6 +1201,7 @@ class MatrixViewer {
     clusterCols.parentElement.title = summed === 'cols' ? 'They are summed' : '';
     odor.title = o.clusterCols ? 'odors are ordered by the clustering' : '';
     $('select[data-opt=metric]', tb).disabled = !(o.clusterRows || o.clusterCols);
+    $('select[data-opt=simMetric]', tb).disabled = !this._simOn();
     $('[data-role=rows-label]', tb).textContent = o.transpose ? 'Columns' : 'Rows';
     // (an axis shared with a linked viewer keeps its order; the columns of a square matrix, its rows')
     for (const [opt, axis] of [['sortRows', 'rows'], ['sortCols', 'cols']]) {
@@ -1322,7 +1337,7 @@ class MatrixViewer {
 
   // the kind of values shown, as colormaps are of: KCs' binary values summed are counts
   _valueKind() {
-    if (this.kind === 'neural') return 'diverging';
+    if (this.kind === 'neural' || this._simOn()) return 'diverging';
     const kind = this.data?.meta?.kind || 'sequential';
     return kind === 'binary' && this._summing() ? 'sequential' : kind;
   }
@@ -1350,7 +1365,7 @@ class MatrixViewer {
   // are drawn (of an axis summed over, null: all of them), and whether it is transposed;
   // null if none is shown
   shownKeys() {
-    const m = this.model;
+    const m = this.model?.sim ? this.model.sim.of : this.model; // (of the similarities, the data they are of, untransposed)
     if (!m || !this.data || this.kind === 'neural') return null;
     const keys = (items) => (items.some((it) => !(it.key >= 0)) ? null : items.map((it) => it.key));
     const [rows, cols] = m.transposed ? [m.cols, m.rows] : [m.rows, m.cols];
@@ -1507,14 +1522,41 @@ class MatrixViewer {
     this._show(build(clustering), notes.join(' · '));
   }
 
+  // whether the odors' similarities are shown in place of the data
+  _simOn() { return this.similarity && this.opts.show === 'sim'; }
+
+  // The odor–odor similarities (by opts.simMetric, as the Compare tab works them out) of a
+  // model as built: of its columns (odors, or each trial of them), by their values over its
+  // rows, in their order (and with their dendrogram) on both axes; kept for the same values
+  _simModel(m) {
+    const nR = m.rows.length, nC = m.cols.length, metric = this.opts.simMetric, c = this._simCache;
+    let values;
+    if (c && c.metric === metric && c.nR === nR && c.nC === nC && (c.input === m.values || c.input.every((v, k) => Object.is(v, m.values[k])))) {
+      values = c.values;
+    } else {
+      const vectors = [];
+      for (let j = 0; j < nC; j++) {
+        const v = new Float32Array(nR);
+        for (let i = 0; i < nR; i++) v[i] = m.values[i * nC + j];
+        vectors.push(v);
+      }
+      values = similarityMatrix(vectors, metric);
+      this._simCache = { input: m.values, nR, nC, metric, values };
+    }
+    return { ...m, rows: m.cols, values, rowDendro: m.colDendro, rowTitle: m.colTitle, rowGroupTitle: m.colGroupTitle, cellText: null,
+      sim: { metric, across: nR, of: m } };
+  }
+
   _show(model, note = '') {
     const o = this.opts;
     const neural = this.kind === 'neural';
+    if (this._simOn()) model = this._simModel(model);
+    const sim = model.sim;
     const cm = COLORMAPS[o.colormap] || COLORMAPS['oklab-div'];
-    const fixed = !neural && !model.summed && this.data.meta.value_range; // [vmin, vmax] whatever the values
+    const fixed = !neural && !model.summed && !sim && this.data.meta.value_range; // [vmin, vmax] whatever the values
     const { vmin, vmax } = fixed ? { vmin: fixed[0], vmax: fixed[1] } : dataRange(model.values, o.clip);
     let norm;
-    const seq = cm.kind === 'sequential' ? seqScale(model.values, o.scale, neural || model.summed ? null : this.data.meta?.scale) : null;
+    const seq = cm.kind === 'sequential' ? seqScale(model.values, o.scale, neural || model.summed || sim ? null : this.data.meta?.scale) : null;
     const scale = seq?.scale || 'linear';
     // (the Scale menu's auto says what it would choose for these values)
     $('select[data-opt=scale] option[value=auto]', this.toolbar).textContent = seq ? `auto (${seq.auto === 'linear' ? 'linear' : 'log'})` : 'auto';
@@ -1524,7 +1566,8 @@ class MatrixViewer {
       const pos = positiveRange(model.values, o.clip);
       norm = makeNorm('log', fixed ? Math.max(vmin, pos.vmin) : pos.vmin, vmax);
     } else norm = makeNorm(scale, vmin, vmax);
-    const dims = neural
+    const nSim = sim && `${model.cols.length.toLocaleString()} ${neural ? (o.mode === 'trials' ? 'trials' : 'odors') : this.data.cluster?.cols || 'columns'}`;
+    const dims = sim ? [nSim, nSim] : neural
       ? [model.summed ? `${model.nFlies.toLocaleString()} ${model.nFlies === 1 ? 'fly' : 'flies'}${model.rows.length !== model.nFlies
           ? ` (${model.rows.length.toLocaleString()} sums, by ${model.summedBy.join(' and ')})` : ''}`
           : `${model.rows.length.toLocaleString()} ROIs`,
@@ -1532,6 +1575,7 @@ class MatrixViewer {
       : [model.rows.length, model.cols.length];
     // labels can be dragged along axes not clustered (nor summed)
     const drag = { rows: !(neural && (o.clusterRows || model.summed)), cols: !(neural && o.clusterCols) };
+    if (sim) drag.rows = drag.cols; // (both the odors)
     if (o.transpose) {
       model = transposeModel(model);
       dims.reverse();
@@ -1543,7 +1587,7 @@ class MatrixViewer {
     this.heatmap.setModel(model, { cellW: o.cellW, cellH: o.cellH, lut: cm.lut, norm, reorder: drag });
     drawColorbar(this.colorbar, cm.lut, norm);
     this._syncLabel();
-    this.statsText = `${dims.join(' × ')}` + (neural && model.nPanels > 1 ? ` in ${model.nPanels} panels` : '') + ` · range ${fmtNum(vmin)} to ${fmtNum(vmax)}` +
+    this.statsText = `${dims.join(' × ')}` + (sim ? ` · ${SIMILARITIES[sim.metric].label} over ${this._simAcross(sim)}` : '') + (neural && model.nPanels > 1 ? ` in ${model.nPanels} panels` : '') + ` · range ${fmtNum(vmin)} to ${fmtNum(vmax)}` +
       (scale === 'log' ? ' · log color scale' : scale === 'log1p' ? ' · log color scale (of 1 + each count)' : '');
     this._setNote(note);
     const grouped = (drag.rows && model.rows.some((r) => r.group != null)) || (drag.cols && model.cols.some((c) => c.group != null));
@@ -1558,8 +1602,17 @@ class MatrixViewer {
 
   // what the values shown are, if said (of a matrix, not neural data), and whether summed over KCs
   _valueLabel() {
+    const sim = this.model?.sim;
+    if (sim) return `${SIMILARITIES[sim.metric].label} (over ${this._simAcross(sim)})`;
     const label = this.kind === 'neural' ? '' : this.data?.meta?.value_label || '';
     return this.model?.summed ? `${label ? `${label}, ` : ''}summed over ${this.model.summed.toLocaleString()} KCs` : label;
+  }
+
+  // what the similarities shown are over: the rows of the data (`_simModel`'s sim)
+  _simAcross({ across, of }) {
+    const many = of.summed ? (this.kind === 'neural' ? 'flies\' KCs summed' : 'KCs summed')
+      : this.kind === 'neural' ? 'ROIs' : this.data.cluster?.rows || 'rows';
+    return `${across.toLocaleString()} ${many}`;
   }
 
   // How the responses shown were calculated (as entered at upload: text with LaTeX math, see
@@ -1575,7 +1628,7 @@ class MatrixViewer {
   // exported figure: how the responses were calculated, if said, else what the values are
   // (`_valueLabel`); [] for neither
   _figureLabel() {
-    if (!this.responseCalc) { const text = this._valueLabel(); return text ? [{ text }] : []; }
+    if (!this.responseCalc || this.model?.sim) { const text = this._valueLabel(); return text ? [{ text }] : []; }
     const summed = this.model?.summed ? [{ text: `, summed over ${this.model.summed.toLocaleString()} KCs` }] : [];
     return [...labelParts(this.responseCalc), ...summed];
   }
@@ -1608,8 +1661,9 @@ class MatrixViewer {
     btn.title = `Show every ${nouns.join(' and ')} again, in the order chosen above (now: ${bits.join(', ')})`;
   }
 
-  // axis of the heatmap -> axis of the edits (of a square matrix, its rows': its columns follow them)
-  _editAxis(axis) { return this.data?.square ? 'rows' : this.opts.transpose ? (axis === 'rows' ? 'cols' : 'rows') : axis; }
+  // axis of the heatmap -> axis of the edits (of a square matrix, its rows': its columns follow them;
+  // of the odors' similarities, the data's columns)
+  _editAxis(axis) { return this._simOn() ? 'cols' : this.data?.square ? 'rows' : this.opts.transpose ? (axis === 'rows' ? 'cols' : 'rows') : axis; }
 
   _reorder(axis, keys) {
     this.edits[this._editAxis(axis)].order = keys;
@@ -1706,11 +1760,12 @@ class MatrixViewer {
   }
 
   // an axis of the matrix shown as that of the matrix given (its rows its columns, if transposed)
-  _givenAxis(axis) { return this.model?.transposed ? (axis === 'rows' ? 'cols' : 'rows') : axis; }
+  _givenAxis(axis) { return this.model?.sim ? 'cols' : this.model?.transposed ? (axis === 'rows' ? 'cols' : 'rows') : axis; }
 
   // a cell clicked (as the heatmap gives it) as the matrix given has it: {row, col} (each
   // its index there), or null if it is not one of its cells (e.g. KCs summed)
   givenCell({ row, col }) {
+    if (this.model?.sim) return null;
     const [r, c] = this.model?.transposed ? [col, row] : [row, col];
     return r?.key >= 0 && c?.key >= 0 ? { row: r.key, col: c.key } : null;
   }
@@ -1731,7 +1786,7 @@ class MatrixViewer {
     if (!this.model) return;
     const status = $('[data-role=export-status]', this.toolbar);
     if (format === 'csv') {
-      const t = this.tableExport?.() ?? { text: this.tableCsv(), name: `${this.fileStem}.csv` };
+      const t = this.tableExport?.() ?? { text: this.tableCsv(), name: `${this.fileStem}${this.model.sim ? `_${this.model.sim.metric}` : ''}.csv` };
       saveBlob(new Blob([t.text], { type: 'text/csv' }), t.name);
       setStatus(status, '');
       return;
@@ -1742,7 +1797,7 @@ class MatrixViewer {
         cellW: this.opts.cellW, cellH: this.opts.cellH, lut: this.lut, norm: this.norm, nanColor: this.heatmap.options.nanColor,
         valueLabel: this._figureLabel(), title: this.title,
       });
-      const suffix = this.kind === 'neural' && this.opts.mode === 'trials' ? '_trials' : '';
+      const suffix = (this.kind === 'neural' && this.opts.mode === 'trials' ? '_trials' : '') + (this.model.sim ? `_${this.model.sim.metric}` : '');
       saveBlob(blob, `${this.fileStem}${suffix}.${format}`);
       setStatus(status, note);
     } catch (e) {
@@ -3346,7 +3401,7 @@ class Browse {
     setStatus($('#ds-readme-status'), '');
     this._showReadme(id);
     $('#ds-files').innerHTML = d.files.map((f) => `<a href="/api/datasets/${id}/files/${encodeURI(f)}" download>${esc(f)}</a>`).join('');
-    if (!this.viewer) this.viewer = new MatrixViewer($('#dataset-viewer'));
+    if (!this.viewer) this.viewer = new MatrixViewer($('#dataset-viewer'), { similarity: true });
     this.viewer.setNeuralData(m, { title: d.title, fileStem: `olfdb_dataset-${id}`, kc: isKcData(md.coding_unit, d.summary?.col_levels),
       serverCache: serverClusterCache(id), responseCalc: md.response_calc });
     if (!$('#ds-odors').hidden) this.showOdors(id);

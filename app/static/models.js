@@ -742,7 +742,7 @@ export class ModelsPage {
         ? ', its KCs as columns there' : ''}.`;
     if (!this.viewer) {
       const el = $('#model-viewer');
-      this.viewer = new MatrixViewer(el, { kind: 'model' });
+      this.viewer = new MatrixViewer(el, { kind: 'model', similarity: true });
       this.viewer.onShow = () => fitViewer(el, this.viewer);
     }
     const stem = `olfdb_model_${c.title}`.replace(/[^\w.-]+/g, '_');
