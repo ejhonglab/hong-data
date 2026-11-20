@@ -26,7 +26,7 @@ const BELOW_COLOR = '#4aa3ff';
 // a prediction's ROIs, by where they are from (`openPrediction`)
 // (of a prediction whose ROIs were refined: those refined, and, apart, the model's own before that)
 const SOURCES = { predicted: { label: 'predicted', color: '#ff4fd8' }, unrefined: { label: 'predicted, before refinement', color: '#e6e6e6' },
-  manual: { label: "the fly's own (drawn by hand)", color: ROI_COLOR },
+  manual: { label: 'manual', color: ROI_COLOR },
   edited: { label: 'predicted, as edited here', color: '#a394ff' }, nmf: { label: 'found by NMF, not merged', color: '#39b8ff' } };
 // a look for glomeruli the predicted ROIs miss (nmf_check.py): what its stages are called, and how often it is asked how far it is
 const NMF_STAGES = { load: 'reading the fly', register: 'registering the atlas to the fly', read: 'reading its movies', factorize: 'factorizing its planes',
@@ -217,7 +217,7 @@ export class MoviePlayer {
     this.movies = view.movies.map((m) => ({ ...m, kind: 'mocorr' }));
     this.$('.player-list').innerHTML = this.movies.length ? this.movies.map((m, i) => `<button type="button" class="player-item"
       data-movie="${i}" title="${this.esc(m.path)}"><span>${this.esc(m.label)}</span><span class="muted">${this.fmtBytes(m.size)}${
-      m.rois ? " · the fly's own ROIs" : ''}${m.trials ? ' · odors' : ''}</span>${m.recordings
+      m.rois ? ' · manual ROIs' : ''}${m.trials ? ' · odors' : ''}</span>${m.recordings
       ? `<span class="player-item-recs">${this.esc(this._registered(m))}</span>` : ''}</button>`).join('')
       : '<p class="muted small">No image of this fly was found.</p>';
     this._dffInit();
@@ -1705,23 +1705,29 @@ export class MoviePlayer {
   // ------------------------------------------- ROIs' responses to each odor (P, Alt+P)
   // As Sam's ImageJ macros' P (al_analysis' plot_roi.py): the mean response to each odor of the ROI chosen, in
   // every recording of its fly (roi_responses.py), shown as a row of a matrix above the movie; P starts the
-  // matrix again with it, Alt+P adds it (in place of its row, if it has one). Of the fly's own ROIs (as read
-  // from their RoiSet.zip), on a movie with odors (or its fly's recordings with theirs).
+  // matrix again with it, Alt+P adds it (in place of its row, if it has one). Of any ROI: one drawn by hand
+  // read from its RoiSet.zip (as al_analysis reads it), any other (predicted, edited, found by NMF) as drawn
+  // here; on a movie with odors, or its fly's recordings with theirs (of a prediction's average image: the
+  // fly's movies').
   async _plotRoi(add) {
     const m = this.movie, r = this.selectedRoi == null ? null : this.rois[this.selectedRoi];
     if (!m || !r) { this._plotShow('Choose an ROI first (click in it, or on its name, or in the list), then P to plot it, or Alt+P to add it to the plot.'); return; }
-    const k = r.source === 'manual' ? this.base?.manual.indexOf(r) : -1, src = m.dff ? this.movies[m.dff.of] : m;
-    if (k == null || k < 0 || !src?.rois) { this._plotShow(`Only the fly's own ROIs can be plotted (as drawn by hand, from their RoiSet.zip), not ${this.esc(r.name)}.`); return; }
+    const src = this._plotSource(m);
+    if (!src) { this._plotShow('No movie of this fly has odors (trial_frames_and_odors.json) to plot responses to.'); return; }
+    // (a manual ROI from its file, if it is the file of the movie its responses are read from)
+    const k = r.source === 'manual' && src.rois && src.rois === this.roiPath ? this.base?.manual.indexOf(r) ?? -1 : -1;
+    const plane = this._roiPlane(r);
     if (!add) { this.plot.rows = []; this.plot.seq += 1; }
-    const seq = this.plot.seq, key = `${src.rois}|${k}`;
-    const row = { key, label: r.name, plane: this._roiPlane(r), pending: true, values: new Map(), error: null };
+    const seq = this.plot.seq, key = k >= 0 ? `${src.rois}|${k}` : `${r.source}|${r.name}|${plane}`;
+    const row = { key, label: r.name, plane, pending: true, values: new Map(), error: null };
     const at = this.plot.rows.findIndex((x) => x.key === key);
     if (at >= 0) this.plot.rows[at] = row; else this.plot.rows.push(row);
     this._plotRender();
     let res;
     try {
       res = await this.api('/api/movie/roi_responses', { method: 'POST',
-        json: { path: src.path, trials: src.trials || null, rois: src.rois, index: k, name: r.name, holder: this.holder } });
+        json: { path: src.path, trials: src.trials || null, holder: this.holder,
+          ...(k >= 0 ? { rois: src.rois, index: k, name: r.name } : { roi: { name: r.name, z: plane, paths: r.paths } }) } });
     } catch (e) {
       row.error = e.message;
     }
@@ -1734,10 +1740,19 @@ export class MoviePlayer {
     this._plotRender();
   }
 
+  // the movie whose recordings a plot of ROIs shown on `movie` reads: itself (or the movie its dF/F images are
+  // of), if it has odors or is its fly's recordings registered together; else (a prediction's average image)
+  // the first of the fly's movies that is, those registered together first. Null if none is.
+  _plotSource(movie) {
+    const src = movie.dff ? this.movies[movie.dff.of] : movie, ok = (x) => x && (x.trials || x.recordings);
+    if (ok(src)) return src;
+    return this.mode === 'prediction' ? this.movies.find((x) => x.recordings) || this.movies.find(ok) || null : null;
+  }
+
   // the movies a plot of this movie's ROIs reads, held in the server's memory meanwhile, if one of its slots is free
   _holdMovies(movie) {
-    const src = movie.dff ? this.movies[movie.dff.of] : movie;
-    if (!src?.rois) return;
+    const src = this._plotSource(movie);
+    if (!src || !(src.rois || movie.predicted)) return;
     this.api('/api/movie/memory', { method: 'POST', json: { holder: this.holder, path: src.path, trials: src.trials || null } }).catch(() => {});
   }
 

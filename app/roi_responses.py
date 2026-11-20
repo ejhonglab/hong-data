@@ -110,6 +110,30 @@ def read_roi(path: Path, index: int, name: Optional[str]):
     return r
 
 
+class Drawn:
+    """An ROI drawn in the player and not read from a RoiSet.zip (one predicted, edited or found by NMF):
+    {"name", "z" (its plane, from 0; None on a movie of one plane), "paths" (its outlines, each [[x, y], ...],
+    in pixels, as ImageJ's)}, standing in for a roifile ``ImagejRoi`` (as `extract.roi_mask` reads one)."""
+
+    def __init__(self, roi: dict):
+        z, paths = roi.get("z"), roi.get("paths")
+        if not (z is None or (isinstance(z, int) and 0 <= z < 1000)):
+            raise RoiResponsesError("the ROI's plane (z) is not a plane")
+        if not isinstance(paths, list) or not 0 < len(paths) <= 100:
+            raise RoiResponsesError("the ROI has no outline")
+        try:
+            self.paths = [np.asarray(p, dtype=np.float64).reshape(-1, 2) for p in paths]
+        except (TypeError, ValueError):
+            raise RoiResponsesError("the ROI's outlines are not lists of [x, y]") from None
+        if sum(len(p) for p in self.paths) > 100_000:
+            raise RoiResponsesError("the ROI has too many points")
+        self.name = str(roi.get("name") or "ROI")
+        self.z_position, self.position = (0 if z is None else z + 1), 0
+
+    def coordinates(self, multi: bool = False):
+        return self.paths if multi else self.paths[0]
+
+
 def needed(trials: list[dict], window: int, t: int) -> np.ndarray:
     """The time points a response is computed from: of each trial, from its start (its baseline)
     to the end of its response window (its last time point at most), of the movie's `t`."""
@@ -216,10 +240,10 @@ def labels(keys: list[tuple[str, str]]) -> list[str]:
     return [_name(o) if count[_name(o)] == 1 else o for _, o in keys]
 
 
-def compute(movie: Path, trials: Optional[Path], roiset: Path, index: int, name: Optional[str], window_option,
+def compute(movie: Path, trials: Optional[Path], roiset: Path | Drawn, index: Optional[int], name: Optional[str], window_option,
             also: list[Path], check: Callable[[Path], Path]) -> dict:
     """An ROI's mean response to each odor (see `__doc__`): the ROI `index` (named `name`) of
-    `roiset`, drawn on `movie` (with its `trials`), with an extraction's response window
+    `roiset` (or `roiset` itself, a `Drawn` one: `index` and `name` then unused), drawn on `movie` (with its `trials`), with an extraction's response window
     (`window_option`: `extract.WINDOW`, or a number; `also`: `extract.stimulus_folders`). `check`
     gives the path of a recording's file to read, or raises if it may not be read.
 
@@ -234,8 +258,11 @@ def compute(movie: Path, trials: Optional[Path], roiset: Path, index: int, name:
     """
     fly, recs = recordings(movie, trials)
     raw = raw_dir(fly)
-    r = read_roi(roiset, index, name)
-    roi_name = r.name or f"{index + 1}"
+    if isinstance(roiset, Drawn):
+        r, roi_name = roiset, roiset.name
+    else:
+        r = read_roi(roiset, index, name)
+        roi_name = r.name or f"{index + 1}"
     per: dict[tuple[str, str], list[float]] = {}
     panels, yaml_odors, out_recs, warnings = [], [], [], []
     for rec in recs:

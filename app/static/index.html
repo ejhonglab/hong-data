@@ -1538,10 +1538,10 @@ try {
       <details class="player-roi-box">
       <summary class="player-rois-head">
         <h3>ROIs</h3>
-        <label class="check"><input type="checkbox" class="player-show-rois" checked> show</label>
-        <label class="check"><input type="checkbox" class="player-roi-names" checked> names</label>
       </summary>
       <div class="player-roi-opts">
+        <label class="check"><input type="checkbox" class="player-show-rois" checked> show</label>
+        <label class="check"><input type="checkbox" class="player-roi-names" checked> names</label>
         <label class="player-roi-planes-row" title="ROIs drawn on other planes than the one shown (all are drawn on a max projection)">ROIs of other planes
           <select class="player-roi-planes">
             <option value="current">none (this plane's only)</option>
@@ -1555,8 +1555,8 @@ try {
         <label class="check player-roi-unnamed-row" hidden title="Predicted ROIs the model could not name as a glomerulus (numbered instead), and their copies as edited here">
           <input type="checkbox" class="player-roi-unnamed" checked> unnamed predicted ROIs <span class="player-roi-unnamed-n muted"></span></label>
       </div>
-      <div class="player-roi-sources" hidden></div>
       </details>
+      <div class="player-roi-sources" hidden></div>
       <section class="player-edit" aria-label="Editing the predicted ROIs" hidden>
         <div class="player-edit-row">
           <label title="How far, in pixels, an outline may move from the predicted one when points are left out of it (Ramer–Douglas–Peucker: the points kept are the predicted outline's own). 1 leaves about a tenth of the points; 0 leaves them all.">Simplify

@@ -1533,20 +1533,26 @@ async def movie_roi_responses(request: Request) -> Response:
     """An ImageJ ROI's mean response to each odor, in each recording of its fly (`roi_responses`), for the
     player's plot of them: {"path": the movie it is drawn on, as listed, "trials": its trials file, if any,
     "rois": its RoiSet.zip, "index": the ROI's place in it (from 0), "name": its name there, "window": the
-    response window (volumes; by default an extraction's, `extract.WINDOW`), "holder": the player's id}.
-    The player's movies are then held in memory (`movie_memory`), a slot taken from another if none is free."""
+    response window (volumes; by default an extraction's, `extract.WINDOW`), "holder": the player's id}; or,
+    in place of "rois", "index" and "name", "roi": an ROI drawn in the player ({"name", "z", "paths"}:
+    `roi_responses.Drawn`, e.g. one predicted). The player's movies are then held in memory (`movie_memory`),
+    a slot taken from another if none is free."""
     body = await request.json()
-    if not isinstance(body, dict) or not isinstance(body.get("index"), int) or not isinstance(body.get("path"), str):
-        return json_error(400, "expected {path, rois, index, name, trials?, window?, holder?}")
+    drawn = isinstance(body, dict) and isinstance(body.get("roi"), dict)
+    if not isinstance(body, dict) or not (drawn or isinstance(body.get("index"), int)) or not isinstance(body.get("path"), str):
+        return json_error(400, "expected {path, rois, index, name (or roi: {name, z, paths}), trials?, window?, holder?}")
     window = body.get("window", extract.WINDOW)
     if window != extract.WINDOW and not (isinstance(window, int) and 1 <= window <= 100):
         return json_error(400, f"window: '{extract.WINDOW}' or a number of volumes, from 1 to 100")
     asked, trials, _ = _movie_of(body)
-    rois = _server_file(body.get("rois"), (".zip", ".roi"))
+    try:
+        rois = roi_responses.Drawn(body["roi"]) if drawn else _server_file(body.get("rois"), (".zip", ".roi"))
+    except roi_responses.RoiResponsesError as e:
+        return json_error(400, str(e))
     holder, who = _holder(body), request.client.host if request.client else None
 
     def run() -> dict:
-        out = roi_responses.compute(asked, trials, rois, body["index"], body.get("name"), window,
+        out = roi_responses.compute(asked, trials, rois, body.get("index"), body.get("name"), window,
                                     extract.stimulus_folders(db, config.TENSOR_ROOT), _movie_check)
         if holder:
             out["slot"] = _hold(asked, trials, holder, True, who)

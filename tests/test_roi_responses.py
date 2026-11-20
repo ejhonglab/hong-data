@@ -76,6 +76,21 @@ def test_one_recording(tmp_path):
         roi_responses.compute(d / PANEL / "mocorr.tif", d / PANEL / movies.TRIALS, d / DIAG / movies.ROISET, 20, None, 2, [], lambda p: p)
 
 
+def test_drawn(tmp_path):
+    # an ROI drawn in the player (e.g. predicted), not of a RoiSet.zip: as the same outline read from one, to the last bit
+    d = fly(tmp_path)
+    r = roifile.ImagejRoi.fromfile(d / DIAG / movies.ROISET)[1]
+    z = r.z_position - 1 if r.z_position > 0 else r.position - 1
+    drawn = roi_responses.Drawn({"name": "DM2?", "z": z, "paths": [p.tolist() for p in r.coordinates(multi=True)]})
+    got = roi_responses.compute(d / movies.CONCAT, None, drawn, None, None, 2, [], lambda p: p)
+    want = roi_responses.compute(d / movies.CONCAT, None, d / DIAG / movies.ROISET, 1, "DM2", 2, [], lambda p: p)
+    assert got["values"] == want["values"] and got["roi"] == "DM2?"
+    with pytest.raises(roi_responses.RoiResponsesError, match="not a plane"):
+        roi_responses.Drawn({"z": -1, "paths": [[[0, 0], [1, 0], [1, 1]]]})
+    with pytest.raises(roi_responses.RoiResponsesError, match="not lists"):
+        roi_responses.Drawn({"z": 0, "paths": [["a"]]})
+
+
 def test_order():
     # a panel hong2p has no order of: its stimulus YAMLs' order, else as presented; an odor's concentrations together, lowest first
     keys = [("x", "b @ -2"), ("x", "c @ -1"), ("x", "a @ -1"), ("glomeruli_diagnostics", "ACV @ -2"), ("x", "a @ -3"),
@@ -95,6 +110,10 @@ def test_api(main, root):  # noqa: F811
     assert status == 200 and got["roi"] == "DM2" and len(got["values"]) == 4
     assert call(main.movie_roi_responses, body={**body, "window": 0})[0] == 400
     assert call(main.movie_roi_responses, body={**body, "name": "DL5"})[0] == 422
+    roi = {"name": "pred 1", "z": 0, "paths": [[[2, 2], [9, 2], [9, 9], [2, 9]]]}
+    status, drawn = call(main.movie_roi_responses, body={"path": body["path"], "roi": roi, "window": 2})
+    assert status == 200 and drawn["roi"] == "pred 1" and len(drawn["values"]) == 4
+    assert call(main.movie_roi_responses, body={"path": body["path"], "roi": {**roi, "paths": []}})[0] == 400
     with pytest.raises(HTTPException) as e:
         call(main.movie_roi_responses, body={**body, "rois": "/etc/RoiSet.zip"})
     assert e.value.status_code in (403, 404)
