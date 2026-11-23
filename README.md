@@ -955,6 +955,32 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   again needs the fly's responses and the atlas registered to it, as predicting does).
   Predictions made before these were kept (`<fly>_identity_terms*.json`, in the download)
   say to predict again.
+  *Naming*, on each prediction of the list (*How they were named*, beside *View the ROIs*; *See it on the
+  atlas…*, under that table), shows when the model's atlas gives an ROI a name, and what other thresholds would
+  name:
+  - **The atlas on the fly's planes.** Over the fly's average image, plane by plane (the wheel, or ↑ ↓), the
+    probability of *one glomerulus* at each pixel (the share of the training flies in which it covers that
+    place, once the atlas is registered to the fly), with lines where it is 0.05, 0.1, 0.25 and 0.5; or *every
+    glomerulus*, each pixel by the one most probable there, named. The ROIs are outlined over it: whole if
+    named, dashed if not. Each plane's button says how strong the map shown is on it.
+  - **What a name costs.** Click an ROI (or its dot in the chart of every ROI's cost) for the glomeruli that
+    cost least for it, each a bar of its five terms' shares against the most a name may cost; choose a
+    glomerulus for the ROIs it costs least for. Under the chart, two bars say what the costs of the ROIs
+    named, and of those not, are made of on average. Of the pair chosen it says what the atlas and position terms
+    are made of (the mean probability over the ROI's voxels; how far its middle is from where the atlas expects
+    the glomerulus, ⊕ on the image, with rings at 1, 2 and 4 SDs), plots its odor tuning against the
+    glomerulus's, and gives the mean probability it would need to cost no more than a name may: a dashed white
+    line on the image.
+  - **What if.** Sliders for the most a name may cost and for each term's weight match the ROIs to glomeruli
+    again at once, exactly as al-diag-seg would (nothing of the prediction changes). The image, the chart and
+    the lists follow, and it says which ROIs gain, lose or change a name against the model's.
+  - **Glomeruli.** Every glomerulus the model can name: how many flies are behind its map, the largest
+    probability the map reaches on this fly (no ROI's atlas term for it can be under 1 minus that), the SD of
+    its position, and the ROI it names, or the one it costs least for.
+
+  The first time a prediction is opened there, the fit worker works out what every glomerulus costs for every
+  ROI (a few seconds; kept with it as `<fly>_naming_costs.json`, in its download). Without the worker, each
+  ROI's 5 best glomeruli are shown, and *What if* is off.
   A fly may lack some of the model's odors (it needs 3 of them): the prediction says which, and its ROIs are then
   joined into 3D and named by those it has, exactly as by a model fit to the same flies with those odors. They are
   found as well as by such a model too if the fly has the odors Cellpose's images are made from (by default those every

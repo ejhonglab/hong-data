@@ -537,6 +537,7 @@ try {
       <div class="actions">
         <button type="button" class="btn primary" id="predict-start">Predict its ROIs</button>
         <button type="button" class="btn" id="predict-view" disabled>View the ROIs</button>
+        <button type="button" class="btn" id="predict-naming" disabled title="How its ROIs were named: where the model's atlas puts each glomerulus on the fly's planes, what each name cost, and which ROIs another threshold would name">How they were named</button>
         <button type="button" class="btn" id="predict-all" disabled title="Predicts, with the model chosen and the cleaning above, every fly in the menu it was not trained on (with only my flies ticked, only yours: of the datasets you uploaded, and in your folders on tensor, by the name in Settings): those held out of it, those with ROIs it was not fit to, and those without ROIs. One this model has predicted already is kept as it is (one that failed is predicted again).">Predict all flies it was not trained on</button>
         <label class="check" title="Ticked: Predict all asks only for your flies (of the datasets you uploaded, and in your folders on tensor, by the name in Settings); unticked, also everyone else's of the site's datasets"><input type="checkbox" id="predict-all-mine" checked> only my flies</label>
       </div>
@@ -689,7 +690,8 @@ try {
           <p class="small muted">An ROI is named as the glomerulus that costs least for it (each glomerulus names one ROI), if that
             costs no more than this; else it is numbered. The cost is the weighted mean of how far the ROI is from the glomerulus
             in odor tuning, position, shape, overlap with the atlas and layout among its neighbours (each 0 for a perfect fit):
-            click a predicted ROI's name in a prediction's viewer for its values.</p>
+            click a predicted ROI's name in a prediction's viewer for its values, or <i>Naming</i> in the list of predictions
+            for where the atlas puts each glomerulus on a fly, and which of its ROIs another value here would name.</p>
         </div>
       </details>
       <p class="small" id="fit-who"></p>
@@ -1626,6 +1628,69 @@ try {
     </div>
     <div class="roi-identity-body"></div>
   </div>
+</dialog>
+
+<!-- How a prediction's ROIs were named (naming.js): the atlas on its fly's planes, each name's cost, and what other thresholds would name -->
+<dialog id="naming" class="naming" aria-labelledby="naming-title">
+  <div class="naming-head">
+    <h2 id="naming-title"></h2>
+    <span class="naming-sub muted"></span>
+    <button type="button" class="btn small naming-close" title="Close (Esc)">Close</button>
+  </div>
+  <div class="naming-body">
+    <section class="naming-map" aria-label="The atlas on the fly's planes">
+      <div class="naming-bar">
+        <div class="seg naming-show" role="group" aria-label="What of the atlas is shown">
+          <button type="button" data-show="one" class="active" title="Where the atlas puts one glomerulus: its probability at each pixel of the plane, as the model's atlas registered to this fly has it (the share of the training flies in which that glomerulus covers the place)">One glomerulus</button>
+          <button type="button" data-show="all" title="At each pixel, the probability of the glomerulus most probable there, with a line where that glomerulus changes and each one's name where it is most probable">Every glomerulus</button>
+          <button type="button" data-show="none" title="The fly's average image and its ROIs alone">No atlas</button>
+        </div>
+        <label class="naming-glom-label">Glomerulus <select class="naming-glom" aria-label="The glomerulus whose probability is shown"></select></label>
+        <label title="What probability is drawn at full strength: the largest the map shown reaches on this fly's planes (so that its shape shows, however low it is), or 1 (so that maps compare)">Full strength at
+          <select class="naming-scale"><option value="peak">its peak</option><option value="one">1</option></select></label>
+        <label title="How strongly the atlas is drawn over the fly's average image">Strength <input type="range" class="naming-opacity" min="0" max="100" value="75"></label>
+        <label class="check"><input type="checkbox" class="naming-names" checked> names</label>
+      </div>
+      <div class="naming-planes" role="group" aria-label="Plane"></div>
+      <div class="naming-canvas-box"><canvas class="naming-canvas" tabindex="0" aria-label="The plane shown: the fly's average image, the atlas over it and the ROIs' outlines"></canvas></div>
+      <p class="naming-readout small muted" aria-live="off"></p>
+      <div class="naming-key small muted"></div>
+    </section>
+    <div class="naming-panels">
+      <aside class="naming-pair" aria-label="The costs of the ROI or glomerulus chosen">
+        <section class="naming-detail">
+          <div class="naming-h"><h3 class="naming-detail-title">Costs</h3>
+            <div class="seg naming-by" role="group" aria-label="Whose costs are listed">
+              <button type="button" data-by="roi" class="active" title="What each glomerulus costs for the ROI chosen, least first">Its glomeruli</button>
+              <button type="button" data-by="glom" title="What the glomerulus shown costs for each ROI, least first">Its ROIs</button>
+            </div></div>
+          <div class="naming-detail-body"></div>
+        </section>
+      </aside>
+      <aside class="naming-side" aria-label="Every ROI and glomerulus">
+        <div class="naming-status" aria-live="polite"></div>
+        <section class="naming-whatif">
+          <div class="naming-h"><h3 title="An ROI is named as a glomerulus only if that costs no more than the most a name may cost. The cost is the weighted mean of five terms, each 0 for a perfect fit. With other values, the ROIs are matched to glomeruli again here, exactly as al-diag-seg matches them: nothing of the prediction changes.">What if</h3>
+            <button type="button" class="btn small naming-reset" title="The most a name may cost, and the weights, as the model has them" disabled>Back to the model's</button></div>
+          <p class="small muted">Which ROIs another threshold, or other weights of the cost's terms, would name. Nothing of the prediction changes.</p>
+          <div class="naming-sliders"></div>
+          <p class="naming-outcome small" aria-live="polite"></p>
+        </section>
+        <section class="naming-strip-box">
+          <div class="naming-h"><h3 title="A dot per ROI, at the cost of the name it has or, for one not named, of the glomerulus that costs least for it">Every ROI, by what its name costs</h3></div>
+          <p class="small muted">An ROI not named is at the cost of its cheapest glomerulus. Drag the line; click a dot for its ROI.
+            Under it, what those costs are made of, on average.</p>
+          <div class="naming-strip"></div>
+        </section>
+        <section class="naming-gloms-box">
+          <div class="naming-h"><h3>Glomeruli</h3>
+            <label class="check small"><input type="checkbox" class="naming-unnamed-only"> only those that name no ROI</label></div>
+          <div class="naming-gloms"></div>
+        </section>
+      </aside>
+    </div>
+  </div>
+  <div class="naming-tip" hidden></div>
 </dialog>
 
 <dialog id="mismatches" class="mismatches" aria-labelledby="mismatches-title">

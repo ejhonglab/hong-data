@@ -11,6 +11,7 @@ import { LotusPanel, decisionsHtml } from './lotus.js';
 import { BundleImport } from './imports.js';
 import { FitsPanel, fmtDuration } from './fits.js';
 import { PredictPanel } from './predictions.js';
+import { NamingExplorer } from './naming.js';
 import { ExtractPanel } from './extract.js';
 import { ModelsPage } from './models.js';
 import { ModelRuns } from './model_runs.js';
@@ -8905,7 +8906,7 @@ class RoiTrainingPage {
     this.fits = new FitsPanel({ $, esc, api, msgBox, askDialog, fmtWhen, fmtSize, getName: () => settings.current().name,
       flies: () => this.data?.flies || null });
     this.predict = new PredictPanel({ $, esc, api, msgBox, askDialog, fmtWhen, getName: () => settings.current().name,
-      player: () => player, flies: () => this.data?.flies || null, onData: () => { this.extract?.predictionsChanged(); this.extract?.renderBatches(); },
+      player: () => player, naming: () => naming, flies: () => this.data?.flies || null, onData: () => { this.extract?.predictionsChanged(); this.extract?.renderBatches(); },
       onMine: () => { if (this.extract?.data) this.extract.renderFlies(); } });
     this.extract = new ExtractPanel({ $, esc, api, msgBox, askDialog, fmtWhen, getName: () => settings.current().name,
       flies: () => this.data?.flies || null, mine: () => this.predict.mine, predictions: () => this.predict.data?.predictions || null,
@@ -9194,6 +9195,7 @@ const headspaceVcf = new HeadspaceVcf(headspacePage);
 const headspaceDilutions = new HeadspaceDilutions(headspacePage);
 const admin = new AdminPage();
 const player = new MoviePlayer($('#player'), { api, esc, fmtBytes, clickDraws: () => display.clickDraws });
+const naming = new NamingExplorer($('#naming'), { api, esc });
 
 let currentTab = null;
 let lastPlace = 'browse'; // the hash of the last place shown other than the Admin tab

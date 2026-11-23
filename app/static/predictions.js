@@ -111,7 +111,7 @@ export function batchGroups(items, batchOf, row, open, cols, statusOf) {
 
 export class PredictPanel {
   // helpers: { $, esc, api, msgBox, askDialog, fmtWhen, getName (the name in Settings, '' if none),
-  // player (the movie player), flies (the tab's flies, as from /api/roi_training; null until found) }
+  // player (the movie player), naming (the naming explorer: naming.js), flies (the tab's flies, as from /api/roi_training; null until found) }
   constructor(h) {
     this.h = h;
     this.data = null; // as from /api/predictions
@@ -144,6 +144,7 @@ export class PredictPanel {
     }, true);
     this.missing = new Map(); // `${fit}|${dir}` -> what the model's odors the fly lacks are (/api/predictions/missing), or a promise of it
     $('#predict-view').addEventListener('click', () => { const p = this._pair(); if (p) this.view(p); });
+    $('#predict-naming').addEventListener('click', () => { const p = this._pair(); if (p) this.h.naming().open(p); });
     $('#predict-list').addEventListener('click', (e) => this._action(e));
   }
 
@@ -412,7 +413,7 @@ export class PredictPanel {
     this._renderBatch();
     $('#predict-paths').hidden = $('#predict-fly').value !== OTHER;
     const p = this._pair(), m = this._model(), fly = this._fly();
-    $('#predict-view').disabled = !(p && p.status === 'done');
+    $('#predict-view').disabled = $('#predict-naming').disabled = !(p && p.status === 'done');
     $('#predict-start').disabled = !(m && fly && this.h.getName()) || (p && ACTIVE.has(p.status));
     $('#predict-status').replaceChildren(...(!m || !fly ? [] : p
       ? [msgBox(p.status === 'done' ? 'ok' : ACTIVE.has(p.status) ? 'info' : 'error', this._about(p))]
@@ -445,6 +446,7 @@ export class PredictPanel {
         <td>#${p.fit_id}${p.fit_deleted ? ' <span class="muted">(deleted)</span>' : ''}</td><td>${esc(p.name)}</td>
         <td>${esc(fmtWhen(p.finished_at || p.created_at))}</td><td>${status}</td><td>${rois}</td><td class="acts">${this._refineCell(p)}</td>
         <td class="acts"><div class="acts-grid">${p.status === 'done' ? `<button type="button" class="btn small" data-act="view">View</button>
+          <button type="button" class="btn small" data-act="naming" title="How its ROIs were named: where the model's atlas puts each glomerulus on the fly's planes, what each name cost, and which ROIs another threshold would name">Naming</button>
           <a class="btn small" href="/api/predictions/${p.id}/download" download>Download</a>` : ''}
           ${p.status !== 'queued' ? `<a class="btn small" href="/api/predictions/${p.id}/log" target="_blank" rel="noopener">Log</a>` : ''}
           ${p.status !== 'running' ? '<button type="button" class="btn small danger" data-act="delete">Delete</button>' : ''}</div></td></tr>${
@@ -558,7 +560,7 @@ alseg-predict ${fit}/model --fly /local/tensor/Ann/analysis/2026-03-31/1 \\
     }
     // (its ROIs can be edited there: saved as whoever is named in Settings, and said here once they are)
     this.h.player().openPrediction(v, `Glomerulus ROIs of ${p.fly}, predicted by fit #${p.fit_id}'s model`,
-      { name: () => this.h.getName(), onSaved: () => this.refresh() });
+      { name: () => this.h.getName(), onSaved: () => this.refresh(), onNaming: (label) => this.h.naming().open(p, label) });
   }
 
   // asks whether to view a prediction there is already of the model and fly, or make it again: 'view', 'rerun' or ''
@@ -627,6 +629,7 @@ alseg-predict ${fit}/model --fly /local/tensor/Ann/analysis/2026-03-31/1 \\
     const id = Number(b.closest('[data-id]').dataset.id), p = this.data.predictions.find((x) => x.id === id);
     const { $, api, msgBox, esc, askDialog } = this.h;
     if (b.dataset.act === 'view') { this.view(p); return; }
+    if (b.dataset.act === 'naming') { this.h.naming().open(p); return; }
     if (b.dataset.act === 'refine') { this.refine(p); return; }
     if (b.dataset.act === 'refine-show') {
       if (this.shown.has(id)) this.shown.delete(id); else this.shown.add(id);

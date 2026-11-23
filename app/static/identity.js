@@ -35,8 +35,9 @@ export function showNoIdentity(dialog, title, why) {
   show(dialog, title, `<p>${why}</p>`);
 }
 
-// The table of ROI `label`'s name: `terms` as the server gives them (with `rois`), `esc` the app's.
-export function showIdentity(dialog, title, terms, label, esc) {
+// The table of ROI `label`'s name: `terms` as the server gives them (with `rois`), `esc` the app's. With `onAtlas`, a button
+// under it that closes the box and calls it: for the naming explorer (naming.js), which shows the ROI on the atlas.
+export function showIdentity(dialog, title, terms, label, esc, onAtlas = null) {
   const roi = terms.rois[label], w = terms.weights, max = terms.max_cost;
   const on = (t) => w[t.key] != null && w[t.key] !== 0;
   const best = roi.candidates[0], got = roi.candidates.find((c) => c.name === roi.assigned);
@@ -78,5 +79,7 @@ export function showIdentity(dialog, title, terms, label, esc) {
     </thead><tbody>${rows}</tbody></table>
     <p class="muted small">The ${Math.min(5, roi.candidates.length)} glomeruli that cost least for this ROI${roi.candidates.length > 5 ? ', and the one it was named' : ''},
       least first; each value is 0 for a perfect fit (hover over a term for what it is). The values are of the ROI as a 3D object: its
-      outlines on all its planes.${roi.candidates.some((c) => c.reference) ? ' * Only in the reference atlas.' : ''}</p>`);
+      outlines on all its planes.${roi.candidates.some((c) => c.reference) ? ' * Only in the reference atlas.' : ''}</p>${onAtlas
+    ? `<div class="actions"><button type="button" class="btn small roi-identity-atlas" title="Where the model's atlas puts each of these glomeruli on the fly's planes, against this ROI; every glomerulus' cost for it; and which ROIs another threshold would name">See it on the atlas…</button></div>` : ''}`);
+  dialog.querySelector('.roi-identity-atlas')?.addEventListener('click', () => { dialog.close(); onAtlas(); });
 }

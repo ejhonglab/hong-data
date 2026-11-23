@@ -533,6 +533,37 @@ between the frontend and the server. Using the app is described in
   worker reads: so an edited copy shows them only while every outline of its name is the
   predicted one, point for point, and otherwise says why not, rather than show values of
   outlines that are no longer there.
+- **The naming explorer matches ROIs to glomeruli again in the browser, as al-diag-seg does**
+  (`naming.py`, `static/naming.js`, `static/naming_solve.js`). It is for seeing when an ROI
+  gets a name: the atlas on the fly's planes under the ROIs, each name's cost against the
+  most a name may cost, and which ROIs another threshold or other weights would name.
+  - *What the web server has.* The fly's average image, the labels of the ROIs that were
+    named (cleaned ROIs keep the names of those they were cleaned from: those are shown) and
+    each glomerulus' probability on the fly's planes are what a prediction kept. They go to
+    the page as one block of bytes (`naming.volumes`: 20 MB for 55 glomeruli on 10 planes of
+    192 × 192, under 1 MB gzipped), the probabilities as 0–255.
+  - *What only the worker can make.* The kept terms are of each ROI's 5 best glomeruli; a
+    name under another threshold may be any glomerulus'. So the fit worker names the ROIs
+    again the first time a prediction is opened there (`naming.make_costs`, asked through
+    `nmf_check.call`: a few seconds, mostly reading the fly's responses on tensor), with
+    al-diag-seg's own `Model.name` and every candidate kept, and writes every pair's terms
+    to the prediction's folder (`<fly>_naming_costs.json`, 0.3 MB).
+  - *Why the matching is in the page.* Asking the worker for each position of a slider
+    takes seconds; in the page it takes milliseconds, so the names follow the slider. Only
+    the layout term depends on the other names, so the file also has what it is made of
+    (where each ROI is and each glomerulus is expected, the position SDs, the neighbors).
+  - *Why it can be trusted.* The worker checks that these, the terms and the weights give
+    al-diag-seg's own costs again (`exact`; if not, *What if* is off, and says why). Many
+    costs are equal (an ROI far from every glomerulus of the reference atlas alone costs the
+    same for each), and which of them is matched is the algorithm's to say: so the page's
+    matching is SciPy's `linear_sum_assignment` step for step, not another Hungarian. On
+    prediction 199 (77 ROIs, 55 glomeruli) it gave al-diag-seg's names under all 23
+    weights and thresholds tried; a first version with another algorithm differed on 2.
+    The page also names the ROIs once at the model's own values, and turns *What if* off if
+    that is not what the prediction has.
+  - *What it does not do.* Nothing of the prediction changes: a model with another
+    `max_cost` is another fit. The terms themselves are not recomputed for other ROIs
+    (edited ones, or those NMF found).
 - **A prediction's ROIs are edited as one copy of them, saved whole at each change**
   (`roi_edit.js`, `player.js`, `predictions.save_edited`). What a model predicted is a
   result, to compare an edit or another model with, so it is never changed: the viewer
@@ -2092,6 +2123,8 @@ app/batches.py     batches of predictions: many flies at once, the odors each la
 app/nmf_check.py   glomeruli a prediction's ROIs miss, looked for in the fly's movies (al-diag-seg's alseg.nmf):
                    the look's state, what it found, ROIs' names with candidates merged in, and what the web
                    server asks of the fit worker meanwhile
+app/naming.py      how a prediction's ROIs were named, for the naming explorer: the ROIs named, the atlas on the
+                   fly's planes, its volumes as bytes, and every glomerulus' cost for every ROI (made by the fit worker)
 app/extract.py     signals of a fly's ROIs extracted from its movies as al_analysis does: masks, traces, dF/F,
                    responses, one signal of an ROI's planes; records, time estimates, its files
 app/unmix.py       its option unmix: neighbouring ROIs' signals unmixed (footprints fit to the trials' dF maps,
@@ -2142,7 +2175,8 @@ app/static/        frontend: index.html, app.js, heatmap.js, colormaps.js (+ mpl
                    app.css, cluster.js (+ cluster-worker.js), figure.js (SVG/PDF/PNG export),
                    player.js (movie player; roi_edit.js: a prediction's ROIs edited in it;
                    identity.js: what a predicted ROI's name cost; nmf_merge.js: ROIs found by NMF
-                   merged into those edited),
+                   merged into those edited), naming.js (the naming explorer: the atlas on a fly's planes, each
+                   name's cost, other thresholds; naming_solve.js: ROIs matched to glomeruli again, as al-diag-seg does),
                    similarity.js (odor similarities, and between them;
                    pvalue-worker.js their p-values), metacyc.js (MetaCyc below its matrices: pathways
                    drawn, compounds, LCA paths, search), lotus.js (LOTUS with its matrices: how
@@ -2339,6 +2373,19 @@ GET    /api/predictions/{id}/view           what the movie player shows of one d
                                             ("edited": their file, when and by whom saved, how simplified;
                                             "revision"); once refined, what was done to each ROI by plane
                                             ("refined") and each image's "unrefined" (the model's own ROIs)
+GET    /api/predictions/{id}/identity       what its ROIs' names cost, as al-diag-seg wrote it: each term's value
+                                            for every ROI's 5 best glomeruli, the weights, the most a name may cost
+GET    /api/predictions/{id}/naming         what the naming explorer shows of one (naming.view): the ROIs its names
+                                            were given to, each glomerulus of the atlas on its fly's planes (its
+                                            peak, its middle), the model's glomeruli (flies, position SD), the terms
+                                            above; 409 if its folder has not its ROIs' labels
+GET    /api/predictions/{id}/naming/volumes its volumes, as bytes (naming.volumes): the average image, the ROIs'
+                                            labels and each glomerulus' probability, after a small JSON header
+GET    /api/predictions/{id}/naming/costs   what naming each ROI as each glomerulus costs, term by term, and what
+                                            the layout term is made of (naming.make_costs); only {made: null} if
+                                            it is not made yet
+POST   /api/predictions/{id}/naming/costs   the same, made by the fit worker now if it is not (a few seconds);
+                                            503 if the worker did not
 PUT    /api/predictions/{id}/edited         save its ROIs as edited in the player: {rois: [{name, z, points, nmf}],
                                             base (the revision edited from), name, simplified, points_edited, nmf
                                             (what was merged of the look for missed glomeruli)};

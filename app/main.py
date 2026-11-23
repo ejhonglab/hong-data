@@ -39,7 +39,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from . import (backup, bundle_import, chemprops, compare, config, dilution, export, extract, filelog, fits, headspace, lotus,
-               batches, lotus_import, matrix_download, merge, metacyc, metacyc_import, model_data, model_runs, nmf_check, orn_input, movies, odormeta, permalinks,
+               batches, lotus_import, matrix_download, merge, metacyc, metacyc_import, model_data, model_runs, naming, nmf_check, orn_input, movies, odormeta, permalinks,
                predictions, refinement, reference, movie_memory, roi_responses, roi_training, sandbox, tensor, thorimage, trial_dff, vcf, version, yamlcheck)
 from .db import PANEL_RENAMES, PROPERTY_COLUMNS, Database, rename_panel
 from .glomeruli import GLOMERULI, load_glomeruli
@@ -1962,6 +1962,50 @@ async def predictions_identity(request: Request) -> Response:
     every ROI's best glomeruli, and their weights, for the viewer to show of an ROI."""
     v = await run_in_threadpool(predictions.identity_terms, db, request.path_params["id"])
     return JSONResponse(v) if v else json_error(404, "no such prediction done")
+
+
+async def predictions_naming(request: Request) -> Response:
+    """What the naming explorer shows of a prediction (`naming.view`): the ROIs its names were given to, the glomeruli
+    of the atlas on its fly's planes, and what each ROI's few best glomeruli cost. 404 for no such prediction done; 409
+    for one whose folder has not its ROIs' labels."""
+    try:
+        return JSONResponse(await run_in_threadpool(naming.view, db, request.path_params["id"]))
+    except LookupError as e:
+        return json_error(404, str(e))
+    except naming.Unavailable as e:
+        return json_error(409, str(e))
+
+
+async def predictions_naming_volumes(request: Request) -> Response:
+    """The explorer's volumes of a prediction, as bytes (`naming.volumes`: its fly's average image, its ROIs' labels and
+    each glomerulus' probability on its planes), gzipped if the browser takes it. 404 and 409 as `predictions_naming`."""
+    def run():
+        body = naming.volumes(db, request.path_params["id"])
+        if "gzip" in request.headers.get("accept-encoding", ""):
+            return Response(gzip.compress(body, 4), media_type="application/octet-stream",
+                            headers={"content-encoding": "gzip", "vary": "accept-encoding"})
+        return Response(body, media_type="application/octet-stream")
+
+    try:
+        return await run_in_threadpool(run)
+    except LookupError as e:
+        return json_error(404, str(e))
+    except naming.Unavailable as e:
+        return json_error(409, str(e))
+
+
+async def predictions_naming_costs(request: Request) -> Response:
+    """What naming each of a prediction's ROIs as each glomerulus costs (`naming.costs`), as kept with it. GET: only
+    ``made``, None, if it is not made yet. POST: made now by the fit worker if it is not (a few seconds); 503 if the
+    worker did not make it. 404 for no such prediction done."""
+    make = request.method == "POST"
+    try:
+        doc = await run_in_threadpool(naming.costs, db, request.path_params["id"], make)
+    except LookupError as e:
+        return json_error(404, str(e))
+    except nmf_check.CallError as e:
+        return json_error(503, f"What every glomerulus costs for every ROI could not be worked out: {e}")
+    return await run_in_threadpool(_json_gzipped, request, doc or {"made": None})
 
 
 async def predictions_edited_save(request: Request) -> Response:
@@ -4430,6 +4474,9 @@ routes = [
     Route("/api/predictions/{id:int}/log", predictions_log),
     Route("/api/predictions/{id:int}/view", predictions_view),
     Route("/api/predictions/{id:int}/identity", predictions_identity),
+    Route("/api/predictions/{id:int}/naming", predictions_naming),
+    Route("/api/predictions/{id:int}/naming/volumes", predictions_naming_volumes),
+    Route("/api/predictions/{id:int}/naming/costs", predictions_naming_costs, methods=["GET", "POST"]),
     Route("/api/predictions/{id:int}/edited", predictions_edited_save, methods=["PUT"]),
     Route("/api/predictions/{id:int}/edited", predictions_edited_delete, methods=["DELETE"]),
     Route("/api/predictions/{id:int}/nmf", predictions_nmf),

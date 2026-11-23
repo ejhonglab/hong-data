@@ -213,11 +213,12 @@ export class MoviePlayer {
   // its images (the fly's average image, as the model saw it, and its motion-corrected movies), each
   // with the ROIs predicted and the fly's own, in colours of their own, only those of the plane shown.
   // The predicted ROIs can be edited (a copy of them: see "editing a prediction's ROIs" below), as
-  // `name()` (who: the name set in Settings, if any), `onSaved` called after each save.
-  openPrediction(view, title, { name, onSaved } = {}) {
+  // `name()` (who: the name set in Settings, if any), `onSaved` called after each save. `onNaming(label)`: opens
+  // the naming explorer (naming.js) at a predicted ROI, from the box of what its name cost.
+  openPrediction(view, title, { name, onSaved, onNaming } = {}) {
     this._setMode('prediction');
     this._plotClear();
-    this.edit = { id: view.id, revision: view.revision || 0, saved: view.edited || null, hist: null, name, onSaved, drag: null,
+    this.edit = { id: view.id, revision: view.revision || 0, saved: view.edited || null, hist: null, name, onSaved, onNaming, drag: null,
       editedPath: view.edited?.path || null };
     this.nmf = { state: view.nmf || null, found: null, pick: new Set(), run: null };
     if (view.nmf) this._nmfRefresh(this.edit);
@@ -976,7 +977,7 @@ export class MoviePlayer {
       showNoIdentity(dialog, title, `This prediction was made before what each name cost was kept with it. Predict this fly's ROIs again
         (<i>Predict its ROIs</i>, in the tab) to see it.`);
     } else if (label == null || !terms.rois[label]) showNoIdentity(dialog, title, 'This ROI is not among those the model named.');
-    else showIdentity(dialog, `${title}${copy ? ', unchanged' : ''}`, terms, label, this.esc);
+    else showIdentity(dialog, `${title}${copy ? ', unchanged' : ''}`, terms, label, this.esc, ed.onNaming ? () => ed.onNaming(+label) : null);
   }
 
   // the ROI whose name, drawn on the image, the pointer is on: its index, or null (the last drawn, if names overlap: the one on top)

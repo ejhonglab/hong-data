@@ -17,6 +17,8 @@ data folder, on tensor): asked for again, it is run again, its files replaced. I
 - ``<fly>_cellprob.tif``: Cellpose's cell probabilities, which `refinement`'s core goes by, and
   ``<fly>_atlas_prior.npz``: the atlas on the fly's grid, which ROIs split are named by (`refinement`);
 - ``average.tif``: the fly's average image, as the model saw it (for the tab's viewer);
+- once its naming was opened in the tab (`naming`), ``<fly>_naming_costs.json``: what naming each of its ROIs as each
+  glomerulus costs, term by term;
 - where the fly has ROIs of its own, the scores of each kind against them (``summary.csv``,
   ``glomeruli.csv``);
 - ``provenance.json`` (the model, its fit and the al-diag-seg it was made with; the fly's
