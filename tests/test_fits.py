@@ -145,7 +145,12 @@ def test_options():
     assert o == {**fits.DEFAULTS, "cellprob_threshold": -1.5, "flow_threshold": 0.0, "dilate": 2, "join_corr": -1.0}
     # and the most a name may cost
     assert fits.DEFAULTS["max_cost"] == 0.6 and fits.options({"max_cost": "0.75"})["max_cost"] == 0.75
-    for bad in ({"epochs": 0}, {"held_out": "x"}, {"held_out": 31}, {"refs": ["hemibrain"]}, {"refs": "grabe2016"},
+    # how the atlas on a fly's grid is moved onto its named ROIs (a fit from before it was an option: as the default,
+    # which its model takes in the predictions it makes now)
+    assert fits.DEFAULTS["align"] == "affine" and fits.options({"align": ""})["align"] == "affine"
+    assert [fits.options({"align": a})["align"] for a in fits.ALIGN] == ["affine", "shift", "none"]
+    assert fits.fit_options({"options": {"held_out": 2}})["align"] == "affine"
+    for bad in ({"align": "warp"}, {"align": True},{"epochs": 0}, {"held_out": "x"}, {"held_out": 31}, {"refs": ["hemibrain"]}, {"refs": "grabe2016"},
                 {"refs": [{}]}, {"refs": ["grabe2016"], "atlas": False}, {"cellprob_threshold": "x"}, {"cellprob_threshold": 7},
                 {"flow_threshold": -0.1}, {"dilate": "0.5"}, {"dilate": 11}, {"join_overlap": 1.5}, {"join_corr": "nan"},
                 {"require_odors": "valeric acid @ -3"}, {"require_odors": [1]}, {"require_odors": [""]}, {"image_odors": "some"},
@@ -297,7 +302,8 @@ def test_worker(main, tensor, monkeypatch):  # noqa: F811
     f = fits.get(main.db, f["id"])
     shared = [f"{NAMES[a]} @ {c}" for a, c in ODORS]
     assert f["status"] == "done" and f["error"] is None and calls["options"] == {"epochs": 10, "atlas": False, "tentative": True,
-                                                                                 "refs": [], "image_odors": shared, **fits.ROI_DEFAULTS}
+                                                                                 "refs": [], "image_odors": shared, "align": "affine",
+                                                                                 **fits.ROI_DEFAULTS}
     # (every fly the tab lists, with the odors they share: what Cellpose's images are made from)
     assert f["flies"]["listed"] == 3 and f["flies"]["odors"] == shared == f["flies"]["image_odors"]
     assert f["flies"]["held_out"] == calls["held_out"] == ["ann_2024-01-01_2"] and len(f["flies"]["train"]) == 2
@@ -458,6 +464,11 @@ def test_worker_with_alseg(main, tensor, monkeypatch):  # noqa: F811
     assert fits.ROI_DEFAULTS == {k: getattr(am.Options(), k) for k in fits.ROI_DEFAULTS}
     saved = json.loads((d / "model/model.json").read_text())["options"]
     assert {k: saved[k] for k in fits.ROI_DEFAULTS} == fits.ROI_DEFAULTS
+    # and how the atlas is moved onto a fly's named ROIs: the site's default al-diag-seg's (which a model saved before
+    # it was an option takes), its choices al-diag-seg's kinds, and "none" its None
+    from alseg import align
+
+    assert fits.DEFAULTS["align"] == am.Options().align == saved["align"] and set(fits.ALIGN) == {*align.KINDS, "none"}
     assert "values not finite (NaN or inf), taken as 0" in (d / "log.txt").read_text()
 
 
@@ -505,8 +516,11 @@ def test_worker_odors(main, tensor, monkeypatch):  # noqa: F811
     assert "images of a fly's responses are made from 3 of them" in readme and "(all but 1-hexanol @ -4)" in readme
     assert len(json.loads((d / "manifest.json").read_text())["flies"]) == 2
     # with images of all its odors, if asked; an odor no fly has cannot be asked of them
-    f, d = fit(require_odors=[names[3]], image_odors="all")
+    # (and a model asked not to move the atlas onto a fly's named ROIs: al-diag-seg's align None, "affine" unless asked)
+    assert model.options.align == "affine"
+    f, d = fit(require_odors=[names[3]], image_odors="all", align="none")
     assert f["flies"]["image_odors"] is None and am.Model.load(d / "model").image_odors() == names
+    assert am.Model.load(d / "model").options.align is None
     f, d = fit(require_odors=["geosmin @ -5"])
     assert f["status"] == "failed" and "no fly has geosmin @ -5" in f["error"]
     without_odor(tensor, "2024-01-01", 2)

@@ -40,10 +40,13 @@ ROI_DEFAULTS = {"cellprob_threshold": -2.0, "flow_threshold": 0.8, "dilate": 0, 
 # the tab's form has those to choose from, `fly_odors`). image_odors: what Cellpose's images of responses are made from,
 # "shared" (the odors every fly the tab lists has, whichever are fit to) or "all" (every odor of the model): with "shared", a
 # fly that lacks the odors asked for is predicted as by a model fit, to the same flies, without them (al-diag-seg's
-# `Options.image_odors`)
+# `Options.image_odors`). align: how the atlas on a fly's grid is moved to where the fly's ROIs say its glomeruli are,
+# before they are named with it there (`ALIGN`: al-diag-seg's `Options.align`, "none" for its None; saved with the
+# model, and a model saved before it was an option takes al-diag-seg's default: tests/test_fits.py checks it is this)
 DEFAULTS = {"held_out": 4, "epochs": 15, "atlas": True, "tentative": True, "refs": ["grabe2016"], "require_odors": [],
-            "image_odors": "shared", **ROI_DEFAULTS}
+            "image_odors": "shared", "align": "affine", **ROI_DEFAULTS}
 IMAGE_ODORS = ("shared", "all")
+ALIGN = ("affine", "shift", "none")
 LIMITS = {"held_out": (1, 30), "epochs": (1, 5000), "dilate": (0, 10)}  # (whole numbers)
 FLOAT_LIMITS = {"cellprob_threshold": (-6.0, 6.0), "flow_threshold": (0.0, 3.0), "join_overlap": (0.0, 1.0),
                 "join_corr": (-1.0, 1.0), "max_cost": (0.0, 2.0)}
@@ -88,8 +91,9 @@ def options(body: dict) -> dict:
     Raises:
         ValueError: for one out of `LIMITS`, or not a whole number; out of `FLOAT_LIMITS`, or not
             a number; for ``refs`` not a list of `REFERENCES`, or given without the atlas (which
-            they are added to); for ``require_odors`` not a list of odors, or ``image_odors`` not
-            of `IMAGE_ODORS`. (Not given, refs are `DEFAULTS`' with the atlas, none without.)
+            they are added to); for ``require_odors`` not a list of odors, ``image_odors`` not
+            of `IMAGE_ODORS`, or ``align`` not of `ALIGN`. (Not given, refs are `DEFAULTS`' with
+            the atlas, none without.)
     """
     out = dict(DEFAULTS)
     for k, (lo, hi) in LIMITS.items():
@@ -129,6 +133,10 @@ def options(body: dict) -> dict:
         if body["image_odors"] not in IMAGE_ODORS:
             raise ValueError(f"image odors: one of {', '.join(IMAGE_ODORS)}")
         out["image_odors"] = body["image_odors"]
+    if body.get("align") not in (None, ""):
+        if body["align"] not in ALIGN:
+            raise ValueError(f"align: one of {', '.join(ALIGN)}")
+        out["align"] = body["align"]
     return out
 
 

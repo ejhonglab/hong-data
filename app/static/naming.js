@@ -231,6 +231,13 @@ export class NamingExplorer {
     if (!v.maps.length) {
       this.notes.push(['info', v.model.has_atlas === false ? 'Its model has no atlas: its ROIs were named by odor tuning and position alone.'
         : 'This prediction did not keep the atlas on its fly\'s planes: predict it again to see it.']);
+    } else if (v.alignment) {
+      const a = v.alignment, um = (x) => `${x < 0 ? '−' : '+'}${Math.abs(x).toFixed(1)}`;
+      this.notes.push(['info', `The atlas is shown as it was moved to where this fly's ROIs say its glomeruli are, before they were named with it
+        (${a.kind === 'shift' ? 'a shift' : `an ${this.esc(a.kind)} map`} fit to ${plural(a.rois, 'ROI')} ${a.rois_named_by === 'tuning'
+        ? 'that odor tuning alone names' : 'named with the atlas as registered'}): its middle by ${um(a.shift_um[0])} µm in z, ${um(a.shift_um[1])} in y
+        and ${um(a.shift_um[2])} in x. One of those ROIs was a median ${a.before_um.toFixed(1)} µm from where the atlas expected its glomerulus,
+        and is ${a.after_um.toFixed(1)} µm now.`]);
     }
     if (!v.terms.rois) this.notes.push(['warn', 'This prediction did not keep what its names cost (it was made before they were): predict it again.']);
     // to begin with: the ROI asked for; else the one not named that came nearest to a name (else the first), with the glomerulus

@@ -377,6 +377,53 @@ between the frontend and the server. Using the app is described in
   So is the most a name may cost (`max_cost`, 0.6: al-diag-seg's default, not tuned on the
   database's flies), an option of a fit rather than of a prediction, so that every prediction
   of a model names by the same rule as its held-out scores.
+- **The atlas on a fly's planes is moved to where the fly's ROIs say its glomeruli are, by
+  an affine map, and a prediction keeps the moved atlas** (al-diag-seg's `alseg.align` and
+  `Model.align`; a fit's `align` option). Registration leaves the atlas off: on fit 9's 75
+  flies of Sam's with ROIs of their own (none trained on), a manual ROI's middle is a median
+  13 µm from where the atlas expects its glomerulus, 8 µm of that along z.
+  - *What it gains.* Measured on those flies (2,319 glomeruli drawn), scored as *Each
+    glomerulus, over a model's predictions* scores (below), with the map fit to different
+    ROIs:
+
+    | Atlas moved by | Glomeruli named right | ROIs named as another drawn glomerulus | ROIs named |
+    |---|---|---|---|
+    | nothing | 755 | 121 | 1,530 |
+    | a shift, of the ROIs named with the atlas | 809 | 116 | 1,590 |
+    | an affine map, of the ROIs named with the atlas | 841 | 128 | 1,716 |
+    | … after a shift | 851 | 128 | 1,737 |
+    | an affine map, of the ROIs that odor tuning alone names (what is done) | 897 | 127 | 1,763 |
+    | an affine map, of the fly's own ROIs (not something a prediction has) | 970 | 110 | 1,821 |
+
+    At a most-a-name-may-cost of 0.55, what is done names 796 right and 71 as another
+    glomerulus: 5% more right than the unmoved atlas at 0.6, with 41% fewer wrong.
+  - *Why the ROIs tuning names.* The ROIs named with the atlas as registered are those
+    near where it expects them, so a map fit to them falls short, and finds nothing where
+    registration failed: in three flies it had left the atlas turned some 55° in the
+    plane (0, 1 and 6 glomeruli named right; moved, 13, 17 and 17). Tuning alone names
+    ROIs wherever they are. It needs most of the odors, though: with the same flies named
+    by 16 of their 22 or 23 odors or fewer, the ROIs named with the atlas give the better
+    map, with 18 or more, the ROIs tuning names (al-diag-seg's README has the numbers).
+    So a fly with fewer than 18 of the model's odors is moved as in the table's fourth row.
+  - *Why not more than affine.* A fit to all but one of a fly's own ROIs puts the one left
+    out a median 13.2 µm off with the atlas as registered, 9.6 µm after a shift, 6.8 µm
+    after an affine map, and 6.6 µm with a smooth warp on top (through the ROIs' residuals,
+    over 30 µm). The warp names no more glomeruli right than the affine map alone, even
+    fit to the fly's own ROIs. And a warp follows each ROI it is fit to, the wrong ones
+    too.
+  - *Why the kept atlas is the moved one.* Everything that uses a prediction's atlas later
+    then agrees with its names without knowing of the move: ROIs split by a refinement
+    and those NMF adds are named with it, the viewer and the naming explorer show it, and
+    the explorer's costs (worked out again from it) stay al-diag-seg's exactly. The move
+    is in the file (`alignment`, in `<fly>_atlas_prior.npz` and the identity terms), the
+    prediction's log and its provenance. Moving it inside naming instead, each time ROIs
+    are named, would move it differently for each set of ROIs, and the explorer could
+    not give al-diag-seg's costs under another threshold without fitting it again.
+  - *Which predictions.* The option is saved with a model, and a model saved before it
+    was one takes the default (as with how Cellpose's masks are made): so every prediction
+    made from now on has it, and those already made keep their names until predicted
+    again (fit 9's 111 took 3.3 h in all). A fit's own held-out scores are of when it
+    was fit.
 - **Keeping neighboring glomeruli out of ROIs is an option of a prediction, not of a fit.** The
   model's ROIs sit closer than manual ones (on fit 7's 4 held-out flies: 0.5 µm apart in the
   median, 48% touching; manual 1.9 µm, none), and the edge of one that faces a neighbor carries
@@ -2379,7 +2426,8 @@ GET    /api/roi_training[?datasets=1,2][&kept=1]
 GET    /api/fits                            every fit (those running and waiting with when they should end), and
                                             the fit worker's status (fits.py)
 POST   /api/fits                            ask for a fit: {name (a first name), options (among them require_odors: only
-                                            the flies with these are fit to; image_odors: "shared" or "all")}; who and from where are kept
+                                            the flies with these are fit to; image_odors: "shared" or "all"; align: "affine",
+                                            "shift" or "none")}; who and from where are kept
 POST   /api/fits/{id}/cancel                stop a fit (one waiting now, one running at its next step)
 DELETE /api/fits/{id}                       delete a fit and its files (409 while it runs)
 GET    /api/fits/{id}/log                   its log
@@ -2418,7 +2466,8 @@ GET    /api/predictions/{id}/identity       what its ROIs' names cost, as al-dia
                                             for every ROI's 5 best glomeruli, the weights, the most a name may cost
 GET    /api/predictions/{id}/naming         what the naming explorer shows of one (naming.view): the ROIs its names
                                             were given to, each glomerulus of the atlas on its fly's planes (its
-                                            peak, its middle), the model's glomeruli (flies, position SD), the terms
+                                            peak, its middle) and how that atlas was moved onto the fly's glomeruli
+                                            (alignment), the model's glomeruli (flies, position SD), the terms
                                             above; 409 if its folder has not its ROIs' labels
 GET    /api/predictions/{id}/naming/volumes its volumes, as bytes (naming.volumes): the average image, the ROIs'
                                             labels and each glomerulus' probability, after a small JSON header

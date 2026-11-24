@@ -962,7 +962,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
     probability of *one glomerulus* at each pixel (the share of the training flies in which it covers that
     place, once the atlas is registered to the fly), with lines where it is 0.05, 0.1, 0.25 and 0.5; or *every
     glomerulus*, each pixel by the one most probable there, named. The ROIs are outlined over it: whole if
-    named, dashed if not. Each plane's button says how strong the map shown is on it.
+    named, dashed if not. Each plane's button says how strong the map shown is on it. The atlas is shown as
+    the names were given with it: where registration put it, then moved onto the fly's glomeruli (below).
+    A note above says how far it was moved; a prediction made before atlases were moved has it as registered.
   - **What a name costs.** Click an ROI (or its dot in the chart of every ROI's cost) for the glomeruli that
     cost least for it, each a bar of its five terms' shares against the most a name may cost; choose a
     glomerulus for the ROIs it costs least for. Under the chart, two bars say what the costs of the ROIs
@@ -981,6 +983,25 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   The first time a prediction is opened there, the fit worker works out what every glomerulus costs for every
   ROI (a few seconds; kept with it as `<fly>_naming_costs.json`, in its download). Without the worker, each
   ROI's 5 best glomeruli are shown, and *What if* is off.
+  **The atlas is moved onto each fly's glomeruli.** Registration leaves the atlas some µm from a fly's
+  glomeruli, most along z (planes are 10 µm apart), and now and then far off. So the atlas on a fly's planes
+  is moved to where its ROIs say its glomeruli are, and the ROIs are named with it there:
+  - **How.** By an affine map (a shift, with scale, tilt and shear) fit to the ROIs that odor tuning alone
+    names, wherever they are, so that a few wrong ones do not move it. In a fly with fewer than 18 of the
+    model's odors it is fit to the ROIs named with the atlas as registered instead (after a shift), and a
+    fly with fewer than 5 such ROIs keeps the atlas as registered. The prediction's log and
+    `provenance.json` say how far the atlas was moved.
+  - **What it gains.** On fit #9's 75 flies of Sam's that have ROIs of their own, it named 897 of the 2,319
+    glomeruli drawn right, against 755 (19% more; more in 45 flies, fewer in 6), and 127 ROIs as another drawn
+    glomerulus, against 121: it names 15% more ROIs. With the most a name may cost at 0.55 instead of 0.6, it
+    named 796 right and 71 as another: 5% more right than without it at 0.6, and 41% fewer wrong.
+  - **Where it gains most.** In three of those flies registration had left the atlas turned some 55°: they
+    went from 0, 1 and 6 glomeruli named right to 13, 17 and 17. A shift alone gained 7% over all the flies,
+    and a smooth warp on top of an affine map nothing more ([design.md](design.md)).
+  - **Which predictions.** Those made from now on, by any model: it is an option of a fit (*How its ROIs are
+    made and named*), and a model fit before it was one takes the default. Predictions already made keep
+    their names until predicted again.
+
   A fly may lack some of the model's odors (it needs 3 of them): the prediction says which, and its ROIs are then
   joined into 3D and named by those it has, exactly as by a model fit to the same flies with those odors. They are
   found as well as by such a model too if the fly has the odors Cellpose's images are made from (by default those every
@@ -1122,8 +1143,9 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   (and add the [Grabe et al. 2016](https://doi.org/10.1016/j.celrep.2016.08.063) atlas to
   it, as by default), whether to train on tentative ROIs, and (under *How its ROIs are made and named*) Cellpose's mask thresholds, how much
   to grow its ROIs, and how much each plane's must overlap and be tuned alike to be joined into 3D objects (the
-  defaults scored best on fit 6's flies), and the most a name may cost (0.6: an ROI no glomerulus costs
-  less for is numbered, not named). Anyone may start one, once their first name is set in
+  defaults scored best on fit 6's flies), the most a name may cost (0.6: an ROI no glomerulus costs
+  less for is numbered, not named), and how the atlas on each fly's planes is moved to where the fly's ROIs say
+  its glomeruli are, before they are named with it (by an affine map, by default; by a shift; or not at all). Anyone may start one, once their first name is set in
   Settings (the box links to it). One runs at a time; those running and waiting say who
   asked for them, from which IP address, when, how far they have got, and when they should
   end (estimated from how long earlier fits took, stage by stage, which is kept with each);

@@ -296,6 +296,7 @@ def run(db, fit: dict, gpu: bool = False) -> None:
             (d / "work").mkdir()  # (Cellpose makes only its models/ in the folder it is given)
             model = am.fit(data["flies"], held, am.Options(epochs=o["epochs"], atlas=o["atlas"], tentative=o["tentative"],
                                                            refs=[str(p) for p in refs], image_odors=flies["image_odors"],
+                                                           align=None if o["align"] == "none" else o["align"],
                                                            # (a fit asked for before these were options: al-diag-seg's)
                                                            **{k: o[k] for k in fits.ROI_DEFAULTS if k in o}),
                            out=d / "work", progress=prog, odors=data["odors"], aliases=data["aliases"],
@@ -369,7 +370,13 @@ AL segmentation tab, asked for by {name} on {created}, on the {device}.
                     their weights, and the most a name may cost (max_cost: an ROI none costs less for is numbered)
 {fly}_atlas_prior.npz
                     (if the model has an atlas) the atlas on the fly's planes: each glomerulus' probability at each
-                    voxel (prior: glomeruli, Z, Y, X; names: the glomeruli), which the ROIs were named by
+                    voxel (prior: glomeruli, Z, Y, X; names: the glomeruli), which the ROIs were named by. It is where
+                    registration put it, then moved to where the model's own ROIs say the fly's glomeruli are
+                    (alignment, as JSON, also in the identity terms: a place x of the atlas, in um (z, y, x), went to
+                    matrix x + offset_um; how many ROIs that was fit to and which (rois_named_by: tuning, those odor
+                    tuning alone names; atlas, those named with the atlas as registered), each one's weight in the
+                    fit, and their median distance from where the atlas expected their glomeruli before and after.
+                    Absent, or null: the atlas was not moved)
 average.tif         the fly's average image, as the model saw it
 {fly}_naming_costs.json
                     (only once its naming was opened in the tab: Naming, in the list of predictions) what naming each
@@ -487,6 +494,19 @@ def _fly_inputs(fly_dir: Path, raw_dir: Optional[Path], model, index) -> dict:
             "anatomical_stack": str(stack) if stack else None}
 
 
+def _moved_said(moved: Optional[dict], kind: Optional[str]) -> str:
+    """How a prediction's atlas was moved to where its fly's ROIs say its glomeruli are (al-diag-seg's ``alignment``:
+    None, not at all; ``kind``: what the model asks, `alseg.model.Options.align`), as its log says it."""
+    if moved is None:
+        return ("its atlas left where registration put it: " +
+                ("too few of its ROIs were named to fit it to" if kind else "the model does not move it onto the fly's ROIs"))
+    dz, dy, dx = moved["shift_um"]
+    onto = "the ROIs that odor tuning alone names" if moved.get("rois_named_by") == "tuning" else "its named ROIs"
+    return (f"its atlas moved onto {onto} ({moved['kind']}, fit to {moved['rois']} of them): its middle by "
+            f"{dz:+.1f} um in z, {dy:+.1f} in y and {dx:+.1f} in x; one of those ROIs was a median {moved['before_um']:.1f} um from "
+            f"where the atlas expected its glomerulus, and is {moved['after_um']:.1f} um now. Its ROIs named again with it there")
+
+
 def run_prediction(db, p: dict, on_gpu: bool, why_cpu: Optional[str] = None) -> None:
     """Runs one prediction (claimed: `predictions.claim`) to the end, on the GPU or the CPU:
     done or failed. Its folder is made anew (`predictions` says what is in it)."""
@@ -537,7 +557,7 @@ def run_prediction(db, p: dict, on_gpu: bool, why_cpu: Optional[str] = None) -> 
             name, scores = p["fly"], None
             if f.get("labels") is not None:
                 res = model.evaluate([f], d, priors=True)
-                final = res["final"]
+                final, moved = res["final"], (res.get("alignment") or {}).get(name)
                 row = lambda kind: next(r for r in res["summary"] if r["rois"] == kind)  # noqa: E731
                 num = lambda v: v if isinstance(v, (int, float)) else None  # noqa: E731
                 ident = next((r for r in res["identity"] if r["rois"] == final), {})
@@ -550,12 +570,12 @@ def run_prediction(db, p: dict, on_gpu: bool, why_cpu: Optional[str] = None) -> 
                 cellprob = f.get("cellprob")
             else:
                 pr = model.predict(f)
-                final, cellprob = pr["final"], pr.get("cellprob")
+                final, cellprob, moved = pr["final"], pr.get("cellprob"), pr.get("alignment")
                 for kind, lab in pr["labels"].items():
                     refinement.write_kind(d, name, kind, lab, pr["identities"][kind], pr["identity_terms"][kind])
                 if pr["atlas_maxprob"] is not None:
                     am.write_volume(d / f"{name}_atlas_maxprob.tif", pr["atlas_maxprob"])
-                    am.write_prior(d / f"{name}_atlas_prior.npz", pr["prior"], model.atlas.names)
+                    am.write_prior(d / f"{name}_atlas_prior.npz", pr["prior"], model.atlas.names, moved)
                 ids = pr["identities"][final]
                 with open(d / f"{name}_identities.csv", "w", newline="") as fh:
                     w = csv.writer(fh)
@@ -564,6 +584,8 @@ def run_prediction(db, p: dict, on_gpu: bool, why_cpu: Optional[str] = None) -> 
                 am.write_identity_terms(d / f"{name}_identity_terms.json", pr["identity_terms"][final])
                 n = len(np.unique(pr["labels"][final])) - 1
                 named = sorted({v[0] for v in ids.values() if v[0]})
+            if model.atlas is not None:
+                print(_moved_said(moved, model.options.align))
             shutil.copyfile(d / f"{name}_{final}_RoiSet.zip", d / f"{name}_RoiSet.zip")
             predictions.write_missing(d, list(model.odors), list(f["odors"]), model.image_odors())
             am.write_volume(d / predictions.AVERAGE, f["average"].astype(np.float32))
@@ -601,7 +623,10 @@ def run_prediction(db, p: dict, on_gpu: bool, why_cpu: Optional[str] = None) -> 
                           "alseg_options": dataclasses.asdict(model.options),
                           "odors": model.odors, "info": model.info},
                 "software": {"al-diag-seg": v["alseg"], "hong2p": v["hong2p"], "olfdb": version.VERSION, **gpu()},
-                "outputs": {"rois": f"{name}_RoiSet.zip", "final": final, "n_rois": int(n), "named": named, "scores": scores},
+                "outputs": {"rois": f"{name}_RoiSet.zip", "final": final, "n_rois": int(n), "named": named, "scores": scores,
+                            # how the atlas on its planes was moved to where its ROIs say its glomeruli are (al-diag-seg's
+                            # Model.align; None: it was not)
+                            "alignment": {k: v for k, v in moved.items() if k != "weights"} if moved else None},
             }
             (d / predictions.PROVENANCE).write_text(json.dumps(prov, indent=1, default=str))
             (d / "README.txt").write_text(PRED_README.format(

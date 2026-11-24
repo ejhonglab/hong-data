@@ -88,6 +88,24 @@ def _prior(p: dict, shape):
     return prior, names
 
 
+def alignment(p: dict) -> Optional[dict]:
+    """How the atlas a prediction kept was moved to where its fly's ROIs say its glomeruli are, before they were named
+    with it there (al-diag-seg's `alseg.model.Model.align`, as its ``<fly>_atlas_prior.npz`` has it: ``kind``,
+    ``matrix`` and ``offset_um`` (a place x of the atlas, um (z, y, x), went to matrix x + offset_um), ``shift_um`` (of
+    its middle), ``rois`` (how many ROIs it was fit to), ``rois_named_by`` (which: "tuning", those odor tuning alone
+    names, or "atlas", those named with the atlas as registered), ``weights`` (each one's in the fit) and
+    ``before_um`` and ``after_um`` (their median distance from where the atlas expected their glomeruli)). None for an
+    atlas left where registration put it: too few such ROIs, a model that does not ask for it, or a prediction made
+    before atlases were moved."""
+    import numpy as np
+
+    try:
+        z = np.load(files(p)["prior"])
+        return json.loads(str(z["alignment"])) if "alignment" in z.files else None
+    except (OSError, ValueError, KeyError):
+        return None
+
+
 def _stat(path: Path) -> list[int]:
     st = os.stat(path)
     return [st.st_size, st.st_mtime_ns]
@@ -125,6 +143,8 @@ def view(db, pred_id: int) -> dict:
       ``peak`` (its largest probability there), ``at`` (where: [z, y, x]), ``planes`` (its largest on each plane),
       ``centre`` (its probability's centre of mass, in voxels: where the position term expects it; None if it is 0
       everywhere) and ``mass`` (its probabilities summed, in voxels); [] without an atlas on the fly's planes;
+    - ``alignment``: how that atlas was moved to where the fly's ROIs say its glomeruli are, before they were named
+      with it (`alignment`; None if it was not, or there is none);
     - ``glomeruli``: {name: {``flies`` (behind its map in the model's atlas), ``trained`` (training flies with it;
       None for one of the reference atlas alone), ``sd`` (of its position, um)}}, as far as the fit's model is there;
     - ``terms``: `predictions.identity_terms` (each ROI's few best glomeruli; ``rois`` None if they were not kept);
@@ -162,7 +182,7 @@ def view(db, pred_id: int) -> dict:
     info = _model_info(p["fit_id"])
     every = sorted(set(info["trained"]) | set(info["flies"]) | set(names))
     return {"id": p["id"], "fit_id": p["fit_id"], "fly": p["fly"], "kind": named_kind(p), "final": (p.get("result") or {}).get("final"),
-            "shape": list(lab.shape), "spacing": spacing, "rois": rois, "maps": maps,
+            "shape": list(lab.shape), "spacing": spacing, "rois": rois, "maps": maps, "alignment": alignment(p) if maps else None,
             "glomeruli": {n: {"flies": info["flies"].get(n), "trained": info["trained"].get(n), "sd": info["sd"].get(n)} for n in every},
             "terms": terms, "costs": costs_state(p), "model": {"has_atlas": info["has_atlas"], "max_cost": info["max_cost"]}}
 

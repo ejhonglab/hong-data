@@ -708,12 +708,23 @@ try {
               <input type="number" id="fit-join-corr" min="-1" max="1" step="0.05" value="0.7"></label>
             <label class="field"><span>Most a name may cost <span class="muted">(0–2; higher names more ROIs, less surely)</span></span>
               <input type="number" id="fit-max-cost" min="0" max="2" step="0.05" value="0.6"></label>
+            <label class="field"><span>The atlas moved onto each fly's glomeruli <span class="muted">(where its ROIs place them)</span></span>
+              <select id="fit-align">
+                <option value="affine" selected>By an affine map</option>
+                <option value="shift">By a shift</option>
+                <option value="none">Not at all</option>
+              </select></label>
           </div>
           <p class="small muted">An ROI is named as the glomerulus that costs least for it (each glomerulus names one ROI), if that
             costs no more than this; else it is numbered. The cost is the weighted mean of how far the ROI is from the glomerulus
             in odor tuning, position, shape, overlap with the atlas and layout among its neighbours (each 0 for a perfect fit):
             click a predicted ROI's name in a prediction's viewer for its values, or <i>Naming</i> in the list of predictions
             for where the atlas puts each glomerulus on a fly, and which of its ROIs another value here would name.</p>
+          <p class="small muted">Registration leaves the atlas some µm from a fly's glomeruli, most along z. So the atlas on a
+            fly's planes is moved to where its ROIs say its glomeruli are, and the ROIs are named with it there. An affine
+            map (a shift, with scale, tilt and shear) is fit to the ROIs that odor tuning alone names, wherever they are; a
+            shift, to the ROIs named with the atlas as registered. Either is fit so that a few wrong ones do not move it. A
+            model fit before this was an option moves it by an affine map too, in the predictions it makes from now on.</p>
         </div>
       </details>
       <p class="small" id="fit-who"></p>

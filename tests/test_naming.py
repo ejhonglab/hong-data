@@ -235,6 +235,14 @@ def test_view_and_volumes(main, tensor):  # noqa: F811
                               "VM7d": {"flies": 1.0, "trained": None, "sd": None}}
     assert v["terms"]["rois"]["2"]["candidates"][0]["name"] == "DL5" and v["terms"]["max_cost"] == 0.6
     assert v["costs"] == {"made": None} and v["model"] == {"has_atlas": True, "max_cost": 0.6}
+    # how the atlas was moved onto the fly's named ROIs, as al-diag-seg says it in the file of the atlas (none: it was not)
+    assert v["alignment"] is None
+    moved = {"kind": "affine", "matrix": [[1.1, 0, 0], [0, 1, 0], [0, 0, 1]], "offset_um": [-2.0, 3.0, 0.5], "shift_um": [1.0, 3.0, 0.5],
+             "rois": 7, "weights": [1.0] * 7, "before_um": 9.5, "after_um": 4.25}
+    kept = dict(np.load(d / f"{FLYNAME}_atlas_prior.npz"))
+    np.savez_compressed(d / f"{FLYNAME}_atlas_prior.npz", **kept, alignment=np.array(json.dumps(moved)))
+    assert view()[1]["alignment"] == moved and view()[1]["maps"] == v["maps"]
+    np.savez_compressed(d / f"{FLYNAME}_atlas_prior.npz", **kept)
 
     # the volumes: a header, then the average image (each plane to 0-255), the labels and each glomerulus' probability (255: 1)
     assert raw(main.predictions_naming_volumes, path_params={"id": p["id"] + 1})[0] == 404

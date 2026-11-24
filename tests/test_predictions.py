@@ -319,6 +319,96 @@ def test_worker_prediction(main, tensor, monkeypatch):  # noqa: F811
     assert "the fit was deleted" in predictions.get(main.db, q["id"])["error"]
 
 
+def test_prediction_alignment(main, tensor, monkeypatch):  # noqa: F811
+    """A model with an atlas (the real al-diag-seg, where it is installed, with its stand-in segmenter; registration stood in
+    for): what a prediction keeps of the atlas on its fly's planes is the atlas as al-diag-seg moved it onto the fly's named
+    ROIs, with how, for a fly with ROIs of its own and for one without; and an atlas that was not moved is said so."""
+    am = pytest.importorskip("alseg.model")
+    from app import naming
+
+    class StandIn(am.Options):
+        def __init__(self, **kw):
+            super().__init__(**{"segmenter": "stand-in", "gpu": False, **kw})
+
+    monkeypatch.setattr(am, "Options", StandIn)
+    f = fits.create(main.db, "Ann", None, fits.options({"held_out": 1, "atlas": False}))
+    fit_worker.run(main.db, fits.claim(main.db))
+    f = fits.get(main.db, f["id"])
+    assert f["status"] == "done"
+    # (the model given an atlas without registering anything: on a fly's planes, each glomerulus where the stand-in has its ROI)
+    mdir = fits.fit_dir(f["id"]) / "model"
+    doc = json.loads((mdir / "model.json").read_text())
+    assert doc["options"]["align"] == "affine"
+    (mdir / "model.json").write_text(json.dumps({**doc, "atlas": True}))
+    np.savez(mdir / "atlas.npz", template=np.zeros((1, 1, 1), np.float32), prob=np.zeros((len(GLOMS), 1, 1, 1), np.float16),
+             names=np.array(GLOMS), spacing=np.ones(3), counts=np.ones(len(GLOMS)))
+
+    def prior_of(self, fly):
+        lab, lut = am._stand_in(fly), fly.get("lut") or {1: GLOMS[0], 2: GLOMS[1]}
+        return np.stack([np.where(lab == next((l for l, n in lut.items() if n == g), -1), 0.8, 0.0) for g in self.atlas.names]).astype(np.float32)
+
+    monkeypatch.setattr(am.Model, "prior_of", prior_of)
+    held = f["flies"]["held_out"][0]
+    date, n = held.split("_")[1:]
+    fly = predictions.locate(f"ann/analysis/{date}/{n}", f"ann/raw/{date}/{n}", config.TENSOR_ROOT, [])
+
+    def predict(where=fly):
+        p, _ = predictions.create(main.db, f["id"], where, "Bob", None, overwrite=True)
+        fit_worker.run_prediction(main.db, predictions.claim(main.db), False)
+        p = predictions.get(main.db, p["id"])
+        d = predictions.pred_dir(p["id"])
+        assert p["status"] == "done", (d / "log.txt").read_text()[-3000:]
+        return p, d, np.load(d / f"{p['fly']}_atlas_prior.npz"), json.loads((d / "provenance.json").read_text())["outputs"]["alignment"]
+
+    # the fixture's flies have 4 glomeruli, too few to fit the atlas to: it is left where registration put it
+    p, d, z, said = predict()
+    assert "alignment" not in z.files and said is None and float(z["prior"].max()) == pytest.approx(0.8, abs=1e-3)
+    assert "its atlas left where registration put it: too few of its ROIs were named to fit it to" in (d / "log.txt").read_text()
+    assert naming.view(main.db, p["id"])["alignment"] is None
+    assert json.loads((d / f"{held}_identity_terms_pred.json").read_text())["alignment"] is None
+
+    # moved (the fit stood in for): the atlas kept is the moved one, with how, wherever it is said
+    moved = {"kind": "affine", "matrix": [[1.25, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], "offset_um": [-4.0, -2.0, 3.0],
+             "shift_um": [1.0, -2.0, 3.0], "rois": 4, "weights": [1.0, 1.0, 0.5, 0.0], "before_um": 6.0, "after_um": 2.5,
+             "rois_named_by": "tuning"}
+    real = am.Model.align, am._stand_in
+    monkeypatch.setattr(am.Model, "align", lambda self, fly, labels, prior, ids, terms=None, prior_names=None: (prior * 0.5, moved, ids, terms))
+    p, d, z, said = predict()
+    assert am.read_alignment(z) == moved and float(z["prior"].max()) == pytest.approx(0.4, abs=1e-3)
+    assert said == {k: v for k, v in moved.items() if k != "weights"}
+    assert ("its atlas moved onto the ROIs that odor tuning alone names (affine, fit to 4 of them): its middle by +1.0 um in z, -2.0 in y and "
+            "+3.0 in x; one of those ROIs was a median 6.0 um from where the atlas expected its glomerulus, and is 2.5 um now") in (d / "log.txt").read_text()
+    assert fit_worker._moved_said({**moved, "rois_named_by": "atlas", "kind": "shift"}, "shift").startswith("its atlas moved onto its named ROIs (shift, fit to 4")
+    assert json.loads((d / f"{held}_identity_terms_pred.json").read_text())["alignment"] == moved
+    assert predictions.identity_terms(main.db, p["id"])["alignment"] == moved and naming.view(main.db, p["id"])["alignment"] == moved
+    assert float(tifffile.imread(d / f"{held}_atlas_maxprob.tif").max()) == pytest.approx(0.4)
+
+    # a fly with no ROIs of its own (the worker writes its files itself)
+    new, raw = tensor / "ann/analysis/2024-02-02/1", tensor / "ann/raw/2024-02-02/1"
+    shutil.copytree(tensor / f"ann/analysis/{date}/{n}", new)
+    shutil.copytree(tensor / f"ann/raw/{date}/{n}", raw)
+    (new / "diagnostics1/RoiSet.zip").unlink()
+
+    def boxes(fly):
+        lab = np.zeros(fly["average"].shape, np.int32)
+        lab[:, 2:10, 2:12], lab[:, 13:21, 15:26] = 1, 2
+        return lab
+
+    monkeypatch.setattr(am, "_stand_in", boxes)
+    q, d, z, said = predict(predictions.locate(str(new), str(raw), config.TENSOR_ROOT, []))
+    assert q["result"]["scores"] is None and am.read_alignment(z) == moved and said["shift_um"] == [1.0, -2.0, 3.0]
+    assert float(z["prior"].max()) == pytest.approx(0.4, abs=1e-3) and naming.view(main.db, q["id"])["alignment"] == moved
+    assert json.loads((d / "ann_2024-02-02_1_identity_terms.json").read_text())["alignment"] == moved
+
+    # a model that does not ask for it
+    monkeypatch.setattr(am.Model, "align", real[0])
+    monkeypatch.setattr(am, "_stand_in", real[1])
+    (mdir / "model.json").write_text(json.dumps({**doc, "atlas": True, "options": {**doc["options"], "align": None}}))
+    p, d, z, said = predict()
+    assert "alignment" not in z.files and said is None
+    assert "its atlas left where registration put it: the model does not move it onto the fly's ROIs" in (d / "log.txt").read_text()
+
+
 def test_prediction_missing_odors(main, tensor, monkeypatch):  # noqa: F811
     """A fly that lacks an odor of the model (the real al-diag-seg, with its stand-in segmenter): predicted by those it has, and
     said to lack it; one fit with images of the odors every fly shares says that none of those is missing."""

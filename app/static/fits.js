@@ -16,9 +16,13 @@ const REQUIRE_CHECKED = ['acetophenone @ -4', 'valeric acid @ -3'];
 const refNames = (o) => (o.refs || []).map((r) => REF_NAMES[r] || r);
 // how a fit's ROIs are made (fits.ROI_DEFAULTS), if it was asked for since they were options
 const minus = (v) => String(v).replace('-', '−');
+// how a fit's model moves the atlas to where a fly's ROIs say its glomeruli are, before naming them with it (fits.ALIGN)
+const ALIGN_NAMES = { affine: "the atlas moved onto each fly's glomeruli by an affine map", shift: "the atlas moved onto each fly's glomeruli by a shift",
+  none: 'the atlas left where registration puts it' };
 const roiSettings = (o) => (o.cellprob_threshold == null ? '' : ` Its ROIs: cell probability threshold ${minus(o.cellprob_threshold)},
   flow threshold ${o.flow_threshold}, grown by ${o.dilate} px; planes joined at overlap ${o.join_overlap} and tuning correlation
-  ${minus(o.join_corr)}${o.max_cost == null ? '' : '; named where a name costs ' + o.max_cost + ' or less'}.`);
+  ${minus(o.join_corr)}${o.max_cost == null ? '' : '; named where a name costs ' + o.max_cost + ' or less'}${
+  o.atlas && ALIGN_NAMES[o.align] ? `, ${ALIGN_NAMES[o.align]}` : ''}.`);
 
 // a duration in seconds as '1 h 5 min', '12 min', '40 s'
 export function fmtDuration(s) {
@@ -337,6 +341,7 @@ export class FitsPanel {
       tentative: $('#fit-tentative').checked, refs: atlas && $('#fit-grabe').checked ? ['grabe2016'] : [],
       cellprob_threshold: $('#fit-cellprob').value, flow_threshold: $('#fit-flow').value, dilate: $('#fit-dilate').value,
       join_overlap: $('#fit-join-overlap').value, join_corr: $('#fit-join-corr').value, max_cost: $('#fit-max-cost').value,
+      align: $('#fit-align').value,
       // (the odors ticked, of those the flies found have: all of them, if the flies are not found yet, for the server to say)
       require_odors: this._odorFlies() ? this._required(this._odorFlies()) : [...this.require],
       image_odors: $('#fit-image-shared')?.checked === false ? 'all' : 'shared' };
