@@ -647,6 +647,28 @@ try {
       <div id="fits-past"></div>
     </div>
 
+    <div class="step" id="byglom-step" hidden>
+      <div class="step-head"><h2>Each glomerulus, over a model's predictions</h2></div>
+      <p class="muted small">For each name an experimenter gives glomeruli: in how many of their flies a model's ROIs found it, and what
+        they named it there. Summed over the flies the model predicted that have ROIs of their own (drawn by hand, as they are
+        now), matched as al-diag-seg scores a prediction: an ROI is <i>on</i> a glomerulus where they overlap by an IoU over 0.3,
+        and has <i>found</i> it at 0.5 or over, and where a glomerulus is not drawn on a plane, nothing there counts against an
+        ROI. Click a glomerulus for its flies, and a fly to see how its ROI was named.</p>
+      <div class="grid predict-options">
+        <label class="field"><span>Model</span><select id="byglom-fit"></select></label>
+        <label class="field"><span>Experimenter <span class="muted">(a fly's top folder on tensor)</span></span><select id="byglom-who"></select></label>
+        <label class="field"><span>Flies</span><select id="byglom-flies"></select></label>
+        <label class="field"><span>ROIs</span><select id="byglom-rois">
+          <option value="final">The predictions' (refined, where they were)</option>
+          <option value="pred">The model's own (before refinement)</option></select></label>
+      </div>
+      <div id="byglom-status" aria-live="polite"></div>
+      <div id="byglom-summary"></div>
+      <div class="byglom-key" id="byglom-key"></div>
+      <label class="check" id="byglom-only" hidden><input type="checkbox" id="byglom-model-only"> Also the <span id="byglom-only-n"></span></label>
+      <div class="byglom-table-box" id="byglom-table"></div>
+    </div>
+
     <div class="step" id="fit-step">
       <div class="step-head"><h2>Fit a model</h2></div>
       <p class="muted small">Fits <a href="https://github.com/tom-f-oconnell/al-diag-seg" target="_blank" rel="noopener">al-diag-seg</a>'s

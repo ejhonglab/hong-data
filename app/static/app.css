@@ -1136,6 +1136,47 @@ button.naming-row:hover { background: var(--surface-2); }
   .naming-side { border-top: 1px solid var(--rule); }
 }
 @media (max-width: 1100px) { .naming-panels { width: 380px; } .naming-slider { grid-template-columns: 124px minmax(0, 1fr) 60px; } }
+/* AL segmentation: each glomerulus over a model's predictions (by_glomerulus.js). Right is green and wrong red; grey: an ROI left unnamed,
+   or one that cannot be judged; striped: the same less surely (barely on it, or off every drawn glomerulus) */
+:root { --byglom-right: #45b565; --byglom-wrong: #a8201a; --byglom-grey: #70767c; }
+:root[data-theme="dark"] { --byglom-right: #3fae5f; --byglom-wrong: #bd3a2f; --byglom-grey: #7d8389; }
+.byglom-key { display: grid; gap: 3px; margin: 6px 0 8px; font-size: 12px; color: var(--ink-muted); }
+.byglom-key > div { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; }
+.byglom-key span { display: inline-flex; align-items: center; gap: 5px; }
+.byglom-key .byglom-key-of { color: var(--ink); font-weight: 500; }
+.byglom-sw { flex: none; width: 12px; height: 12px; border-radius: 2px; }
+.byglom-table { font-size: 12px; }
+.byglom-table th, .byglom-table td { padding: 3px 5px; white-space: nowrap; }
+.byglom-table td { text-align: right; font-variant-numeric: tabular-nums; }
+.byglom-table thead th { text-align: right; white-space: normal; vertical-align: bottom; line-height: 1.25; }
+.byglom-table thead th[data-sort] { cursor: pointer; }
+.byglom-table thead th:first-child, .byglom-table th.byglom-barcell, .byglom-table td.byglom-barcell, .byglom-table .byglom-names { text-align: left; }
+.byglom-table tbody th, .byglom-table tfoot th { text-align: left; font-weight: 500; position: static; color: var(--ink); border-bottom-color: var(--rule); }
+.byglom-table tbody tr[data-glom] { cursor: pointer; }
+.byglom-table tbody tr[data-glom]:hover > * { background: var(--surface-2); }
+.byglom-table tbody tr.open > * { background: var(--accent-soft); }
+.byglom-table tr.group td { text-align: left; }
+.byglom-table tfoot td, .byglom-table tfoot th { border-top: 1px solid var(--rule-strong); border-bottom: 0; font-weight: 500; }
+.byglom-table .byglom-names { max-width: 118px; overflow: hidden; text-overflow: ellipsis; }
+.byglom-barcell { width: 15%; min-width: 96px; }
+.byglom-sums { margin: 8px 0; padding-left: 18px; }
+.byglom-sums li { margin: 2px 0; }
+.byglom-bar { display: flex; gap: 2px; height: 12px; width: 100%; border-radius: 2px; overflow: hidden; }
+.byglom-bar > i { display: block; min-width: 2px; }
+.byglom-bar > i:hover { filter: brightness(1.15); }
+.byglom-bar .right, .byglom-sw.right { background: var(--byglom-right); }
+.byglom-bar .wrong, .byglom-sw.wrong { background: var(--byglom-wrong); }
+.byglom-bar .unnamed, .byglom-sw.unnamed { background: var(--byglom-grey); }
+.byglom-bar .none, .byglom-sw.none { background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--rule-strong); }
+.byglom-bar .right.weak, .byglom-sw.right.weak { background: repeating-linear-gradient(135deg, var(--byglom-right) 0 2px, transparent 2px 4px); }
+.byglom-bar .wrong.weak, .byglom-sw.wrong.weak { background: repeating-linear-gradient(135deg, var(--byglom-wrong) 0 2px, transparent 2px 4px); }
+.byglom-table tr.byglom-detail > td { background: var(--surface); text-align: left; white-space: normal; padding: 8px 10px 10px; }
+.byglom-detail p { margin: 0 0 6px; max-width: 86ch; }
+.byglom-flies { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 4px; margin: 6px 0 0; }
+.byglom-flies-head { flex: 0 0 100%; font-weight: 500; }
+.byglom-fly { font: inherit; font-size: 11.5px; padding: 1px 6px; border: 1px solid var(--rule); border-radius: 3px; background: var(--field); color: var(--ink); cursor: pointer; font-variant-numeric: tabular-nums; }
+.byglom-fly:hover { border-color: var(--accent); background: var(--accent-soft); }
+@media (max-width: 1040px) { .byglom-table-box { overflow-x: auto; } }
 .swatch-roi { flex: none; width: 10px; height: 10px; border-radius: 2px; border: 1px solid rgba(0,0,0,.3); }
 .data-movies { display: flex; align-items: center; gap: 8px; margin: 0 10px 8px; font-size: 12px; }
 

@@ -564,6 +564,36 @@ between the frontend and the server. Using the app is described in
   - *What it does not do.* Nothing of the prediction changes: a model with another
     `max_cost` is another fit. The terms themselves are not recomputed for other ROIs
     (edited ones, or those NMF found).
+- **A model's predictions are summed by glomerulus from matches the fit worker makes once**
+  (`by_glomerulus.py`, `static/by_glomerulus.js`). It is for seeing which glomeruli a model
+  finds and names, over all the flies of one experimenter that it predicted and that have
+  ROIs of their own.
+  - *Whose a fly is.* The top folder of its data on tensor, which its name starts with:
+    every prediction has it, of a dataset's fly or not (an uploader, only the former).
+  - *Why the worker matches.* A prediction keeps how its model's own ROIs matched each
+    glomerulus (`glomeruli.csv`), but not its refined ones, nor what a glomerulus was
+    named instead. Matching needs al-diag-seg's reading of a RoiSet (which ROIs are
+    glomeruli, tentative ones) and its IoU for glomeruli drawn on some of their planes
+    only; done again in the web server, the sums could drift from the scores shown beside
+    them. So the fit worker matches each kind of a prediction's ROIs with al-diag-seg's own
+    functions (`make_one`, asked through `nmf_check.call`, as many predictions at a time as
+    it gets to in 20 s: 77 took 11 s) and keeps the pairs, not counts: per ROI of the fly's
+    own, the predicted one overlapping it most, its name and their IoU; and the same per
+    predicted ROI (`<fly>_by_glomerulus.json`). On the 77 live predictions scored, they
+    give al-diag-seg's own `glomeruli.csv` and named counts again.
+  - *Against the fly's ROIs as they are now.* A file is of its labels' and the RoiSet's
+    sizes and times: once the prediction is refined, or the experimenter draws the ROIs
+    again, it is made again the next time the box is shown. So the sums follow the
+    experimenter's ROIs, and may differ from a prediction's own scores (of when it was
+    made): the box says how many flies' ROIs changed.
+  - *What is counted.* From a drawn glomerulus: the predicted ROI overlapping it most, on
+    it at al-diag-seg's IoU for names (over 0.3), found at its IoU for detection (0.5).
+    From a name the model gave: the fly's own ROI its ROI overlaps most. An ROI named as a
+    glomerulus the fly has drawn, but not on it, is told apart by whether it lies over it
+    on planes where it is not drawn (half of it or more, seen from above): planes are far
+    apart, and a glomerulus on two of them is often two ROIs, of which one gets the name.
+  - *The sums are made at each request* (0.2 s for 75 flies: the files are kept parsed
+    while unchanged), so they need no invalidating when predictions come and go.
 - **A prediction's ROIs are edited as one copy of them, saved whole at each change**
   (`roi_edit.js`, `player.js`, `predictions.save_edited`). What a model predicted is a
   result, to compare an edit or another model with, so it is never changed: the viewer
@@ -2125,6 +2155,8 @@ app/nmf_check.py   glomeruli a prediction's ROIs miss, looked for in the fly's m
                    server asks of the fit worker meanwhile
 app/naming.py      how a prediction's ROIs were named, for the naming explorer: the ROIs named, the atlas on the
                    fly's planes, its volumes as bytes, and every glomerulus' cost for every ROI (made by the fit worker)
+app/by_glomerulus.py   how a fit's model did on each glomerulus over an experimenter's flies: each prediction's ROIs
+                   matched to its fly's own (made by the fit worker, kept with it), and the sums over them
 app/extract.py     signals of a fly's ROIs extracted from its movies as al_analysis does: masks, traces, dF/F,
                    responses, one signal of an ROI's planes; records, time estimates, its files
 app/unmix.py       its option unmix: neighbouring ROIs' signals unmixed (footprints fit to the trials' dF maps,
@@ -2177,6 +2209,7 @@ app/static/        frontend: index.html, app.js, heatmap.js, colormaps.js (+ mpl
                    identity.js: what a predicted ROI's name cost; nmf_merge.js: ROIs found by NMF
                    merged into those edited), naming.js (the naming explorer: the atlas on a fly's planes, each
                    name's cost, other thresholds; naming_solve.js: ROIs matched to glomeruli again, as al-diag-seg does),
+                   by_glomerulus.js (a model's predictions summed by glomerulus, under Past fits),
                    similarity.js (odor similarities, and between them;
                    pvalue-worker.js their p-values), metacyc.js (MetaCyc below its matrices: pathways
                    drawn, compounds, LCA paths, search), lotus.js (LOTUS with its matrices: how
@@ -2351,6 +2384,14 @@ POST   /api/fits/{id}/cancel                stop a fit (one waiting now, one run
 DELETE /api/fits/{id}                       delete a fit and its files (409 while it runs)
 GET    /api/fits/{id}/log                   its log
 GET    /api/fits/{id}/download              its model and results, as a zip sent as it is written
+GET    /api/fits/by_glomerulus              how a fit's model did on each glomerulus over an experimenter's flies it
+                                            predicted that have ROIs of their own (by_glomerulus.summary): ?fit, ?who
+                                            (default the newest fit with such flies, the experimenter with most),
+                                            ?flies (new: not trained on; all), ?rois (final; pred: the model's own);
+                                            with the fits and experimenters to choose from, and the predictions
+                                            not matched to their flies' own ROIs yet
+POST   /api/fits/by_glomerulus              the fit worker matches those: {predictions: ids}, as many as it gets to
+                                            in a while (made, failed, left); 503 if it does not answer
 GET    /api/predictions                     every prediction of a fly's glomerulus ROIs (those waiting and running
                                             with when they should end; those done with their ROIs as edited, if
                                             they were), the models to predict with, the fit worker's status, and

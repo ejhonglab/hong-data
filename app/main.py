@@ -38,7 +38,7 @@ from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, R
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import (backup, bundle_import, chemprops, compare, config, dilution, export, extract, filelog, fits, headspace, lotus,
+from . import (backup, bundle_import, by_glomerulus, chemprops, compare, config, dilution, export, extract, filelog, fits, headspace, lotus,
                batches, lotus_import, matrix_download, merge, metacyc, metacyc_import, model_data, model_runs, naming, nmf_check, orn_input, movies, odormeta, permalinks,
                predictions, refinement, reference, movie_memory, roi_responses, roi_training, sandbox, tensor, thorimage, trial_dff, vcf, version, yamlcheck)
 from .db import PANEL_RENAMES, PROPERTY_COLUMNS, Database, rename_panel
@@ -2006,6 +2006,30 @@ async def predictions_naming_costs(request: Request) -> Response:
     except nmf_check.CallError as e:
         return json_error(503, f"What every glomerulus costs for every ROI could not be worked out: {e}")
     return await run_in_threadpool(_json_gzipped, request, doc or {"made": None})
+
+
+async def fits_by_glomerulus(request: Request) -> Response:
+    """How a fit's model did on each glomerulus, over an experimenter's flies it predicted that have ROIs of their own
+    (`by_glomerulus.summary`): ``fit`` and ``who`` (default the newest fit with such flies, and the experimenter with
+    most), ``flies`` ("new": those it was not trained on, the default; or "all") and ``rois`` ("final": each
+    prediction's ROIs to use, the default; or "pred": the model's own). POST, with {"predictions": ids}: the fit worker
+    matches those predictions' ROIs to their flies' own (those the summary says are ``missing``), as many as it gets
+    to in a while (`by_glomerulus.ask`): 503 if it did not answer. 400 for what is not one of those."""
+    if request.method == "POST":
+        body = await request.json()
+        try:
+            return JSONResponse(await run_in_threadpool(by_glomerulus.ask, db, body.get("predictions") if isinstance(body, dict) else None))
+        except ValueError as e:
+            return json_error(400, str(e))
+        except nmf_check.CallError as e:
+            return json_error(503, f"The predictions' ROIs could not be matched to their flies' own: {e}")
+    q = request.query_params
+    try:
+        fit = int(q["fit"]) if q.get("fit") else None
+        out = await run_in_threadpool(by_glomerulus.summary, db, fit, q.get("who") or None, q.get("flies") or "new", q.get("rois") or "final")
+    except ValueError as e:
+        return json_error(400, str(e))
+    return await run_in_threadpool(_json_gzipped, request, out)
 
 
 async def predictions_edited_save(request: Request) -> Response:
@@ -4458,6 +4482,7 @@ routes = [
     Route("/api/roi_training/download", roi_training_download),
     Route("/api/fits", fits_list),
     Route("/api/fits", fits_create, methods=["POST"]),
+    Route("/api/fits/by_glomerulus", fits_by_glomerulus, methods=["GET", "POST"]),
     Route("/api/fits/{id:int}", fits_delete, methods=["DELETE"]),
     Route("/api/fits/{id:int}/cancel", fits_cancel, methods=["POST"]),
     Route("/api/fits/{id:int}/log", fits_log),

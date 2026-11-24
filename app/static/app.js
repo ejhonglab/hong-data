@@ -12,6 +12,7 @@ import { BundleImport } from './imports.js';
 import { FitsPanel, fmtDuration } from './fits.js';
 import { PredictPanel } from './predictions.js';
 import { NamingExplorer } from './naming.js';
+import { ByGlomerulusPanel } from './by_glomerulus.js';
 import { ExtractPanel } from './extract.js';
 import { ModelsPage } from './models.js';
 import { ModelRuns } from './model_runs.js';
@@ -8906,17 +8907,20 @@ class RoiTrainingPage {
     this.fits = new FitsPanel({ $, esc, api, msgBox, askDialog, fmtWhen, fmtSize, getName: () => settings.current().name,
       flies: () => this.data?.flies || null });
     this.predict = new PredictPanel({ $, esc, api, msgBox, askDialog, fmtWhen, getName: () => settings.current().name,
-      player: () => player, naming: () => naming, flies: () => this.data?.flies || null, onData: () => { this.extract?.predictionsChanged(); this.extract?.renderBatches(); },
+      player: () => player, naming: () => naming, flies: () => this.data?.flies || null,
+      onData: () => { this.extract?.predictionsChanged(); this.extract?.renderBatches(); this.byGlomerulus?.predictionsChanged(this.predict.data?.predictions); },
       onMine: () => { if (this.extract?.data) this.extract.renderFlies(); } });
     this.extract = new ExtractPanel({ $, esc, api, msgBox, askDialog, fmtWhen, getName: () => settings.current().name,
       flies: () => this.data?.flies || null, mine: () => this.predict.mine, predictions: () => this.predict.data?.predictions || null,
       batches: () => this.predict.data?.batches || null, refreshBatches: () => this.predict.refresh() });
+    this.byGlomerulus = new ByGlomerulusPanel({ $, esc, api, msgBox, naming: () => naming });
   }
 
   async load(again = false) {
     this.fits.load();
     this.predict.load();
     this.extract.load();
+    this.byGlomerulus.load();
     if (this.data && !again) return;
     const seq = ++this._seq;
     $('#rt-download').hidden = true;

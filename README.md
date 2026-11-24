@@ -1136,6 +1136,24 @@ reason, unknown ROI names, duplicate columns, non-numeric cells, ...).
   held-out flies' predicted ROIs. Anyone may delete one (it asks first). The bottom of
   *Fit a model* says what such a download has, and how to install al-diag-seg and run a
   model on a fly (the versions the fit worker has filled in).
+  *Each glomerulus, over a model's predictions*, under *Past fits*, sums how a fit's model did on each glomerulus
+  over one experimenter's flies (by the top folder of a fly's data on tensor) that it predicted and that have ROIs
+  of their own. It has a row per name the experimenter gave an ROI in them:
+  - **Of the flies it is drawn in**: how many have an ROI found on it (IoU ≥ 0.5), with their mean Dice; and, by
+    the predicted ROI overlapping it most (IoU over 0.3), how many are named right, named as another (which),
+    left unnamed, or have no ROI on them.
+  - **Of the ROIs the model named it**: how many are on the fly's own glomerulus of that name, barely on it or
+    over it on planes where it is not drawn, on another glomerulus, elsewhere though the fly has it drawn, or in a
+    fly where it is not drawn (where it may be right).
+  - **In model**: how many of the model's training flies have it (`ref`: only the reference atlas has it; *not in
+    it*: a name the model can never give).
+
+  Click a heading to sort by it, a glomerulus for its flies by what became of it in each, and a fly to open its
+  naming at that ROI. The menus choose the model, the experimenter, the flies (those the model was not trained on,
+  or all it predicted) and their ROIs (the predictions', refined where they were, or the model's own); a box adds
+  the names the model gave that the experimenter never did. The matching is al-diag-seg's own, as it scores a
+  prediction, against each fly's ROIs as they are now. The fit worker does it the first time a prediction is summed
+  (well under a second each) and keeps it with the prediction (`<fly>_by_glomerulus.json`, in its download).
 - **AL atlas**: the 108 glomeruli (54 per lobe) of the Grabe et al. 2016 in vivo atlas in 3D:
   drag to turn them (Shift or the right button: to move them; Ctrl: round the axis looked down), the wheel to zoom, and buttons to
   look from each side (anterior, dorsal, lateral, ...). Choose the right lobe (the default), the left

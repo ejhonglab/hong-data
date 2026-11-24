@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Optional
 
 from . import batches, config, extract, filelog, fits, nmf_check, odormeta, predictions, refinement, roi_training, sandbox, version
-from . import naming  # noqa: F401 (what it does when the web server asks: `nmf_check.CALLS`)
+from . import by_glomerulus, naming  # noqa: F401 (what it does when the web server asks: `nmf_check.CALLS`)
 from .db import Database
 from .glomeruli import load_glomeruli
 
@@ -375,6 +375,11 @@ average.tif         the fly's average image, as the model saw it
                     (only once its naming was opened in the tab: Naming, in the list of predictions) what naming each
                     ROI as each glomerulus costs: every term's value for every pair (terms: ROIs, labels, in rows;
                     glomeruli, names, in columns), and what the layout term is made of
+{fly}_by_glomerulus.json
+                    (only for a fly with ROIs of its own, once the tab summed a model's predictions by glomerulus: Each
+                    glomerulus, over a model's predictions) each kind of its ROIs matched to the fly's own as they
+                    were then: per ROI of the fly's own (manual), the predicted ROI overlapping it most, its name (as)
+                    and their IoU; and per predicted ROI, the fly's own it overlaps most
 {fly}_nmf.json, {fly}_nmf.tif, {fly}_nmf_candidates.tif and {fly}_nmf_RoiSet.zip
                     (only once glomeruli its ROIs miss were looked for, in the tab's viewer) what that found in the
                     fly's movies: candidates (glomeruli with no ROI, more of an ROI on a plane it has no outline on,

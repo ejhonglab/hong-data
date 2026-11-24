@@ -19,6 +19,8 @@ data folder, on tensor): asked for again, it is run again, its files replaced. I
 - ``average.tif``: the fly's average image, as the model saw it (for the tab's viewer);
 - once its naming was opened in the tab (`naming`), ``<fly>_naming_costs.json``: what naming each of its ROIs as each
   glomerulus costs, term by term;
+- once the tab summed its model's predictions by glomerulus (`by_glomerulus`), ``<fly>_by_glomerulus.json``: its ROIs
+  matched to its fly's own;
 - where the fly has ROIs of its own, the scores of each kind against them (``summary.csv``,
   ``glomeruli.csv``);
 - ``provenance.json`` (the model, its fit and the al-diag-seg it was made with; the fly's
